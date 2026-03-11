@@ -42,7 +42,7 @@
     "lint": "oxlint --deny-warnings src tests scripts",
     "typecheck": "tsc -p tsconfig.typecheck.json --noEmit",
     "build:website": "bun website/build.ts",
-    "prepare": "lefthook install",
+    "prepare": "test -n \"$CI\" || lefthook install",
     "prepublishOnly": "bun run lint && bun run typecheck && bun run test && bun run bench:gate && bun run check:package"
   },
   "keywords": ["expression", "evaluator", "parser", "safe", "sandbox", "template", "pipe", "transform", "formula", "dsl", "ast", "jexl", "compiler"],
