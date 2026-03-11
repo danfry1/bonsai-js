@@ -488,7 +488,7 @@ qualifiesForFreeShipping.evaluateSync({
         </div>
 
         <h3>Pipes with arguments</h3>
-        <p>The piped value is always the first argument. Any extra arguments go in parentheses after the transform name.</p>
+        <p>The piped value is always the first argument. Any extra arguments go in parentheses after the transform name. When there are no extra arguments, parentheses are optional — <code>name |&gt; trim</code> and <code>name |&gt; trim()</code> are identical.</p>
 
         <div class="ex-group">
           <div class="ex" data-expr='roleCsv |> split(",")' data-ctx='{"roleCsv":"admin,billing,ops"}'>
