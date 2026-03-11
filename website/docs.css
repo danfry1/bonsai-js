@@ -745,13 +745,13 @@
 
 .docs-quick-nav {
   position: sticky;
-  top: 64px;
-  z-index: 25;
+  top: 0px;
+  z-index: 110;
   display: flex;
   gap: 10px;
   overflow-x: auto;
   margin: -6px -48px 28px;
-  padding: 10px 48px 14px;
+  padding: 76px 48px 14px;
   background: #0a0a0f;
 }
 
