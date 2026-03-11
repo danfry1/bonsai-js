@@ -745,13 +745,16 @@
 
 .docs-quick-nav {
   position: sticky;
-  top: 78px;
+  top: 64px;
   z-index: 25;
   display: flex;
   gap: 10px;
   overflow-x: auto;
-  margin: -6px 0 28px;
-  padding: 0 0 6px;
+  margin: -6px -48px 28px;
+  padding: 14px 48px;
+  background: rgba(10, 10, 15, 0.95);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .docs-quick-nav::-webkit-scrollbar {
