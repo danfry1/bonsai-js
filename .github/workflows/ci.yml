@@ -52,10 +52,11 @@ jobs:
     name: Node ${{ matrix.node-version }} smoke
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: quality
     strategy:
       fail-fast: false
       matrix:
-        node-version: [18, 20, 22]
+        node-version: [20, 22]
 
     steps:
       - uses: actions/checkout@v4

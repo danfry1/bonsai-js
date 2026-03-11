@@ -48,9 +48,10 @@
   "author": "Daniel Fry",
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "devDependencies": {
+    "@types/node": "^25.4.0",
     "jexl": "^2.3.0",
     "oxlint": "^1.51.0",
     "tsdown": "^0.21.0",
