@@ -3,6 +3,9 @@ name: Deploy Website
 on:
   push:
     branches: [main]
+    paths:
+      - 'website/**'
+      - 'src/**'
   workflow_dispatch:
 
 permissions:
