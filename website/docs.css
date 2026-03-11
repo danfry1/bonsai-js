@@ -920,8 +920,9 @@
   }
 
   .docs-quick-nav {
-    top: 70px;
-    margin-bottom: 22px;
+    top: 0px;
+    margin: -6px -20px 22px;
+    padding: 68px 20px 12px;
   }
 
   .docs-quick-link {
@@ -954,6 +955,11 @@
 @media (max-width: 640px) {
   .docs-content {
     padding: 72px 16px 40px;
+  }
+
+  .docs-quick-nav {
+    margin: -6px -16px 18px;
+    padding: 64px 16px 10px;
   }
 
   .docs-hero {
