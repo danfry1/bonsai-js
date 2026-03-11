@@ -934,6 +934,10 @@
     display: flex;
   }
 
+  .nav-hamburger {
+    display: none !important;
+  }
+
   .sidebar-overlay {
     position: fixed;
     inset: 0;
