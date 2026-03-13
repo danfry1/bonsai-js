@@ -1,71 +1,62 @@
 <svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0A0A0F"/>
-      <stop offset="0.55" stop-color="#0F1A14"/>
-      <stop offset="1" stop-color="#0A0A0F"/>
-    </linearGradient>
-    <linearGradient id="accent" x1="185" y1="132" x2="998" y2="526" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#34d399"/>
-      <stop offset="1" stop-color="#059669"/>
+      <stop stop-color="#0c0c14"/>
+      <stop offset="1" stop-color="#0a1210"/>
     </linearGradient>
     <linearGradient id="canopy" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#34d399"/>
       <stop offset="100%" stop-color="#059669"/>
     </linearGradient>
-    <linearGradient id="trunk" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#a3785f"/>
-      <stop offset="100%" stop-color="#7c5a3c"/>
+    <linearGradient id="glow" x1="600" y1="0" x2="600" y2="630" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#34d399" stop-opacity="0.07"/>
+      <stop offset="1" stop-color="#34d399" stop-opacity="0"/>
     </linearGradient>
   </defs>
 
+  <!-- Full-bleed dark background -->
   <rect width="1200" height="630" fill="url(#bg)"/>
-  <circle cx="992" cy="126" r="204" fill="#34d399" fill-opacity="0.06"/>
-  <circle cx="114" cy="584" r="196" fill="#34d399" fill-opacity="0.04"/>
-  <rect x="76" y="70" width="1048" height="490" rx="26" fill="#12121C" stroke="#FFFFFF" stroke-opacity="0.08"/>
 
-  <!-- Bonsai icon in badge -->
-  <rect x="128" y="120" width="94" height="94" rx="22" fill="#12121C" stroke="url(#accent)" stroke-width="2"/>
+  <!-- Subtle top glow -->
+  <rect width="1200" height="320" fill="url(#glow)"/>
 
-  <!-- Mini bonsai tree in badge -->
-  <g transform="translate(150, 132)">
-    <!-- Pot -->
-    <rect x="14" y="58" width="22" height="2.5" rx="1.2" fill="#6b7280"/>
-    <path d="M16 60 L17.5 67 Q17.5 68 20 68 L30 68 Q32.5 68 32.5 67 L34 60 Z" fill="#4b5563"/>
-    <!-- Trunk -->
-    <path d="M25 58 C25 52 23 48 22 42 C21 36 24 30 25 26" fill="none" stroke="#a3785f" stroke-width="3.5" stroke-linecap="round"/>
-    <!-- Branches -->
-    <path d="M23 42 C19 40 15 38 13 34" fill="none" stroke="#7c5a3c" stroke-width="2" stroke-linecap="round"/>
-    <path d="M24 36 C28 34 32 32 35 28" fill="none" stroke="#7c5a3c" stroke-width="1.8" stroke-linecap="round"/>
-    <path d="M24 30 C21 28 18 26 16 22" fill="none" stroke="#7c5a3c" stroke-width="1.5" stroke-linecap="round"/>
-    <!-- Canopy -->
-    <ellipse cx="25" cy="18" rx="10" ry="9" fill="url(#canopy)"/>
-    <ellipse cx="13" cy="28" rx="8" ry="7" fill="#10b981"/>
-    <ellipse cx="35" cy="24" rx="7" ry="6.5" fill="#10b981"/>
-    <ellipse cx="20" cy="20" rx="6" ry="5" fill="#34d399" opacity="0.5"/>
-    <ellipse cx="16" cy="18" rx="5" ry="4.5" fill="url(#canopy)" opacity="0.8"/>
+  <!-- Thin accent line at top -->
+  <rect y="0" width="1200" height="4" fill="#34d399" opacity="0.6"/>
+
+  <!-- Bonsai tree (larger, positioned top-right as a watermark) -->
+  <g transform="translate(940, 60) scale(3.2)" opacity="0.12">
+    <rect x="14" y="58" width="22" height="2.5" rx="1.2" fill="#34d399"/>
+    <path d="M16 60 L17.5 67 Q17.5 68 20 68 L30 68 Q32.5 68 32.5 67 L34 60 Z" fill="#34d399"/>
+    <path d="M25 58 C25 52 23 48 22 42 C21 36 24 30 25 26" fill="none" stroke="#34d399" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M23 42 C19 40 15 38 13 34" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round"/>
+    <path d="M24 36 C28 34 32 32 35 28" fill="none" stroke="#34d399" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M24 30 C21 28 18 26 16 22" fill="none" stroke="#34d399" stroke-width="1.5" stroke-linecap="round"/>
+    <ellipse cx="25" cy="18" rx="10" ry="9" fill="#34d399"/>
+    <ellipse cx="13" cy="28" rx="8" ry="7" fill="#34d399"/>
+    <ellipse cx="35" cy="24" rx="7" ry="6.5" fill="#34d399"/>
   </g>
 
-  <text x="252" y="160" fill="#34d399" font-family="JetBrains Mono, monospace" font-size="26" font-weight="700">BONSAI</text>
-  <text x="252" y="190" fill="#6b7280" font-family="JetBrains Mono, monospace" font-size="16">bonsai-js</text>
+  <!-- Brand -->
+  <text x="80" y="100" fill="#34d399" font-family="'SF Mono', 'JetBrains Mono', monospace" font-size="22" font-weight="600" letter-spacing="3">BONSAI</text>
+  <text x="80" y="128" fill="#555" font-family="'SF Mono', 'JetBrains Mono', monospace" font-size="16">bonsai-js</text>
 
-  <text x="128" y="282" fill="white" font-family="Space Grotesk, Arial, sans-serif" font-size="66" font-weight="700">
-    Safe expressions for rules,
-  </text>
-  <text x="128" y="360" fill="white" font-family="Space Grotesk, Arial, sans-serif" font-size="66" font-weight="700">
-    filters, and templates.
-  </text>
-  <text x="128" y="426" fill="#A7A7B0" font-family="Space Grotesk, Arial, sans-serif" font-size="30">
-    Zero-dependency expression engine for configurable product logic.
-  </text>
-  <text x="128" y="468" fill="#A7A7B0" font-family="Space Grotesk, Arial, sans-serif" font-size="30">
-    Typed API, sandbox controls, live playground, and production docs.
-  </text>
+  <!-- Headline -->
+  <text x="80" y="240" fill="white" font-family="'Inter', 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif" font-size="72" font-weight="800" letter-spacing="-2">Safe expressions</text>
+  <text x="80" y="320" fill="white" font-family="'Inter', 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif" font-size="72" font-weight="800" letter-spacing="-2">for rules, filters,</text>
+  <text x="80" y="400" fill="white" font-family="'Inter', 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif" font-size="72" font-weight="800" letter-spacing="-2">and templates.</text>
 
-  <rect x="128" y="504" width="196" height="46" rx="23" fill="#34d399" fill-opacity="0.1" stroke="#34d399" stroke-opacity="0.35"/>
-  <rect x="340" y="504" width="168" height="46" rx="23" fill="#FFFFFF" fill-opacity="0.04" stroke="#FFFFFF" stroke-opacity="0.1"/>
-  <rect x="524" y="504" width="156" height="46" rx="23" fill="#FFFFFF" fill-opacity="0.04" stroke="#FFFFFF" stroke-opacity="0.1"/>
-  <text x="161" y="533" fill="#34d399" font-family="JetBrains Mono, monospace" font-size="20" font-weight="700">NO EVAL</text>
-  <text x="381" y="533" fill="#D7D7DC" font-family="JetBrains Mono, monospace" font-size="20" font-weight="700">ZERO DEPS</text>
-  <text x="558" y="533" fill="#D7D7DC" font-family="JetBrains Mono, monospace" font-size="20" font-weight="700">NODE 18+</text>
+  <!-- Subtitle -->
+  <text x="80" y="468" fill="#777" font-family="'Inter', 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif" font-size="24">Zero-dependency expression engine with sandbox controls and typed API.</text>
+
+  <!-- Bottom badges — minimal, no pill borders -->
+  <text x="80" y="564" fill="#34d399" font-family="'SF Mono', 'JetBrains Mono', monospace" font-size="16" font-weight="600" letter-spacing="1.5">NO EVAL</text>
+  <circle cx="192" cy="559" r="2" fill="#333"/>
+  <text x="210" y="564" fill="#555" font-family="'SF Mono', 'JetBrains Mono', monospace" font-size="16" font-weight="600" letter-spacing="1.5">ZERO DEPS</text>
+  <circle cx="348" cy="559" r="2" fill="#333"/>
+  <text x="366" y="564" fill="#555" font-family="'SF Mono', 'JetBrains Mono', monospace" font-size="16" font-weight="600" letter-spacing="1.5">TYPESCRIPT</text>
+  <circle cx="512" cy="559" r="2" fill="#333"/>
+  <text x="530" y="564" fill="#555" font-family="'SF Mono', 'JetBrains Mono', monospace" font-size="16" font-weight="600" letter-spacing="1.5">NODE 20+</text>
+
+  <!-- Bottom border accent -->
+  <rect y="626" width="1200" height="4" fill="#34d399" opacity="0.3"/>
 </svg>
