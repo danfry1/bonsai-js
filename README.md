@@ -7,8 +7,11 @@
 [![npm version](https://img.shields.io/npm/v/bonsai-js)](https://www.npmjs.com/package/bonsai-js)
 [![npm downloads](https://img.shields.io/npm/dm/bonsai-js)](https://www.npmjs.com/package/bonsai-js)
 [![CI](https://github.com/danfry1/bonsai-js/actions/workflows/ci.yml/badge.svg)](https://github.com/danfry1/bonsai-js/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/danfry1/bonsai-js/actions/workflows/codeql.yml/badge.svg)](https://github.com/danfry1/bonsai-js/actions/workflows/codeql.yml)
 [![bundle size](https://img.shields.io/bundlephobia/minzip/bonsai-js)](https://bundlephobia.com/package/bonsai-js)
 [![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](https://www.npmjs.com/package/bonsai-js)
+[![node](https://img.shields.io/node/v/bonsai-js)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-typed-blue)](https://www.typescriptlang.org)
 [![license](https://img.shields.io/npm/l/bonsai-js)](https://github.com/danfry1/bonsai-js/blob/main/LICENSE)
 
 A safe expression language for rules, filters, templates, and user-authored logic. Runs in any JavaScript runtime.
