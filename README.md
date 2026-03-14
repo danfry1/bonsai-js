@@ -13,6 +13,7 @@
 [![node](https://img.shields.io/node/v/bonsai-js)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-typed-blue)](https://www.typescriptlang.org)
 [![license](https://img.shields.io/npm/l/bonsai-js)](https://github.com/danfry1/bonsai-js/blob/main/LICENSE)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12173/badge)](https://www.bestpractices.dev/projects/12173)
 
 A safe expression language for rules, filters, templates, and user-authored logic. Runs in any JavaScript runtime.
 
