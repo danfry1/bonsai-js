@@ -8,10 +8,7 @@ on:
       - 'src/**'
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+permissions: read-all
 
 concurrency:
   group: pages
@@ -23,6 +20,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: github.repository == 'danfry1/bonsai-js'
+
+    permissions:
+      pages: write
+      id-token: write
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
