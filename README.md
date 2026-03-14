@@ -11,7 +11,7 @@
 [![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](https://www.npmjs.com/package/bonsai-js)
 [![license](https://img.shields.io/npm/l/bonsai-js)](https://github.com/danfry1/bonsai-js/blob/main/LICENSE)
 
-Safe expression evaluation for rules, filters, templates, and user-authored logic in JavaScript and TypeScript.
+A safe expression language for rules, filters, templates, and user-authored logic. Runs in any JavaScript runtime.
 
 Bonsai gives you a constrained expression language with caching, typed errors, pluggable transforms/functions, and safety controls. It is designed for cases where `eval()` would be inappropriate: business rules, formula fields, admin-defined filters, template helpers, and product configuration.
 

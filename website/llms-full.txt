@@ -1,6 +1,6 @@
 # Bonsai - Full Documentation
 
-> A safe, fast expression evaluator for JavaScript with pipe operators, optional chaining, and a modular plugin system.
+> A safe, fast expression language for rules, filters, and templates with pipe operators, optional chaining, and a modular plugin system.
 
 Bonsai lets you safely evaluate expression strings in JavaScript. Think of it as a tiny, sandboxed language for data transformations, business rules, and template logic - without the security risks of running arbitrary code.
 

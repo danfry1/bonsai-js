@@ -1,7 +1,7 @@
 {
   "name": "bonsai-js",
   "version": "0.1.1",
-  "description": "A modern, high-performance expression evaluator for JavaScript",
+  "description": "A safe, zero-dependency expression language for rules, filters, and templates",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.mjs",
