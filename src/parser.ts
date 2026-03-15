@@ -397,12 +397,25 @@ export function parse(source: string, _depth = 0): ASTNode {
     const start = current().start
     advance() // skip the `.`
 
-    const prop = expect('Identifier')
-    let node: ASTNode = {
-      type: 'LambdaAccessor',
-      property: prop.value,
-      start,
-      end: prop.end,
+    // Bare `.` as identity lambda (e.g., `. > 2`, `. == "x"`)
+    // Must be followed by an operator to form a compound predicate.
+    let node: ASTNode
+    if (current().type !== 'Identifier') {
+      if (current().type !== 'Operator' && current().type !== 'NullishCoalescing') {
+        throw new ExpressionError(
+          `Expected property name or operator after "."`,
+          { source, start, end: start + 1 },
+        )
+      }
+      node = { type: 'LambdaIdentity', start, end: start + 1 }
+    } else {
+      const prop = expect('Identifier')
+      node = {
+        type: 'LambdaAccessor',
+        property: prop.value,
+        start,
+        end: prop.end,
+      }
     }
 
     // Continue with postfix operations (member access, optional chaining, calls)
@@ -551,8 +564,8 @@ export function parse(source: string, _depth = 0): ASTNode {
       }
     }
 
-    // If node is just a LambdaAccessor, keep it as-is for backward compat
-    if (node.type === 'LambdaAccessor') {
+    // If node is just a LambdaAccessor or LambdaIdentity, keep it as-is
+    if (node.type === 'LambdaAccessor' || node.type === 'LambdaIdentity') {
       return node
     }
 

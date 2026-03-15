@@ -583,7 +583,8 @@ qualifiesForFreeShipping.evaluateSync({
           <thead><tr><th>Shorthand</th><th>Meaning</th><th>Typical use</th></tr></thead>
           <tbody>
             <tr><td><code>.id</code></td><td>Read the current item's <code>id</code></td><td><code>orders |&gt; map(.id)</code></td></tr>
-            <tr><td><code>.price &lt; 100</code></td><td>Test the current item</td><td><code>products |&gt; filter(.price &lt; 100)</code></td></tr>
+            <tr><td><code>.price &lt; 100</code></td><td>Test the current item's property</td><td><code>products |&gt; filter(.price &lt; 100)</code></td></tr>
+            <tr><td><code>. &gt; 2</code></td><td>Compare the current item itself</td><td><code>[1,2,3,4].filter(. &gt; 2)</code></td></tr>
             <tr><td><code>.email.endsWith("@acme.com")</code></td><td>Use member access and safe method calls on the current item</td><td><code>users |&gt; some(.email.endsWith("@acme.com"))</code></td></tr>
           </tbody>
         </table>
@@ -622,8 +623,25 @@ qualifiesForFreeShipping.evaluateSync({
           <span class="out">[{ email: "alice@acme.com" }]</span>
         </div>
 
+        <h3>Bare dot identity</h3>
+        <p>Use a bare <code>.</code> followed by an operator to refer to the current item itself — useful for arrays of primitives.</p>
+
+        <div class="ex-group">
+          <div class="ex" data-expr="[1, 2, 3, 4].filter(. > 2)" data-ctx='{}'><code class="expr">[1, 2, 3, 4].filter(<span class="o">.</span> <span class="o">&gt;</span> <span class="n">2</span>)</code><span class="out">[3, 4]</span></div>
+          <div class="ex" data-expr="[1, 2, 3].map(. * 10)" data-ctx='{}'><code class="expr">[1, 2, 3].map(<span class="o">.</span> <span class="o">*</span> <span class="n">10</span>)</code><span class="out">[10, 20, 30]</span></div>
+        </div>
+
+        <h3>JS-style method chaining</h3>
+        <p>Array methods <code>filter</code>, <code>map</code>, <code>find</code>, <code>some</code>, and <code>every</code> work as native method calls with lambda arguments — no stdlib import required.</p>
+
+        <div class="ex-group">
+          <div class="ex" data-expr='users.filter(.age >= 18).map(.name)' data-ctx='{"users":[{"name":"Alice","age":25},{"name":"Bob","age":15}]}'><code class="expr">users.filter(.age <span class="o">&gt;=</span> <span class="n">18</span>).map(.name)</code><span class="out">["Alice"]</span></div>
+          <div class="ex" data-expr="[1, 2, 3].some(. > 2)" data-ctx='{}'><code class="expr">[1, 2, 3].some(<span class="o">.</span> <span class="o">&gt;</span> <span class="n">2</span>)</code><span class="out">true</span></div>
+          <div class="ex" data-expr="[1, 2, 3].find(. > 1)" data-ctx='{}'><code class="expr">[1, 2, 3].find(<span class="o">.</span> <span class="o">&gt;</span> <span class="n">1</span>)</code><span class="out">2</span></div>
+        </div>
+
         <div class="doc-tip">
-          <strong>Tip:</strong> Lambdas only work as arguments to transforms that expect functions. They are shorthand, not general-purpose standalone expressions like JavaScript arrow functions.
+          <strong>Pipes vs methods:</strong> Both <code>users |&gt; filter(.age &gt;= 18) |&gt; map(.name)</code> and <code>users.filter(.age &gt;= 18).map(.name)</code> produce the same result. Use whichever reads better for your use case. Method chaining is built in; pipe transforms require the stdlib <code>arrays</code> plugin but offer additional transforms like <code>count</code>, <code>unique</code>, <code>sort</code>, and <code>flatten</code>.
         </div>
       </div>
 

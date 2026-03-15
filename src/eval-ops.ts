@@ -23,6 +23,9 @@ function isAllowedReceiver(obj: unknown, methodName: string): boolean {
     // String + Array
     case 'includes': case 'indexOf': case 'slice': case 'at':
       return t === 'string' || Array.isArray(obj)
+    // Array-only (higher-order)
+    case 'filter': case 'map': case 'find': case 'some': case 'every':
+      return Array.isArray(obj)
     // Number
     case 'toFixed':
       return t === 'number'

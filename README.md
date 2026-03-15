@@ -62,6 +62,16 @@ expr.evaluateSync('users |> filter(.age >= 18) |> map(.name)', {
   ],
 }) // ['Alice']
 
+// JS-style method chaining works too
+expr.evaluateSync('users.filter(.age >= 18).map(.name)', {
+  users: [
+    { name: 'Alice', age: 25 },
+    { name: 'Bob', age: 15 },
+  ],
+}) // ['Alice']
+
+expr.evaluateSync('[1, 2, 3, 4].filter(. > 2)') // [3, 4]
+
 expr.evaluateSync('user?.profile?.avatar ?? "default.png"', {
   user: null,
 }) // 'default.png'
@@ -125,6 +135,53 @@ if (result.valid) {
   console.error(result.errors[0]?.formatted)
 }
 ```
+
+## Array Methods and Lambdas
+
+Bonsai supports two styles for working with arrays: **pipe transforms** and **JS-style method chaining**. Both use the same lambda shorthand.
+
+### Lambda shorthand
+
+Inside array methods, `.` refers to the current item:
+
+- `.property` — access a property on each item (e.g., `.age`, `.name`)
+- `. > value` — compare each item directly (e.g., `. > 2`, `. == "x"`)
+
+Compound predicates work too: `.age >= 18 && .active`
+
+### Pipe transforms (via stdlib)
+
+```ts
+import { arrays } from 'bonsai-js/stdlib'
+
+const expr = bonsai().use(arrays)
+
+expr.evaluateSync('users |> filter(.age >= 18) |> map(.name)', {
+  users: [{ name: 'Alice', age: 25 }, { name: 'Bob', age: 15 }],
+}) // ['Alice']
+
+expr.evaluateSync('[1, 2, 3, 4] |> filter(. > 2)') // [3, 4]
+```
+
+### JS-style method chaining
+
+No stdlib import required — `filter`, `map`, `find`, `some`, and `every` work as native array methods:
+
+```ts
+const expr = bonsai()
+
+expr.evaluateSync('users.filter(.age >= 18).map(.name)', {
+  users: [{ name: 'Alice', age: 25 }, { name: 'Bob', age: 15 }],
+}) // ['Alice']
+
+expr.evaluateSync('[1, 2, 3, 4].filter(. > 2)') // [3, 4]
+expr.evaluateSync('[1, 2, 3].map(. * 10)') // [10, 20, 30]
+expr.evaluateSync('[1, 2, 3].find(. > 1)') // 2
+expr.evaluateSync('[1, 2, 3].some(. > 2)') // true
+expr.evaluateSync('[1, 2, 3].every(. > 0)') // true
+```
+
+Both styles support async evaluation via `evaluate()`.
 
 ## API Reference
 
@@ -437,7 +494,7 @@ What Bonsai does:
 - prevents expressions from reaching globals or importing modules
 - looks up root identifiers via own-property checks only (`Object.hasOwn`), so context prototype chains cannot leak
 - creates object literals with `null` prototypes, preventing prototype pollution through expression-constructed objects
-- validates method call receivers against a safe allowlist of types (string, number, array, plain object)
+- validates method call receivers against a safe allowlist of types (string, number, array, plain object) — array methods include `filter`, `map`, `find`, `some`, `every`, `includes`, `indexOf`, `slice`, `at`
 - automatically bypasses allow/deny lists for canonical numeric array indices (e.g., `items[0]`)
 - rejects `Promise` values in `evaluateSync()` with actionable errors that name the offending function/transform/method and suggest using `evaluate()` instead
 

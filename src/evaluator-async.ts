@@ -150,6 +150,9 @@ async function evalNodeAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown>
       case 'LambdaAccessor':
         return makeLambdaAccessor(node.property, g)
 
+      case 'LambdaIdentity':
+        return (item: unknown) => item
+
       case 'LambdaExpression':
         return (item: unknown) => evalLambdaBodyAsync(node.body, item, env)
 
@@ -182,6 +185,20 @@ async function evalCallExpressionAsync(
         await pushCallArgumentAsync(args, arg, env)
       }
       validateMethodArgs(methodName, args)
+
+      // Higher-order array methods need async-aware iteration
+      // because lambda callbacks may return Promises, which native
+      // Array methods can't handle (Promises are always truthy).
+      if (Array.isArray(obj) && args.length === 1 && typeof args[0] === 'function') {
+        const arr = obj
+        const predicate = args[0] as (item: unknown) => unknown
+        const asyncResult = await evalAsyncArrayMethod(methodName, arr, predicate)
+        if (asyncResult !== undefined) {
+          g.checkTimeout()
+          return asyncResult.value
+        }
+      }
+
       const result = await method.call(obj, ...args)
       g.checkTimeout()
       return result
@@ -219,9 +236,51 @@ async function pushCallArgumentAsync(args: unknown[], node: ASTNode, env: AsyncE
   args.push(await evalArgAsync(node, env))
 }
 
+// Async-safe higher-order array method evaluation. Native JS array methods
+// call predicates synchronously, but our lambdas may return Promises.
+// Returns { value } if handled, undefined if the method isn't higher-order.
+async function evalAsyncArrayMethod(
+  methodName: string,
+  arr: unknown[],
+  predicate: (item: unknown) => unknown,
+): Promise<{ value: unknown } | undefined> {
+  switch (methodName) {
+    case 'filter': {
+      const results = arr.map(predicate)
+      const resolved = results.some(r => r instanceof Promise) ? await Promise.all(results) : results
+      return { value: arr.filter((_, i) => resolved[i]) }
+    }
+    case 'map': {
+      const results = arr.map(predicate)
+      return { value: results.some(r => r instanceof Promise) ? await Promise.all(results) : results }
+    }
+    case 'find': {
+      const results = arr.map(predicate)
+      const resolved = results.some(r => r instanceof Promise) ? await Promise.all(results) : results
+      const idx = resolved.findIndex(Boolean)
+      return { value: idx >= 0 ? arr[idx] : undefined }
+    }
+    case 'some': {
+      const results = arr.map(predicate)
+      const resolved = results.some(r => r instanceof Promise) ? await Promise.all(results) : results
+      return { value: resolved.some(Boolean) }
+    }
+    case 'every': {
+      const results = arr.map(predicate)
+      const resolved = results.some(r => r instanceof Promise) ? await Promise.all(results) : results
+      return { value: resolved.every(Boolean) }
+    }
+    default:
+      return undefined
+  }
+}
+
 async function evalArgAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown> {
   if (node.type === 'LambdaAccessor') {
     return makeLambdaAccessor(node.property, env.g)
+  }
+  if (node.type === 'LambdaIdentity') {
+    return (item: unknown) => item
   }
   return await evalNodeAsync(node, env)
 }
@@ -258,6 +317,9 @@ async function evalLambdaBodyAsync(node: ASTNode, item: unknown, env: AsyncEvalE
   let ownDepth = true
   try {
     switch (node.type) {
+      case 'LambdaIdentity':
+        return item
+
       case 'LambdaAccessor':
         g.checkNameAccess(node.property, 'member')
         return (item as Record<string, unknown>)?.[node.property]
@@ -289,10 +351,20 @@ async function evalLambdaBodyAsync(node: ASTNode, item: unknown, env: AsyncEvalE
             if (arg.type === 'SpreadElement') {
               args.push(...expandSpreadValue(await evalNodeAsync(arg.argument, env), g.policy.maxArrayLength))
             } else {
-              args.push(await evalNodeAsync(arg, env))
+              args.push(await evalArgAsync(arg, env))
             }
           }
           validateMethodArgs(methodName, args)
+
+          // Async-safe higher-order array method handling (same as top-level path)
+          if (Array.isArray(obj) && args.length === 1 && typeof args[0] === 'function') {
+            const asyncResult = await evalAsyncArrayMethod(methodName, obj, args[0] as (item: unknown) => unknown)
+            if (asyncResult !== undefined) {
+              g.checkTimeout()
+              return asyncResult.value
+            }
+          }
+
           return await method.call(obj, ...args)
         }
         ownDepth = false

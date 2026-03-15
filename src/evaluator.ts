@@ -161,6 +161,9 @@ function evalNode(node: ASTNode, env: EvalEnv): unknown {
       case 'LambdaAccessor':
         return makeLambdaAccessor(node.property, g)
 
+      case 'LambdaIdentity':
+        return (item: unknown) => item
+
       case 'LambdaExpression':
         return (item: unknown) => evalLambdaBody(node.body, item, env)
 
@@ -227,6 +230,9 @@ function evalArg(node: ASTNode, env: EvalEnv): unknown {
   if (node.type === 'LambdaAccessor') {
     return makeLambdaAccessor(node.property, env.g)
   }
+  if (node.type === 'LambdaIdentity') {
+    return (item: unknown) => item
+  }
   return evalNode(node, env)
 }
 
@@ -262,6 +268,9 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
   let ownDepth = true
   try {
     switch (node.type) {
+      case 'LambdaIdentity':
+        return item
+
       case 'LambdaAccessor':
         g.checkNameAccess(node.property, 'member')
         return (item as Record<string, unknown>)?.[node.property]
@@ -293,7 +302,7 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
             if (arg.type === 'SpreadElement') {
               args.push(...expandSpreadValue(evalNode(arg.argument, env), g.policy.maxArrayLength))
             } else {
-              args.push(evalNode(arg, env))
+              args.push(evalArg(arg, env))
             }
           }
           validateMethodArgs(methodName, args)

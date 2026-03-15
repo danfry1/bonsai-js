@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-03-15
+
+### Added
+
+- **JS-style array method chaining:** `users.filter(.age >= 18).map(.name)` — `filter`, `map`, `find`, `some`, and `every` now work as native array methods with lambda arguments, no stdlib import required
+- **Bare dot identity lambda:** `. > 2` and `. * 10` now work as lambda shorthand for the current item itself, in both method calls and pipe transforms (e.g., `[1,2,3,4].filter(. > 2)`, `[1,2,3] |> map(. * 10)`)
+- Async-safe evaluation for all higher-order array methods — lambda predicates that return Promises are correctly resolved in both top-level and nested contexts via `evaluate()`
+- Documentation for array methods, lambda shorthand, and method chaining in README and website docs
+
 ## [Unreleased]
 
 ### Added

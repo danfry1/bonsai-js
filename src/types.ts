@@ -165,6 +165,10 @@ export interface LambdaExpression extends BaseNode {
   body: ASTNode
 }
 
+export interface LambdaIdentity extends BaseNode {
+  type: 'LambdaIdentity'
+}
+
 export type ASTNode =
   | NumberLiteral
   | StringLiteral
@@ -185,6 +189,7 @@ export type ASTNode =
   | SpreadElement
   | LambdaAccessor
   | LambdaExpression
+  | LambdaIdentity
 
 // === Configuration ===
 
