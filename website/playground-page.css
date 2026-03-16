@@ -296,6 +296,7 @@
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.88rem;
   line-height: 1.6;
+  font-variant-ligatures: none;
   white-space: pre-wrap;
   word-break: break-word;
   pointer-events: none;
@@ -398,6 +399,7 @@
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.88rem;
   line-height: 1.6;
+  font-variant-ligatures: none;
   resize: none;
   caret-color: #10b981;
   outline: none;
