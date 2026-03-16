@@ -270,6 +270,16 @@ async function evalAsyncArrayMethod(
       const resolved = results.some(r => r instanceof Promise) ? await Promise.all(results) : results
       return { value: resolved.every(Boolean) }
     }
+    case 'findIndex': {
+      const results = arr.map(predicate)
+      const resolved = results.some(r => r instanceof Promise) ? await Promise.all(results) : results
+      return { value: resolved.findIndex(Boolean) }
+    }
+    case 'flatMap': {
+      const results = arr.map(predicate)
+      const resolved = results.some(r => r instanceof Promise) ? await Promise.all(results) : results
+      return { value: (resolved as unknown[]).flat() }
+    }
     default:
       return undefined
   }

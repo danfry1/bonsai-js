@@ -104,6 +104,124 @@ describe('JS-style .filter().map() with lambdas (sync)', () => {
   })
 })
 
+describe('native array methods (non-callback)', () => {
+  const expr = bonsai()
+
+  it('[1,2,3].join(", ")', () => {
+    expect(expr.evaluateSync('[1,2,3].join(", ")')).toBe('1, 2, 3')
+  })
+
+  it('chained: users.filter(.age >= 18).map(.name).join(", ")', () => {
+    expect(expr.evaluateSync('users.filter(.age >= 18).map(.name).join(", ")', {
+      users: [{ name: 'Alice', age: 25 }, { name: 'Bob', age: 15 }, { name: 'Carol', age: 30 }]
+    })).toBe('Alice, Carol')
+  })
+
+  it('[[1,2],[3,4]].flat()', () => {
+    expect(expr.evaluateSync('[[1,2],[3,4]].flat()')).toEqual([1, 2, 3, 4])
+  })
+
+  it('[1,2,3].concat([4,5])', () => {
+    expect(expr.evaluateSync('[1,2,3].concat([4,5])')).toEqual([1, 2, 3, 4, 5])
+  })
+
+  it('[1,2,3,2].lastIndexOf(2)', () => {
+    expect(expr.evaluateSync('[1,2,3,2].lastIndexOf(2)')).toBe(3)
+  })
+
+  it('[1,2,3,4].findIndex(. > 2)', () => {
+    expect(expr.evaluateSync('[1,2,3,4].findIndex(. > 2)')).toBe(2)
+  })
+
+  it('[[1,2],[3]].flatMap(. * 2) — not useful but should not crash', () => {
+    expect(expr.evaluateSync('[1,2,3].flatMap(. * 2)')).toEqual([2, 4, 6])
+  })
+
+  it('[3,1,2].toReversed()', () => {
+    expect(expr.evaluateSync('[3,1,2].toReversed()')).toEqual([2, 1, 3])
+  })
+
+  it('[3,1,2].toSorted()', () => {
+    expect(expr.evaluateSync('[3,1,2].toSorted()')).toEqual([1, 2, 3])
+  })
+
+  it('[1,2,3].with(1, 99)', () => {
+    expect(expr.evaluateSync('[1,2,3].with(1, 99)')).toEqual([1, 99, 3])
+  })
+
+  it('toReversed does not mutate original', () => {
+    const ctx = { arr: [1, 2, 3] }
+    expr.evaluateSync('arr.toReversed()', ctx)
+    expect(ctx.arr).toEqual([1, 2, 3])
+  })
+
+  it('toSorted does not mutate original', () => {
+    const ctx = { arr: [3, 1, 2] }
+    expr.evaluateSync('arr.toSorted()', ctx)
+    expect(ctx.arr).toEqual([3, 1, 2])
+  })
+})
+
+describe('native string methods', () => {
+  const expr = bonsai()
+
+  it('"  hello  ".trim()', () => {
+    expect(expr.evaluateSync('"  hello  ".trim()')).toBe('hello')
+  })
+
+  it('"Hello".toLowerCase()', () => {
+    expect(expr.evaluateSync('"Hello".toLowerCase()')).toBe('hello')
+  })
+
+  it('"hello".toUpperCase()', () => {
+    expect(expr.evaluateSync('"hello".toUpperCase()')).toBe('HELLO')
+  })
+
+  it('"hello world".split(" ")', () => {
+    expect(expr.evaluateSync('"hello world".split(" ")')).toEqual(['hello', 'world'])
+  })
+
+  it('"5".padStart(3, "0")', () => {
+    expect(expr.evaluateSync('"5".padStart(3, "0")')).toBe('005')
+  })
+
+  it('"5".padEnd(3, "0")', () => {
+    expect(expr.evaluateSync('"5".padEnd(3, "0")')).toBe('500')
+  })
+
+  it('"hello".concat(" world")', () => {
+    expect(expr.evaluateSync('"hello".concat(" world")')).toBe('hello world')
+  })
+
+  it('"hello world".lastIndexOf("o")', () => {
+    expect(expr.evaluateSync('"hello world".lastIndexOf("o")')).toBe(7)
+  })
+})
+
+describe('mutating methods are blocked', () => {
+  const expr = bonsai()
+
+  it('arr.reverse() is blocked', () => {
+    expect(() => expr.evaluateSync('[1,2,3].reverse()')).toThrow()
+  })
+
+  it('arr.sort() is blocked', () => {
+    expect(() => expr.evaluateSync('[1,2,3].sort()')).toThrow()
+  })
+
+  it('arr.push() is blocked', () => {
+    expect(() => expr.evaluateSync('[1,2,3].push(4)')).toThrow()
+  })
+
+  it('arr.pop() is blocked', () => {
+    expect(() => expr.evaluateSync('[1,2,3].pop()')).toThrow()
+  })
+
+  it('arr.splice() is blocked', () => {
+    expect(() => expr.evaluateSync('[1,2,3].splice(0,1)')).toThrow()
+  })
+})
+
 describe('JS-style .filter().map() with lambdas (async)', () => {
   const expr = bonsai()
 

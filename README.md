@@ -185,6 +185,47 @@ expr.evaluateSync('[1, 2, 3].every(. > 0)') // true
 
 Both styles support async evaluation via `evaluate()`.
 
+### Built-in safe methods
+
+These methods work via native `.method()` syntax without any imports. Mutating methods (`reverse`, `sort`, `push`, `pop`, `splice`, etc.) are blocked to prevent context mutation.
+
+**String methods:**
+
+| Method | Example |
+| --- | --- |
+| `trim`, `trimStart`, `trimEnd` | `"  hi  ".trim()` → `"hi"` |
+| `toLowerCase`, `toUpperCase` | `"Hello".toLowerCase()` → `"hello"` |
+| `startsWith`, `endsWith` | `"hello".startsWith("hel")` → `true` |
+| `includes`, `indexOf`, `lastIndexOf` | `"hello".includes("ell")` → `true` |
+| `slice`, `substring`, `at` | `"hello".slice(1, 3)` → `"el"` |
+| `replace`, `replaceAll` | `"abc".replace("a", "x")` → `"xbc"` |
+| `split` | `"a,b,c".split(",")` → `["a", "b", "c"]` |
+| `padStart`, `padEnd` | `"5".padStart(3, "0")` → `"005"` |
+| `charAt`, `charCodeAt`, `repeat`, `concat` | `"ab".repeat(2)` → `"abab"` |
+
+**Array methods (with lambda support):**
+
+| Method | Example |
+| --- | --- |
+| `filter` | `[1,2,3].filter(. > 1)` → `[2, 3]` |
+| `map` | `[1,2,3].map(. * 10)` → `[10, 20, 30]` |
+| `find`, `findIndex` | `[1,2,3].find(. > 1)` → `2` |
+| `some`, `every` | `[1,2,3].some(. > 2)` → `true` |
+| `flatMap` | `[[1],[2,3]].flatMap(.)` |
+
+**Array methods (non-callback):**
+
+| Method | Example |
+| --- | --- |
+| `join` | `[1,2,3].join(", ")` → `"1, 2, 3"` |
+| `includes`, `indexOf`, `lastIndexOf` | `[1,2,3].includes(2)` → `true` |
+| `slice`, `at`, `concat`, `flat` | `[1,2,3].concat([4])` → `[1, 2, 3, 4]` |
+| `toReversed`, `toSorted`, `toSpliced`, `with` | `[3,1,2].toSorted()` → `[1, 2, 3]` |
+
+**Number methods:** `toFixed`, `toString`
+
+**Pipe-only transforms** (require stdlib import): `count`, `first`, `last`, `reverse`, `flatten`, `unique`, `sort`, `upper`, `lower`, `trim`, `sum`, `avg`, `clamp`, and more. See [Standard Library](#standard-library) for the full list.
+
 ## API Reference
 
 ### `bonsai(options?)`

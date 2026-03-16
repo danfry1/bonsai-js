@@ -17,14 +17,23 @@ function isAllowedReceiver(obj: unknown, methodName: string): boolean {
     // String-only
     case 'startsWith': case 'endsWith': case 'substring':
     case 'charAt': case 'charCodeAt': case 'repeat':
-    case 'trimStart': case 'trimEnd':
+    case 'trim': case 'trimStart': case 'trimEnd':
+    case 'toLowerCase': case 'toUpperCase':
     case 'replace': case 'replaceAll':
+    case 'padStart': case 'padEnd':
+    case 'split':
       return t === 'string'
     // String + Array
-    case 'includes': case 'indexOf': case 'slice': case 'at':
+    case 'includes': case 'indexOf': case 'lastIndexOf':
+    case 'slice': case 'at': case 'concat':
       return t === 'string' || Array.isArray(obj)
     // Array-only (higher-order)
-    case 'filter': case 'map': case 'find': case 'some': case 'every':
+    case 'filter': case 'map': case 'find': case 'findIndex':
+    case 'some': case 'every': case 'flatMap':
+      return Array.isArray(obj)
+    // Array-only (non-callback, non-mutating)
+    case 'join': case 'flat':
+    case 'toReversed': case 'toSorted': case 'toSpliced': case 'with':
       return Array.isArray(obj)
     // Number
     case 'toFixed':
