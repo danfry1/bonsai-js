@@ -30,7 +30,7 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
-      - run: npm i -g npm@latest
+      - run: npm i -g npm@11.11.1
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
