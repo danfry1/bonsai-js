@@ -644,6 +644,69 @@ qualifiesForFreeShipping.evaluateSync({
         <div class="doc-tip">
           <strong>Pipes vs methods:</strong> Both <code>users |&gt; filter(.age &gt;= 18) |&gt; map(.name)</code> and <code>users.filter(.age &gt;= 18).map(.name)</code> produce the same result. Use whichever reads better for your use case. Method chaining is built in; pipe transforms require the stdlib <code>arrays</code> plugin but offer additional transforms like <code>count</code>, <code>unique</code>, <code>sort</code>, and <code>flatten</code>.
         </div>
+
+        <h3>Built-in safe methods</h3>
+        <p>These methods work via native <code>.method()</code> syntax without any imports. Mutating methods (<code>reverse</code>, <code>sort</code>, <code>push</code>, <code>pop</code>, <code>splice</code>, etc.) are blocked to prevent context mutation.</p>
+
+        <details open>
+          <summary><strong>String methods</strong></summary>
+          <table>
+            <thead><tr><th>Method</th><th>Example</th></tr></thead>
+            <tbody>
+              <tr><td><code>trim</code>, <code>trimStart</code>, <code>trimEnd</code></td><td><code>"  hi  ".trim()</code> &rarr; <code>"hi"</code></td></tr>
+              <tr><td><code>toLowerCase</code>, <code>toUpperCase</code></td><td><code>"Hello".toLowerCase()</code> &rarr; <code>"hello"</code></td></tr>
+              <tr><td><code>startsWith</code>, <code>endsWith</code></td><td><code>"hello".startsWith("hel")</code> &rarr; <code>true</code></td></tr>
+              <tr><td><code>includes</code>, <code>indexOf</code>, <code>lastIndexOf</code></td><td><code>"hello".includes("ell")</code> &rarr; <code>true</code></td></tr>
+              <tr><td><code>slice</code>, <code>substring</code>, <code>at</code></td><td><code>"hello".slice(1, 3)</code> &rarr; <code>"el"</code></td></tr>
+              <tr><td><code>replace</code>, <code>replaceAll</code></td><td><code>"abc".replace("a", "x")</code> &rarr; <code>"xbc"</code></td></tr>
+              <tr><td><code>split</code></td><td><code>"a,b,c".split(",")</code> &rarr; <code>["a", "b", "c"]</code></td></tr>
+              <tr><td><code>padStart</code>, <code>padEnd</code></td><td><code>"5".padStart(3, "0")</code> &rarr; <code>"005"</code></td></tr>
+              <tr><td><code>charAt</code>, <code>charCodeAt</code>, <code>repeat</code>, <code>concat</code></td><td><code>"ab".repeat(2)</code> &rarr; <code>"abab"</code></td></tr>
+            </tbody>
+          </table>
+        </details>
+
+        <details open>
+          <summary><strong>Array methods (with lambda support)</strong></summary>
+          <table>
+            <thead><tr><th>Method</th><th>Example</th></tr></thead>
+            <tbody>
+              <tr><td><code>filter</code></td><td><code>[1,2,3].filter(. &gt; 1)</code> &rarr; <code>[2, 3]</code></td></tr>
+              <tr><td><code>map</code></td><td><code>[1,2,3].map(. * 10)</code> &rarr; <code>[10, 20, 30]</code></td></tr>
+              <tr><td><code>find</code>, <code>findIndex</code></td><td><code>[1,2,3].find(. &gt; 1)</code> &rarr; <code>2</code></td></tr>
+              <tr><td><code>some</code>, <code>every</code></td><td><code>[1,2,3].some(. &gt; 2)</code> &rarr; <code>true</code></td></tr>
+              <tr><td><code>flatMap</code></td><td><code>[1,2,3].flatMap(. * 2)</code> &rarr; <code>[2, 4, 6]</code></td></tr>
+            </tbody>
+          </table>
+        </details>
+
+        <details open>
+          <summary><strong>Array methods (non-callback)</strong></summary>
+          <table>
+            <thead><tr><th>Method</th><th>Example</th></tr></thead>
+            <tbody>
+              <tr><td><code>join</code></td><td><code>[1,2,3].join(", ")</code> &rarr; <code>"1, 2, 3"</code></td></tr>
+              <tr><td><code>includes</code>, <code>indexOf</code>, <code>lastIndexOf</code></td><td><code>[1,2,3].includes(2)</code> &rarr; <code>true</code></td></tr>
+              <tr><td><code>slice</code>, <code>at</code>, <code>concat</code>, <code>flat</code></td><td><code>[1,2,3].concat([4])</code> &rarr; <code>[1, 2, 3, 4]</code></td></tr>
+              <tr><td><code>toReversed</code>, <code>toSorted</code>, <code>toSpliced</code>, <code>with</code></td><td><code>[3,1,2].toSorted()</code> &rarr; <code>[1, 2, 3]</code></td></tr>
+            </tbody>
+          </table>
+        </details>
+
+        <details>
+          <summary><strong>Number methods</strong></summary>
+          <table>
+            <thead><tr><th>Method</th><th>Example</th></tr></thead>
+            <tbody>
+              <tr><td><code>toFixed</code></td><td><code>(3.14159).toFixed(2)</code> &rarr; <code>"3.14"</code></td></tr>
+              <tr><td><code>toString</code></td><td><code>(42).toString()</code> &rarr; <code>"42"</code></td></tr>
+            </tbody>
+          </table>
+        </details>
+
+        <div class="doc-tip">
+          <strong>Pipe-only transforms</strong> (require stdlib import): <code>count</code>, <code>first</code>, <code>last</code>, <code>reverse</code>, <code>flatten</code>, <code>unique</code>, <code>sort</code>, <code>upper</code>, <code>lower</code>, <code>sum</code>, <code>avg</code>, <code>clamp</code>, and more. See the <a href="#stdlib">Standard Library</a> section for the full list.
+        </div>
       </div>
 
       <!-- ========== API REFERENCE ========== -->
