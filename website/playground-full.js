@@ -326,10 +326,14 @@ function updateHighlight() {
     const word = match[0]
     const span = document.createElement('span')
 
+    // Skip transform highlighting if preceded by `.` (property access, not a transform)
+    const charBefore = match.index > 0 ? text[match.index - 1] : ''
+    const isPropertyAccess = charBefore === '.'
+
     if (varSet.has(word)) {
       span.className = 'hl-var'
       span.textContent = word
-    } else if (transforms[word]) {
+    } else if (transforms[word] && !isPropertyAccess) {
       const t = transforms[word]
       span.className = 'hl-transform'
       span.textContent = word
@@ -409,16 +413,27 @@ exprInput.addEventListener('mousemove', (e) => {
     return
   }
 
+  // Find the closest matching span to the mouse position
+  function closestSpan(selector, text, mouseX) {
+    const spans = exprHighlight.querySelectorAll(selector)
+    let best = null
+    let bestDist = Infinity
+    for (const s of spans) {
+      if (s.textContent !== text) continue
+      const rect = s.getBoundingClientRect()
+      const cx = rect.left + rect.width / 2
+      const dist = Math.abs(mouseX - cx)
+      if (dist < bestDist) { bestDist = dist; best = s }
+    }
+    return best
+  }
+
   // Check if it's a transform
   if (transforms[word]) {
     if (word === activeTransform) return
     activeTransform = word
     clearTimeout(tooltipTimer)
-    const spans = exprHighlight.querySelectorAll('.hl-transform')
-    let target = null
-    for (const s of spans) {
-      if (s.textContent === word) { target = s; break }
-    }
+    const target = closestSpan('.hl-transform', word, e.clientX)
     if (target) showTransformTooltip(word, target)
     return
   }
@@ -429,11 +444,7 @@ exprInput.addEventListener('mousemove', (e) => {
     if (word === activeTransform) return
     activeTransform = word
     clearTimeout(tooltipTimer)
-    const spans = exprHighlight.querySelectorAll('.hl-var')
-    let target = null
-    for (const s of spans) {
-      if (s.textContent === word) { target = s; break }
-    }
+    const target = closestSpan('.hl-var', word, e.clientX)
     if (target) showVarTooltip(ctxVar, target)
     return
   }
