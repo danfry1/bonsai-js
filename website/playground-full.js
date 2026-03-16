@@ -333,15 +333,17 @@ function updateHighlight() {
     if (varSet.has(word)) {
       span.className = 'hl-var'
       span.textContent = word
+      frag.appendChild(span)
     } else if (transforms[word] && !isPropertyAccess) {
       const t = transforms[word]
       span.className = 'hl-transform'
       span.textContent = word
       span.dataset.desc = t.desc
       span.dataset.module = t.module
+      frag.appendChild(span)
+    } else {
+      frag.appendChild(document.createTextNode(word))
     }
-
-    frag.appendChild(span)
     last = match.index + match[0].length
   }
   if (last < text.length) {
