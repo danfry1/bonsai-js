@@ -39,6 +39,7 @@ h3 { font-size: 1.4rem; }
 
 code, pre, .mono {
   font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, monospace;
+  font-variant-ligatures: none;
 }
 
 a {
@@ -235,7 +236,7 @@ section h2 {
 .copy-btn {
   background: none;
   border: none;
-  color: #666;
+  color: #999;
   cursor: pointer;
   padding: 4px;
   transition: color 0.2s ease;
@@ -313,7 +314,7 @@ section h2 {
 }
 
 .hero-code .comment {
-  color: #555;
+  color: #888;
 }
 
 .hero-code .string {
@@ -554,7 +555,7 @@ section h2 {
 
 .quick-try-arrow {
   flex-shrink: 0;
-  color: #555;
+  color: #888;
 }
 
 .quick-try-result {
@@ -695,7 +696,7 @@ section h2 {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #555;
+  color: #888;
   margin-bottom: 8px;
 }
 
@@ -714,7 +715,7 @@ section h2 {
 .ctx-inline-add {
   background: none;
   border: none;
-  color: #555;
+  color: #888;
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.7rem;
   cursor: pointer;
@@ -860,7 +861,7 @@ section h2 {
 }
 
 .ctx-row-name::placeholder {
-  color: #555;
+  color: #888;
   font-weight: 400;
 }
 
@@ -904,7 +905,7 @@ section h2 {
 .ctx-type-boolean { background: rgba(192, 132, 252, 0.1); color: #c084fc; }
 .ctx-type-array   { background: rgba(251, 191, 36, 0.1); color: #fbbf24; }
 .ctx-type-object  { background: rgba(244, 114, 182, 0.1); color: #f472b6; }
-.ctx-type-null    { background: rgba(255, 255, 255, 0.05); color: #666; }
+.ctx-type-null    { background: rgba(255, 255, 255, 0.05); color: #999; }
 
 .ctx-row-delete {
   flex-shrink: 0;
@@ -916,7 +917,7 @@ section h2 {
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: #555;
+  color: #888;
   font-size: 1rem;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -976,7 +977,7 @@ section h2 {
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px;
   background: transparent;
-  color: #666;
+  color: #999;
   font-size: 0.75rem;
   font-family: 'JetBrains Mono', monospace;
   cursor: pointer;
@@ -1007,10 +1008,10 @@ section h2 {
 #result-output .r-string { color: #34d399; }
 #result-output .r-number { color: #60a5fa; }
 #result-output .r-boolean { color: #c084fc; }
-#result-output .r-null { color: #666; font-style: italic; }
+#result-output .r-null { color: #999; font-style: italic; }
 #result-output .r-key { color: #10b981; }
 #result-output .r-bracket { color: #888; }
-#result-output .r-punct { color: #555; }
+#result-output .r-punct { color: #888; }
 
 #result-type {
   display: inline-block;
@@ -1186,7 +1187,7 @@ td .example-result {
 }
 
 .api-example .comment {
-  color: #555;
+  color: #888;
 }
 
 .api-example .result {
@@ -1198,7 +1199,7 @@ td .example-result {
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   padding: 40px 0;
   text-align: center;
-  color: #555;
+  color: #888;
   font-size: 0.85rem;
 }
 

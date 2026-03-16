@@ -273,7 +273,7 @@
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid rgba(255, 255, 255, 0.03);
   border-radius: 5px;
-  color: #666;
+  color: #999;
   font-size: 0.75rem;
   line-height: 1.5;
 }
@@ -291,7 +291,7 @@
   background: none;
   border: none;
   border-radius: 0;
-  color: #555;
+  color: #888;
   font-size: 0.75rem;
 }
 
@@ -325,7 +325,7 @@
 .ex .s { color: #98c379; }  /* string */
 .ex .k { color: #c678dd; }  /* keyword */
 .ex .o { color: #10b981; }  /* operator */
-.ex .c { color: #555; }     /* comment */
+.ex .c { color: #888; }     /* comment */
 .ex .n { color: #d19a66; }  /* number */
 .ex .f { color: #e5c07b; }  /* function */
 
@@ -375,7 +375,7 @@
   color: #e8e4df;
 }
 
-.doc-code .comment { color: #555; }
+.doc-code .comment { color: #888; }
 .doc-code .result { color: #61afef; }
 .doc-code .string { color: #98c379; }
 .doc-code .keyword { color: #c678dd; }
@@ -523,7 +523,7 @@
 }
 
 .bench-note {
-  color: #666;
+  color: #999;
   font-size: 0.82rem;
   margin-top: 12px;
 }
@@ -1073,7 +1073,7 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: #666;
+    color: #999;
     margin-bottom: 2px;
   }
 

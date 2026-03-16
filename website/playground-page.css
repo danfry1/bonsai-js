@@ -55,7 +55,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #555;
+  color: #888;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
@@ -118,7 +118,7 @@
 .pg-example-code {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.68rem;
-  color: #555;
+  color: #888;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -191,7 +191,7 @@
 .pg-eval-time {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.68rem;
-  color: #555;
+  color: #888;
   transition: opacity 0.2s ease;
 }
 
@@ -267,7 +267,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #555;
+  color: #888;
 }
 
 .pg-pane-hint {
@@ -418,7 +418,7 @@
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 5px;
   background: transparent;
-  color: #666;
+  color: #999;
   font-size: 0.68rem;
   font-family: 'JetBrains Mono', monospace;
   cursor: pointer;
@@ -576,7 +576,7 @@
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 5px;
   background: transparent;
-  color: #555;
+  color: #888;
   font-size: 0.7rem;
   font-family: 'JetBrains Mono', monospace;
   cursor: pointer;
@@ -614,7 +614,7 @@
 .pg-result-body .r-string { color: #34d399; }
 .pg-result-body .r-number { color: #60a5fa; }
 .pg-result-body .r-boolean { color: #c084fc; }
-.pg-result-body .r-null { color: #555; font-style: italic; }
+.pg-result-body .r-null { color: #888; font-style: italic; }
 .pg-result-body .r-key { color: #10b981; }
 .pg-result-body .r-bracket { color: #888; }
 .pg-result-body .r-punct { color: #444; }
@@ -638,7 +638,7 @@
 .ctx-type-boolean { background: rgba(192, 132, 252, 0.1); color: #c084fc; }
 .ctx-type-array   { background: rgba(251, 191, 36, 0.1); color: #fbbf24; }
 .ctx-type-object  { background: rgba(244, 114, 182, 0.1); color: #f472b6; }
-.ctx-type-null    { background: rgba(255, 255, 255, 0.04); color: #555; }
+.ctx-type-null    { background: rgba(255, 255, 255, 0.04); color: #888; }
 
 /* ── Autocomplete dropdown ── */
 .pg-autocomplete {
@@ -702,7 +702,7 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   background: rgba(255, 255, 255, 0.04);
-  color: #555;
+  color: #888;
   flex-shrink: 0;
 }
 
@@ -721,7 +721,7 @@
 }
 
 .pg-ac-item.active .pg-ac-desc {
-  color: #666;
+  color: #999;
 }
 
 /* ── Responsive ── */
