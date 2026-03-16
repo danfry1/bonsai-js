@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-03-16
+
+### Added
+
+- Native method support for commonly expected string methods: `trim`, `toLowerCase`, `toUpperCase`, `split`, `padStart`, `padEnd`, `concat`, `lastIndexOf`
+- Native method support for additional array methods: `join`, `flat`, `concat`, `lastIndexOf`, `findIndex`, `flatMap`
+- ES2023 non-mutating array methods: `toReversed`, `toSorted`, `toSpliced`, `with`
+- Mutating array methods (`reverse`, `sort`, `push`, `pop`, `splice`) are explicitly blocked to prevent context mutation
+
 ## [0.2.0] - 2026-03-15
 
 ### Added
