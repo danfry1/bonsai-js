@@ -1,6 +1,6 @@
 {
   "name": "bonsai-js",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "A safe, zero-dependency expression language for rules, filters, and templates",
   "type": "module",
   "sideEffects": false,
@@ -14,6 +14,10 @@
     "./stdlib": {
       "types": "./dist/stdlib/index.d.mts",
       "import": "./dist/stdlib/index.mjs"
+    },
+    "./autocomplete": {
+      "types": "./dist/autocomplete/index.d.mts",
+      "import": "./dist/autocomplete/index.mjs"
     }
   },
   "files": [

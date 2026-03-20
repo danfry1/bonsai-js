@@ -1,5 +1,6 @@
 import { bonsai } from './bonsai.bundle.js'
 import { strings, arrays, math, types, dates } from './stdlib.bundle.js'
+import { createAutocomplete } from './autocomplete.bundle.js'
 
 const expr = bonsai()
 expr.use(strings)
@@ -7,6 +8,9 @@ expr.use(arrays)
 expr.use(math)
 expr.use(types)
 expr.use(dates)
+
+// Built after transforms catalog is defined below
+let ac
 
 // ── Stdlib transform catalog ────────────────────────────────
 const transforms = {
@@ -59,6 +63,9 @@ const transforms = {
   formatDate: { desc: 'Format date to string', module: 'dates', accepts: ['number', 'string'] },
   diffDays: { desc: 'Difference in days between dates', module: 'dates', accepts: ['number', 'string'] },
 }
+
+// Autocomplete auto-discovers transform type compatibility via probing — no config needed
+ac = createAutocomplete(expr, {})
 
 // ── Examples ─────────────────────────────────────────────────
 const examples = {
@@ -538,61 +545,36 @@ let acIndex = -1
 let acPrefix = ''
 let acStart = -1 // cursor position where the prefix starts
 
-function getAutocompleteContext() {
-  const pos = exprInput.selectionStart
-  const text = exprInput.value.slice(0, pos)
-
-  // Match: |> optional-whitespace then optional-partial-word at cursor
-  const m = text.match(/\|>\s*(\w*)$/)
-  if (m) {
-    // Extract the expression before this |> to determine input type
-    const beforePipe = text.slice(0, m.index).trim()
-    return { prefix: m[1].toLowerCase(), start: pos - m[1].length, beforePipe }
-  }
-  return null
-}
-
-function inferPipeInputType(exprBefore) {
-  if (!exprBefore) return null
-  try {
-    const context = buildContext()
-    const result = expr.evaluateSync(exprBefore, context)
-    if (result === null || result === undefined) return null
-    if (Array.isArray(result)) return 'array'
-    return typeof result
-  } catch {
-    return null
-  }
-}
-
 function updateAutocomplete() {
-  const ctx = getAutocompleteContext()
-  if (!ctx) {
+  const pos = exprInput.selectionStart
+  const text = exprInput.value
+
+  // Update autocomplete context with current variables
+  ac.setContext(buildContext())
+
+  const completions = ac.complete(text, pos)
+
+  if (completions.length === 0 || (completions.length === 1 && completions[0].label === text.slice(pos - completions[0].label.length, pos))) {
     closeAutocomplete()
     return
   }
 
-  acPrefix = ctx.prefix
-  acStart = ctx.start
+  // Find prefix start position for insertion
+  const before = text.slice(0, pos)
+  const prefixMatch = before.match(/[\w$]*$/)
+  acPrefix = prefixMatch ? prefixMatch[0] : ''
+  acStart = pos - acPrefix.length
 
-  const inputType = inferPipeInputType(ctx.beforePipe)
-
-  // Filter by prefix match, then by type compatibility
-  acItems = transformList
-    .filter((t) => {
-      if (!t.name.toLowerCase().startsWith(acPrefix)) return false
-      // If we can't determine the type, show all
-      if (!inputType) return true
-      // null accepts = works on any type
-      if (!t.accepts) return true
-      return t.accepts.includes(inputType)
-    })
-    .slice(0, 12)
-
-  if (acItems.length === 0 || (acItems.length === 1 && acItems[0].name.toLowerCase() === acPrefix)) {
-    closeAutocomplete()
-    return
-  }
+  acItems = completions.slice(0, 12).map(c => {
+    // Enrich with module info from the playground's transform catalog
+    const catalogEntry = transforms[c.label]
+    return {
+      name: c.label,
+      desc: catalogEntry ? catalogEntry.desc : (c.detail || c.kind),
+      module: catalogEntry ? catalogEntry.module : c.kind,
+      accepts: null,
+    }
+  })
 
   acIndex = 0
   renderAutocomplete()

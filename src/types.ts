@@ -1,3 +1,23 @@
+// === Inferred Type Names ===
+
+/** Closed set of type names produced by runtime type inference. */
+export type InferredTypeName = 'string' | 'number' | 'boolean' | 'array' | 'object' | 'null' | 'undefined'
+
+// === Policy Snapshot ===
+
+/** Read-only snapshot of the security policy, returned by {@link BonsaiInstance.getPolicy}. */
+export interface PolicySnapshot {
+  readonly allowedProperties?: readonly string[]
+  readonly deniedProperties?: readonly string[]
+}
+
+// === Property Resolution ===
+
+/** Discriminated result from {@link resolvePropertyChain}. */
+export type ResolveResult =
+  | { found: true; value: unknown }
+  | { found: false; reason: 'blocked' | 'not-object' | 'not-found' }
+
 // === Source Positions ===
 
 export interface SourcePosition {
@@ -238,6 +258,8 @@ export interface BonsaiInstance {
   listTransforms(): string[]
   /** List all registered function names. */
   listFunctions(): string[]
+  /** Returns a read-only snapshot of the security policy for autocomplete filtering. */
+  getPolicy(): PolicySnapshot
   /** Clear the compiled expression and AST caches. */
   clearCache(): void
   /** Pre-compile an expression for repeated evaluation. */

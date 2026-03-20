@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-20
+
+### Added
+
+- **Autocomplete API** (`bonsai-js/autocomplete`): cursor-aware expression completions with property, method, transform, function, and keyword suggestions
+- `getPolicy()` method on `BonsaiInstance` for reading security policy
+- Tolerant tokenization for incomplete expressions
+- Type inference from sample context objects with array element type detection
+- Lambda-aware dot classification (lambda-start, lambda member-access, top-level member-access)
+- Security policy filtering in completions (respects allowedProperties/deniedProperties)
+
 ## [0.2.1] - 2026-03-16
 
 ### Added

@@ -17,6 +17,14 @@ const results = await Promise.all([
     target: 'browser',
     minify: true,
   }),
+  Bun.build({
+    entrypoints: [`${root}/src/autocomplete/index.ts`],
+    outdir: `${root}/website`,
+    format: 'esm',
+    naming: 'autocomplete.bundle.js',
+    target: 'browser',
+    minify: true,
+  }),
 ])
 
 let failed = false

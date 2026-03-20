@@ -27,6 +27,9 @@ export type {
   ASTNode,
   Token,
   TokenType,
+  InferredTypeName,
+  PolicySnapshot,
+  ResolveResult,
   BonsaiPlugin,
   BonsaiInstance,
   CompiledExpression,
@@ -112,6 +115,12 @@ export function bonsai(options: BonsaiOptions = {}): BonsaiInstance {
     hasFunction(name) { return registry.getFunction(name) !== undefined },
     listTransforms() { return registry.getTransformNames() },
     listFunctions() { return registry.getFunctionNames() },
+    getPolicy() {
+      return {
+        ...(policy.allowedProperties ? { allowedProperties: [...policy.allowedProperties] } : {}),
+        ...(policy.deniedProperties ? { deniedProperties: [...policy.deniedProperties] } : {}),
+      }
+    },
     clearCache() { cache.clear(); astCache.clear() },
     compile(expression) { return compileExpr(expression) },
     async evaluate<T = unknown>(expression: string, context = {}) {
