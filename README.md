@@ -578,9 +578,152 @@ Bonsai is optimized for repeated evaluation.
 
 Benchmark guidance and current numbers live in the website docs and benchmark suite. Treat raw benchmark numbers as directional, not part of the API contract.
 
+## Autocomplete
+
+Bonsai ships a cursor-aware autocomplete engine at `bonsai-js/autocomplete`. It provides ranked, type-aware completion suggestions for any cursor position in an expression — designed for rule builders, expression editors, and admin tools. Tree-shakeable: if you don't import it, it's not in your bundle.
+
+```ts
+import { bonsai } from 'bonsai-js'
+import { strings, arrays } from 'bonsai-js/stdlib'
+import { createAutocomplete } from 'bonsai-js/autocomplete'
+
+const expr = bonsai().use(strings).use(arrays)
+
+const ac = createAutocomplete(expr, {
+  context: { user: { name: 'Alice', age: 25 }, items: [1, 2, 3] },
+})
+
+ac.complete('user.', 5)
+// [{ label: 'name', detail: 'string', kind: 'property' },
+//  { label: 'age',  detail: 'number', kind: 'property' }, ...]
+
+ac.complete('user.name.', 10)
+// [{ label: 'trim', detail: 'string → string', insertText: 'trim()', cursorOffset: 5 },
+//  { label: 'toUpperCase', detail: 'string → string' }, ...]
+
+ac.complete('items |> ', 9)
+// Only array-compatible transforms — string-only transforms automatically excluded.
+
+ac.complete('users.filter(.', 14)
+// [{ label: 'name', detail: 'string' }, { label: 'age', detail: 'number' }]
+```
+
+### What it provides
+
+| Context | What you get |
+|---|---|
+| `user.` | Object properties with value types |
+| `user?.name?.` | Optional chaining — same completions as dot access |
+| `user.name.` | Type-appropriate methods with return types |
+| `user.name.trim().` | Methods inferred through chained calls (eval-based) |
+| `user.name.to` | Fuzzy-filtered methods via static type inference |
+| `items \|> ` | Transforms filtered by inferred input type |
+| `users.filter(.` | Lambda element properties with types |
+| `users.filter(.name.` | Lambda member — methods for the element property type |
+| `groups.map(.users.filter(.` | Nested lambda element inference |
+| `us` | Context variables, functions, keywords |
+| `name.tLC` | Fuzzy matching (camelCase-aware) |
+
+### How to integrate
+
+The API returns pure data — no DOM, no framework dependency. Wire it into any UI:
+
+```ts
+// Custom dropdown
+textarea.addEventListener('input', () => {
+  ac.setContext(getCurrentContext())
+  const completions = ac.complete(textarea.value, textarea.selectionStart)
+  showDropdown(completions)
+})
+
+// Monaco editor
+const monacoKindMap = {
+  variable: monaco.languages.CompletionItemKind.Variable,
+  property: monaco.languages.CompletionItemKind.Property,
+  method: monaco.languages.CompletionItemKind.Method,
+  transform: monaco.languages.CompletionItemKind.Function,
+  function: monaco.languages.CompletionItemKind.Function,
+  keyword: monaco.languages.CompletionItemKind.Keyword,
+}
+
+monaco.languages.registerCompletionItemProvider('bonsai', {
+  triggerCharacters: ['.', '|', '('],
+  provideCompletionItems(model, position) {
+    ac.setContext(getCurrentContext())
+    const offset = model.getOffsetAt(position)
+    return {
+      suggestions: ac.complete(model.getValue(), offset).map(c => ({
+        label: c.label,
+        kind: monacoKindMap[c.kind],
+        insertText: c.insertText ?? c.label,
+        detail: c.detail,
+      })),
+    }
+  },
+})
+```
+
+Context can be updated dynamically — call `ac.setContext(newData)` whenever the user's data changes.
+
+### Options
+
+```ts
+createAutocomplete(instance, {
+  // Expression evaluation context — the data your users are writing expressions against
+  context: { user: { name: 'Alice' }, items: [1, 2, 3] },
+
+  // Explicit transform type map — skips auto-probing for better performance.
+  // Keys are transform names, values are arrays of accepted input types.
+  // When omitted, types are discovered automatically by probing each transform.
+  transformTypes: {
+    upper: ['string'],
+    trim: ['string'],
+    count: ['array'],
+    sort: ['array'],
+  },
+
+  // Error callback for debugging missing or incorrect completions.
+  // Only called for unexpected internal errors — not for expected parse/eval failures.
+  onError: (error, phase) => console.warn(`[autocomplete] ${phase}:`, error),
+})
+```
+
+### Security policy
+
+Autocomplete respects the same `allowedProperties` and `deniedProperties` policy configured on the Bonsai instance. Completions are filtered to match what the evaluator would actually allow:
+
+```ts
+const expr = bonsai({ allowedProperties: ['name', 'age'] })
+const ac = createAutocomplete(expr, {
+  context: { user: { name: 'Alice', secret: 'hidden' } },
+})
+
+ac.complete('user.', 5)
+// 'secret' is excluded — only 'name' and 'age' appear
+```
+
+This applies to all contexts: property access, lambda element properties, and nested chain resolution. Methods (`trim`, `filter`, etc.) are always shown for their applicable types — they are controlled by `deniedProperties`, not `allowedProperties`.
+
+### Completion type
+
+```ts
+interface Completion {
+  label: string        // Display text and default insert text
+  kind: 'variable' | 'property' | 'method' | 'transform' | 'function' | 'keyword'
+  detail?: string      // Type info: 'string', 'string → array', '"Alice"', 'array(3)'
+  insertText?: string  // Override insert: 'trim()', 'filter(.)', 'min()'
+  cursorOffset?: number // Cursor position in insertText (e.g., between parens)
+  sortPriority: number // Lower = higher rank
+}
+```
+
+### Error handling
+
+`complete()` never throws — it always returns `Completion[]`. If an unexpected internal error occurs, it returns `[]` and reports the error via the `onError` callback. Expected errors (syntax errors from incomplete expressions, security policy blocks, type mismatches) are silently handled as part of normal autocomplete operation.
+
 ## Stability
 
-Bonsai follows SemVer for the documented package entrypoints `bonsai-js` and `bonsai-js/stdlib`.
+Bonsai follows SemVer for the documented package entrypoints `bonsai-js`, `bonsai-js/stdlib`, and `bonsai-js/autocomplete`.
 
 - Supported runtimes are Node 20+ and current Bun releases.
 - The packed npm artifact is smoke-tested on Node 20 and 22.

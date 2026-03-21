@@ -42,6 +42,28 @@ describe('public API stability', () => {
   })
 })
 
+describe('autocomplete API stability', () => {
+  it('exports createAutocomplete from bonsai-js/autocomplete', async () => {
+    const mod = await import('../src/autocomplete/index.js')
+    expect(typeof mod.createAutocomplete).toBe('function')
+  })
+
+  it('getPolicy exists on instance', () => {
+    const expr = api.bonsai()
+    expect(typeof expr.getPolicy).toBe('function')
+    const policy = expr.getPolicy()
+    expect(policy).toBeDefined()
+  })
+
+  it('autocomplete instance has complete and setContext', async () => {
+    const { createAutocomplete } = await import('../src/autocomplete/index.js')
+    const expr = api.bonsai()
+    const ac = createAutocomplete(expr, {})
+    expect(typeof ac.complete).toBe('function')
+    expect(typeof ac.setContext).toBe('function')
+  })
+})
+
 describe('advanced API exports', () => {
   it('exports tokenize', () => {
     const tokens = tokenize('1 + 2')
