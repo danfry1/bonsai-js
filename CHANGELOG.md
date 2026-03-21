@@ -5,16 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - 2026-03-20
+## [0.3.0] - 2026-03-21
 
 ### Added
 
 - **Autocomplete API** (`bonsai-js/autocomplete`): cursor-aware expression completions with property, method, transform, function, and keyword suggestions
 - `getPolicy()` method on `BonsaiInstance` for reading security policy
-- Tolerant tokenization for incomplete expressions
+- `InferredTypeName`, `PolicySnapshot`, `ResolveResult` shared types
+- Tolerant tokenization for incomplete expressions with regex fallback
 - Type inference from sample context objects with array element type detection
 - Lambda-aware dot classification (lambda-start, lambda member-access, top-level member-access)
-- Security policy filtering in completions (respects allowedProperties/deniedProperties)
+- Security policy filtering in completions (respects allowedProperties/deniedProperties in all paths)
+- Optional chaining (`?.`) support in completions
+- Fuzzy matching with camelCase-aware scoring
+- `onError` callback for debugging autocomplete failures
+- `transformTypes` option to skip auto-probing for performance
+- Eval-based type inference for method chains (e.g., `user.name.trim().`)
+- Nested lambda element inference (e.g., `groups.map(.users.filter(.`)
+- Pre-computed method completion cache for fast method suggestions
+- Autocomplete benchmarks (`benchmarks/autocomplete.bench.ts`)
+
+### Changed
+
+- **Performance**: core `evaluateSync` 1.4–2.4x faster (LRU cache fast path, pooled ExecutionContext, leaf node fast path)
+- **Performance**: autocomplete method completions 3–4x faster via pre-computed completion objects
+- LRU cache uses `lastKey` tracking to skip reordering on repeated hits
+- `ExecutionContext` reusable via `reset()` — avoids per-call allocation in `evaluateSync`
+- Leaf AST nodes (literals, identifiers) skip depth tracking overhead in both sync and async evaluators
+
+### Security
+
+- Transform names validated as safe identifiers before `evaluateSync` interpolation
+- `resolvePropertyChain` enforces `allowedProperties`/`deniedProperties` policy at every chain step
+- `BLOCKED_NAMES` unified with `BLOCKED_PROPERTIES` from execution context (single source of truth)
+- Catch blocks use `isExpectedError()` checking all 4 Bonsai error types — unexpected errors surface via `onError`
+- Top-level `complete()` catches unexpected errors and returns `[]` (never crashes host)
 
 ## [0.2.1] - 2026-03-16
 
