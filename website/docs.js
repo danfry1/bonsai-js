@@ -215,18 +215,6 @@
     btn.className = 'copy-btn';
     btn.textContent = '\u2398';
     btn.title = 'Copy to clipboard';
-    btn.style.cssText =
-      'position:absolute;top:8px;right:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:#888;border-radius:4px;padding:2px 6px;cursor:pointer;font-size:0.75rem;transition:all 0.2s ease;';
-
-    btn.addEventListener('mouseenter', () => {
-      btn.style.color = '#10b981';
-      btn.style.borderColor = 'rgba(16,185,129,0.3)';
-    });
-
-    btn.addEventListener('mouseleave', () => {
-      btn.style.color = '#888';
-      btn.style.borderColor = 'rgba(255,255,255,0.1)';
-    });
 
     btn.addEventListener('click', () => {
       const text = block.textContent
@@ -234,10 +222,10 @@
         .trim();
       navigator.clipboard.writeText(text).then(() => {
         btn.textContent = '\u2713';
-        btn.style.color = '#98c379';
+        btn.classList.add('copied');
         setTimeout(() => {
           btn.textContent = '\u2398';
-          btn.style.color = '#888';
+          btn.classList.remove('copied');
         }, 1500);
       });
     });
