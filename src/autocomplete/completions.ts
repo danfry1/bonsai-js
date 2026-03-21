@@ -1,5 +1,5 @@
 import type { InferredTypeName } from '../types.js'
-import { METHODS_BY_TYPE, BLOCKED_NAMES, KEYWORDS, getMethodReturnType, isMethodReceiverType } from './catalog.js'
+import { METHODS_BY_TYPE, BLOCKED_NAMES, KEYWORDS, getMethodReturnType, isMethodReceiverType, type MethodReceiverType } from './catalog.js'
 import { getPrefix, type CursorContext } from './context.js'
 import { inferType, type PropertyPolicy } from './inference.js'
 
@@ -59,6 +59,27 @@ export interface CompletionEnv {
 const LAMBDA_METHODS = new Set(['filter', 'map', 'find', 'findIndex', 'some', 'every', 'flatMap'])
 const PREVIEW_MAX_LENGTH = 20
 
+// Pre-computed method completions per receiver type (static catalog, built once at module load)
+const METHOD_COMPLETIONS_BY_TYPE: Record<string, Completion[]> = {}
+for (const [type, methods] of Object.entries(METHODS_BY_TYPE)) {
+  METHOD_COMPLETIONS_BY_TYPE[type] = methods
+    .filter(m => !BLOCKED_NAMES.has(m))
+    .map(method => {
+      const returnType = getMethodReturnType(type as MethodReceiverType, method)
+      const detail = returnType ? `${type} → ${returnType}` : type
+      const isLambda = LAMBDA_METHODS.has(method)
+      const insert = isLambda ? `${method}(.)` : `${method}()`
+      return {
+        label: method,
+        kind: 'method' as const,
+        detail,
+        insertText: insert,
+        cursorOffset: isLambda ? insert.length - 2 : insert.length - 1,
+        sortPriority: 1,
+      }
+    })
+}
+
 export function generateCompletions(ctx: CursorContext, env: CompletionEnv): Completion[] {
   const results: Completion[] = []
 
@@ -111,26 +132,16 @@ function addPropertyCompletions(results: Completion[], env: CompletionEnv): void
 function addMethodCompletions(results: Completion[], env: CompletionEnv): void {
   const type = env.member?.resolvedType
   if (!type || !isMethodReceiverType(type)) return
-  const methods = METHODS_BY_TYPE[type]
-  for (const method of methods) {
-    // Check BLOCKED_NAMES and deniedProperties, but NOT allowedProperties.
-    // allowedProperties is a property-access allowlist — methods are allowlisted
-    // by METHODS_BY_TYPE (mirrors isAllowedReceiver). deniedProperties explicitly
-    // blocks names, which applies to methods too for evaluator consistency.
-    if (BLOCKED_NAMES.has(method)) continue
-    if (env.policy.deniedProperties && env.policy.deniedProperties.has(method)) continue
-    const returnType = getMethodReturnType(type, method)
-    const detail = returnType ? `${type} → ${returnType}` : type
-    const isLambda = LAMBDA_METHODS.has(method)
-    const insert = isLambda ? `${method}(.)` : `${method}()`
-    results.push({
-      label: method,
-      kind: 'method',
-      detail,
-      insertText: insert,
-      cursorOffset: isLambda ? insert.length - 2 : insert.length - 1,
-      sortPriority: 1,
-    })
+  const cached = METHOD_COMPLETIONS_BY_TYPE[type]
+  if (!cached) return
+  // BLOCKED_NAMES is already filtered in the pre-computed cache.
+  // Only deniedProperties needs runtime checking (it varies per instance).
+  if (env.policy.deniedProperties) {
+    for (const c of cached) {
+      if (!env.policy.deniedProperties.has(c.label)) results.push(c)
+    }
+  } else {
+    for (const c of cached) results.push(c)
   }
 }
 
