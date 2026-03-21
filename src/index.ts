@@ -72,6 +72,10 @@ export function bonsai(options: BonsaiOptions = {}): BonsaiInstance {
 
   const policy = new SecurityPolicy(options)
 
+  // Pooled ExecutionContext for evaluateSync — avoids per-call allocation
+  const syncCtx = new ExecutionContext(policy)
+  let syncCtxInUse = false
+
   function createExecutionContext(): ExecutionContext {
     return new ExecutionContext(policy)
   }
@@ -97,7 +101,16 @@ export function bonsai(options: BonsaiOptions = {}): BonsaiInstance {
         return evaluateAsync(optimized, context, registry.transforms, registry.functions, createExecutionContext(), source) as Promise<T>
       },
       evaluateSync<T = unknown>(context = {}) {
-        return evaluate(optimized, context, registry.transforms, registry.functions, createExecutionContext(), source) as T
+        if (syncCtxInUse) {
+          return evaluate(optimized, context, registry.transforms, registry.functions, createExecutionContext(), source) as T
+        }
+        syncCtxInUse = true
+        try {
+          syncCtx.reset()
+          return evaluate(optimized, context, registry.transforms, registry.functions, syncCtx, source) as T
+        } finally {
+          syncCtxInUse = false
+        }
       },
     }
 
@@ -128,9 +141,19 @@ export function bonsai(options: BonsaiOptions = {}): BonsaiInstance {
       return evaluateAsync(ast, context, registry.transforms, registry.functions, createExecutionContext(), expression) as Promise<T>
     },
     evaluateSync<T = unknown>(expression: string, context = {}) {
-      // Hot path: skip CompiledExpression object creation, go straight to eval
+      // Hot path: reuse pooled ExecutionContext to avoid per-call allocation
       const ast = getAst(expression)
-      return evaluate(ast, context, registry.transforms, registry.functions, createExecutionContext(), expression) as T
+      if (syncCtxInUse) {
+        // Reentrant call (e.g., custom function calling evaluateSync) — fresh allocation
+        return evaluate(ast, context, registry.transforms, registry.functions, createExecutionContext(), expression) as T
+      }
+      syncCtxInUse = true
+      try {
+        syncCtx.reset()
+        return evaluate(ast, context, registry.transforms, registry.functions, syncCtx, expression) as T
+      } finally {
+        syncCtxInUse = false
+      }
     },
     validate(expression) {
       try {

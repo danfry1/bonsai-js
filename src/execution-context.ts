@@ -48,7 +48,7 @@ export class SecurityPolicy {
 export class ExecutionContext {
   private stepCount = 0
   private depth = 0
-  private readonly deadline: number
+  private deadline: number
   readonly policy: SecurityPolicy
   private readonly now: () => number
 
@@ -56,6 +56,13 @@ export class ExecutionContext {
     this.policy = policy
     this.now = now
     this.deadline = policy.timeout ? now() + policy.timeout : 0
+  }
+
+  /** Reset mutable state for reuse. Avoids allocating a new instance per evaluation. */
+  reset(): void {
+    this.stepCount = 0
+    this.depth = 0
+    this.deadline = this.policy.timeout ? this.now() + this.policy.timeout : 0
   }
 
   step(): void {

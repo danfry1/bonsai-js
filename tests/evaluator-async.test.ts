@@ -88,8 +88,8 @@ describe('async evaluation', () => {
 
   it('enforces maxDepth during async evaluation', async () => {
     const expr = bonsai({ maxDepth: 3 })
-    await expect(expr.evaluate('a.b.c.d', {
-      a: { b: { c: { d: 1 } } },
+    await expect(expr.evaluate('a.b.c.d.e', {
+      a: { b: { c: { d: { e: 1 } } } },
     })).rejects.toThrow('Maximum expression depth')
   })
 

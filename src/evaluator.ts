@@ -45,27 +45,32 @@ export function evaluate(
 }
 
 function evalNode(node: ASTNode, env: EvalEnv): unknown {
-  const { ctx, g, s } = env
+  // Fast path for leaf nodes — no depth tracking or step counting needed
+  switch (node.type) {
+    case 'NumberLiteral':
+    case 'StringLiteral':
+    case 'BooleanLiteral':
+      return node.value
+    case 'NullLiteral':
+      return null
+    case 'UndefinedLiteral':
+      return undefined
+    case 'Identifier':
+      env.g.checkNameAccess(node.name, 'identifier')
+      return Object.hasOwn(env.ctx, node.name) ? env.ctx[node.name] : undefined
+  }
+
+  // Compound nodes: full depth tracking
+  return evalCompound(node, env)
+}
+
+function evalCompound(node: ASTNode, env: EvalEnv): unknown {
+  const { g, s } = env
   g.enterDepth()
   g.step()
 
   try {
     switch (node.type) {
-      case 'NumberLiteral':
-      case 'StringLiteral':
-      case 'BooleanLiteral':
-        return node.value
-
-      case 'NullLiteral':
-        return null
-
-      case 'UndefinedLiteral':
-        return undefined
-
-      case 'Identifier':
-        g.checkNameAccess(node.name, 'identifier')
-        return Object.hasOwn(ctx, node.name) ? ctx[node.name] : undefined
-
       case 'UnaryExpression':
         return applyUnaryOp(node.operator, evalNode(node.operand, env))
 

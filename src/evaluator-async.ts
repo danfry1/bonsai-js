@@ -32,27 +32,31 @@ export async function evaluateAsync(
 }
 
 async function evalNodeAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown> {
-  const { ctx, g, s } = env
+  // Fast path for leaf nodes — no depth tracking or step counting needed
+  switch (node.type) {
+    case 'NumberLiteral':
+    case 'StringLiteral':
+    case 'BooleanLiteral':
+      return node.value
+    case 'NullLiteral':
+      return null
+    case 'UndefinedLiteral':
+      return undefined
+    case 'Identifier':
+      env.g.checkNameAccess(node.name, 'identifier')
+      return Object.hasOwn(env.ctx, node.name) ? env.ctx[node.name] : undefined
+  }
+
+  return evalCompoundAsync(node, env)
+}
+
+async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown> {
+  const { g, s } = env
   g.enterDepth()
   g.step()
 
   try {
     switch (node.type) {
-      case 'NumberLiteral':
-      case 'StringLiteral':
-      case 'BooleanLiteral':
-        return node.value
-
-      case 'NullLiteral':
-        return null
-
-      case 'UndefinedLiteral':
-        return undefined
-
-      case 'Identifier':
-        g.checkNameAccess(node.name, 'identifier')
-        return Object.hasOwn(ctx, node.name) ? ctx[node.name] : undefined
-
       case 'UnaryExpression':
         return applyUnaryOp(node.operator, await evalNodeAsync(node.operand, env))
 
