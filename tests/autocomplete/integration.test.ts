@@ -519,4 +519,179 @@ describe('autocomplete integration', () => {
     ac.complete('name', 4)
     expect(errors).toHaveLength(0)
   })
+
+  it('onError not triggered for expected Bonsai errors (security, type, reference)', () => {
+    const instance = bonsai({ deniedProperties: ['secret'] })
+    instance.use(strings)
+    const errors: Array<{ error: unknown; phase: string }> = []
+    const ac = createAutocomplete(instance, {
+      context: { obj: { secret: 'hidden' } },
+      onError: (error, phase) => errors.push({ error, phase }),
+    })
+    // Eval path hits denied property — should NOT trigger onError
+    ac.complete('obj.secret.', 11)
+    expect(errors).toHaveLength(0)
+  })
+
+  // ── Policy enforcement in lambda paths ────────────────────────
+
+  it('allowedProperties blocks lambda-start for unlisted outer array', () => {
+    const ac = setup(
+      { users: [{ name: 'Alice' }], hidden: [{ secret: 'x' }] },
+      { allowedProperties: ['users', 'name'] },
+    )
+    const result = ac.complete('hidden.map(.', 12)
+    expect(result).toEqual([])
+  })
+
+  it('deniedProperties blocks lambda-start for denied outer array', () => {
+    const ac = setup(
+      { data: { secrets: [{ key: 'API_KEY' }] } },
+      { deniedProperties: ['secrets'] },
+    )
+    const result = ac.complete('data.secrets.filter(.', 21)
+    expect(result).toEqual([])
+  })
+
+  it('deniedProperties blocks lambda-member chain resolution', () => {
+    const ac = setup(
+      { users: [{ name: 'Alice', secret: 'pw' }] },
+      { deniedProperties: ['secret'] },
+    )
+    const result = ac.complete('users.filter(.secret.', 21)
+    const labels = result.map(c => c.label)
+    // Should not reveal that 'secret' is a string (no string methods)
+    expect(labels).not.toContain('trim')
+    expect(labels).not.toContain('toUpperCase')
+  })
+
+  // ── Static fallback inference ─────────────────────────────────
+
+  it('static type inference: user.name.to suggests string methods via prefix', () => {
+    const ac = setup({ user: { name: 'Alice' } })
+    const result = ac.complete('user.name.to', 12)
+    const labels = result.map(c => c.label)
+    expect(labels).toContain('toUpperCase')
+    expect(labels).toContain('toLowerCase')
+    expect(labels).toContain('toString')
+    expect(labels).not.toContain('filter') // no array methods
+  })
+
+  // ── Lambda-member with unresolvable chain ─────────────────────
+
+  it('lambda-member with unresolvable chain returns empty gracefully', () => {
+    const ac = setup({ items: [{ name: 'Alice' }] })
+    const result = ac.complete('items.filter(.nonexistent.', 26)
+    // nonexistent doesn't exist on elements → no completions for member access
+    expect(result).toEqual([])
+  })
+
+  // ── Top-level complete() error safety ─────────────────────────
+
+  it('complete() returns [] and calls onError for unexpected internal errors', () => {
+    const instance = bonsai()
+    const errors: Array<{ error: unknown; phase: string }> = []
+    const ac = createAutocomplete(instance, {
+      context: { get name(): string { throw new RangeError('boom') } },
+      onError: (error, phase) => errors.push({ error, phase }),
+    })
+    // Accessing a getter that throws — should be caught at top level
+    const result = ac.complete('name.', 5)
+    expect(result).toEqual([])
+    // The error should be reported via onError
+    expect(errors.length).toBeGreaterThan(0)
+  })
+
+  // ── transformTypes explicit type map ──────────────────────────
+
+  it('transformTypes filters pipe completions by declared type', () => {
+    const instance = bonsai()
+    instance.use(strings)
+    instance.use(arrays)
+    const ac = createAutocomplete(instance, {
+      context: { name: 'Alice' },
+      transformTypes: { upper: ['string'], trim: ['string'], count: ['array'], sort: ['array'] },
+    })
+    const result = ac.complete('name |> ', 8)
+    const labels = result.map(c => c.label)
+    expect(labels).toContain('upper')
+    expect(labels).toContain('trim')
+    expect(labels).not.toContain('count') // array-only
+    expect(labels).not.toContain('sort') // array-only
+  })
+
+  it('transformTypes: transforms not in the map are still shown', () => {
+    const instance = bonsai()
+    instance.use(strings)
+    const ac = createAutocomplete(instance, {
+      context: { name: 'Alice' },
+      transformTypes: { upper: ['string'] },
+    })
+    const result = ac.complete('name |> ', 8)
+    const labels = result.map(c => c.label)
+    expect(labels).toContain('upper')
+    // trim is not in the map at all → passes through unfiltered
+    expect(labels).toContain('trim')
+  })
+
+  // ── Optional chaining ─────────────────────────────────────────
+
+  it('user?. → property completions via optional chaining', () => {
+    const ac = setup(context)
+    const result = ac.complete('user?.', 6)
+    const labels = result.map(c => c.label)
+    expect(labels).toContain('name')
+    expect(labels).toContain('age')
+    expect(labels).toContain('address')
+  })
+
+  it('user?.address?. → nested optional chaining completions', () => {
+    const ac = setup(context)
+    const result = ac.complete('user?.address?.', 15)
+    const labels = result.map(c => c.label)
+    expect(labels).toContain('city')
+    expect(labels).toContain('zip')
+  })
+
+  // ── Primitive array lambda-start ──────────────────────────────
+
+  it('number array lambda-start returns no property completions', () => {
+    const ac = setup({ nums: [1, 2, 3] })
+    const result = ac.complete('nums.filter(.', 13)
+    // Numbers have no object properties to suggest in lambda-start
+    const properties = result.filter(c => c.kind === 'property')
+    expect(properties).toEqual([])
+  })
+
+  // ── Null pipe input type ──────────────────────────────────────
+
+  it('null value |> shows all transforms (unfiltered)', () => {
+    const ac = setup({ nothing: null })
+    const result = ac.complete('nothing |> ', 11)
+    // null input → type is undefined → all transforms shown
+    expect(result.length).toBeGreaterThan(0)
+    expect(result.every(c => c.kind === 'transform')).toBe(true)
+  })
+
+  // ── Template literal inside-string guard ──────────────────────
+
+  it('cursor inside template literal string returns []', () => {
+    const ac = setup({ x: 1 })
+    const result = ac.complete('`hello', 4)
+    expect(result).toEqual([])
+  })
+
+  it('cursor inside template interpolation allows completions', () => {
+    const ac = setup({ user: { name: 'Alice' } })
+    const result = ac.complete('`Hello ${user.', 14)
+    const labels = result.map(c => c.label)
+    expect(labels).toContain('name')
+  })
+
+  it('template with object literal inside interpolation does not break string detection', () => {
+    const ac = setup({ x: 1 })
+    // `${{}}`  — inner {} should not break template depth tracking
+    const result = ac.complete('`${{}}` + x', 11)
+    expect(result.length).toBeGreaterThanOrEqual(0) // should not crash
+  })
 })

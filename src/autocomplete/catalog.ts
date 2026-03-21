@@ -2,7 +2,7 @@ import { BLOCKED_PROPERTIES } from '../execution-context.js'
 import type { InferredTypeName } from '../types.js'
 
 /** Types that have method catalogs. */
-type MethodReceiverType = 'string' | 'array' | 'number'
+export type MethodReceiverType = 'string' | 'array' | 'number'
 
 /** Key format for the return type map: "receiverType.methodName". */
 type ReturnTypeKey = `${MethodReceiverType}.${string}`
@@ -57,9 +57,14 @@ const RETURN_TYPES: Record<ReturnTypeKey, ReturnTypeValue> = {
 }
 
 /** Look up the return type for a method call on a given receiver type. */
-export function getMethodReturnType(receiverType: string, method: string): ReturnTypeValue | undefined {
-  const key = `${receiverType}.${method}` as ReturnTypeKey
+export function getMethodReturnType(receiverType: MethodReceiverType, method: string): ReturnTypeValue | undefined {
+  const key: ReturnTypeKey = `${receiverType}.${method}`
   return key in RETURN_TYPES ? RETURN_TYPES[key] : undefined
+}
+
+/** Type guard: narrows an InferredTypeName to MethodReceiverType (types that have method catalogs). */
+export function isMethodReceiverType(t: string): t is MethodReceiverType {
+  return t in METHODS_BY_TYPE
 }
 
 /** Re-export shared blocked names for use in completion filtering. */

@@ -11,7 +11,15 @@ export interface TolerantTokenResult {
   insideString: boolean
 }
 
-export type ErrorHandler = (error: unknown, phase: string) => void
+/** Known phases where errors can occur during completion. */
+export type CompletionPhase =
+  | 'tokenize'
+  | 'tryEvalPrefix'
+  | 'inferPipeInputType'
+  | `probeTransform:${string}`
+  | 'complete'
+
+export type ErrorHandler = (error: unknown, phase: CompletionPhase) => void
 
 export function tolerantTokenize(
   expression: string,
@@ -25,7 +33,7 @@ export function tolerantTokenize(
   const insideString = isCursorInsideString(expression, cursor)
 
   try {
-    const tokens = tokenize(expression).filter(t => t.type !== 'EOF') as NonEofToken[]
+    const tokens = tokenize(expression).filter((t): t is NonEofToken => t.type !== 'EOF')
     return { tokens, partial: false, insideString }
   } catch (err: unknown) {
     if (!(err instanceof ExpressionError || err instanceof SyntaxError)) {
@@ -41,6 +49,7 @@ function isCursorInsideString(expression: string, cursor: number): boolean {
   let inDouble = false
   let inTemplate = false
   let templateDepth = 0
+  const braceStack: number[] = [] // per-depth brace counter for nested interpolations
   let escaped = false
 
   for (let i = 0; i < expression.length && i < cursor; i++) {
@@ -59,7 +68,7 @@ function isCursorInsideString(expression: string, cursor: number): boolean {
     if (!inSingle && !inDouble && !inTemplate) {
       if (ch === "'") inSingle = true
       else if (ch === '"') inDouble = true
-      else if (ch === '`') { inTemplate = true; templateDepth = 0 }
+      else if (ch === '`') { inTemplate = true; templateDepth = 0; braceStack.length = 0 }
     } else if (inSingle && ch === "'") {
       inSingle = false
     } else if (inDouble && ch === '"') {
@@ -69,9 +78,17 @@ function isCursorInsideString(expression: string, cursor: number): boolean {
         inTemplate = false
       } else if (ch === '$' && i + 1 < expression.length && expression[i + 1] === '{') {
         templateDepth++
+        braceStack.push(0)
         i++
-      } else if (ch === '}' && templateDepth > 0) {
-        templateDepth--
+      } else if (templateDepth > 0 && ch === '{') {
+        braceStack[braceStack.length - 1]++
+      } else if (templateDepth > 0 && ch === '}') {
+        if (braceStack.length > 0 && braceStack[braceStack.length - 1] > 0) {
+          braceStack[braceStack.length - 1]--
+        } else {
+          braceStack.pop()
+          templateDepth--
+        }
       }
     }
   }
@@ -108,7 +125,7 @@ function classifyToken(value: string, start: number, end: number): NonEofToken |
   if (/^\d/.test(value)) return { type: 'Number', value, start, end }
   if (value.startsWith('"') || value.startsWith("'")) return { type: 'String', value, start, end }
   if (value.startsWith('`')) return { type: 'TemplateLiteral', value, start, end }
-  if ('(){}[],:?.'.includes(value)) return { type: 'Punctuation', value: value as PunctuationValue, start, end }
+  if (value.length === 1 && '(){}[],:?.'.includes(value)) return { type: 'Punctuation', value: value as PunctuationValue, start, end }
   if ('+-*/%!=<>&|'.includes(value[0]) || value === '**') return { type: 'Operator', value: value as OperatorValue, start, end }
   return null
 }

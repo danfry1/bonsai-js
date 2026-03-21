@@ -1,18 +1,25 @@
 import { BLOCKED_PROPERTIES } from '../execution-context.js'
 import type { InferredTypeName, ResolveResult } from '../types.js'
-import { getMethodReturnType } from './catalog.js'
+import { getMethodReturnType, type MethodReceiverType } from './catalog.js'
 
 export function inferType(value: unknown): InferredTypeName {
   if (value === null) return 'null'
   if (value === undefined) return 'undefined'
   if (Array.isArray(value)) return 'array'
-  return typeof value as InferredTypeName
+  const t = typeof value
+  if (t === 'string' || t === 'number' || t === 'boolean') return t
+  // function, symbol, bigint → treat as object for completion purposes
+  return 'object'
 }
 
-export interface ResolveOptions {
+/** Shared policy shape for property allow/deny filtering. */
+export interface PropertyPolicy {
   allowedProperties?: ReadonlySet<string>
   deniedProperties?: ReadonlySet<string>
 }
+
+/** Policy options for property chain resolution. */
+export type ResolveOptions = PropertyPolicy
 
 export function resolvePropertyChain(
   context: Record<string, unknown>,
@@ -41,7 +48,6 @@ export type ElementTypeInfo =
   | { type: 'number'; properties: []; value: number }
   | { type: 'boolean'; properties: []; value: boolean }
   | { type: 'array'; properties: []; value: unknown[] }
-  | { type: 'null'; properties: []; value: null }
 
 export function inferElementType(array: unknown[]): ElementTypeInfo {
   const first = array.find(el => el != null)
@@ -62,7 +68,7 @@ export function inferElementType(array: unknown[]): ElementTypeInfo {
   return { type: 'unknown', properties: [], value: undefined }
 }
 
-export function inferMethodReturnType(receiverType: string, method: string): string {
+export function inferMethodReturnType(receiverType: MethodReceiverType, method: string): InferredTypeName | 'unknown' {
   return getMethodReturnType(receiverType, method) ?? 'unknown'
 }
 

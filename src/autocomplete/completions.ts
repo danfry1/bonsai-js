@@ -1,6 +1,7 @@
-import { METHODS_BY_TYPE, BLOCKED_NAMES, KEYWORDS, getMethodReturnType } from './catalog.js'
+import type { InferredTypeName } from '../types.js'
+import { METHODS_BY_TYPE, BLOCKED_NAMES, KEYWORDS, getMethodReturnType, isMethodReceiverType } from './catalog.js'
 import { getPrefix, type CursorContext } from './context.js'
-import { inferType } from './inference.js'
+import { inferType, type PropertyPolicy } from './inference.js'
 
 // ── Completion type ────────────────────────────────────────────
 
@@ -23,7 +24,7 @@ export type Completion = CompletionBase & CompletionInsert
 /** Info for member-access contexts (top-level-member, lambda-member). */
 export interface MemberInfo {
   resolvedValue?: unknown
-  resolvedType?: string
+  resolvedType: InferredTypeName
 }
 
 /** Info for lambda-start context. */
@@ -40,14 +41,14 @@ export interface IdentifierInfo {
 
 /** Info for pipe-transform context. */
 export interface PipeInfo {
-  inputType?: string
-  transformTypes?: Record<string, string[]>
+  inputType?: InferredTypeName
+  transformTypes?: Record<string, InferredTypeName[]>
 }
 
 export interface CompletionEnv {
   transforms: string[]
   functions: string[]
-  policy: { allowedProperties?: ReadonlySet<string>; deniedProperties?: ReadonlySet<string> }
+  policy: PropertyPolicy
   member?: MemberInfo
   lambda?: LambdaInfo
   identifier?: IdentifierInfo
@@ -109,9 +110,8 @@ function addPropertyCompletions(results: Completion[], env: CompletionEnv): void
 
 function addMethodCompletions(results: Completion[], env: CompletionEnv): void {
   const type = env.member?.resolvedType
-  if (!type) return
-  const methods = METHODS_BY_TYPE[type as keyof typeof METHODS_BY_TYPE]
-  if (!methods) return
+  if (!type || !isMethodReceiverType(type)) return
+  const methods = METHODS_BY_TYPE[type]
   for (const method of methods) {
     // Check BLOCKED_NAMES and deniedProperties, but NOT allowedProperties.
     // allowedProperties is a property-access allowlist — methods are allowlisted

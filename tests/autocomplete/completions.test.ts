@@ -15,7 +15,7 @@ describe('generateCompletions', () => {
   describe('top-level-member', () => {
     it('returns property completions for object values', () => {
       const ctx: CursorContext = { kind: 'top-level-member', prefix: '', precedingTokens: [] }
-      const result = generateCompletions(ctx, env({ member: { resolvedValue: { name: 'Alice', age: 25 } } }))
+      const result = generateCompletions(ctx, env({ member: { resolvedValue: { name: 'Alice', age: 25 }, resolvedType: 'object' } }))
       const labels = result.map(c => c.label)
       expect(labels).toContain('name')
       expect(labels).toContain('age')
@@ -130,7 +130,7 @@ describe('generateCompletions', () => {
     it('blocks __proto__', () => {
       const ctx: CursorContext = { kind: 'top-level-member', prefix: '', precedingTokens: [] }
       const result = generateCompletions(ctx, env({
-        member: { resolvedValue: { __proto__: {}, name: 'x' } },
+        member: { resolvedValue: { __proto__: {}, name: 'x' }, resolvedType: 'object' },
       }))
       const labels = result.map(c => c.label)
       expect(labels).not.toContain('__proto__')
@@ -140,7 +140,7 @@ describe('generateCompletions', () => {
     it('blocks constructor and prototype', () => {
       const ctx: CursorContext = { kind: 'top-level-member', prefix: '', precedingTokens: [] }
       const result = generateCompletions(ctx, env({
-        member: { resolvedValue: { constructor: null, prototype: null, safe: 1 } },
+        member: { resolvedValue: { constructor: null, prototype: null, safe: 1 }, resolvedType: 'object' },
       }))
       const labels = result.map(c => c.label)
       expect(labels).not.toContain('constructor')
@@ -151,7 +151,7 @@ describe('generateCompletions', () => {
     it('respects allowedProperties policy', () => {
       const ctx: CursorContext = { kind: 'top-level-member', prefix: '', precedingTokens: [] }
       const result = generateCompletions(ctx, env({
-        member: { resolvedValue: { name: 'x', secret: 'y' } },
+        member: { resolvedValue: { name: 'x', secret: 'y' }, resolvedType: 'object' },
         policy: { allowedProperties: new Set(['name']) },
       }))
       const labels = result.map(c => c.label)
@@ -162,7 +162,7 @@ describe('generateCompletions', () => {
     it('respects deniedProperties policy', () => {
       const ctx: CursorContext = { kind: 'top-level-member', prefix: '', precedingTokens: [] }
       const result = generateCompletions(ctx, env({
-        member: { resolvedValue: { name: 'x', secret: 'y' } },
+        member: { resolvedValue: { name: 'x', secret: 'y' }, resolvedType: 'object' },
         policy: { deniedProperties: new Set(['secret']) },
       }))
       const labels = result.map(c => c.label)

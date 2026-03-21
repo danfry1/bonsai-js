@@ -1,9 +1,10 @@
 import type { BonsaiInstance, Token, InferredTypeName } from '../types.js'
-import { ExpressionError } from '../errors.js'
+import { ExpressionError, BonsaiSecurityError, BonsaiTypeError, BonsaiReferenceError } from '../errors.js'
 import { tolerantTokenize, type ErrorHandler } from './tokenizer.js'
 import { classifyCursor } from './context.js'
 import { generateCompletions, type Completion, type CompletionEnv } from './completions.js'
 import { inferType, resolvePropertyChain, inferElementType, inferMethodReturnType, type ResolveOptions } from './inference.js'
+import { isMethodReceiverType } from './catalog.js'
 
 export type { Completion }
 
@@ -17,7 +18,7 @@ export interface AutocompleteOptions {
    *  explicitly to avoid the cold-start probe cost. */
   transformTypes?: Record<string, InferredTypeName[]>
   /** Called when an unexpected internal error occurs during completion.
-   *  Expected errors (e.g., syntax errors from incomplete expressions) are not reported.
+   *  Expected errors (e.g., syntax errors, security blocks, type mismatches) are not reported.
    *  Useful for debugging missing or incorrect completions. */
   onError?: ErrorHandler
 }
@@ -29,6 +30,14 @@ export interface AutocompleteInstance {
 
 // Valid identifier pattern for transform name validation
 const VALID_IDENTIFIER = /^[a-zA-Z_$][\w$]*$/
+
+/** Check if an error is an expected Bonsai error (syntax, security, type, or reference). */
+function isExpectedError(err: unknown): boolean {
+  return err instanceof ExpressionError
+    || err instanceof BonsaiSecurityError
+    || err instanceof BonsaiTypeError
+    || err instanceof BonsaiReferenceError
+}
 
 export function createAutocomplete(
   instance: BonsaiInstance,
@@ -52,106 +61,115 @@ export function createAutocomplete(
 
   return {
     complete(expression: string, cursor: number): Completion[] {
-      // Clamp cursor to valid range
-      cursor = Math.max(0, Math.min(cursor, expression.length))
-
-      const { tokens, insideString } = tolerantTokenize(expression, cursor, onError)
-      if (insideString) return []
-
-      const cursorCtx = classifyCursor(tokens, cursor)
-      if (cursorCtx.kind === 'none') return []
-
-      const transforms = instance.listTransforms()
-      const functions = instance.listFunctions()
-
-      const env: CompletionEnv = {
-        transforms, functions, policy,
+      try {
+        return completeInner(expression, cursor)
+      } catch (err: unknown) {
+        onError?.(err, 'complete')
+        return []
       }
-
-      if (cursorCtx.kind === 'pipe-transform') {
-        const inputType = inferPipeInputType(expression, cursor, instance, context, onError)
-        env.pipe = { inputType, transformTypes: options.transformTypes }
-        if (inputType && !options.transformTypes) {
-          const accepted = probeAcceptedTransforms(instance, inputType, probeCache, transforms, onError)
-          env.transforms = transforms.filter(name => accepted.has(name))
-        }
-      } else if (cursorCtx.kind === 'top-level-member') {
-        // Only use eval-based inference when prefix is empty (cursor right after dot)
-        // When prefix is non-empty (user typing a partial name), use static resolution
-        const useEval = cursorCtx.prefix === ''
-        const evalResult = useEval ? tryEvalPrefix(expression, cursor, instance, context, tokens, onError) : undefined
-        if (evalResult !== undefined) {
-          env.member = { resolvedValue: evalResult, resolvedType: inferType(evalResult) }
-        } else {
-          // Fall back to static chain resolution from context
-          const chain = extractChainFromTokens(cursorCtx.precedingTokens)
-          if (chain.length > 0) {
-            const result = resolvePropertyChain(context, chain, resolvePolicy)
-            if (result.found) {
-              env.member = { resolvedValue: result.value, resolvedType: inferType(result.value) }
-            } else {
-              // If static resolution failed but there's a method call in the chain,
-              // try to infer type from the method return type map
-              const inferred = inferTypeFromTokenChain(cursorCtx.precedingTokens, context, resolvePolicy)
-              if (inferred) {
-                env.member = { resolvedType: inferred }
-              }
-            }
-          }
-        }
-      } else if (cursorCtx.kind === 'lambda-member') {
-        const arrTokens = extractChainBeforeCall(tokens, cursor)
-        const arrResult = resolvePropertyChain(context, arrTokens)
-        if (arrResult.found && Array.isArray(arrResult.value)) {
-          const elemInfo = inferElementType(arrResult.value)
-          if (elemInfo.type === 'object') {
-            const resolved = resolvePropertyChain(elemInfo.value, cursorCtx.chain, resolvePolicy)
-            if (resolved.found) {
-              env.member = { resolvedValue: resolved.value, resolvedType: inferType(resolved.value) }
-            }
-          } else if (elemInfo.type !== 'unknown') {
-            env.member = { resolvedType: inferType(elemInfo.value) }
-          }
-        }
-      } else if (cursorCtx.kind === 'lambda-start') {
-        const arrTokens = extractChainBeforeCall(tokens, cursor)
-        let resolved = false
-
-        // First try: static chain resolution from context
-        if (arrTokens.length > 0) {
-          const arrResult = resolvePropertyChain(context, arrTokens)
-          if (arrResult.found && Array.isArray(arrResult.value)) {
-            const elemInfo = inferElementType(arrResult.value)
-            env.lambda = {
-              elementProperties: elemInfo.properties,
-              elementValue: elemInfo.type === 'object' ? elemInfo.value : undefined,
-            }
-            resolved = true
-          }
-        }
-
-        // Second try: for nested lambdas, try eval-based inference
-        // e.g., groups.map(.users.filter(. → evaluate groups[0].users to get the array
-        if (!resolved) {
-          const nestedArr = tryResolveNestedLambdaArray(tokens, cursor, context)
-          if (nestedArr) {
-            const elemInfo = inferElementType(nestedArr)
-            env.lambda = {
-              elementProperties: elemInfo.properties,
-              elementValue: elemInfo.type === 'object' ? elemInfo.value : undefined,
-            }
-          }
-        }
-      } else if (cursorCtx.kind === 'identifier') {
-        env.identifier = { contextKeys: Object.keys(context), contextValues: context }
-      }
-
-      return generateCompletions(cursorCtx, env)
     },
 
     setContext(newContext: Record<string, unknown>): void {
       context = newContext ?? {}
     },
+  }
+
+  function completeInner(expression: string, cursor: number): Completion[] {
+    // Clamp cursor to valid range
+    cursor = Math.max(0, Math.min(cursor, expression.length))
+
+    const { tokens, insideString } = tolerantTokenize(expression, cursor, onError)
+    if (insideString) return []
+
+    const cursorCtx = classifyCursor(tokens, cursor)
+    if (cursorCtx.kind === 'none') return []
+
+    const transforms = instance.listTransforms()
+    const functions = instance.listFunctions()
+
+    const env: CompletionEnv = {
+      transforms, functions, policy,
+    }
+
+    if (cursorCtx.kind === 'pipe-transform') {
+      const inputType = inferPipeInputType(expression, cursor, instance, context, onError)
+      env.pipe = { inputType, transformTypes: options.transformTypes }
+      if (inputType && !options.transformTypes) {
+        const accepted = probeAcceptedTransforms(instance, inputType, probeCache, transforms, onError)
+        env.transforms = transforms.filter(name => accepted.has(name))
+      }
+    } else if (cursorCtx.kind === 'top-level-member') {
+      // Only use eval-based inference when prefix is empty (cursor right after dot)
+      // When prefix is non-empty (user typing a partial name), use static resolution
+      const useEval = cursorCtx.prefix === ''
+      const evalResult = useEval ? tryEvalPrefix(expression, cursor, instance, context, tokens, onError) : undefined
+      if (evalResult !== undefined) {
+        env.member = { resolvedValue: evalResult, resolvedType: inferType(evalResult) }
+      } else {
+        // Fall back to static chain resolution from context
+        const chain = extractChainFromTokens(cursorCtx.precedingTokens)
+        if (chain.length > 0) {
+          const result = resolvePropertyChain(context, chain, resolvePolicy)
+          if (result.found) {
+            env.member = { resolvedValue: result.value, resolvedType: inferType(result.value) }
+          } else {
+            // If static resolution failed but there's a method call in the chain,
+            // try to infer type from the method return type map
+            const inferred = inferTypeFromTokenChain(cursorCtx.precedingTokens, context, resolvePolicy)
+            if (inferred) {
+              env.member = { resolvedType: inferred }
+            }
+          }
+        }
+      }
+    } else if (cursorCtx.kind === 'lambda-member') {
+      const arrTokens = extractChainBeforeCall(tokens, cursor)
+      const arrResult = resolvePropertyChain(context, arrTokens, resolvePolicy)
+      if (arrResult.found && Array.isArray(arrResult.value)) {
+        const elemInfo = inferElementType(arrResult.value)
+        if (elemInfo.type === 'object') {
+          const resolved = resolvePropertyChain(elemInfo.value, cursorCtx.chain, resolvePolicy)
+          if (resolved.found) {
+            env.member = { resolvedValue: resolved.value, resolvedType: inferType(resolved.value) }
+          }
+        } else if (elemInfo.type !== 'unknown') {
+          env.member = { resolvedType: inferType(elemInfo.value) }
+        }
+      }
+    } else if (cursorCtx.kind === 'lambda-start') {
+      const arrTokens = extractChainBeforeCall(tokens, cursor)
+      let resolved = false
+
+      // First try: static chain resolution from context
+      if (arrTokens.length > 0) {
+        const arrResult = resolvePropertyChain(context, arrTokens, resolvePolicy)
+        if (arrResult.found && Array.isArray(arrResult.value)) {
+          const elemInfo = inferElementType(arrResult.value)
+          env.lambda = {
+            elementProperties: elemInfo.properties,
+            elementValue: elemInfo.type === 'object' ? elemInfo.value : undefined,
+          }
+          resolved = true
+        }
+      }
+
+      // Second try: for nested lambdas, try eval-based inference
+      // e.g., groups.map(.users.filter(. → evaluate groups[0].users to get the array
+      if (!resolved) {
+        const nestedArr = tryResolveNestedLambdaArray(tokens, cursor, context, resolvePolicy)
+        if (nestedArr) {
+          const elemInfo = inferElementType(nestedArr)
+          env.lambda = {
+            elementProperties: elemInfo.properties,
+            elementValue: elemInfo.type === 'object' ? elemInfo.value : undefined,
+          }
+        }
+      }
+    } else if (cursorCtx.kind === 'identifier') {
+      env.identifier = { contextKeys: Object.keys(context), contextValues: context }
+    }
+
+    return generateCompletions(cursorCtx, env)
   }
 }
 
@@ -189,7 +207,7 @@ function tryEvalPrefix(
   try {
     return instance.evaluateSync(exprText, context)
   } catch (err: unknown) {
-    if (!(err instanceof ExpressionError)) {
+    if (!isExpectedError(err)) {
       onError?.(err, 'tryEvalPrefix')
     }
     return undefined
@@ -197,16 +215,16 @@ function tryEvalPrefix(
 }
 
 /**
- * Infer the type by walking the token chain and using the RETURN_TYPES map.
+ * Infer the type by walking the token chain and using the return type map.
  * Handles: user.name.trim(). → string (because trim returns string)
  */
 function inferTypeFromTokenChain(
   tokens: Token[],
   context: Record<string, unknown>,
   resolveOpts?: ResolveOptions,
-): string | undefined {
+): InferredTypeName | undefined {
   // Walk the chain: resolve context properties, then use return type map for method calls
-  let currentType: string | undefined
+  let currentType: InferredTypeName | undefined
 
   // First resolve as much as we can from context
   const chain: string[] = []
@@ -225,12 +243,19 @@ function inferTypeFromTokenChain(
       if (currentType === undefined && chain.length > 0) {
         const result = resolvePropertyChain(context, chain, resolveOpts)
         currentType = result.found ? inferType(result.value) : undefined
-        chain.length = 0
+      } else if (currentType !== undefined && chain.length > 0) {
+        // Property access on a method return type — can't resolve statically
+        // (e.g., trim().foo.bar( — foo/bar are not context properties)
+        currentType = undefined
       }
+      // Always clear chain after consuming it for a method call
+      chain.length = 0
 
-      if (currentType && methodName) {
-        currentType = inferMethodReturnType(currentType, methodName)
-        if (currentType === 'unknown') currentType = undefined
+      if (currentType && isMethodReceiverType(currentType)) {
+        const returned = inferMethodReturnType(currentType, methodName)
+        currentType = returned === 'unknown' ? undefined : returned as InferredTypeName
+      } else {
+        currentType = undefined
       }
 
       // Skip past the closing paren
@@ -246,6 +271,12 @@ function inferTypeFromTokenChain(
     } else {
       break
     }
+  }
+
+  // If we have a resolved type but there are unresolved identifiers remaining
+  // (e.g., user.name.trim().nonExistent), we can't resolve further statically
+  if (currentType !== undefined && chain.length > 0) {
+    return undefined
   }
 
   // Resolve remaining chain from context if we haven't resolved type yet
@@ -268,6 +299,7 @@ function tryResolveNestedLambdaArray(
   tokens: Token[],
   cursor: number,
   context: Record<string, unknown>,
+  resolveOpts?: ResolveOptions,
 ): unknown[] | undefined {
   const before = tokens.filter(t => t.start < cursor)
 
@@ -312,13 +344,19 @@ function tryResolveNestedLambdaArray(
     lambdaChainsByDepth.set(depth, [...currentChain])
   }
 
-  // Find the outermost array from context
-  // Walk backward from the outermost ( to find the context chain
+  // Find the outermost method-call ( — must be preceded by `identifier` with a `.`/`?.`/`|>` before it
+  // This skips leading function calls like fn(arg) or grouping parens like (expr)
   let outerParenIdx = -1
   for (let i = 0; i < before.length; i++) {
-    if (before[i].type === 'Punctuation' && before[i].value === '(') {
-      outerParenIdx = i
-      break
+    if (before[i].type === 'Punctuation' && before[i].value === '(' && i >= 2) {
+      const prev = before[i - 1]
+      const prevPrev = before[i - 2]
+      if (prev.type === 'Identifier' &&
+          ((prevPrev.type === 'Punctuation' && prevPrev.value === '.') ||
+           prevPrev.type === 'OptionalChain' || prevPrev.type === 'Pipe')) {
+        outerParenIdx = i
+        break
+      }
     }
   }
 
@@ -329,7 +367,7 @@ function tryResolveNestedLambdaArray(
   if (chain.length === 0) return undefined
 
   // Resolve the outermost array from context
-  const outerResult = resolvePropertyChain(context, chain)
+  const outerResult = resolvePropertyChain(context, chain, resolveOpts)
   if (!outerResult.found || !Array.isArray(outerResult.value)) return undefined
   let currentValue: unknown = outerResult.value
 
@@ -346,7 +384,7 @@ function tryResolveNestedLambdaArray(
     }
 
     // Follow the lambda chain on the element
-    const nestedResult = resolvePropertyChain(elemInfo.value, lambdaChain)
+    const nestedResult = resolvePropertyChain(elemInfo.value, lambdaChain, resolveOpts)
     if (!nestedResult.found || !Array.isArray(nestedResult.value)) return undefined
     currentValue = nestedResult.value
   }
@@ -389,7 +427,7 @@ function probeAcceptedTransforms(
       instance.evaluateSync(`x |> ${name}`, { x: sample })
       accepted.add(name)
     } catch (err: unknown) {
-      if (!(err instanceof ExpressionError)) {
+      if (!isExpectedError(err)) {
         onError?.(err, `probeTransform:${name}`)
       }
     }
@@ -410,7 +448,7 @@ function inferPipeInputType(
   instance: BonsaiInstance,
   context: Record<string, unknown>,
   onError?: ErrorHandler,
-): string | undefined {
+): InferredTypeName | undefined {
   const before = expression.slice(0, cursor)
   const pipeMatch = before.match(/^(.*)\|>\s*\w*\s*$/s)
   if (!pipeMatch) return undefined
@@ -423,7 +461,7 @@ function inferPipeInputType(
     if (result === null || result === undefined) return undefined
     return inferType(result)
   } catch (err: unknown) {
-    if (!(err instanceof ExpressionError)) {
+    if (!isExpectedError(err)) {
       onError?.(err, 'inferPipeInputType')
     }
     return undefined
