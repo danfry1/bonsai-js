@@ -1,6 +1,6 @@
 import type { BonsaiInstance, Token, InferredTypeName } from '../types.js'
 import { ExpressionError, BonsaiSecurityError, BonsaiTypeError, BonsaiReferenceError } from '../errors.js'
-import { tolerantTokenize, type ErrorHandler } from './tokenizer.js'
+import { tolerantTokenize, isCursorInsideString, type ErrorHandler } from './tokenizer.js'
 import { classifyCursor } from './context.js'
 import { generateCompletions, type Completion, type CompletionEnv } from './completions.js'
 import { inferType, resolvePropertyChain, inferElementType, inferMethodReturnType, type ResolveOptions } from './inference.js'
@@ -78,20 +78,22 @@ export function createAutocomplete(
     // Clamp cursor to valid range
     cursor = Math.max(0, Math.min(cursor, expression.length))
 
-    const { tokens, insideString } = tolerantTokenize(expression, cursor, onError)
-    if (insideString) return []
+    // Fast path: check if cursor is inside a string before expensive tokenization
+    if (isCursorInsideString(expression, cursor)) return []
+
+    const { tokens } = tolerantTokenize(expression, cursor, onError)
 
     const cursorCtx = classifyCursor(tokens, cursor)
     if (cursorCtx.kind === 'none') return []
 
-    const transforms = instance.listTransforms()
-    const functions = instance.listFunctions()
-
+    // Defer listTransforms/listFunctions to branches that need them (avoids allocation on every call)
     const env: CompletionEnv = {
-      transforms, functions, policy,
+      transforms: [], functions: [], policy,
     }
 
     if (cursorCtx.kind === 'pipe-transform') {
+      const transforms = instance.listTransforms()
+      env.transforms = transforms
       const inputType = inferPipeInputType(expression, cursor, instance, context, onError)
       env.pipe = { inputType, transformTypes: options.transformTypes }
       if (inputType && !options.transformTypes) {
@@ -99,27 +101,30 @@ export function createAutocomplete(
         env.transforms = transforms.filter(name => accepted.has(name))
       }
     } else if (cursorCtx.kind === 'top-level-member') {
-      // Only use eval-based inference when prefix is empty (cursor right after dot)
-      // When prefix is non-empty (user typing a partial name), use static resolution
-      const useEval = cursorCtx.prefix === ''
-      const evalResult = useEval ? tryEvalPrefix(expression, cursor, instance, context, tokens, onError) : undefined
-      if (evalResult !== undefined) {
-        env.member = { resolvedValue: evalResult, resolvedType: inferType(evalResult) }
-      } else {
-        // Fall back to static chain resolution from context
-        const chain = extractChainFromTokens(cursorCtx.precedingTokens)
-        if (chain.length > 0) {
-          const result = resolvePropertyChain(context, chain, resolvePolicy)
-          if (result.found) {
-            env.member = { resolvedValue: result.value, resolvedType: inferType(result.value) }
-          } else {
-            // If static resolution failed but there's a method call in the chain,
-            // try to infer type from the method return type map
-            const inferred = inferTypeFromTokenChain(cursorCtx.precedingTokens, context, resolvePolicy)
-            if (inferred) {
-              env.member = { resolvedType: inferred }
-            }
+      // Fast path: try static chain resolution first (avoids evaluateSync for simple chains)
+      const chain = extractChainFromTokens(cursorCtx.precedingTokens)
+      if (chain.length > 0) {
+        const result = resolvePropertyChain(context, chain, resolvePolicy)
+        if (result.found) {
+          env.member = { resolvedValue: result.value, resolvedType: inferType(result.value) }
+        } else if (cursorCtx.prefix === '') {
+          // Static resolution failed (method chain like trim().) — try eval
+          const evalResult = tryEvalPrefix(expression, cursor, instance, context, tokens, onError)
+          if (evalResult !== undefined) {
+            env.member = { resolvedValue: evalResult, resolvedType: inferType(evalResult) }
           }
+        } else {
+          // Static failed with prefix — try type inference from token chain
+          const inferred = inferTypeFromTokenChain(cursorCtx.precedingTokens, context, resolvePolicy)
+          if (inferred) {
+            env.member = { resolvedType: inferred }
+          }
+        }
+      } else if (cursorCtx.prefix === '') {
+        // No simple chain (e.g., after `)` or complex expression) — try eval
+        const evalResult = tryEvalPrefix(expression, cursor, instance, context, tokens, onError)
+        if (evalResult !== undefined) {
+          env.member = { resolvedValue: evalResult, resolvedType: inferType(evalResult) }
         }
       }
     } else if (cursorCtx.kind === 'lambda-member') {
@@ -166,6 +171,7 @@ export function createAutocomplete(
         }
       }
     } else if (cursorCtx.kind === 'identifier') {
+      env.functions = instance.listFunctions()
       env.identifier = { contextKeys: Object.keys(context), contextValues: context }
     }
 

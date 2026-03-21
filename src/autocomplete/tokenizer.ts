@@ -44,7 +44,7 @@ export function tolerantTokenize(
   }
 }
 
-function isCursorInsideString(expression: string, cursor: number): boolean {
+export function isCursorInsideString(expression: string, cursor: number): boolean {
   let inSingle = false
   let inDouble = false
   let inTemplate = false
