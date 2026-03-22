@@ -297,6 +297,7 @@
   font-size: 0.88rem;
   line-height: 1.6;
   font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
   white-space: pre-wrap;
   word-break: break-word;
   pointer-events: none;
@@ -400,6 +401,7 @@
   font-size: 0.88rem;
   line-height: 1.6;
   font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
   resize: none;
   caret-color: var(--accent);
   outline: none;

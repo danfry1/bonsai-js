@@ -268,6 +268,7 @@ h3 { font-size: 1.4rem; }
 code, pre, .mono {
   font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, monospace;
   font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
 }
 
 a {
