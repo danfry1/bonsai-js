@@ -1908,27 +1908,29 @@ input.addEventListener(<span class="string">'input'</span>, () => {
         <p><a href="./monaco-demo.html">See it in action &rarr;</a></p>
 
         <div class="doc-code">
+<span class="keyword">const</span> kindMap = {
+  property: monaco.languages.CompletionItemKind.Field,
+  method:   monaco.languages.CompletionItemKind.Method,
+  transform: monaco.languages.CompletionItemKind.Function,
+  function: monaco.languages.CompletionItemKind.Function,
+  variable: monaco.languages.CompletionItemKind.Variable,
+  keyword:  monaco.languages.CompletionItemKind.Keyword,
+}
+
 monaco.languages.registerCompletionItemProvider(<span class="string">'bonsai'</span>, {
-  triggerCharacters: [<span class="string">'.'</span>, <span class="string">'|'</span>],
+  triggerCharacters: [<span class="string">'.'</span>, <span class="string">'|'</span>, <span class="string">' '</span>],
   provideCompletionItems(model, position) {
-    <span class="keyword">const</span> line = model.getValueInRange({
+    <span class="keyword">const</span> text = model.getValueInRange({
       startLineNumber: 1, startColumn: 1,
       endLineNumber: position.lineNumber, endColumn: position.column,
     })
-    <span class="keyword">const</span> items = ac.complete(line, line.length)
+    <span class="keyword">const</span> items = ac.complete(text, text.length)
     <span class="keyword">const</span> word = model.getWordUntilPosition(position)
 
     <span class="keyword">return</span> {
       suggestions: items.map(c => ({
         label: c.label,
-        kind: monaco.languages.CompletionItemKind[
-          c.kind === <span class="string">'property'</span> ? <span class="string">'Field'</span>
-          : c.kind === <span class="string">'method'</span> ? <span class="string">'Method'</span>
-          : c.kind === <span class="string">'transform'</span> ? <span class="string">'Function'</span>
-          : c.kind === <span class="string">'variable'</span> ? <span class="string">'Variable'</span>
-          : c.kind === <span class="string">'keyword'</span> ? <span class="string">'Keyword'</span>
-          : <span class="string">'Function'</span>
-        ],
+        kind: kindMap[c.kind] || monaco.languages.CompletionItemKind.Text,
         detail: c.detail,
         insertText: c.insertText ?? c.label,
         range: {
