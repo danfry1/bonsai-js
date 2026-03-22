@@ -1750,11 +1750,11 @@ expr.evaluateSync(<span class="string">'user.secret'</span>, {
         <p>Call <code>complete(expression, cursor)</code> with the expression string and the cursor position (zero-based character offset). It returns an array of <code>Completion</code> objects sorted by relevance.</p>
 
         <div class="doc-code">
-<span class="comment">// Property completions with value previews</span>
+<span class="comment">// Property completions with inferred types</span>
 ac.complete(<span class="string">'user.'</span>, 5)
-<span class="comment">// [{label: 'name', detail: '"Alice"', kind: 'property'},
-//  {label: 'age',  detail: '25',      kind: 'property'},
-//  {label: 'plan', detail: '"pro"',    kind: 'property'}]</span>
+<span class="comment">// [{label: 'name', detail: 'string', kind: 'property'},
+//  {label: 'age',  detail: 'number', kind: 'property'},
+//  {label: 'plan', detail: 'string', kind: 'property'}]</span>
 
 <span class="comment">// Type-aware method suggestions</span>
 ac.complete(<span class="string">'user.name.'</span>, 10)
@@ -1763,8 +1763,8 @@ ac.complete(<span class="string">'user.name.'</span>, 10)
 
 <span class="comment">// Lambda property inference</span>
 ac.complete(<span class="string">'items.filter(.'</span>, 14)
-<span class="comment">// [{label: 'title', detail: '"Widget"', kind: 'property'},
-//  {label: 'price', detail: '9.99',     kind: 'property'}]</span>
+<span class="comment">// [{label: 'title', detail: 'string', kind: 'property'},
+//  {label: 'price', detail: 'number', kind: 'property'}]</span>
 
 <span class="comment">// Pipe transforms filtered by inferred type</span>
 ac.complete(<span class="string">'user.name |> '</span>, 13)
@@ -1808,7 +1808,7 @@ ac.complete(<span class="string">'user.name |> '</span>, 13)
 
         <div class="doc-code">
 ac.complete(<span class="string">'user.na'</span>, 7)
-<span class="comment">// [{label: 'name', detail: '"Alice"', kind: 'property', sortPriority: -500}]
+<span class="comment">// [{label: 'name', detail: 'string', kind: 'property', sortPriority: -500}]
 // Fuzzy matching: 'na' matches 'name' as a prefix</span>
         </div>
 
@@ -1822,8 +1822,8 @@ ac.setContext({
 })
 
 ac.complete(<span class="string">'order.'</span>, 6)
-<span class="comment">// [{label: 'total',  detail: '129',       kind: 'property'},
-//  {label: 'status', detail: '"pending"', kind: 'property'}]</span>
+<span class="comment">// [{label: 'total',  detail: 'number', kind: 'property'},
+//  {label: 'status', detail: 'string', kind: 'property'}]</span>
         </div>
 
         <h3>Completion object</h3>
@@ -1834,7 +1834,7 @@ ac.complete(<span class="string">'order.'</span>, 6)
           <tbody>
             <tr><td><code>label</code></td><td><code>string</code></td><td>Display text and default insert text (e.g., <code>"name"</code>, <code>"trim()"</code>).</td></tr>
             <tr><td><code>kind</code></td><td><code>string</code></td><td>One of <code>'variable'</code>, <code>'property'</code>, <code>'method'</code>, <code>'transform'</code>, <code>'function'</code>, or <code>'keyword'</code>.</td></tr>
-            <tr><td><code>detail</code></td><td><code>string?</code></td><td>Type or value preview. Properties show the current value (e.g., <code>'"Alice"'</code>, <code>'25'</code>). Methods show their signature (e.g., <code>'string &rarr; string'</code>).</td></tr>
+            <tr><td><code>detail</code></td><td><code>string?</code></td><td>Type info. Properties show the inferred type (e.g., <code>'string'</code>, <code>'number'</code>). Methods show their signature (e.g., <code>'string &rarr; string'</code>). Root-level variables show a value preview (e.g., <code>'"Alice"'</code>, <code>'array(3)'</code>).</td></tr>
             <tr><td><code>insertText</code></td><td><code>string?</code></td><td>Override text to insert instead of <code>label</code>. Used by methods that need parentheses or argument placeholders (e.g., <code>'filter(.)'</code>).</td></tr>
             <tr><td><code>cursorOffset</code></td><td><code>number?</code></td><td>Where to place the cursor within <code>insertText</code> after insertion. For <code>'filter(.)'</code> with offset <code>8</code>, the cursor lands between the parentheses.</td></tr>
             <tr><td><code>sortPriority</code></td><td><code>number</code></td><td>Lower values sort first. Fuzzy matching adjusts this so better matches rank higher.</td></tr>
@@ -1908,27 +1908,29 @@ input.addEventListener(<span class="string">'input'</span>, () => {
         <p><a href="./monaco-demo.html">See it in action &rarr;</a></p>
 
         <div class="doc-code">
+<span class="keyword">const</span> kindMap = {
+  property: monaco.languages.CompletionItemKind.Field,
+  method:   monaco.languages.CompletionItemKind.Method,
+  transform: monaco.languages.CompletionItemKind.Function,
+  function: monaco.languages.CompletionItemKind.Function,
+  variable: monaco.languages.CompletionItemKind.Variable,
+  keyword:  monaco.languages.CompletionItemKind.Keyword,
+}
+
 monaco.languages.registerCompletionItemProvider(<span class="string">'bonsai'</span>, {
-  triggerCharacters: [<span class="string">'.'</span>, <span class="string">'|'</span>],
+  triggerCharacters: [<span class="string">'.'</span>, <span class="string">'|'</span>, <span class="string">' '</span>],
   provideCompletionItems(model, position) {
-    <span class="keyword">const</span> line = model.getValueInRange({
+    <span class="keyword">const</span> text = model.getValueInRange({
       startLineNumber: 1, startColumn: 1,
       endLineNumber: position.lineNumber, endColumn: position.column,
     })
-    <span class="keyword">const</span> items = ac.complete(line, line.length)
+    <span class="keyword">const</span> items = ac.complete(text, text.length)
     <span class="keyword">const</span> word = model.getWordUntilPosition(position)
 
     <span class="keyword">return</span> {
       suggestions: items.map(c => ({
         label: c.label,
-        kind: monaco.languages.CompletionItemKind[
-          c.kind === <span class="string">'property'</span> ? <span class="string">'Field'</span>
-          : c.kind === <span class="string">'method'</span> ? <span class="string">'Method'</span>
-          : c.kind === <span class="string">'transform'</span> ? <span class="string">'Function'</span>
-          : c.kind === <span class="string">'variable'</span> ? <span class="string">'Variable'</span>
-          : c.kind === <span class="string">'keyword'</span> ? <span class="string">'Keyword'</span>
-          : <span class="string">'Function'</span>
-        ],
+        kind: kindMap[c.kind] || monaco.languages.CompletionItemKind.Text,
         detail: c.detail,
         insertText: c.insertText ?? c.label,
         range: {
