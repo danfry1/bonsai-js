@@ -1089,6 +1089,8 @@
   .doc-section table td {
     padding: 3px 0;
     font-size: 0.85rem;
+    text-size-adjust: none;
+    -webkit-text-size-adjust: none;
   }
 
   .doc-section table td:before {
