@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Bonsai + Monaco Editor - See context-aware autocomplete for expressions in action with a real code editor.">
+  <meta name="theme-color" content="#0a0a0f">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Bonsai">
+  <meta property="og:title" content="Monaco Demo - Bonsai">
+  <meta property="og:description" content="Context-aware autocomplete for safe expressions, powered by Monaco Editor.">
+  <meta property="og:url" content="https://danfry1.github.io/bonsai-js/monaco-demo.html">
+  <meta property="og:image" content="https://danfry1.github.io/bonsai-js/og-card.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Monaco Demo - Bonsai">
+  <meta name="twitter:description" content="Context-aware autocomplete for safe expressions, powered by Monaco Editor.">
+  <meta name="twitter:image" content="https://danfry1.github.io/bonsai-js/og-card.png">
+  <title>Monaco Autocomplete Demo - Bonsai</title>
+  <link rel="canonical" href="https://danfry1.github.io/bonsai-js/monaco-demo.html">
+  <link rel="icon" href="./logo.png" type="image/png">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./monaco-demo.css">
+</head>
+<body class="monaco-demo-page">
+
+  <!-- Nav -->
+  <nav class="nav">
+    <div class="nav-inner">
+      <a href="./" class="nav-brand">
+        <img src="./logo.png" alt="Bonsai logo" width="32" height="32">
+        Bonsai
+      </a>
+      <button class="nav-hamburger" aria-label="Toggle menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+      <ul class="nav-links">
+        <li><a href="./#features">Features</a></li>
+        <li><a href="./playground.html">Playground</a></li>
+        <li><a href="./docs.html">Docs</a></li>
+        <li><a href="./how-it-works.html">How It Works</a></li>
+        <li><a href="https://github.com/danfry1/bonsai-js" target="_blank" rel="noopener">GitHub</a></li>
+        <li><a href="https://www.npmjs.com/package/bonsai-js" target="_blank" rel="noopener">npm</a></li>
+        <li>
+          <button class="theme-toggle" aria-label="Switch to light mode" type="button">
+            <svg class="theme-icon-sun" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/></svg>
+            <svg class="theme-icon-moon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
+        </li>
+      </ul>
+    </div>
+  </nav>
+
+  <div class="md-layout">
+    <!-- Sidebar: context + hints -->
+    <aside class="md-sidebar">
+      <div class="md-sidebar-header">Context</div>
+      <div class="md-context-wrap">
+        <textarea class="md-context-editor" id="context-editor" spellcheck="false">{
+  "user": {
+    "name": "Alice",
+    "age": 25,
+    "plan": "pro",
+    "email": "alice@example.com"
+  },
+  "items": [
+    { "title": "Widget", "price": 9.99, "inStock": true },
+    { "title": "Gadget", "price": 24.50, "inStock": false }
+  ],
+  "threshold": 100
+}</textarea>
+        <div class="md-context-error" id="context-error"></div>
+      </div>
+
+      <div class="md-hints">
+        <div class="md-hints-header">Try these</div>
+        <button class="md-hint" data-expr="user.">Property access: <code>user.</code></button>
+        <button class="md-hint" data-expr="user.name.">Method suggestions: <code>user.name.</code></button>
+        <button class="md-hint" data-expr="items.filter(.">Lambda properties: <code>items.filter(.</code></button>
+        <button class="md-hint" data-expr="user.name |> ">Pipe transforms: <code>user.name |> </code></button>
+        <button class="md-hint" data-expr='user.age >= 18 && user.plan == "pro"'>Business rule: <code>user.age >= 18 && ...</code></button>
+        <button class="md-hint" data-expr="items |> filter(.inStock) |> map(.title)">Pipeline: <code>items |> filter(...)</code></button>
+      </div>
+    </aside>
+
+    <!-- Main editor area -->
+    <div class="md-main">
+      <div class="md-topbar">
+        <div class="md-topbar-left">
+          <span class="md-topbar-badge">
+            <span class="dot"></span>
+            Autocomplete
+          </span>
+          <span class="md-topbar-hint">type <code>user.</code> or press Ctrl+Space</span>
+        </div>
+      </div>
+
+      <div class="md-editor-wrap">
+        <div id="monaco-editor"></div>
+      </div>
+
+      <div class="md-result-bar">
+        <span class="md-result-label">Result</span>
+        <span id="result" class="md-result-value"></span>
+      </div>
+    </div>
+  </div>
+
+  <script src="./nav.js" defer></script>
+  <script type="module" src="./monaco-demo.js"></script>
+</body>
+</html>
