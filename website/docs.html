@@ -1844,7 +1844,7 @@ ac.complete(<span class="string">'order.'</span>, 6)
 
       <div class="doc-section" id="autocomplete-editor">
         <h2>Editor Integration <a class="anchor" href="#autocomplete-editor">#</a></h2>
-        <p class="section-why">The autocomplete API returns plain data objects with no DOM or framework dependency. Here is how to wire it into a real editor.</p>
+        <p class="section-why">The autocomplete API returns plain data objects with no DOM or framework dependency. Here is how to wire it into a real editor. <a href="./monaco-demo.html">Try the live Monaco demo &rarr;</a></p>
 
         <h3>Basic input with dropdown</h3>
         <p>The simplest integration: listen for input events, call <code>complete()</code>, and render results into a list.</p>
@@ -1904,7 +1904,8 @@ input.addEventListener(<span class="string">'input'</span>, () => {
         </div>
 
         <h3>Monaco Editor</h3>
-        <p>For Monaco, register a completion provider that maps Bonsai completions to Monaco's <code>CompletionItem</code> format:</p>
+        <p>For Monaco, register a completion provider that maps Bonsai completions to Monaco's <code>CompletionItem</code> format.</p>
+        <p><a href="./monaco-demo.html">See it in action &rarr;</a></p>
 
         <div class="doc-code">
 monaco.languages.registerCompletionItemProvider(<span class="string">'bonsai'</span>, {
