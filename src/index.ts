@@ -2,11 +2,7 @@ import type {
   BonsaiOptions,
   BonsaiInstance,
   CompiledExpression,
-  ValidationResult,
   ExpressionReferences,
-  TransformFn,
-  FunctionFn,
-  BonsaiPlugin,
   ASTNode,
 } from './types.js'
 import { parse } from './parser.js'
