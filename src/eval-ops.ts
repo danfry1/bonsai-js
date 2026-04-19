@@ -113,7 +113,7 @@ export function resolveTransform(name: string, transforms: Record<string, Transf
   return transforms[name]
 }
 
-export function resolveFunction(name: string, functions: Record<string, FunctionFn>): FunctionFn {
+export function resolveFunction(name: string, functions: Record<string, { allowCtx: boolean, f: FunctionFn }>): { allowCtx: boolean, f: FunctionFn } {
   if (!Object.hasOwn(functions, name)) {
     const suggestion = suggest(name, Object.keys(functions))
     throw new BonsaiReferenceError('function', name, suggestion)

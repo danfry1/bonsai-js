@@ -13,7 +13,12 @@ function run(
 ) {
   const ast = parse(expr)
   const ec = new ExecutionContext(new SecurityPolicy())
-  return evaluate(ast, context, transforms, functions, ec)
+  const mappedFunctions = Object.fromEntries(
+    Object.entries(functions).map(([key, value]) => {
+      return [key, {allowCtx:false, f: value}];
+    })
+  )
+  return evaluate(ast, context, transforms, mappedFunctions, ec)
 }
 
 describe('evaluator - functions', () => {

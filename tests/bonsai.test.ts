@@ -56,6 +56,33 @@ describe('bonsai()', () => {
     expect(expr.evaluateSync('greet("Dan")')).toBe('Hello, Dan!')
   })
 
+  it("allows access to context from inside functions when specified", () => {
+    const expr = bonsai()
+    function functionWithContext (this: { context: { name: string} } ) {
+      return `Hello, ${this.context.name}!`
+    }
+    expr.addFunction("greet", functionWithContext, { allowContextAccess: true });
+    expect(expr.evaluateSync("greet()", { name: "Dan" })).toBe("Hello, Dan!")
+  })
+
+  it("denies access to context from inside functions when specified", () => {
+    const expr = bonsai()
+    function functionWithContext (this: { context: { name: string} } ) {
+      return `Hello, ${this?.context?.name}!`
+    }
+    expr.addFunction("greet", functionWithContext, { allowContextAccess: false });
+    expect(expr.evaluateSync("greet()", { name: "Dan" })).toBe("Hello, undefined!")
+  })
+
+  it("denies access to context from inside functions by default", () => {
+    const expr = bonsai()
+    function functionWithContext (this: { context: {name:string} }) {
+      return `Hello, ${this?.context?.name}!`
+    }
+    expr.addFunction("greet", functionWithContext)
+    expect(expr.evaluateSync("greet()", { name: "Dan" })).toBe("Hello, undefined!")
+  })
+
   it('should apply plugins via use()', () => {
     const expr = bonsai()
     expr.use((e) => {
