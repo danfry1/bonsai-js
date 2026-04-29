@@ -111,6 +111,7 @@ isEligible.evaluateSync({
 ```
 
 ### Async enrichment
+#### Isolated by default
 
 ```ts
 import { bonsai } from 'bonsai-js'
@@ -123,6 +124,21 @@ expr.addFunction('lookupTier', async (userId) => {
 })
 
 await expr.evaluate('lookupTier(userId) == "pro"', { userId: 'u_123' })
+```
+#### With context access if enabled
+
+```ts
+import { bonsai } from 'bonsai-js'
+
+const expr = bonsai()
+
+function lookupCurrentUserTier (this: { context: { currentUserId: string} } ) {
+  const row = await db.users.findById(this.context.currentUserId)
+  return row?.tier ?? 'free'
+}
+expr.addFunction('lookupCurrentUserTier', lookupCurrentUserTier, { allowContextAccess: true })
+
+await expr.evaluate('lookupCurrentUserTier() == "pro"', { currentUserId: 'u_123' })
 ```
 
 ### Editor validation
@@ -364,7 +380,7 @@ evaluateExpression<number>('x * 2', { x: 21 }) // 42
 interface BonsaiInstance {
   use(plugin: BonsaiPlugin): this
   addTransform(name: string, fn: TransformFn): this
-  addFunction(name: string, fn: FunctionFn): this
+  addFunction(name: string, fn: FunctionFn, addFunctionOptions?: {allowContextAccess: boolean}): this
   removeTransform(name: string): boolean
   removeFunction(name: string): boolean
   hasTransform(name: string): boolean
@@ -540,6 +556,7 @@ What Bonsai does:
 - validates method call receivers against a safe allowlist of types (string, number, array, plain object) — array methods include `filter`, `map`, `find`, `some`, `every`, `includes`, `indexOf`, `slice`, `at`
 - automatically bypasses allow/deny lists for canonical numeric array indices (e.g., `items[0]`)
 - rejects `Promise` values in `evaluateSync()` with actionable errors that name the offending function/transform/method and suggest using `evaluate()` instead
+- runs custom user-defined functions with isolation by default, although they can be bound to a given context if explicitly allowed
 
 Important operational caveats:
 

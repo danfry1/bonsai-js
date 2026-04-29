@@ -28,7 +28,7 @@ function rejectPromise(value: unknown, kind: 'function' | 'method' | 'transform'
 export interface EvalEnv {
   ctx: Record<string, unknown>
   tr: Record<string, TransformFn>
-  fn: Record<string, FunctionFn>
+  fn: Record<string, { f: FunctionFn, allowCtx: boolean }>
   g: ExecutionContext
   s?: string
 }
@@ -37,7 +37,7 @@ export function evaluate(
   node: ASTNode,
   context: Record<string, unknown>,
   transforms: Record<string, TransformFn>,
-  functions: Record<string, FunctionFn>,
+  functions: Record<string, { f: FunctionFn, allowCtx: boolean }>,
   guard: ExecutionContext,
   source?: string,
 ): unknown {
@@ -207,12 +207,16 @@ function evalCallExpression(node: Extract<ASTNode, { type: 'CallExpression' }>, 
 
   if (node.callee.type === 'Identifier') {
     try {
-      const func = resolveFunction(node.callee.name, fn)
+      const resolved = resolveFunction(node.callee.name, fn)
       const args: unknown[] = []
       for (const arg of node.args) {
         pushCallArgument(args, arg, env)
       }
-      return rejectPromise(func(...args), 'function', node.callee.name)
+      let func = resolved.f;
+      if (resolved.allowCtx) {
+        func = func.bind({ context: env.ctx })
+      }
+      return rejectPromise(func(...args), "function", node.callee.name);
     } catch (e) {
       if (s) attachLocation(e, s, node.start, node.end)
       throw e

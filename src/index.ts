@@ -121,7 +121,7 @@ export function bonsai(options: BonsaiOptions = {}): BonsaiInstance {
   const instance: BonsaiInstance = {
     use(plugin) { plugin(instance); return instance },
     addTransform(name, fn) { registry.addTransform(name, fn); return instance },
-    addFunction(name, fn) { registry.addFunction(name, fn); return instance },
+    addFunction(name, fn, addFunctionOptions?: {allowContextAccess: boolean}) { registry.addFunction(name, fn, addFunctionOptions?.allowContextAccess ?? false); return instance },
     removeTransform(name) { return registry.removeTransform(name) },
     removeFunction(name) { return registry.removeFunction(name) },
     hasTransform(name) { return registry.getTransform(name) !== undefined },

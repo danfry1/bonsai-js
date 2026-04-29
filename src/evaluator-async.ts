@@ -21,7 +21,7 @@ export async function evaluateAsync(
   node: ASTNode,
   context: Record<string, unknown>,
   transforms: Record<string, TransformFn>,
-  functions: Record<string, FunctionFn>,
+  functions: Record<string, { f: FunctionFn, allowCtx: boolean }>,
   guard: ExecutionContext,
   source?: string,
 ): Promise<unknown> {
@@ -214,12 +214,12 @@ async function evalCallExpressionAsync(
 
   if (node.callee.type === 'Identifier') {
     try {
-      const func = resolveFunction(node.callee.name, fn)
+      const resolved = resolveFunction(node.callee.name, fn)
       const args: unknown[] = []
       for (const arg of node.args) {
         await pushCallArgumentAsync(args, arg, env)
       }
-      const result = await func(...args)
+      const result = await resolved.f(...args)
       g.checkTimeout()
       return result
     } catch (e) {

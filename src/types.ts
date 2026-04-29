@@ -245,7 +245,7 @@ export interface BonsaiInstance {
   /** Register a named transform for use with the pipe operator (`|>`). */
   addTransform(name: string, fn: TransformFn): this
   /** Register a named function callable as `name(args)` in expressions. */
-  addFunction(name: string, fn: FunctionFn): this
+  addFunction(name: string, fn: FunctionFn, addFunctionOptions?: {allowContextAccess: boolean}): this
   /** Remove a previously registered transform. Returns true if it existed. */
   removeTransform(name: string): boolean
   /** Remove a previously registered function. Returns true if it existed. */
