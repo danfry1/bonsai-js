@@ -1,4 +1,5 @@
-import type { ASTNode, FunctionFn, ObjectProperty, TransformFn } from './types.js'
+import type { ASTNode, ContextFunctionFn, FunctionFn, ObjectProperty, TransformFn } from './types.js'
+import type { Bindings } from './plugins.js'
 import type { ExecutionContext } from './execution-context.js'
 import { attachLocation, BonsaiTypeError } from './errors.js'
 import {
@@ -8,7 +9,7 @@ import {
   expandSpreadValue,
   getIdentifierName,
   getObjectLiteralKeyName,
-  resolveFunction,
+  resolveCallable,
   resolveTransform,
   validateMethodArgs,
   validateMethodCall,
@@ -29,19 +30,42 @@ export interface EvalEnv {
   ctx: Record<string, unknown>
   tr: Record<string, TransformFn>
   fn: Record<string, FunctionFn>
+  cfn: Record<string, ContextFunctionFn>
   g: ExecutionContext
   s?: string
+  /**
+   * Lazily materialised shallow-frozen copy of `ctx`, shared across all
+   * context-function invocations within a single evaluation. Computed on
+   * the first context-function call. Undefined means no context function
+   * has been called yet in this evaluation.
+   */
+  frozenCtx?: Readonly<Record<string, unknown>>
+}
+
+/** Return (and lazily create) the frozen context snapshot for context functions. */
+export function getFrozenContext(env: EvalEnv): Readonly<Record<string, unknown>> {
+  if (!env.frozenCtx) {
+    // Shallow copy so we never freeze the user's own context object.
+    env.frozenCtx = Object.freeze({ ...env.ctx })
+  }
+  return env.frozenCtx
 }
 
 export function evaluate(
   node: ASTNode,
   context: Record<string, unknown>,
-  transforms: Record<string, TransformFn>,
-  functions: Record<string, FunctionFn>,
+  bindings: Bindings,
   guard: ExecutionContext,
   source?: string,
 ): unknown {
-  return evalNode(node, { ctx: context, tr: transforms, fn: functions, g: guard, s: source })
+  return evalNode(node, {
+    ctx: context,
+    tr: bindings.transforms,
+    fn: bindings.functions,
+    cfn: bindings.contextFunctions,
+    g: guard,
+    s: source,
+  })
 }
 
 function evalNode(node: ASTNode, env: EvalEnv): unknown {
@@ -207,12 +231,15 @@ function evalCallExpression(node: Extract<ASTNode, { type: 'CallExpression' }>, 
 
   if (node.callee.type === 'Identifier') {
     try {
-      const func = resolveFunction(node.callee.name, fn)
+      const resolved = resolveCallable(node.callee.name, fn, env.cfn)
       const args: unknown[] = []
       for (const arg of node.args) {
         pushCallArgument(args, arg, env)
       }
-      return rejectPromise(func(...args), 'function', node.callee.name)
+      const result = resolved.kind === 'context'
+        ? resolved.fn(getFrozenContext(env), ...args)
+        : resolved.fn(...args)
+      return rejectPromise(result, 'function', node.callee.name)
     } catch (e) {
       if (s) attachLocation(e, s, node.start, node.end)
       throw e

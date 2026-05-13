@@ -3,6 +3,7 @@ import type { ExecutionContext } from './execution-context.js'
 import type {
   ASTNode,
   BinaryExpressionOperator,
+  ContextFunctionFn,
   TransformFn,
   FunctionFn,
   UnaryOperator,
@@ -119,6 +120,34 @@ export function resolveFunction(name: string, functions: Record<string, Function
     throw new BonsaiReferenceError('function', name, suggestion)
   }
   return functions[name]
+}
+
+/**
+ * Resolve a callable by name across the pure-function and context-function
+ * registries. Context functions are checked first because they share a
+ * namespace and registrations are last-write-wins regardless of kind.
+ *
+ * Returns a discriminated result so call sites can decide how to invoke
+ * (pure functions take only call args; context functions receive a frozen
+ * context first, then call args).
+ */
+export type ResolvedCallable =
+  | { kind: 'pure'; fn: FunctionFn }
+  | { kind: 'context'; fn: ContextFunctionFn }
+
+export function resolveCallable(
+  name: string,
+  functions: Record<string, FunctionFn>,
+  contextFunctions: Record<string, ContextFunctionFn>,
+): ResolvedCallable {
+  if (Object.hasOwn(contextFunctions, name)) {
+    return { kind: 'context', fn: contextFunctions[name] }
+  }
+  if (Object.hasOwn(functions, name)) {
+    return { kind: 'pure', fn: functions[name] }
+  }
+  const suggestion = suggest(name, [...Object.keys(functions), ...Object.keys(contextFunctions)])
+  throw new BonsaiReferenceError('function', name, suggestion)
 }
 
 export function getIdentifierName(node: ASTNode, message = 'Expected identifier'): string {

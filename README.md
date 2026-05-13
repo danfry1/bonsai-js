@@ -125,6 +125,49 @@ expr.addFunction('lookupTier', async (userId) => {
 await expr.evaluate('lookupTier(userId) == "pro"', { userId: 'u_123' })
 ```
 
+### Context-aware functions
+
+Register functions that read the evaluation context directly. The function
+receives a shallow-frozen snapshot of the context as its first parameter, so
+you can keep expressions terse and let the function pull what it needs:
+
+```ts
+import { bonsai } from 'bonsai-js'
+
+interface AppContext {
+  currentUserId: string
+  perms: readonly string[]
+}
+
+const app = bonsai<AppContext>()
+
+app.addContextFunction('lookupCurrentUserTier', async (ctx) => {
+  const row = await db.users.findById(ctx.currentUserId)
+  return row?.tier ?? 'free'
+})
+
+app.addContextFunction('hasPermission', (ctx, action) =>
+  ctx.perms.includes(String(action)))
+
+await app.evaluate(
+  'lookupCurrentUserTier() == "pro" && hasPermission("admin")',
+  { currentUserId: 'u_123', perms: ['admin', 'write'] },
+)
+```
+
+The instance is generic over the context type (`bonsai<AppContext>()`), giving
+you end-to-end type safety: `ctx` is typed inside the function, and the call
+site is type-checked against the same shape. If your context type has required
+fields, TypeScript also requires you to pass the `context` argument to
+`evaluate`, `evaluateSync`, and compiled-expression evaluation. The frozen
+snapshot guarantees functions cannot mutate shared evaluation state.
+
+Pure functions (`addFunction`) and context-aware functions (`addContextFunction`)
+share a single namespace. Registering the same name with either method
+overwrites the prior registration. Use `isContextFunction(name)` for
+introspection when needed. Plugins typed against a minimal context requirement
+can still be applied to instances with a wider context shape.
+
 ### Editor validation
 
 ```ts
@@ -361,20 +404,25 @@ evaluateExpression<number>('x * 2', { x: 21 }) // 42
 ## Instance Methods
 
 ```ts
-interface BonsaiInstance {
-  use(plugin: BonsaiPlugin): this
+type EvaluationContextArgs<TCtx extends Record<string, unknown> = Record<string, unknown>> =
+  {} extends TCtx ? [context?: TCtx] : [context: TCtx]
+
+interface BonsaiInstance<TCtx extends Record<string, unknown> = Record<string, unknown>> {
+  use(plugin: BonsaiPlugin<TCtx>): this
   addTransform(name: string, fn: TransformFn): this
   addFunction(name: string, fn: FunctionFn): this
+  addContextFunction(name: string, fn: ContextFunctionFn<TCtx>): this
   removeTransform(name: string): boolean
   removeFunction(name: string): boolean
   hasTransform(name: string): boolean
   hasFunction(name: string): boolean
+  isContextFunction(name: string): boolean
   listTransforms(): string[]
   listFunctions(): string[]
   clearCache(): void
-  compile(expression: string): CompiledExpression
-  evaluate<T = unknown>(expression: string, context?: Record<string, unknown>): Promise<T>
-  evaluateSync<T = unknown>(expression: string, context?: Record<string, unknown>): T
+  compile(expression: string): CompiledExpression<TCtx>
+  evaluate<T = unknown>(expression: string, ...args: EvaluationContextArgs<TCtx>): Promise<T>
+  evaluateSync<T = unknown>(expression: string, ...args: EvaluationContextArgs<TCtx>): T
   validate(expression: string): ValidationResult
 }
 ```
@@ -382,9 +430,12 @@ interface BonsaiInstance {
 Method notes:
 
 - `use()` runs a plugin immediately and returns the same instance.
-- `addTransform()` and `addFunction()` overwrite any existing registration with the same name.
-- `listTransforms()` and `listFunctions()` return the currently registered names.
+- `addTransform()`, `addFunction()`, and `addContextFunction()` overwrite any existing registration with the same name. Pure and context-aware functions share a single namespace.
+- `addContextFunction()` registers a function that receives a shallow-frozen snapshot of the evaluation context as its first argument. See [Context-aware functions](#context-aware-functions).
+- `isContextFunction()` returns `true` if the named function was registered via `addContextFunction()`.
+- `listTransforms()` and `listFunctions()` return the currently registered names. `listFunctions()` includes both pure and context-aware functions.
 - `clearCache()` clears the internal AST cache and compiled-expression cache. It does not remove registered transforms/functions.
+- Pass a context type generic to `bonsai<MyContext>()` for end-to-end type safety: `evaluate`, `evaluateSync`, `addContextFunction`, `compile`, and `use` all propagate the type. If `MyContext` has required fields, TypeScript requires a context argument when evaluating.
 
 ## Extending the Runtime
 

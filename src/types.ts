@@ -235,49 +235,81 @@ export type TransformFn = (value: unknown, ...args: unknown[]) => unknown | Prom
 /** A function is called directly by name: `myFunction(arg1, arg2)`. */
 export type FunctionFn = (...args: unknown[]) => unknown | Promise<unknown>
 
-/** A plugin receives the Bonsai instance and extends it with transforms or functions. */
-export type BonsaiPlugin = (instance: BonsaiInstance) => void
+/** The shape of an evaluation context object. */
+export type BonsaiContext = object
+type EmptyContext = Record<never, never>
+
+/**
+ * Evaluation/compiled call sites only require a `context` argument when the
+ * instance context type has required keys. Untyped instances keep the current
+ * ergonomic `evaluateSync(expr)` / `compiled.evaluateSync()` behavior.
+ */
+export type EvaluationContextArgs<TCtx extends BonsaiContext = Record<string, unknown>> =
+  EmptyContext extends TCtx ? [context?: TCtx] : [context: TCtx]
+
+/**
+ * A context-aware function. Receives a shallow-frozen copy of the evaluation
+ * context as its first parameter, followed by the call's argument values.
+ * Registered via {@link BonsaiInstance.addContextFunction}.
+ */
+export type ContextFunctionFn<TCtx extends BonsaiContext = Record<string, unknown>> =
+  (context: Readonly<TCtx>, ...args: unknown[]) => unknown | Promise<unknown>
+
+/** A plugin receives a Bonsai instance and extends it with transforms or functions. */
+export type BonsaiPlugin<TCtx extends BonsaiContext = Record<string, unknown>> =
+  (instance: BonsaiInstance<TCtx>) => void
 
 /** Core Bonsai instance returned by `bonsai()`. */
-export interface BonsaiInstance {
+export interface BonsaiInstance<TCtx extends BonsaiContext = Record<string, unknown>> {
   /** Register a plugin that extends this instance with transforms/functions. */
-  use(plugin: BonsaiPlugin): this
+  use<TPluginCtx extends BonsaiContext>(
+    plugin: TCtx extends TPluginCtx ? BonsaiPlugin<TPluginCtx> : never,
+  ): this
   /** Register a named transform for use with the pipe operator (`|>`). */
   addTransform(name: string, fn: TransformFn): this
   /** Register a named function callable as `name(args)` in expressions. */
   addFunction(name: string, fn: FunctionFn): this
+  /**
+   * Register a context-aware function callable as `name(args)` in expressions.
+   * The function receives a frozen snapshot of the evaluation context as its
+   * first parameter. Shares a namespace with {@link addFunction}: registering
+   * the same name with either method overwrites the previous registration.
+   */
+  addContextFunction(name: string, fn: ContextFunctionFn<TCtx>): this
   /** Remove a previously registered transform. Returns true if it existed. */
   removeTransform(name: string): boolean
-  /** Remove a previously registered function. Returns true if it existed. */
+  /** Remove a previously registered function (pure or context-aware). Returns true if it existed. */
   removeFunction(name: string): boolean
   /** Check whether a transform with the given name is registered. */
   hasTransform(name: string): boolean
-  /** Check whether a function with the given name is registered. */
+  /** Check whether a function (pure or context-aware) with the given name is registered. */
   hasFunction(name: string): boolean
+  /** Check whether a function with the given name was registered via {@link addContextFunction}. */
+  isContextFunction(name: string): boolean
   /** List all registered transform names. */
   listTransforms(): string[]
-  /** List all registered function names. */
+  /** List all registered function names (both pure and context-aware). */
   listFunctions(): string[]
   /** Returns a read-only snapshot of the security policy for autocomplete filtering. */
   getPolicy(): PolicySnapshot
   /** Clear the compiled expression and AST caches. */
   clearCache(): void
   /** Pre-compile an expression for repeated evaluation. */
-  compile(expression: string): CompiledExpression
+  compile(expression: string): CompiledExpression<TCtx>
   /** Evaluate an expression asynchronously. Required when transforms/functions are async. */
-  evaluate<T = unknown>(expression: string, context?: Record<string, unknown>): Promise<T>
+  evaluate<T = unknown>(expression: string, ...args: EvaluationContextArgs<TCtx>): Promise<T>
   /** Evaluate an expression synchronously. Throws if a transform/function returns a Promise. */
-  evaluateSync<T = unknown>(expression: string, context?: Record<string, unknown>): T
+  evaluateSync<T = unknown>(expression: string, ...args: EvaluationContextArgs<TCtx>): T
   /** Check if an expression is syntactically valid without evaluating it. */
   validate(expression: string): ValidationResult
 }
 
 /** A pre-compiled expression that can be evaluated repeatedly with different contexts. */
-export interface CompiledExpression {
+export interface CompiledExpression<TCtx extends BonsaiContext = Record<string, unknown>> {
   /** Evaluate asynchronously. Required when transforms/functions are async. */
-  evaluate<T = unknown>(context?: Record<string, unknown>): Promise<T>
+  evaluate<T = unknown>(...args: EvaluationContextArgs<TCtx>): Promise<T>
   /** Evaluate synchronously. Throws if a transform/function returns a Promise. */
-  evaluateSync<T = unknown>(context?: Record<string, unknown>): T
+  evaluateSync<T = unknown>(...args: EvaluationContextArgs<TCtx>): T
   /** The optimized AST after constant folding and dead branch elimination. */
   readonly ast: ASTNode
   /** The original expression string. */

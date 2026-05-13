@@ -175,8 +175,8 @@ describe('property-based evaluator invariants', () => {
 
       const optimized = compile(parsed)
       const compiled = expr.compile(source)
-      const direct = captureOutcome(() => evaluate(parsed, { ...CONTEXT }, {}, {}, new ExecutionContext(new SecurityPolicy())))
-      const optimizedDirect = captureOutcome(() => evaluate(optimized, { ...CONTEXT }, {}, {}, new ExecutionContext(new SecurityPolicy())))
+      const direct = captureOutcome(() => evaluate(parsed, { ...CONTEXT }, { transforms: {}, functions: {}, contextFunctions: {} }, new ExecutionContext(new SecurityPolicy())))
+      const optimizedDirect = captureOutcome(() => evaluate(optimized, { ...CONTEXT }, { transforms: {}, functions: {}, contextFunctions: {} }, new ExecutionContext(new SecurityPolicy())))
       const syncResult = captureOutcome(() => expr.evaluateSync(source, { ...CONTEXT }))
       const compiledResult = captureOutcome(() => compiled.evaluateSync({ ...CONTEXT }))
       const asyncResult = await captureAsyncOutcome(() => expr.evaluate(source, { ...CONTEXT }))

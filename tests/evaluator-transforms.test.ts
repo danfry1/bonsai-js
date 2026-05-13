@@ -13,7 +13,7 @@ function run(
 ) {
   const ast = parse(expr)
   const ec = new ExecutionContext(new SecurityPolicy())
-  return evaluate(ast, context, transforms, functions, ec)
+  return evaluate(ast, context, { transforms, functions, contextFunctions: {} }, ec)
 }
 
 describe('evaluator - functions', () => {
