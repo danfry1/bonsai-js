@@ -29,7 +29,7 @@ export interface AutocompleteInstance {
 }
 
 // Valid identifier pattern for transform name validation
-const VALID_IDENTIFIER = /^[a-zA-Z_$][\w$]*$/
+const VALID_IDENTIFIER = /^[a-zA-Z_$][\w$]*$/u
 
 /** Check if an error is an expected Bonsai error (syntax, security, type, or reference). */
 function isExpectedError(err: unknown): boolean {
@@ -456,7 +456,7 @@ function inferPipeInputType(
   onError?: ErrorHandler,
 ): InferredTypeName | undefined {
   const before = expression.slice(0, cursor)
-  const pipeMatch = before.match(/^(.*)\|>\s*\w*\s*$/s)
+  const pipeMatch = before.match(/^(.*)\|>\s*\w*\s*$/su)
   if (!pipeMatch) return undefined
 
   const exprBefore = pipeMatch[1].trim()

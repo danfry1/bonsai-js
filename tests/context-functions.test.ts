@@ -98,7 +98,7 @@ describe('addContextFunction', () => {
     it('rejects async context functions in evaluateSync with a helpful error', () => {
       const expr = bonsai<{ value: number }>()
       expr.addContextFunction('lookup', async (ctx) => ctx.value)
-      expect(() => expr.evaluateSync('lookup()', { value: 1 })).toThrow(/lookup/)
+      expect(() => expr.evaluateSync('lookup()', { value: 1 })).toThrow(/lookup/u)
     })
 
     it('supports parallel-safe context across async functions', async () => {
@@ -202,7 +202,7 @@ describe('addContextFunction', () => {
         throw new Error('should have thrown')
       } catch (err) {
         expect(err).toBeInstanceOf(BonsaiReferenceError)
-        expect((err as Error).message).toMatch(/lookupUser/)
+        expect((err as Error).message).toMatch(/lookupUser/u)
       }
     })
 
@@ -216,7 +216,7 @@ describe('addContextFunction', () => {
       } catch (err) {
         expect(err).toBeInstanceOf(BonsaiReferenceError)
         // The suggestion should reach into the context-function namespace too
-        expect((err as Error).message).toMatch(/ctxfn/)
+        expect((err as Error).message).toMatch(/ctxfn/u)
       }
     })
   })
@@ -251,13 +251,13 @@ describe('addContextFunction', () => {
     it('errors thrown from async functions propagate via the returned promise', async () => {
       const expr = bonsai<{ userId: string }>()
       expr.addContextFunction('boom', async () => { throw new Error('async-boom') })
-      await expect(expr.evaluate('boom()', { userId: 'u_1' })).rejects.toThrow(/async-boom/)
+      await expect(expr.evaluate('boom()', { userId: 'u_1' })).rejects.toThrow(/async-boom/u)
     })
 
     it('reports the function name when evaluateSync sees a promise from a context function', () => {
       const expr = bonsai<{ tier: string }>()
       expr.addContextFunction('asyncCtx', async (ctx) => ctx.tier)
-      expect(() => expr.evaluateSync('asyncCtx()', { tier: 'pro' })).toThrow(/asyncCtx/)
+      expect(() => expr.evaluateSync('asyncCtx()', { tier: 'pro' })).toThrow(/asyncCtx/u)
     })
   })
 

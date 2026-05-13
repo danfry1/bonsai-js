@@ -4,10 +4,7 @@ import type {
   BonsaiInstance,
   CompiledExpression,
   EvaluationContextArgs,
-  ValidationResult,
   ExpressionReferences,
-  TransformFn,
-  FunctionFn,
   ContextFunctionFn,
   BonsaiPlugin,
   ASTNode,
@@ -47,15 +44,15 @@ export type {
 const DEFAULT_CACHE_SIZE = 256
 
 // Shared instance for standalone one-off evaluation
-let _shared: BonsaiInstance | undefined
+let sharedInstance: BonsaiInstance | undefined
 
 /**
  * Evaluate a single expression with default options. Uses a shared instance internally.
  * For repeated evaluation or custom configuration, use `bonsai()` to create a dedicated instance.
  */
 export function evaluateExpression<T = unknown>(expression: string, context?: Record<string, unknown>): T {
-  if (!_shared) _shared = bonsai()
-  return _shared.evaluateSync<T>(expression, context)
+  if (!sharedInstance) sharedInstance = bonsai()
+  return sharedInstance.evaluateSync<T>(expression, context)
 }
 
 /**

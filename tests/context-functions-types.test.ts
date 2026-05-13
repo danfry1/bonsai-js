@@ -73,10 +73,10 @@ describe('addContextFunction / bonsai<TCtx>() type surface', () => {
 
   it('BonsaiInstance is generic over context', () => {
     interface Ctx { a: number }
-    const _typed: BonsaiInstance<Ctx> = bonsai<Ctx>()
-    const _untyped: BonsaiInstance = bonsai()
-    expect(typeof _typed.addContextFunction).toBe('function')
-    expect(typeof _untyped.addContextFunction).toBe('function')
+    const typed: BonsaiInstance<Ctx> = bonsai<Ctx>()
+    const untyped: BonsaiInstance = bonsai()
+    expect(typeof typed.addContextFunction).toBe('function')
+    expect(typeof untyped.addContextFunction).toBe('function')
   })
 
   it('CompiledExpression is generic over context', () => {

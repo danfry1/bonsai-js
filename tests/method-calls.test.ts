@@ -135,7 +135,7 @@ describe('method calls on values', () => {
   describe('argument validation', () => {
     const expr = bonsai()
     expr.addFunction('makeFn', () => () => 'injected')
-    expr.addFunction('makeRegex', () => /x/)
+    expr.addFunction('makeRegex', () => /x/u)
 
     it('blocks function args to replace', () => {
       expect(() => expr.evaluateSync('"abc".replace("a", makeFn())')).toThrow('callbacks are not allowed')
