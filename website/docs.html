@@ -239,8 +239,8 @@ console.log(qualifiesForFreeShipping) <span class="comment">// true</span></div>
           <a class="docs-task-card" href="#api-extending">
             <span class="docs-task-label">Add app logic</span>
             <h3>Register custom transforms and functions</h3>
-            <p>Use this when the built-in syntax is not enough and you want app-specific capabilities.</p>
-            <code class="docs-task-code">expr.addFunction('discount', fn)</code>
+            <p>Use this when the built-in syntax is not enough and you want app-specific capabilities, including functions that read the evaluation context directly.</p>
+            <code class="docs-task-code">expr.addFunction('discount', fn)<br>expr.addContextFunction('hasPermission', fn)</code>
           </a>
         </div>
       </div>
@@ -865,8 +865,21 @@ expr.addFunction(<span class="string">'lookupTier'</span>, <span class="keyword"
 })
         </div>
 
+        <p>The instance itself can also be generic over the context type. Pass <code>bonsai&lt;AppContext&gt;()</code> and the context shape is checked end-to-end through <code>evaluate</code>, <code>evaluateSync</code>, <code>compile</code>, and <code>addContextFunction</code>:</p>
+
+        <div class="doc-code">
+<span class="keyword">interface</span> AppContext { userId: <span class="keyword">string</span>; perms: readonly <span class="keyword">string</span>[] }
+
+<span class="keyword">const</span> app = bonsai&lt;AppContext&gt;()
+
+<span class="keyword">await</span> app.evaluate(<span class="string">'userId == "u_1"'</span>, { userId: <span class="string">'u_1'</span>, perms: [] })  <span class="result">// ✓</span>
+<span class="keyword">await</span> app.evaluate(<span class="string">'userId == "u_1"'</span>, { foo: <span class="string">'bar'</span> })                <span class="result">// ✗ TS error</span>
+        </div>
+
+        <p>When <code>AppContext</code> has required fields, the <code>context</code> argument becomes required at every call site; when fields are optional (or the default <code>Record&lt;string, unknown&gt;</code>), it stays optional, preserving the untyped ergonomics.</p>
+
         <div class="doc-tip">
-          <strong>Tip:</strong> If any registered transform, function, or method returns a <code>Promise</code>, <code>evaluateSync()</code> will throw an <code>BonsaiTypeError</code> identifying the offending call and suggesting <code>evaluate()</code> instead. Use <code>evaluate()</code> or compiled <code>.evaluate()</code> for async extensions.
+          <strong>Tip:</strong> If any registered transform, function, or method returns a <code>Promise</code>, <code>evaluateSync()</code> will throw a <code>BonsaiTypeError</code> identifying the offending call and suggesting <code>evaluate()</code> instead. Use <code>evaluate()</code> or compiled <code>.evaluate()</code> for async extensions.
         </div>
       </div>
 
@@ -1003,6 +1016,45 @@ expr.evaluateSync(<span class="string">'between(order.total, 50, 200)'</span>, {
 })     <span class="result">// true</span>
         </div>
 
+        <h3>Context-aware functions</h3>
+        <p>Some functions need to read the evaluation context directly (think auth, permissions, personalization). Register them with <code>addContextFunction</code>: the function receives a shallow-frozen snapshot of the context as its first parameter, followed by the call's arguments.</p>
+
+        <div class="doc-code">
+<span class="keyword">type</span> ContextFunctionFn&lt;TCtx&gt; =
+  (context: Readonly&lt;TCtx&gt;, ...args: unknown[]) =&gt; unknown | Promise&lt;unknown&gt;
+        </div>
+
+        <div class="doc-code">
+<span class="keyword">interface</span> AppContext {
+  currentUserId: <span class="keyword">string</span>
+  perms: readonly <span class="keyword">string</span>[]
+}
+
+<span class="keyword">const</span> app = bonsai&lt;AppContext&gt;()
+
+app.addContextFunction(<span class="string">'lookupCurrentUserTier'</span>, <span class="keyword">async</span> (ctx) =&gt; {
+  <span class="keyword">const</span> row = <span class="keyword">await</span> db.users.findById(ctx.currentUserId)
+  <span class="keyword">return</span> row?.tier ?? <span class="string">'free'</span>
+})
+
+app.addContextFunction(<span class="string">'hasPermission'</span>, (ctx, action) =&gt;
+  ctx.perms.includes(<span class="keyword">String</span>(action))
+)
+
+<span class="keyword">await</span> app.evaluate(
+  <span class="string">'lookupCurrentUserTier() == "pro" && hasPermission("admin")'</span>,
+  { currentUserId: <span class="string">'u_123'</span>, perms: [<span class="string">'admin'</span>, <span class="string">'write'</span>] }
+)
+        </div>
+
+        <p>Pure functions (<code>addFunction</code>) and context-aware functions share a single namespace. Registering the same name with either method overwrites the prior registration. Use <code>isContextFunction(name)</code> for introspection.</p>
+
+        <p>The frozen-context snapshot is created lazily once per evaluation and shared across every context-function call in that evaluation. Pure-function-only expressions never pay any shallow-copy cost.</p>
+
+        <div class="doc-tip">
+          <strong>Tip:</strong> typing the instance with <code>bonsai&lt;AppContext&gt;()</code> propagates <code>AppContext</code> through every method that touches context, so <code>evaluate</code>, <code>evaluateSync</code>, <code>compile</code>, and <code>addContextFunction</code> are all checked against the same shape. If your context type has required fields, the context argument becomes required at call sites.
+        </div>
+
         <h3>Plugins</h3>
 
         <div class="doc-code">
@@ -1016,7 +1068,9 @@ expr.evaluateSync(<span class="string">'between(order.total, 50, 200)'</span>, {
 bonsai().use(currency)
         </div>
 
-        <p>Registering the same name again replaces the previous implementation. Transforms and functions live in separate registries, so the same name can exist once in each namespace.</p>
+        <p>Registering the same name again replaces the previous implementation. Transforms live in a separate namespace; pure and context-aware functions share one namespace and overwrite each other.</p>
+
+        <p>Plugins can also be typed against a minimal context they require: <code>BonsaiPlugin&lt;{ tenantId: string }&gt;</code> applies cleanly to any instance whose context extends <code>{ tenantId: string }</code>.</p>
 
         <div class="doc-tip">
           <strong>Design rule:</strong> keep transforms small and predictable, validate their inputs, and reserve async behavior for cases where you genuinely need I/O. Custom extensions run as normal host JavaScript, so treat them as trusted code.
@@ -1032,13 +1086,15 @@ bonsai().use(currency)
           <tbody>
             <tr><td><code>use(plugin)</code></td><td><code>this</code></td><td>Apply a plugin immediately and return the same instance for chaining.</td></tr>
             <tr><td><code>addTransform(name, fn)</code></td><td><code>this</code></td><td>Register or replace a transform.</td></tr>
-            <tr><td><code>addFunction(name, fn)</code></td><td><code>this</code></td><td>Register or replace a function.</td></tr>
+            <tr><td><code>addFunction(name, fn)</code></td><td><code>this</code></td><td>Register or replace a pure function.</td></tr>
+            <tr><td><code>addContextFunction(name, fn)</code></td><td><code>this</code></td><td>Register or replace a context-aware function. Shares a namespace with <code>addFunction</code>.</td></tr>
             <tr><td><code>removeTransform(name)</code></td><td><code>boolean</code></td><td>Unregister a transform. Returns <code>true</code> if it existed.</td></tr>
-            <tr><td><code>removeFunction(name)</code></td><td><code>boolean</code></td><td>Unregister a function. Returns <code>true</code> if it existed.</td></tr>
+            <tr><td><code>removeFunction(name)</code></td><td><code>boolean</code></td><td>Unregister a function (pure or context-aware). Returns <code>true</code> if it existed.</td></tr>
             <tr><td><code>hasTransform(name)</code></td><td><code>boolean</code></td><td>Check if a transform is registered.</td></tr>
-            <tr><td><code>hasFunction(name)</code></td><td><code>boolean</code></td><td>Check if a function is registered.</td></tr>
+            <tr><td><code>hasFunction(name)</code></td><td><code>boolean</code></td><td>Check if a function (pure or context-aware) is registered.</td></tr>
+            <tr><td><code>isContextFunction(name)</code></td><td><code>boolean</code></td><td>Check whether a registered function reads the evaluation context.</td></tr>
             <tr><td><code>listTransforms()</code></td><td><code>string[]</code></td><td>List all registered transform names.</td></tr>
-            <tr><td><code>listFunctions()</code></td><td><code>string[]</code></td><td>List all registered function names.</td></tr>
+            <tr><td><code>listFunctions()</code></td><td><code>string[]</code></td><td>List all registered function names (both pure and context-aware).</td></tr>
             <tr><td><code>clearCache()</code></td><td><code>void</code></td><td>Clear the internal AST cache and compiled-expression cache.</td></tr>
           </tbody>
         </table>

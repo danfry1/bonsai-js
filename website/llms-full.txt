@@ -420,7 +420,7 @@ expr.evaluateSync('"ha" |> repeat(3)')  // "hahaha"
 
 ### addFunction(name, fn)
 
-Register a function called directly by name.
+Register a pure function called directly by name.
 
 ```js
 expr.addFunction('greet', (name) => `Hello, ${name}!`)
@@ -429,6 +429,39 @@ expr.addFunction('clamp', (val, min, max) => Math.min(Math.max(val, min), max))
 expr.evaluateSync('greet("world")')      // "Hello, world!"
 expr.evaluateSync('clamp(150, 0, 100)')  // 100
 ```
+
+### addContextFunction(name, fn)
+
+Register a function that reads the evaluation context. The function receives a shallow-frozen snapshot of the context as its first parameter, followed by the call's arguments. Pure functions and context-aware functions share a single namespace.
+
+```ts
+interface AppContext {
+  currentUserId: string
+  perms: readonly string[]
+}
+
+const app = bonsai<AppContext>()
+
+app.addContextFunction('lookupCurrentUserTier', async (ctx) => {
+  const row = await db.users.findById(ctx.currentUserId)
+  return row?.tier ?? 'free'
+})
+
+app.addContextFunction('hasPermission', (ctx, action) =>
+  ctx.perms.includes(String(action))
+)
+
+await app.evaluate(
+  'lookupCurrentUserTier() == "pro" && hasPermission("admin")',
+  { currentUserId: 'u_123', perms: ['admin', 'write'] }
+)
+```
+
+Typing the instance with `bonsai<AppContext>()` propagates the context shape through `evaluate`, `evaluateSync`, `compile`, and `addContextFunction` for end-to-end type safety. When the context type has required fields, the context argument becomes required at every call site.
+
+The frozen-context snapshot is created lazily once per evaluation and shared across every context-function call within that evaluation. Pure-function-only expressions never pay any shallow-copy cost.
+
+Use `isContextFunction(name)` to check whether a registered function reads the context.
 
 ### use(plugin)
 
