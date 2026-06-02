@@ -785,8 +785,8 @@ interface Completion {
 
 Bonsai follows SemVer for the documented package entrypoints `bonsai-js`, `bonsai-js/stdlib`, and `bonsai-js/autocomplete`.
 
-- Supported runtimes are Node 20+ and current Bun releases.
-- The packed npm artifact is smoke-tested on Node 20 and 22.
+- Supported runtimes are Node 22+ and current Bun releases.
+- The packed npm artifact is smoke-tested on Node 22 and 24.
 - Internal modules under `src/*` are not public API.
 
 See [stability policy](./docs/stability-policy.md) for the compatibility boundary and release rules.

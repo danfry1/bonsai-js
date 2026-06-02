@@ -1,0 +1,7 @@
+[install]
+# Supply-chain hardening: refuse npm package versions published more recently
+# than this threshold (in seconds). 604800 = 7 days. This is install-time
+# defense-in-depth; the primary one-week gate is the Dependabot cooldown,
+# which blocks update PRs until a version is at least seven days old.
+minimumReleaseAge = 604800
+minimumReleaseAgeExcludes = []
