@@ -413,10 +413,10 @@ evaluateExpression<number>('x * 2', { x: 21 }) // 42
 ## Instance Methods
 
 ```ts
-type EvaluationContextArgs<TCtx extends Record<string, unknown> = Record<string, unknown>> =
+type EvaluationContextArgs<TCtx extends object = Record<string, unknown>> =
   {} extends TCtx ? [context?: TCtx] : [context: TCtx]
 
-interface BonsaiInstance<TCtx extends Record<string, unknown> = Record<string, unknown>> {
+interface BonsaiInstance<TCtx extends object = Record<string, unknown>> {
   use(plugin: BonsaiPlugin<TCtx>): this
   addTransform(name: string, fn: TransformFn): this
   addFunction(name: string, fn: FunctionFn): this
