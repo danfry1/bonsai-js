@@ -6,7 +6,6 @@ import type {
   EvaluationContextArgs,
   ExpressionReferences,
   ContextFunctionFn,
-  BonsaiPlugin,
   ASTNode,
 } from './types.js'
 import { parse } from './parser.js'
@@ -136,13 +135,8 @@ export function bonsai<TCtx extends BonsaiContext = Record<string, unknown>>(
   }
 
   const instance: BonsaiInstance<TCtx> = {
-    use<TPluginCtx extends BonsaiContext>(
-      plugin: TCtx extends TPluginCtx ? BonsaiPlugin<TPluginCtx> : never,
-    ) {
-      // `use()` only accepts plugins whose required context is satisfied by
-      // this instance's context type. The cast bridges that conditional
-      // relationship for the implementation.
-      plugin(instance as unknown as BonsaiInstance<TPluginCtx>)
+    use(plugin) {
+      plugin(instance)
       return instance
     },
     addTransform(name, fn) { registry.addTransform(name, fn); return instance },

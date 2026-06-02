@@ -262,9 +262,7 @@ export type BonsaiPlugin<TCtx extends BonsaiContext = Record<string, unknown>> =
 /** Core Bonsai instance returned by `bonsai()`. */
 export interface BonsaiInstance<TCtx extends BonsaiContext = Record<string, unknown>> {
   /** Register a plugin that extends this instance with transforms/functions. */
-  use<TPluginCtx extends BonsaiContext>(
-    plugin: TCtx extends TPluginCtx ? BonsaiPlugin<TPluginCtx> : never,
-  ): this
+  use(plugin: BonsaiPlugin<TCtx>): this
   /** Register a named transform for use with the pipe operator (`|>`). */
   addTransform(name: string, fn: TransformFn): this
   /** Register a named function callable as `name(args)` in expressions. */
