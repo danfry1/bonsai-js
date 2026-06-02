@@ -165,4 +165,56 @@ describe('async higher-order array method parity with sync', () => {
     expect(await expr.evaluate('arr.map(. * 2)', { arr: [1, 2, 3] })).toEqual([2, 4, 6])
     expect(await expr.evaluate('arr.filter(. > 1)', { arr: [1, 2, 3] })).toEqual([2, 3])
   })
+
+  it('findIndex short-circuits and returns the matching index', async () => {
+    const log: number[] = []
+    const arr = logged(log, [[0, false], [1, true], [2, false]])
+    const result = await bonsai().evaluate('arr.findIndex(.flag)', { arr })
+    expect(log).toEqual([0, 1])
+    expect(result).toBe(1)
+  })
+
+  it('map evaluates predicates in array order', async () => {
+    const log: number[] = []
+    const arr = logged(log, [[0, true], [1, true], [2, true]])
+    await bonsai().evaluate('arr.map(.flag)', { arr })
+    expect(log).toEqual([0, 1, 2])
+  })
+
+  it('returns the not-found sentinels for find/findIndex/some/every', async () => {
+    const expr = bonsai()
+    expect(await expr.evaluate('arr.find(. > 9)', { arr: [1, 2, 3] })).toBeUndefined()
+    expect(await expr.evaluate('arr.findIndex(. > 9)', { arr: [1, 2, 3] })).toBe(-1)
+    expect(await expr.evaluate('arr.some(. > 9)', { arr: [1, 2, 3] })).toBe(false)
+    expect(await expr.evaluate('arr.every(. > 0)', { arr: [1, 2, 3] })).toBe(true)
+    expect(await expr.evaluate('arr.some(. > 9)', { arr: [] })).toBe(false)
+    expect(await expr.evaluate('arr.every(. > 9)', { arr: [] })).toBe(true)
+  })
+
+  it('awaits Promise-returning predicates (map and filter)', async () => {
+    const expr = bonsai()
+    expr.addFunction('asyncTax', async () => 5)
+    expr.addFunction('thresh', async () => 1)
+    // Lambda bodies that await an async function become Promise-returning predicates.
+    expect(await expr.evaluate('items.map(.price + asyncTax())', { items: [{ price: 10 }, { price: 20 }] })).toEqual([15, 25])
+    expect(await expr.evaluate('items.filter(. > thresh())', { items: [1, 2, 3] })).toEqual([2, 3])
+  })
+
+  it('flatMap awaits and flattens one level', async () => {
+    const result = await bonsai().evaluate('data.flatMap(.vals)', { data: [{ vals: [1, 2] }, { vals: [3] }] })
+    expect(result).toEqual([1, 2, 3])
+  })
+
+  it('handles nested higher-order methods (sync and async agree)', async () => {
+    const expr = bonsai()
+    const ctx = { matrix: [{ row: [1, 2, 3] }, { row: [4, 5] }] }
+    expect(expr.evaluateSync('matrix.map(.row.filter(. > 2))', ctx)).toEqual([[3], [4, 5]])
+    expect(await expr.evaluate('matrix.map(.row.filter(. > 2))', ctx)).toEqual([[3], [4, 5]])
+  })
+
+  it('propagates errors thrown while evaluating a predicate', async () => {
+    const expr = bonsai()
+    expr.addFunction('boom', async () => { throw new Error('predicate boom') })
+    await expect(expr.evaluate('items.map(boom())', { items: [1, 2] })).rejects.toThrow('predicate boom')
+  })
 })
