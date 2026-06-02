@@ -62,6 +62,42 @@ A performance gate runs on every release. If your change touches the evaluator h
 - Write a clear title and description explaining what and why.
 - Ensure CI passes (lint, typecheck, test, build, perf gate).
 
+## Releasing
+
+Releases are driven by a Git tag and use npm **staged publishing** over OIDC trusted publishing. No npm tokens are involved, and every release requires a human 2FA approval before the version becomes installable.
+
+### 1. Cut the release
+
+Bump `version` in `package.json` and update `CHANGELOG.md` in a PR titled `chore: release X.Y.Z`, and merge it to `main`. Then tag that commit and push the tag:
+
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+Pushing a `v*` tag triggers `.github/workflows/release.yml`.
+
+### 2. CI stages the release (automatic)
+
+The release workflow runs the full gate (lint, typecheck, test, build, performance gate, package checks), then runs `npm stage publish`. This authenticates via OIDC (no token), attaches provenance, and uploads the tarball to npm's **stage queue**. The version is **not installable yet**. CI also creates the GitHub Release.
+
+### 3. Approve the staged version (required, manual)
+
+The staged version waits in the queue until a maintainer approves it with a 2FA proof of presence. From a trusted device with npm CLI `>= 11.15.0` (run `npm login` first):
+
+```bash
+npm stage list bonsai-js      # find the stage-id
+npm stage view <stage-id>     # inspect the staged version (optional)
+npm stage approve <stage-id>  # 2FA prompt; makes the version live
+```
+
+Alternatively, approve from the **Staged Packages** tab on the package page at npmjs.com. After approval the version is published with provenance and becomes installable. If no one approves, the version never ships, by design: a compromised CI run or credential can only queue a release, not publish it.
+
+### npm configuration (one-time, already set)
+
+- Trusted publisher `danfry1/bonsai-js` via `release.yml`, with `npm stage publish` in its allowed actions.
+- Publishing access set to "Require two-factor authentication and disallow tokens", so only OIDC plus a human 2FA approval can publish.
+
 ## Project Structure
 
 ```
