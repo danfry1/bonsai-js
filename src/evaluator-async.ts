@@ -29,7 +29,6 @@ export async function evaluateAsync(
     ctx: context,
     tr: bindings.transforms,
     fn: bindings.functions,
-    cfn: bindings.contextFunctions,
     g: guard,
     s: source,
   }
@@ -221,7 +220,7 @@ async function evalCallExpressionAsync(
 
   if (node.callee.type === 'Identifier') {
     try {
-      const resolved = resolveCallable(node.callee.name, fn, env.cfn)
+      const resolved = resolveCallable(node.callee.name, fn)
       const args: unknown[] = []
       for (const arg of node.args) {
         await pushCallArgumentAsync(args, arg, env)

@@ -255,6 +255,17 @@ export type EvaluationContextArgs<TCtx extends BonsaiContext = Record<string, un
 export type ContextFunctionFn<TCtx extends BonsaiContext = Record<string, unknown>> =
   (context: Readonly<TCtx>, ...args: unknown[]) => unknown | Promise<unknown>
 
+/**
+ * A registry entry for a callable invoked as `name(args)` in expressions,
+ * tagged with its kind so the evaluator knows how to call it. Pure functions
+ * receive only the call arguments; context functions receive the evaluation
+ * context as their first parameter. Pure and context functions share one
+ * namespace, so a name resolves to exactly one entry (last registration wins).
+ */
+export type RegisteredFunction =
+  | { kind: 'pure'; fn: FunctionFn }
+  | { kind: 'context'; fn: ContextFunctionFn }
+
 /** A plugin receives a Bonsai instance and extends it with transforms or functions. */
 export type BonsaiPlugin<TCtx extends BonsaiContext = Record<string, unknown>> =
   (instance: BonsaiInstance<TCtx>) => void

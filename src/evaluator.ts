@@ -1,4 +1,4 @@
-import type { ASTNode, ContextFunctionFn, FunctionFn, ObjectProperty, TransformFn } from './types.js'
+import type { ASTNode, ObjectProperty, RegisteredFunction, TransformFn } from './types.js'
 import type { Bindings } from './plugins.js'
 import type { ExecutionContext } from './execution-context.js'
 import { attachLocation, BonsaiTypeError } from './errors.js'
@@ -29,8 +29,7 @@ function rejectPromise(value: unknown, kind: 'function' | 'method' | 'transform'
 export interface EvalEnv {
   ctx: Record<string, unknown>
   tr: Record<string, TransformFn>
-  fn: Record<string, FunctionFn>
-  cfn: Record<string, ContextFunctionFn>
+  fn: Record<string, RegisteredFunction>
   g: ExecutionContext
   s?: string
   /**
@@ -62,7 +61,6 @@ export function evaluate(
     ctx: context,
     tr: bindings.transforms,
     fn: bindings.functions,
-    cfn: bindings.contextFunctions,
     g: guard,
     s: source,
   })
@@ -231,7 +229,7 @@ function evalCallExpression(node: Extract<ASTNode, { type: 'CallExpression' }>, 
 
   if (node.callee.type === 'Identifier') {
     try {
-      const resolved = resolveCallable(node.callee.name, fn, env.cfn)
+      const resolved = resolveCallable(node.callee.name, fn)
       const args: unknown[] = []
       for (const arg of node.args) {
         pushCallArgument(args, arg, env)

@@ -3,7 +3,7 @@ import { evaluate } from '../src/evaluator.js'
 import { parse } from '../src/parser.js'
 import { SecurityPolicy, ExecutionContext } from '../src/execution-context.js'
 import { BonsaiReferenceError } from '../src/errors.js'
-import type { TransformFn, FunctionFn } from '../src/types.js'
+import type { TransformFn, FunctionFn, RegisteredFunction } from '../src/types.js'
 
 function run(
   expr: string,
@@ -13,7 +13,10 @@ function run(
 ) {
   const ast = parse(expr)
   const ec = new ExecutionContext(new SecurityPolicy())
-  return evaluate(ast, context, { transforms, functions, contextFunctions: {} }, ec)
+  const registered: Record<string, RegisteredFunction> = Object.fromEntries(
+    Object.entries(functions).map(([name, fn]) => [name, { kind: 'pure', fn }]),
+  )
+  return evaluate(ast, context, { transforms, functions: registered }, ec)
 }
 
 describe('evaluator - functions', () => {

@@ -3,9 +3,8 @@ import type { ExecutionContext } from './execution-context.js'
 import type {
   ASTNode,
   BinaryExpressionOperator,
-  ContextFunctionFn,
+  RegisteredFunction,
   TransformFn,
-  FunctionFn,
   UnaryOperator,
 } from './types.js'
 
@@ -114,39 +113,21 @@ export function resolveTransform(name: string, transforms: Record<string, Transf
   return transforms[name]
 }
 
-export function resolveFunction(name: string, functions: Record<string, FunctionFn>): FunctionFn {
-  if (!Object.hasOwn(functions, name)) {
-    const suggestion = suggest(name, Object.keys(functions))
-    throw new BonsaiReferenceError('function', name, suggestion)
-  }
-  return functions[name]
-}
-
 /**
- * Resolve a callable by name across the pure-function and context-function
- * registries. Context functions are checked first because they share a
- * namespace and registrations are last-write-wins regardless of kind.
- *
- * Returns a discriminated result so call sites can decide how to invoke
- * (pure functions take only call args; context functions receive a frozen
+ * Resolve a callable by name in the shared function namespace. Pure and context
+ * functions occupy one registry keyed by name, so a single lookup returns the
+ * tagged entry; the call site uses `kind` to decide how to invoke it (pure
+ * functions take only call args; context functions receive the evaluation
  * context first, then call args).
  */
-export type ResolvedCallable =
-  | { kind: 'pure'; fn: FunctionFn }
-  | { kind: 'context'; fn: ContextFunctionFn }
-
 export function resolveCallable(
   name: string,
-  functions: Record<string, FunctionFn>,
-  contextFunctions: Record<string, ContextFunctionFn>,
-): ResolvedCallable {
-  if (Object.hasOwn(contextFunctions, name)) {
-    return { kind: 'context', fn: contextFunctions[name] }
-  }
+  functions: Record<string, RegisteredFunction>,
+): RegisteredFunction {
   if (Object.hasOwn(functions, name)) {
-    return { kind: 'pure', fn: functions[name] }
+    return functions[name]
   }
-  const suggestion = suggest(name, [...Object.keys(functions), ...Object.keys(contextFunctions)])
+  const suggestion = suggest(name, Object.keys(functions))
   throw new BonsaiReferenceError('function', name, suggestion)
 }
 

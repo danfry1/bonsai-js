@@ -1,4 +1,4 @@
-import type { TransformFn, FunctionFn, ContextFunctionFn } from './types.js'
+import type { TransformFn, FunctionFn, ContextFunctionFn, RegisteredFunction } from './types.js'
 
 /**
  * Snapshot of every registered binding passed to the evaluator on each call.
@@ -8,8 +8,7 @@ import type { TransformFn, FunctionFn, ContextFunctionFn } from './types.js'
  */
 export interface Bindings {
   readonly transforms: Record<string, TransformFn>
-  readonly functions: Record<string, FunctionFn>
-  readonly contextFunctions: Record<string, ContextFunctionFn>
+  readonly functions: Record<string, RegisteredFunction>
 }
 
 export interface PluginRegistry {
@@ -19,32 +18,32 @@ export interface PluginRegistry {
   removeTransform(name: string): boolean
   removeFunction(name: string): boolean
   getTransform(name: string): TransformFn | undefined
-  getFunction(name: string): FunctionFn | undefined
-  getContextFunction(name: string): ContextFunctionFn | undefined
+  getFunction(name: string): RegisteredFunction | undefined
   isContextFunction(name: string): boolean
   hasFunction(name: string): boolean
   getTransformNames(): string[]
   getFunctionNames(): string[]
   use(plugin: (registry: PluginRegistry) => void): void
   readonly transforms: Record<string, TransformFn>
-  readonly functions: Record<string, FunctionFn>
-  readonly contextFunctions: Record<string, ContextFunctionFn>
+  readonly functions: Record<string, RegisteredFunction>
   /** Cached snapshot of all bindings. Rebuilt only when a registration changes. */
   readonly bindings: Bindings
 }
 
 export function createPluginRegistry(): PluginRegistry {
   const transformMap = new Map<string, TransformFn>()
-  const functionMap = new Map<string, FunctionFn>()
-  const contextFunctionMap = new Map<string, ContextFunctionFn>()
+  // Pure and context functions share one namespace keyed by name; the tagged
+  // value records which kind was registered. Re-registering a name with either
+  // method structurally replaces the prior entry (last registration wins),
+  // so there is no cross-map invariant to keep in sync.
+  const functionMap = new Map<string, RegisteredFunction>()
 
-  // Cached snapshots, rebuilt only when registry changes
+  // Cached snapshots, rebuilt only when the registry changes
   let transformsCache: Record<string, TransformFn> = {}
-  let functionsCache: Record<string, FunctionFn> = {}
-  let contextFunctionsCache: Record<string, ContextFunctionFn> = {}
+  let functionsCache: Record<string, RegisteredFunction> = {}
   let transformsDirty = false
   let functionsDirty = false
-  let contextFunctionsDirty = false
+  let bindingsCache: Bindings | undefined
 
   const registry: PluginRegistry = {
     addTransform(name, fn) {
@@ -52,15 +51,12 @@ export function createPluginRegistry(): PluginRegistry {
       transformsDirty = true
     },
     addFunction(name, fn) {
-      functionMap.set(name, fn)
+      functionMap.set(name, { kind: 'pure', fn })
       functionsDirty = true
-      // Context and pure functions share a namespace: overwrite the other kind.
-      if (contextFunctionMap.delete(name)) contextFunctionsDirty = true
     },
     addContextFunction(name, fn) {
-      contextFunctionMap.set(name, fn)
-      contextFunctionsDirty = true
-      if (functionMap.delete(name)) functionsDirty = true
+      functionMap.set(name, { kind: 'context', fn })
+      functionsDirty = true
     },
     removeTransform(name) {
       const r = transformMap.delete(name)
@@ -68,23 +64,16 @@ export function createPluginRegistry(): PluginRegistry {
       return r
     },
     removeFunction(name) {
-      const pure = functionMap.delete(name)
-      const ctx = contextFunctionMap.delete(name)
-      if (pure) functionsDirty = true
-      if (ctx) contextFunctionsDirty = true
-      return pure || ctx
+      const r = functionMap.delete(name)
+      if (r) functionsDirty = true
+      return r
     },
     getTransform(name) { return transformMap.get(name) },
     getFunction(name) { return functionMap.get(name) },
-    getContextFunction(name) { return contextFunctionMap.get(name) },
-    isContextFunction(name) { return contextFunctionMap.has(name) },
-    hasFunction(name) { return functionMap.has(name) || contextFunctionMap.has(name) },
+    isContextFunction(name) { return functionMap.get(name)?.kind === 'context' },
+    hasFunction(name) { return functionMap.has(name) },
     getTransformNames() { return [...transformMap.keys()] },
-    getFunctionNames() {
-      const names = new Set<string>(functionMap.keys())
-      for (const name of contextFunctionMap.keys()) names.add(name)
-      return [...names]
-    },
+    getFunctionNames() { return [...functionMap.keys()] },
     use(plugin) { plugin(registry) },
     get transforms() {
       if (transformsDirty) {
@@ -100,32 +89,17 @@ export function createPluginRegistry(): PluginRegistry {
       }
       return functionsCache
     },
-    get contextFunctions() {
-      if (contextFunctionsDirty) {
-        contextFunctionsCache = Object.fromEntries(contextFunctionMap)
-        contextFunctionsDirty = false
-      }
-      return contextFunctionsCache
-    },
     get bindings(): Bindings {
       // Reuse the cached individual snapshots. The composite object is
-      // rebuilt only when any of the three underlying caches change.
+      // rebuilt only when either underlying cache changes.
       const t = registry.transforms
       const f = registry.functions
-      const cf = registry.contextFunctions
-      if (
-        !bindingsCache
-        || bindingsCache.transforms !== t
-        || bindingsCache.functions !== f
-        || bindingsCache.contextFunctions !== cf
-      ) {
-        bindingsCache = { transforms: t, functions: f, contextFunctions: cf }
+      if (!bindingsCache || bindingsCache.transforms !== t || bindingsCache.functions !== f) {
+        bindingsCache = { transforms: t, functions: f }
       }
       return bindingsCache
     },
   }
-
-  let bindingsCache: Bindings | undefined
 
   return registry
 }
