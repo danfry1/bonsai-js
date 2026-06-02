@@ -3,5 +3,5 @@
 # GitHub honors this file automatically. For local git, run once:
 #   git config blame.ignoreRevsFile .git-blame-ignore-revs
 
-# style: format codebase with oxfmt
-53ac21a0282971508912f8ba4a68d4ac3ecb0ede
+# chore: add oxfmt for consistent formatting (#62) - bulk reformat
+3bc2547e9fdf369e75fa62d134a1375289368b2d
