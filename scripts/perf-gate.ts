@@ -57,38 +57,45 @@ function measure(fn: () => void): number {
   return iterations * OPS_PER_SECOND / elapsedMs
 }
 
+// Floors are set to roughly one tenth of the throughput observed on a fast
+// developer machine. That leaves comfortable headroom for slower, noisier CI
+// runners (which run perhaps a third to a half as fast) while still failing on
+// a catastrophic regression (a ~3x or worse slowdown). This is a guard against
+// regressions, not a microbenchmark; tighten deliberately if you record a
+// CI-measured baseline. The cache-effectiveness ratio below is the relative,
+// machine-independent check.
 const cases: PerfCase[] = [
   {
     name: 'cached literal',
-    minHz: 1_000_000,
+    minHz: 4_000_000,
     fn: () => {
       expr.evaluateSync('42')
     },
   },
   {
     name: 'cached comparison',
-    minHz: 500_000,
+    minHz: 1_200_000,
     fn: () => {
       expr.evaluateSync('user.age >= 18 && user.verified', context)
     },
   },
   {
     name: 'transform pipeline',
-    minHz: 300_000,
+    minHz: 1_500_000,
     fn: () => {
       expr.evaluateSync('user.name |> upper', context)
     },
   },
   {
     name: 'compiled comparison',
-    minHz: 250_000,
+    minHz: 1_200_000,
     fn: () => {
       compiled.evaluateSync(context)
     },
   },
   {
     name: 'array transform',
-    minHz: 250_000,
+    minHz: 2_500_000,
     fn: () => {
       expr.evaluateSync('items |> sum', context)
     },

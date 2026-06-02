@@ -56,3 +56,45 @@ describe('tree-shaking', () => {
     expect(pkg.sideEffects).toBe(false)
   })
 })
+
+describe('bundle size budgets', () => {
+  // Minified, browser-targeted byte ceilings. `bun build` output is
+  // deterministic for a given bun version, so these are stable across machines
+  // and CI (unlike the perf gate). They are generous ceilings sized to catch a
+  // significant regression (for example the core entry accidentally importing
+  // the whole stdlib or the autocomplete engine), not tight microbudgets;
+  // update them deliberately when an intentional change moves a number.
+  const KB = 1024
+
+  const CORE = `
+    import { evaluateExpression } from '../src/index.js'
+    console.log(evaluateExpression('1+2'))
+  `
+  const FULL = `
+    import { bonsai } from '../src/index.js'
+    import { all } from '../src/stdlib/index.js'
+    const e = bonsai(); e.use(all)
+    console.log(e.evaluateSync('1+2'))
+  `
+  const AUTOCOMPLETE = `
+    import { createAutocomplete } from '../src/autocomplete/index.js'
+    import { bonsai } from '../src/index.js'
+    console.log(createAutocomplete(bonsai(), {}))
+  `
+
+  it('core entry (evaluateExpression only) stays within budget', () => {
+    expect(bundleSize(CORE)).toBeLessThan(56 * KB)
+  })
+
+  it('full entry (bonsai + all stdlib) stays within budget', () => {
+    expect(bundleSize(FULL)).toBeLessThan(62 * KB)
+  })
+
+  it('autocomplete subpath stays within budget', () => {
+    expect(bundleSize(AUTOCOMPLETE)).toBeLessThan(76 * KB)
+  })
+
+  it('core entry does not pull in the autocomplete engine', () => {
+    expect(bundleSize(CORE)).toBeLessThan(bundleSize(AUTOCOMPLETE))
+  })
+})
