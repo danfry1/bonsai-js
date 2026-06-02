@@ -64,5 +64,10 @@
     "tsdown": "0.22.0",
     "typescript": "6.0.3",
     "vitest": "4.1.7"
+  },
+  "overrides": {
+    "vite": "7.3.3",
+    "postcss": "8.5.11",
+    "picomatch": "4.0.4"
   }
 }
