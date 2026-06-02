@@ -187,15 +187,17 @@ describe('autocomplete integration', () => {
     expect(labels).toContain('age')
   })
 
-  it('allowedProperties does not block method completions', () => {
+  it('restricts method completions to allowedProperties (matches the evaluator)', () => {
     const ac = setup(
-      { user: { name: 'Alice' } },
-      { allowedProperties: ['name'] },
+      { name: 'Alice' },
+      { allowedProperties: ['trim'] },
     )
-    const result = ac.complete('user.name.', 10)
-    const methods = result.filter(c => c.kind === 'method')
-    expect(methods.length).toBeGreaterThan(0)
-    expect(methods.map(c => c.label)).toContain('trim')
+    const result = ac.complete('name.', 5)
+    const methods = result.filter(c => c.kind === 'method').map(c => c.label)
+    // The evaluator applies allowedProperties to method names, so a method that
+    // is not allowed must not be suggested.
+    expect(methods).toContain('trim')
+    expect(methods).not.toContain('toUpperCase')
   })
 
   it('__proto__ traversal is blocked in completions', () => {

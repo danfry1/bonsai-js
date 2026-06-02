@@ -1,8 +1,9 @@
 import { BLOCKED_PROPERTIES } from '../execution-context.js'
+import { methodsForReceiverType, type MethodReceiverType } from '../safe-methods.js'
 import type { InferredTypeName } from '../types.js'
 
-/** Types that have method catalogs. */
-export type MethodReceiverType = 'string' | 'array' | 'number'
+/** Types that have method catalogs. Re-exported from the shared allowlist. */
+export type { MethodReceiverType }
 
 /** Key format for the return type map: "receiverType.methodName". */
 type ReturnTypeKey = `${MethodReceiverType}.${string}`
@@ -10,22 +11,15 @@ type ReturnTypeKey = `${MethodReceiverType}.${string}`
 /** Return type values include InferredTypeName plus 'unknown' for unresolvable cases. */
 type ReturnTypeValue = InferredTypeName | 'unknown'
 
-/** Methods allowed per receiver type. Must stay in sync with isAllowedReceiver in eval-ops.ts. */
+/**
+ * Methods offered per receiver type, derived from the shared SAFE_METHODS
+ * allowlist (src/safe-methods.ts) so autocomplete and the evaluator can never
+ * disagree about what is callable.
+ */
 export const METHODS_BY_TYPE: Record<MethodReceiverType, readonly string[]> = {
-  string: [
-    'trim', 'trimStart', 'trimEnd', 'toLowerCase', 'toUpperCase',
-    'startsWith', 'endsWith', 'includes', 'indexOf', 'lastIndexOf',
-    'slice', 'substring', 'at', 'replace', 'replaceAll',
-    'split', 'padStart', 'padEnd', 'charAt', 'charCodeAt',
-    'repeat', 'concat', 'toString',
-  ],
-  array: [
-    'filter', 'map', 'find', 'findIndex', 'some', 'every', 'flatMap',
-    'join', 'flat', 'includes', 'indexOf', 'lastIndexOf',
-    'slice', 'at', 'concat', 'toReversed', 'toSorted', 'toSpliced', 'with',
-    'toString',
-  ],
-  number: ['toFixed', 'toString'],
+  string: methodsForReceiverType('string'),
+  array: methodsForReceiverType('array'),
+  number: methodsForReceiverType('number'),
 }
 
 /** Return type keyed by "receiverType.method" to disambiguate shared method names. */
@@ -50,7 +44,6 @@ const RETURN_TYPES: Record<ReturnTypeKey, ReturnTypeValue> = {
   'array.some': 'boolean', 'array.every': 'boolean',
   'array.join': 'string', 'array.indexOf': 'number', 'array.lastIndexOf': 'number',
   'array.includes': 'boolean', 'array.at': 'unknown', 'array.with': 'array',
-  'array.toString': 'string',
 
   // Number methods
   'number.toFixed': 'string', 'number.toString': 'string',
