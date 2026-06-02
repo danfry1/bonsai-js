@@ -70,6 +70,21 @@ function evalNode(node: ASTNode, env: EvalEnv): unknown {
     case 'Identifier':
       env.g.checkNameAccess(node.name, 'identifier')
       return Object.hasOwn(env.ctx, node.name) ? env.ctx[node.name] : undefined
+    case 'UnaryExpression':
+    case 'BinaryExpression':
+    case 'ConditionalExpression':
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+    case 'ArrayLiteral':
+    case 'ObjectLiteral':
+    case 'CallExpression':
+    case 'PipeExpression':
+    case 'TemplateLiteral':
+    case 'SpreadElement':
+    case 'LambdaAccessor':
+    case 'LambdaIdentity':
+    case 'LambdaExpression':
+      break
   }
 
   // Compound nodes: full depth tracking
@@ -90,21 +105,21 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
         const op = node.operator
         if (op === '&&') {
           const left = evalNode(node.left, env)
-          return left ? evalNode(node.right, env) : left
+          return (left as boolean) ? evalNode(node.right, env) : left
         }
         if (op === '||') {
           const left = evalNode(node.left, env)
-          return left ? left : evalNode(node.right, env)
+          return (left as boolean) ? left : evalNode(node.right, env)
         }
         if (op === '??') {
           const left = evalNode(node.left, env)
-          return left != null ? left : evalNode(node.right, env)
+          return left ?? evalNode(node.right, env)
         }
         return applyBinaryOp(op, evalNode(node.left, env), evalNode(node.right, env))
       }
 
       case 'ConditionalExpression':
-        return evalNode(node.test, env)
+        return (evalNode(node.test, env) as boolean)
           ? evalNode(node.consequent, env)
           : evalNode(node.alternate, env)
 
@@ -114,7 +129,7 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
         try {
           return accessMember(object, node.property, node.computed, computedValue, g)
         } catch (e) {
-          if (s) attachLocation(e, s, node.start, node.end)
+          if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
           throw e
         }
       }
@@ -126,7 +141,7 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
         try {
           return accessMember(object, node.property, node.computed, computedValue, g)
         } catch (e) {
-          if (s) attachLocation(e, s, node.start, node.end)
+          if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
           throw e
         }
       }
@@ -161,7 +176,8 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
         try {
           return evalPipe(input, node.transform, env)
         } catch (e) {
-          if (s) attachLocation(e, s, node.transform.start, node.transform.end)
+          if (s !== undefined && s !== '')
+            attachLocation(e, s, node.transform.start, node.transform.end)
           throw e
         }
       }
@@ -186,6 +202,12 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
       case 'LambdaExpression':
         return (item: unknown) => evalLambdaBody(node.body, item, env)
 
+      case 'NumberLiteral':
+      case 'StringLiteral':
+      case 'BooleanLiteral':
+      case 'NullLiteral':
+      case 'UndefinedLiteral':
+      case 'Identifier':
       default:
         throw new Error(`Unknown node type: ${(node as ASTNode).type}`)
     }
@@ -220,7 +242,7 @@ function evalCallExpression(
       checkResultStringLength(result, g)
       return result
     } catch (e) {
-      if (s) attachLocation(e, s, node.start, node.end)
+      if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
       throw e
     }
   }
@@ -239,7 +261,7 @@ function evalCallExpression(
         resolved.kind === 'context' ? resolved.fn(env.ctx, ...args) : resolved.fn(...args)
       return rejectPromise(result, 'function', node.callee.name)
     } catch (e) {
-      if (s) attachLocation(e, s, node.start, node.end)
+      if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
       throw e
     }
   }
@@ -356,15 +378,15 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
         const op = node.operator
         if (op === '&&') {
           const left = evalLambdaBody(node.left, item, env)
-          return left ? evalLambdaBody(node.right, item, env) : left
+          return (left as boolean) ? evalLambdaBody(node.right, item, env) : left
         }
         if (op === '||') {
           const left = evalLambdaBody(node.left, item, env)
-          return left ? left : evalLambdaBody(node.right, item, env)
+          return (left as boolean) ? left : evalLambdaBody(node.right, item, env)
         }
         if (op === '??') {
           const left = evalLambdaBody(node.left, item, env)
-          return left != null ? left : evalLambdaBody(node.right, item, env)
+          return left ?? evalLambdaBody(node.right, item, env)
         }
         return applyBinaryOp(
           op,
@@ -377,13 +399,24 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
         return applyUnaryOp(node.operator, evalLambdaBody(node.operand, item, env))
 
       case 'ConditionalExpression':
-        return evalLambdaBody(node.test, item, env)
+        return (evalLambdaBody(node.test, item, env) as boolean)
           ? evalLambdaBody(node.consequent, item, env)
           : evalLambdaBody(node.alternate, item, env)
 
       case 'LambdaExpression':
         return evalLambdaBody(node.body, item, env)
 
+      case 'NumberLiteral':
+      case 'StringLiteral':
+      case 'BooleanLiteral':
+      case 'NullLiteral':
+      case 'UndefinedLiteral':
+      case 'Identifier':
+      case 'ArrayLiteral':
+      case 'ObjectLiteral':
+      case 'PipeExpression':
+      case 'SpreadElement':
+      case 'TemplateLiteral':
       default:
         // Delegate to evalNode which manages its own depth
         ownDepth = false

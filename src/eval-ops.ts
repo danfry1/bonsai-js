@@ -1,5 +1,6 @@
 import { suggest, BonsaiReferenceError, BonsaiSecurityError, BonsaiTypeError } from './errors.js'
 import { isMethodAllowedOn } from './safe-methods.js'
+import { coerceToString } from './coerce.js'
 import type { ExecutionContext } from './execution-context.js'
 import type {
   ASTNode,
@@ -10,10 +11,6 @@ import type {
 } from './types.js'
 
 type SafeMethod = (...args: unknown[]) => unknown
-
-function toPropertyKey(value: unknown): string {
-  return String(value)
-}
 
 export function applyBinaryOp(
   operator: BinaryExpressionOperator,
@@ -46,30 +43,33 @@ export function applyBinaryOp(
     case '>=':
       return (left as number) >= (right as number)
     case 'in': {
-      if (typeof right === 'string') return (right as string).includes(left as string)
+      if (typeof right === 'string') return right.includes(left as string)
       if (Array.isArray(right)) return right.includes(left)
       throw new BonsaiTypeError('in', 'a string or array', right)
     }
     case 'not in': {
-      if (typeof right === 'string') return !(right as string).includes(left as string)
+      if (typeof right === 'string') return !right.includes(left as string)
       if (Array.isArray(right)) return !right.includes(left)
       throw new BonsaiTypeError('not in', 'a string or array', right)
     }
+    case '&&':
+    case '||':
+    case '??':
     default:
-      throw new Error(`Unknown binary operator: ${operator}`)
+      throw new Error(`Unknown binary operator: ${operator as string}`)
   }
 }
 
 export function applyUnaryOp(operator: UnaryOperator, operand: unknown): unknown {
   switch (operator) {
     case '!':
-      return !operand
+      return !(operand as boolean)
     case '-':
       return -(operand as number)
     case '+':
       return Number(operand)
     default:
-      throw new Error(`Unknown unary operator: ${operator}`)
+      throw new Error(`Unknown unary operator: ${operator as string}`)
   }
 }
 
@@ -260,7 +260,7 @@ export function accessMember(
   guard: ExecutionContext,
 ): unknown {
   const key = computed
-    ? toPropertyKey(computedValue)
+    ? coerceToString(computedValue)
     : getIdentifierName(propertyNode, 'Expected identifier property')
   guard.checkNameAccess(key, 'member')
   return (object as Record<string, unknown>)?.[key]

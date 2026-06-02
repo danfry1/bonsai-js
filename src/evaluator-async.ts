@@ -59,6 +59,21 @@ async function evalNodeAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown>
     case 'Identifier':
       env.g.checkNameAccess(node.name, 'identifier')
       return Object.hasOwn(env.ctx, node.name) ? env.ctx[node.name] : undefined
+    case 'UnaryExpression':
+    case 'BinaryExpression':
+    case 'ConditionalExpression':
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+    case 'ArrayLiteral':
+    case 'ObjectLiteral':
+    case 'CallExpression':
+    case 'PipeExpression':
+    case 'TemplateLiteral':
+    case 'SpreadElement':
+    case 'LambdaAccessor':
+    case 'LambdaIdentity':
+    case 'LambdaExpression':
+      break
   }
 
   return evalCompoundAsync(node, env)
@@ -78,15 +93,15 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
         const op = node.operator
         if (op === '&&') {
           const left = await evalNodeAsync(node.left, env)
-          return left ? await evalNodeAsync(node.right, env) : left
+          return isTruthy(left) ? await evalNodeAsync(node.right, env) : left
         }
         if (op === '||') {
           const left = await evalNodeAsync(node.left, env)
-          return left ? left : await evalNodeAsync(node.right, env)
+          return isTruthy(left) ? left : await evalNodeAsync(node.right, env)
         }
         if (op === '??') {
           const left = await evalNodeAsync(node.left, env)
-          return left != null ? left : await evalNodeAsync(node.right, env)
+          return left ?? (await evalNodeAsync(node.right, env))
         }
         return applyBinaryOp(
           op,
@@ -96,7 +111,7 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
       }
 
       case 'ConditionalExpression':
-        return (await evalNodeAsync(node.test, env))
+        return isTruthy(await evalNodeAsync(node.test, env))
           ? await evalNodeAsync(node.consequent, env)
           : await evalNodeAsync(node.alternate, env)
 
@@ -106,7 +121,7 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
         try {
           return accessMember(object, node.property, node.computed, computedValue, g)
         } catch (e) {
-          if (s) attachLocation(e, s, node.start, node.end)
+          if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
           throw e
         }
       }
@@ -118,7 +133,7 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
         try {
           return accessMember(object, node.property, node.computed, computedValue, g)
         } catch (e) {
-          if (s) attachLocation(e, s, node.start, node.end)
+          if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
           throw e
         }
       }
@@ -155,7 +170,8 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
         try {
           return await evalPipeAsync(input, node.transform, env)
         } catch (e) {
-          if (s) attachLocation(e, s, node.transform.start, node.transform.end)
+          if (s !== undefined && s !== '')
+            attachLocation(e, s, node.transform.start, node.transform.end)
           throw e
         }
       }
@@ -181,6 +197,12 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
       case 'LambdaExpression':
         return (item: unknown) => evalLambdaBodyAsync(node.body, item, env)
 
+      case 'NumberLiteral':
+      case 'StringLiteral':
+      case 'BooleanLiteral':
+      case 'NullLiteral':
+      case 'UndefinedLiteral':
+      case 'Identifier':
       default:
         throw new Error(`Unknown node type: ${(node as ASTNode).type}`)
     }
@@ -233,7 +255,7 @@ async function evalCallExpressionAsync(
       checkResultStringLength(result, g)
       return result
     } catch (e) {
-      if (s) attachLocation(e, s, node.start, node.end)
+      if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
       throw e
     }
   }
@@ -254,7 +276,7 @@ async function evalCallExpressionAsync(
       g.checkTimeout()
       return result
     } catch (e) {
-      if (s) attachLocation(e, s, node.start, node.end)
+      if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
       throw e
     }
   }
@@ -297,7 +319,7 @@ async function evalAsyncArrayMethod(
     case 'filter': {
       const out: unknown[] = []
       for (const item of arr) {
-        if (await predicate(item)) out.push(item)
+        if (isTruthy(await predicate(item))) out.push(item)
       }
       return { value: out }
     }
@@ -317,25 +339,25 @@ async function evalAsyncArrayMethod(
     }
     case 'find': {
       for (const item of arr) {
-        if (await predicate(item)) return { value: item }
+        if (isTruthy(await predicate(item))) return { value: item }
       }
       return { value: undefined }
     }
     case 'findIndex': {
       for (let i = 0; i < arr.length; i++) {
-        if (await predicate(arr[i])) return { value: i }
+        if (isTruthy(await predicate(arr[i]))) return { value: i }
       }
       return { value: -1 }
     }
     case 'some': {
       for (const item of arr) {
-        if (await predicate(item)) return { value: true }
+        if (isTruthy(await predicate(item))) return { value: true }
       }
       return { value: false }
     }
     case 'every': {
       for (const item of arr) {
-        if (!(await predicate(item))) return { value: false }
+        if (!isTruthy(await predicate(item))) return { value: false }
       }
       return { value: true }
     }
@@ -351,7 +373,7 @@ async function evalArgAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown> 
   if (node.type === 'LambdaIdentity') {
     return (item: unknown) => item
   }
-  return await evalNodeAsync(node, env)
+  return evalNodeAsync(node, env)
 }
 
 async function evalPipeAsync(
@@ -471,15 +493,15 @@ async function evalLambdaBodyAsync(
         const op = node.operator
         if (op === '&&') {
           const left = await evalLambdaBodyAsync(node.left, item, env)
-          return left ? await evalLambdaBodyAsync(node.right, item, env) : left
+          return isTruthy(left) ? await evalLambdaBodyAsync(node.right, item, env) : left
         }
         if (op === '||') {
           const left = await evalLambdaBodyAsync(node.left, item, env)
-          return left ? left : await evalLambdaBodyAsync(node.right, item, env)
+          return isTruthy(left) ? left : await evalLambdaBodyAsync(node.right, item, env)
         }
         if (op === '??') {
           const left = await evalLambdaBodyAsync(node.left, item, env)
-          return left != null ? left : await evalLambdaBodyAsync(node.right, item, env)
+          return left ?? (await evalLambdaBodyAsync(node.right, item, env))
         }
         return applyBinaryOp(
           op,
@@ -492,13 +514,24 @@ async function evalLambdaBodyAsync(
         return applyUnaryOp(node.operator, await evalLambdaBodyAsync(node.operand, item, env))
 
       case 'ConditionalExpression':
-        return (await evalLambdaBodyAsync(node.test, item, env))
+        return isTruthy(await evalLambdaBodyAsync(node.test, item, env))
           ? await evalLambdaBodyAsync(node.consequent, item, env)
           : await evalLambdaBodyAsync(node.alternate, item, env)
 
       case 'LambdaExpression':
         return await evalLambdaBodyAsync(node.body, item, env)
 
+      case 'NumberLiteral':
+      case 'StringLiteral':
+      case 'BooleanLiteral':
+      case 'NullLiteral':
+      case 'UndefinedLiteral':
+      case 'Identifier':
+      case 'ArrayLiteral':
+      case 'ObjectLiteral':
+      case 'PipeExpression':
+      case 'TemplateLiteral':
+      case 'SpreadElement':
       default:
         ownDepth = false
         g.exitDepth()
@@ -515,6 +548,13 @@ async function getObjectPropertyKey(prop: ObjectProperty, env: AsyncEvalEnv): Pr
     : getObjectLiteralKeyName(prop.key)
   env.g.checkNameAccess(key, 'object-key')
   return key
+}
+
+// Reproduces JavaScript truthiness exactly for values of static type
+// `unknown`/`any`, so the short-circuit and conditional operators keep their
+// original coercion semantics while satisfying strict-boolean-expressions.
+function isTruthy(value: unknown): boolean {
+  return Boolean(value)
 }
 
 function makeLambdaAccessor(

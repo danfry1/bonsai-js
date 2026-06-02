@@ -18,7 +18,7 @@ describe('lambda predicates', () => {
   it('compound predicate .age >= 18', () => {
     const expr = bonsai()
     expr.addTransform('filter', (val: unknown, fn: unknown) =>
-      (val as unknown[]).filter(fn as (item: unknown) => unknown),
+      (val as unknown[]).filter(fn as (item: unknown) => boolean),
     )
     const result = expr.evaluateSync('users |> filter(.age >= 18)', {
       users: [
@@ -43,7 +43,7 @@ describe('lambda predicates', () => {
   it('lambda with method call .name.startsWith("A")', () => {
     const expr = bonsai()
     expr.addTransform('filter', (val: unknown, fn: unknown) =>
-      (val as unknown[]).filter(fn as (item: unknown) => unknown),
+      (val as unknown[]).filter(fn as (item: unknown) => boolean),
     )
     const result = expr.evaluateSync('users |> filter(.name.startsWith("A"))', {
       users: [{ name: 'Alice' }, { name: 'Bob' }],
@@ -54,7 +54,7 @@ describe('lambda predicates', () => {
   it('lambda with comparison .price < 100', () => {
     const expr = bonsai()
     expr.addTransform('filter', (val: unknown, fn: unknown) =>
-      (val as unknown[]).filter(fn as (item: unknown) => unknown),
+      (val as unknown[]).filter(fn as (item: unknown) => boolean),
     )
     const result = expr.evaluateSync('items |> filter(.price < 100)', {
       items: [{ price: 50 }, { price: 150 }, { price: 75 }],
@@ -65,7 +65,7 @@ describe('lambda predicates', () => {
   it('lambda with logical operators .active && .verified', () => {
     const expr = bonsai()
     expr.addTransform('filter', (val: unknown, fn: unknown) =>
-      (val as unknown[]).filter(fn as (item: unknown) => unknown),
+      (val as unknown[]).filter(fn as (item: unknown) => boolean),
     )
     const result = expr.evaluateSync('users |> filter(.active && .verified)', {
       users: [

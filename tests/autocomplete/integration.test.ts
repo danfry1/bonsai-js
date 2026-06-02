@@ -163,7 +163,7 @@ describe('autocomplete integration', () => {
     const result = ac.complete('users.filter(.name.', 19)
     const labels = result.map((c) => c.label)
     expect(result.every((c) => c.kind === 'method')).toBe(true)
-    expect(result.every((c) => c.detail?.startsWith('string'))).toBe(true)
+    expect(result.every((c) => c.detail?.startsWith('string') === true)).toBe(true)
     expect(labels).toEqual(
       expect.arrayContaining([
         'trim',
@@ -525,7 +525,9 @@ describe('autocomplete integration', () => {
     const errors: Array<{ error: unknown; phase: string }> = []
     const ac = createAutocomplete(instance, {
       context: { name: 'Alice' },
-      onError: (error, phase) => errors.push({ error, phase }),
+      onError: (error, phase) => {
+        errors.push({ error, phase })
+      },
     })
     // Normal operation should not trigger onError
     ac.complete('name', 4)
@@ -538,7 +540,9 @@ describe('autocomplete integration', () => {
     const errors: Array<{ error: unknown; phase: string }> = []
     const ac = createAutocomplete(instance, {
       context: { obj: { secret: 'hidden' } },
-      onError: (error, phase) => errors.push({ error, phase }),
+      onError: (error, phase) => {
+        errors.push({ error, phase })
+      },
     })
     // Eval path hits denied property — should NOT trigger onError
     ac.complete('obj.secret.', 11)
@@ -603,7 +607,9 @@ describe('autocomplete integration', () => {
           throw new RangeError('boom')
         },
       },
-      onError: (error, phase) => errors.push({ error, phase }),
+      onError: (error, phase) => {
+        errors.push({ error, phase })
+      },
     })
     // Accessing a getter that throws — should be caught at top level
     const result = ac.complete('name.', 5)

@@ -220,7 +220,7 @@ function tryEvalPrefix(
   context: Record<string, unknown>,
   tokens: Token[],
   onError?: ErrorHandler,
-): unknown | undefined {
+): unknown {
   // Find the expression prefix before the final dot
   const before = tokens.filter((t) => t.end <= cursor)
   if (before.length === 0) return undefined
@@ -276,7 +276,7 @@ function inferTypeFromTokenChain(
     } else if (tokens[i].type === 'Punctuation' && tokens[i].value === '(') {
       // Method call — use the last identifier as method name
       const methodName = chain.pop()
-      if (!methodName) break
+      if (methodName === undefined || methodName === '') break
 
       // Resolve what we have so far to get the receiver type
       if (currentType === undefined && chain.length > 0) {
@@ -292,7 +292,7 @@ function inferTypeFromTokenChain(
 
       if (currentType && isMethodReceiverType(currentType)) {
         const returned = inferMethodReturnType(currentType, methodName)
-        currentType = returned === 'unknown' ? undefined : (returned as InferredTypeName)
+        currentType = returned === 'unknown' ? undefined : returned
       } else {
         currentType = undefined
       }
@@ -478,7 +478,7 @@ function probeAcceptedTransforms(
   // Evict oldest entry if cache exceeds max size
   if (cache.size >= PROBE_CACHE_MAX) {
     const first = cache.keys().next()
-    if (!first.done) cache.delete(first.value)
+    if (first.done !== true) cache.delete(first.value)
   }
   cache.set(cacheKey, accepted)
   return accepted
@@ -492,7 +492,7 @@ function inferPipeInputType(
   onError?: ErrorHandler,
 ): InferredTypeName | undefined {
   const before = expression.slice(0, cursor)
-  const pipeMatch = before.match(/^(?<input>.*)\|>\s*\w*\s*$/su)
+  const pipeMatch = /^(?<input>.*)\|>\s*\w*\s*$/su.exec(before)
   if (!pipeMatch) return undefined
 
   const exprBefore = (pipeMatch.groups?.input ?? '').trim()
@@ -594,7 +594,7 @@ function extractChainBeforeCall(tokens: Token[], cursor: number): string[] {
   if (parenIdx <= 0) return []
 
   const methodToken = before[parenIdx - 1]
-  if (!methodToken || methodToken.type !== 'Identifier') return []
+  if (methodToken === undefined || methodToken.type !== 'Identifier') return []
 
   const preMethodIdx = parenIdx - 2
   if (preMethodIdx < 0) return []

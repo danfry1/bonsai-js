@@ -27,7 +27,7 @@ function optimize(node: ASTNode): ASTNode {
       // Dead branch elimination
       if (isConstant(test)) {
         const value = valueOf(test)
-        return value ? optimize(node.consequent) : optimize(node.alternate)
+        return isTruthy(value) ? optimize(node.consequent) : optimize(node.alternate)
       }
 
       return {
@@ -72,9 +72,33 @@ function optimize(node: ASTNode): ASTNode {
     case 'LambdaExpression':
       return { ...node, body: optimize(node.body) }
 
+    case 'NumberLiteral':
+    case 'StringLiteral':
+    case 'BooleanLiteral':
+    case 'NullLiteral':
+    case 'UndefinedLiteral':
+    case 'Identifier':
+    case 'ObjectLiteral':
+    case 'TemplateLiteral':
+    case 'SpreadElement':
+    case 'LambdaAccessor':
+    case 'LambdaIdentity':
+      return node
+
     default:
       return node
   }
+}
+
+// Reproduce JS truthiness for a constant value without an implicit
+// boolean coercion (satisfies strict-boolean-expressions / no-extra-boolean-cast
+// while preserving the exact dead-branch-elimination semantics).
+function isTruthy(value: unknown): boolean {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0 && !Number.isNaN(value)
+  if (typeof value === 'string') return value !== ''
+  return true
 }
 
 function isConstant(node: ASTNode): boolean {
@@ -94,11 +118,7 @@ function valueOf(node: ASTNode): unknown {
   return undefined
 }
 
-function evalConstant(
-  op: BinaryExpressionOperator,
-  left: unknown,
-  right: unknown,
-): unknown | undefined {
+function evalConstant(op: BinaryExpressionOperator, left: unknown, right: unknown): unknown {
   if (typeof left === 'number' && typeof right === 'number') {
     switch (op) {
       case '+':
@@ -125,6 +145,12 @@ function evalConstant(
         return left === right
       case '!=':
         return left !== right
+      case '&&':
+      case '||':
+      case '??':
+      case 'in':
+      case 'not in':
+        break
     }
   }
   if (typeof left === 'string' && typeof right === 'string' && op === '+') {

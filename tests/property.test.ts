@@ -150,7 +150,7 @@ const { expr: expressionArbitrary } = fc.letrec<{ expr: string }>((tie) => ({
     },
     {
       weight: 1,
-      arbitrary: tie('expr').map((inner) => `\`value:${'${'}${inner}${'}'}\``),
+      arbitrary: tie('expr').map((inner) => `\`value:\${${inner}}\``),
     },
   ),
 }))

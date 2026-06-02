@@ -140,7 +140,7 @@ function addMethodCompletions(results: Completion[], env: CompletionEnv): void {
   const type = env.member?.resolvedType
   if (!type || !isMethodReceiverType(type)) return
   const cached = METHOD_COMPLETIONS_BY_TYPE[type]
-  if (!cached) return
+  if (cached === undefined) return
   // BLOCKED_NAMES is already filtered in the pre-computed cache. allow/deny
   // lists vary per instance and the evaluator applies BOTH to method names
   // (ExecutionContext.checkNameAccess, kind === 'method'), so completions must

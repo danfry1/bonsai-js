@@ -56,7 +56,7 @@ describe('LRUCache', () => {
   })
 
   it('handles undefined values correctly with has-based check', () => {
-    const cache = new LRUCache<string, undefined>(10)
+    const cache = new LRUCache<string, number | undefined>(10)
     cache.set('key', undefined)
     expect(cache.get('key')).toBeUndefined()
     expect(cache.size).toBe(1)

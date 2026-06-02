@@ -122,7 +122,7 @@ describe('addContextFunction', () => {
 
     it('rejects async context functions in evaluateSync with a helpful error', () => {
       const expr = bonsai<{ value: number }>()
-      expr.addContextFunction('lookup', async (ctx) => ctx.value)
+      expr.addContextFunction('lookup', (ctx) => Promise.resolve(ctx.value))
       expect(() => expr.evaluateSync('lookup()', { value: 1 })).toThrow(/lookup/u)
     })
 
@@ -155,7 +155,7 @@ describe('addContextFunction', () => {
 
     it('preserves context-function behavior across compile + async evaluate', async () => {
       const expr = bonsai<{ userId: string }>()
-      expr.addContextFunction('whoami', async (ctx) => ctx.userId)
+      expr.addContextFunction('whoami', (ctx) => Promise.resolve(ctx.userId))
       const compiled = expr.compile('whoami()')
       expect(await compiled.evaluate({ userId: 'u_1' })).toBe('u_1')
       expect(await compiled.evaluate({ userId: 'u_2' })).toBe('u_2')
@@ -281,15 +281,13 @@ describe('addContextFunction', () => {
 
     it('errors thrown from async functions propagate via the returned promise', async () => {
       const expr = bonsai<{ userId: string }>()
-      expr.addContextFunction('boom', async () => {
-        throw new Error('async-boom')
-      })
+      expr.addContextFunction('boom', () => Promise.reject(new Error('async-boom')))
       await expect(expr.evaluate('boom()', { userId: 'u_1' })).rejects.toThrow(/async-boom/u)
     })
 
     it('reports the function name when evaluateSync sees a promise from a context function', () => {
       const expr = bonsai<{ tier: string }>()
-      expr.addContextFunction('asyncCtx', async (ctx) => ctx.tier)
+      expr.addContextFunction('asyncCtx', (ctx) => Promise.resolve(ctx.tier))
       expect(() => expr.evaluateSync('asyncCtx()', { tier: 'pro' })).toThrow(/asyncCtx/u)
     })
   })

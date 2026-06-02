@@ -1,5 +1,6 @@
 import type { BonsaiPlugin } from '../types.js'
 import { BonsaiTypeError } from '../errors.js'
+import { coerceToString } from '../coerce.js'
 
 function expectArray(val: unknown, name: string): unknown[] {
   if (!Array.isArray(val)) throw new BonsaiTypeError(name, 'an array', val)
@@ -22,7 +23,8 @@ function compareCodePoints(a: string, b: string): number {
   for (;;) {
     const x = ia.next()
     const y = ib.next()
-    if (x.done || y.done) return (x.done ? 0 : 1) - (y.done ? 0 : 1)
+    if (x.done === true || y.done === true)
+      return (x.done === true ? 0 : 1) - (y.done === true ? 0 : 1)
     if (x.value !== y.value) {
       return (x.value.codePointAt(0) ?? 0) - (y.value.codePointAt(0) ?? 0)
     }
@@ -40,7 +42,7 @@ export const arrays: BonsaiPlugin = (expr) => {
   expr.addTransform('flatten', (val: unknown) => expectArray(val, 'flatten').flat())
   expr.addTransform('unique', (val: unknown) => [...new Set(expectArray(val, 'unique'))])
   expr.addTransform('join', (val: unknown, sep: unknown) =>
-    expectArray(val, 'join').join(String(sep ?? ',')),
+    expectArray(val, 'join').join(coerceToString(sep ?? ',')),
   )
   expr.addTransform('sort', (val: unknown) => {
     const arr = [...expectArray(val, 'sort')]
@@ -51,7 +53,7 @@ export const arrays: BonsaiPlugin = (expr) => {
       // identically everywhere. Iterating by code point (not the UTF-16
       // code-unit `<`) keeps astral-plane characters ordered by their actual
       // scalar value.
-      return compareCodePoints(String(a), String(b))
+      return compareCodePoints(coerceToString(a), coerceToString(b))
     })
   })
 
@@ -69,9 +71,9 @@ export const arrays: BonsaiPlugin = (expr) => {
     const fn = predicate as (item: unknown) => unknown
     const results = arr.map(fn)
     if (hasPromises(results)) {
-      return Promise.all(results).then((resolved) => arr.filter((_, i) => resolved[i]))
+      return Promise.all(results).then((resolved) => arr.filter((_, i) => Boolean(resolved[i])))
     }
-    return arr.filter((_, i) => results[i])
+    return arr.filter((_, i) => Boolean(results[i]))
   })
 
   expr.addTransform('map', (val: unknown, fn: unknown) => {

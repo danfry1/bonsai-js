@@ -74,7 +74,7 @@ export function classifyCursor(tokens: Token[], cursor: number): CursorContext {
       }
       if (
         state.lambdaActive[state.depth] &&
-        prevToken &&
+        prevToken !== null &&
         VALUE_PRODUCERS.has(tokenKey(prevToken))
       ) {
         return { kind: 'lambda-member', prefix, chain: [...state.currentChain], depth: state.depth }
@@ -145,7 +145,7 @@ function buildLambdaState(tokens: Token[]): LambdaState {
       if (!prev || LAMBDA_TRIGGERS.has(prevKey) || OPERATOR_TYPES.has(prev?.type ?? '')) {
         lambdaActive[depth] = true
         currentChain.length = 0
-      } else if (lambdaActive[depth] && prev && VALUE_PRODUCERS.has(tokenKey(prev))) {
+      } else if (lambdaActive[depth] && prev !== null && VALUE_PRODUCERS.has(tokenKey(prev))) {
         // Only push identifiers onto the chain — not ) or ] which are value-producers
         // but not property names (e.g., .name.trim(). — the ) should not be in the chain)
         if (prev.type === 'Identifier') {

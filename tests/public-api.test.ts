@@ -36,7 +36,7 @@ describe('public API stability', () => {
     const result = expr.validate('1 + 2')
     expect(result.valid).toBe(true)
     if (result.valid) {
-      const ast: ASTNode = result.ast!
+      const ast: ASTNode = result.ast
       expect(ast.type).toBe('BinaryExpression')
     }
   })

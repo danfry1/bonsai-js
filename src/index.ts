@@ -108,7 +108,7 @@ export function evaluateExpression<T = unknown>(
   expression: string,
   context?: Record<string, unknown>,
 ): T {
-  if (!sharedInstance) sharedInstance = bonsai()
+  sharedInstance ??= bonsai()
   return sharedInstance.evaluateSync<T>(expression, context)
 }
 
@@ -380,6 +380,14 @@ function extractReferences(node: ASTNode): ExpressionReferences {
         break
       case 'LambdaExpression':
         walk(n.body)
+        break
+      case 'NumberLiteral':
+      case 'StringLiteral':
+      case 'BooleanLiteral':
+      case 'NullLiteral':
+      case 'UndefinedLiteral':
+      case 'LambdaAccessor':
+      case 'LambdaIdentity':
         break
     }
   }

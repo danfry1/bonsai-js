@@ -103,8 +103,8 @@ describe('evaluator - lambda accessors in transforms', () => {
       { users },
       {
         filter: (val: unknown, predicate: unknown) => {
-          return (val as unknown[]).filter((item) => {
-            if (typeof predicate === 'function') return predicate(item)
+          return (val as unknown[]).filter((item): boolean => {
+            if (typeof predicate === 'function') return Boolean(predicate(item))
             return false
           })
         },

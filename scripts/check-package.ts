@@ -36,7 +36,7 @@ try {
     run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', packDir]),
   )
   const filename = packOutput[0]?.filename as string | undefined
-  if (!filename) {
+  if (filename === undefined || filename === '') {
     throw new Error('npm pack did not return a tarball filename')
   }
 
