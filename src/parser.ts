@@ -35,6 +35,14 @@ const PRECEDENCE: Readonly<Record<OperatorValue | '??', number | undefined>> = {
 
 const MAX_PARSE_DEPTH = 32
 
+// Upper bound on recursive-descent grammar nesting (parentheses, unary chains,
+// bracket indexing, etc.). This is a safety backstop that fails closed with a
+// typed ExpressionError before the native call stack can overflow. It is far
+// above any realistic expression and well above the evaluator's default
+// maxDepth (100), so legitimate input is unaffected; parenthesis nesting that
+// produces no AST node is bounded here rather than by the evaluator.
+const MAX_GRAMMAR_DEPTH = 1000
+
 export function parse(source: string, _depth = 0): ASTNode {
   if (_depth > MAX_PARSE_DEPTH) {
     throw new ExpressionError(
@@ -44,6 +52,7 @@ export function parse(source: string, _depth = 0): ASTNode {
   }
   const tokens = tokenize(source)
   let pos = 0
+  let grammarDepth = 0
 
   function current(): Token {
     return tokens[pos]
@@ -64,7 +73,30 @@ export function parse(source: string, _depth = 0): ASTNode {
     return advance()
   }
 
+  function enterNesting(): void {
+    if (++grammarDepth > MAX_GRAMMAR_DEPTH) {
+      grammarDepth--
+      const tok = current()
+      throw new ExpressionError(
+        'Maximum expression nesting depth exceeded',
+        { source, start: tok.start, end: tok.end },
+      )
+    }
+  }
+
+  // Pratt parser entry. Wrapped so that grammar recursion depth is bounded:
+  // pathologically nested input fails closed with a typed ExpressionError
+  // rather than overflowing the native call stack.
   function parseExpression(minPrec = 0): ASTNode {
+    enterNesting()
+    try {
+      return parseExpressionInner(minPrec)
+    } finally {
+      grammarDepth--
+    }
+  }
+
+  function parseExpressionInner(minPrec = 0): ASTNode {
     let left = parseUnary()
 
     // Ternary — lowest precedence, handled before binary ops
@@ -200,6 +232,15 @@ export function parse(source: string, _depth = 0): ASTNode {
   }
 
   function parseUnary(): ASTNode {
+    enterNesting()
+    try {
+      return parseUnaryInner()
+    } finally {
+      grammarDepth--
+    }
+  }
+
+  function parseUnaryInner(): ASTNode {
     const tok = current()
 
     if (tok.type === 'Operator' && (tok.value === '!' || tok.value === '-' || tok.value === '+')) {

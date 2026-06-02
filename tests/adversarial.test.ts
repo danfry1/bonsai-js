@@ -239,3 +239,197 @@ describe('sandbox hardening', () => {
     expect(expr.evaluateSync('toString', {})).toBeUndefined()
   })
 })
+
+describe('resource-exhaustion limits', () => {
+  // Parser nesting depth guard: deep nesting must fail closed with a typed
+  // ExpressionError, never a raw native RangeError (stack overflow).
+  it('throws a typed ExpressionError on pathologically deep parenthesis nesting', () => {
+    const deep = `${'('.repeat(50_000)}1${')'.repeat(50_000)}`
+    expect(() => parse(deep)).toThrow(ExpressionError)
+  })
+
+  it('throws a typed ExpressionError on pathologically deep unary nesting', () => {
+    const deep = `${'!'.repeat(50_000)}x`
+    expect(() => parse(deep)).toThrow(ExpressionError)
+  })
+
+  it('surfaces deep nesting through evaluateSync and validate without a raw RangeError', () => {
+    const deep = `${'('.repeat(50_000)}1${')'.repeat(50_000)}`
+    expect(() => bonsai().evaluateSync(deep)).toThrow(ExpressionError)
+    const result = bonsai().validate(deep)
+    expect(result.valid).toBe(false)
+    if (!result.valid) {
+      expect(result.errors[0].message).toMatch(/nesting depth/iu)
+      expect(result.errors[0].message).not.toMatch(/call stack/iu)
+    }
+  })
+
+  it('still parses reasonably deep but legal nesting', () => {
+    const ok = `${'('.repeat(300)}1${')'.repeat(300)}`
+    expect(bonsai().evaluateSync(ok)).toBe(1)
+  })
+
+  // String-output cap on the method path (the stdlib transform path already
+  // caps padStart/padEnd; the method path previously did not).
+  it('caps padStart/padEnd output length on the method path', () => {
+    expect(() => bonsai().evaluateSync('"x".padStart(50000000)')).toThrow(BonsaiSecurityError)
+    expect(() => bonsai().evaluateSync('"x".padEnd(50000000)')).toThrow(BonsaiSecurityError)
+  })
+
+  it('respects a custom maxStringLength for padStart/padEnd', () => {
+    const expr = bonsai({ maxStringLength: 100 })
+    expect(expr.evaluateSync('"x".padStart(100)')).toHaveLength(100)
+    expect(() => expr.evaluateSync('"x".padStart(101)')).toThrow(BonsaiSecurityError)
+  })
+
+  it('caps repeat by output length as well as by count', () => {
+    // 10 chars * 101 = 1010 > 1000
+    expect(() => bonsai({ maxStringLength: 1000 }).evaluateSync('"xxxxxxxxxx".repeat(101)')).toThrow(BonsaiSecurityError)
+    // existing count cap still applies under the default policy
+    expect(() => bonsai().evaluateSync('"x".repeat(200000000)')).toThrow('count')
+  })
+
+  // Array-output cap: maxArrayLength previously covered only array literals and
+  // spread, not array-producing method outputs.
+  it('enforces maxArrayLength on array-producing method outputs (sync)', () => {
+    const expr = bonsai({ maxArrayLength: 5 })
+    expect(() => expr.evaluateSync('"a,b,c,d,e,f,g".split(",")')).toThrow(BonsaiSecurityError)
+    expect(() => expr.evaluateSync('items.map(. + 1)', { items: [1, 2, 3, 4, 5, 6] })).toThrow(BonsaiSecurityError)
+    expect(() => expr.evaluateSync('a.concat(b)', { a: [1, 2, 3], b: [4, 5, 6] })).toThrow(BonsaiSecurityError)
+    expect(() => expr.evaluateSync('m.flat()', { m: [[1, 2, 3], [4, 5, 6]] })).toThrow(BonsaiSecurityError)
+  })
+
+  it('enforces maxArrayLength on array-producing method outputs (async)', async () => {
+    const expr = bonsai({ maxArrayLength: 5 })
+    await expect(expr.evaluate('items.map(. + 1)', { items: [1, 2, 3, 4, 5, 6] })).rejects.toThrow(BonsaiSecurityError)
+    await expect(expr.evaluate('"a,b,c,d,e,f,g".split(",")')).rejects.toThrow(BonsaiSecurityError)
+  })
+
+  // --- Parser depth guard: all recursion paths, boundaries, messages ---
+
+  it('bounds deep array-literal nesting with a typed ExpressionError', () => {
+    const deep = `${'['.repeat(50_000)}1${']'.repeat(50_000)}`
+    expect(() => parse(deep)).toThrow(ExpressionError)
+  })
+
+  it('bounds deep nesting reached through computed member access', () => {
+    const deep = `a${'[a'.repeat(50_000)}${']'.repeat(50_000)}`
+    expect(() => parse(deep)).toThrow(ExpressionError)
+  })
+
+  it('bounds deep nesting inside a template interpolation', () => {
+    const deep = `\`\${${'('.repeat(50_000)}1${')'.repeat(50_000)}}\``
+    expect(() => bonsai().evaluateSync(deep)).toThrow(ExpressionError)
+  })
+
+  it('reports a clear nesting-depth message rather than a stack-overflow', () => {
+    const deep = `${'('.repeat(50_000)}1${')'.repeat(50_000)}`
+    expect(() => parse(deep)).toThrow(/nesting depth/iu)
+  })
+
+  it('still parses moderately deep array nesting at the parser level', () => {
+    const ok = `${'['.repeat(300)}1${']'.repeat(300)}`
+    expect(() => parse(ok)).not.toThrow()
+  })
+
+  // --- String-output cap: async parity, boundaries, error code ---
+
+  it('caps string growth in async mode too', async () => {
+    await expect(bonsai().evaluate('"x".padStart(50000000)')).rejects.toThrow(BonsaiSecurityError)
+  })
+
+  it('respects a custom maxStringLength for padEnd at the boundary', () => {
+    const expr = bonsai({ maxStringLength: 100 })
+    expect(expr.evaluateSync('"x".padEnd(100)')).toHaveLength(100)
+    expect(() => expr.evaluateSync('"x".padEnd(101)')).toThrow(BonsaiSecurityError)
+  })
+
+  it('caps repeat at the produced-length boundary', () => {
+    const expr = bonsai({ maxStringLength: 50 })
+    expect(expr.evaluateSync('"xxxxx".repeat(10)')).toHaveLength(50) // 5 * 10 = 50, allowed
+    expect(() => expr.evaluateSync('"xxxxx".repeat(11)')).toThrow(BonsaiSecurityError) // 55 > 50
+  })
+
+  // --- Array-output cap: full method set, boundaries, within-limit, async ---
+
+  it('enforces maxArrayLength across every array-returning method (sync)', () => {
+    const expr = bonsai({ maxArrayLength: 5 })
+    const ctx = { arr: [1, 2, 3, 4, 5, 6] }
+    expect(() => expr.evaluateSync('arr.slice(0)', ctx)).toThrow(BonsaiSecurityError)
+    expect(() => expr.evaluateSync('arr.toSorted()', ctx)).toThrow(BonsaiSecurityError)
+    expect(() => expr.evaluateSync('arr.toReversed()', ctx)).toThrow(BonsaiSecurityError)
+    expect(() => expr.evaluateSync('arr.with(0, 9)', ctx)).toThrow(BonsaiSecurityError)
+    expect(() => expr.evaluateSync('arr.toSpliced(0, 0, 9)', ctx)).toThrow(BonsaiSecurityError)
+    expect(() => expr.evaluateSync('arr.flatMap(. * 1)', ctx)).toThrow(BonsaiSecurityError)
+    expect(() => expr.evaluateSync('arr.filter(. > 0)', ctx)).toThrow(BonsaiSecurityError) // all 6 survive
+  })
+
+  it('allows array method outputs within the limit (regression)', () => {
+    const expr = bonsai({ maxArrayLength: 5 })
+    expect(expr.evaluateSync('"a,b,c,d,e".split(",")')).toHaveLength(5) // exactly at limit
+    // The 6-element source comes from context (a literal would hit the cap at construction).
+    expect(expr.evaluateSync('arr.filter(. > 4)', { arr: [1, 2, 3, 4, 5, 6] })).toEqual([5, 6])
+    expect(expr.evaluateSync('[1,2,3].map(. * 2)')).toEqual([2, 4, 6])
+    expect(() => expr.evaluateSync('"a,b,c,d,e,f".split(",")')).toThrow(BonsaiSecurityError) // 6 > 5
+  })
+
+  it('enforces maxArrayLength across methods in async mode', async () => {
+    const expr = bonsai({ maxArrayLength: 5 })
+    const ctx = { arr: [1, 2, 3, 4, 5, 6] }
+    await expect(expr.evaluate('arr.filter(. > 0)', ctx)).rejects.toThrow(BonsaiSecurityError)
+    await expect(expr.evaluate('arr.flatMap(. * 1)', ctx)).rejects.toThrow(BonsaiSecurityError)
+    await expect(expr.evaluate('arr.toSorted()', ctx)).rejects.toThrow(BonsaiSecurityError)
+  })
+
+  it('uses the documented machine-readable error codes', () => {
+    const expr = bonsai({ maxStringLength: 10, maxArrayLength: 3 })
+    let strCode: string | undefined
+    try { expr.evaluateSync('"x".padStart(50)') } catch (e) { strCode = (e as BonsaiSecurityError).code }
+    expect(strCode).toBe('MAX_STRING_LENGTH')
+    let arrCode: string | undefined
+    try { expr.evaluateSync('"a,b,c,d".split(",")') } catch (e) { arrCode = (e as BonsaiSecurityError).code }
+    expect(arrCode).toBe('MAX_ARRAY_LENGTH')
+  })
+
+  // String-output cap on every string-returning method. padStart/padEnd/repeat
+  // are checked before allocation; join/concat/slice/... are checked on output.
+  // arr.join(sep) is the worst single-call amplifier (length x separator length).
+  describe('maxStringLength bounds every string-returning method output', () => {
+    it('caps join output (the array-length x separator-length amplifier)', () => {
+      const expr = bonsai({ maxStringLength: 10 })
+      // 3 elements joined by a 10-char separator => 23 chars, past the cap.
+      expect(() => expr.evaluateSync('a.join(s)', { a: ['x', 'y', 'z'], s: '0123456789' })).toThrow(BonsaiSecurityError)
+      // Within the cap is still allowed.
+      expect(expr.evaluateSync('a.join(s)', { a: ['x', 'y'], s: '00' })).toBe('x00y')
+    })
+
+    it('uses MAX_STRING_LENGTH for an over-cap join (not a raw allocation)', () => {
+      const expr = bonsai({ maxStringLength: 10 })
+      let code: string | undefined
+      try { expr.evaluateSync('a.join(s)', { a: ['x', 'y', 'z'], s: '0123456789' }) } catch (e) { code = (e as BonsaiSecurityError).code }
+      expect(code).toBe('MAX_STRING_LENGTH')
+    })
+
+    it('caps string concat and slice output', () => {
+      const expr = bonsai({ maxStringLength: 10 })
+      expect(() => expr.evaluateSync('a.concat(b)', { a: 'xxxxxx', b: 'yyyyyy' })).toThrow(BonsaiSecurityError)
+      expect(() => expr.evaluateSync('big.slice(0)', { big: 'x'.repeat(11) })).toThrow(BonsaiSecurityError)
+      // A slice that stays within the cap is allowed.
+      expect(expr.evaluateSync('big.slice(0, 10)', { big: 'x'.repeat(11) })).toHaveLength(10)
+    })
+
+    it('enforces the join cap in async mode too', async () => {
+      const expr = bonsai({ maxStringLength: 10 })
+      await expect(expr.evaluate('a.join(s)', { a: ['x', 'y', 'z'], s: '0123456789' })).rejects.toThrow(BonsaiSecurityError)
+    })
+
+    it('bounds join under the default policy (regression for the documented guarantee)', () => {
+      // Default maxStringLength = 100,000. A separator at the cap joined across a
+      // handful of elements produces a multi-hundred-KB string in one native
+      // call; it must be rejected rather than silently allocated.
+      const expr = bonsai()
+      const arr = Array.from({ length: 10 }, (_, i) => String(i))
+      expect(() => expr.evaluateSync('a.join(s)', { a: arr, s: 'x'.repeat(100000) })).toThrow(BonsaiSecurityError)
+    })
+  })
+})

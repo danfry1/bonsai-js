@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Bounded parser recursion: pathologically nested input (deep parentheses, unary chains) now fails closed with a typed `ExpressionError` ("Maximum expression nesting depth exceeded") instead of overflowing the native call stack with an uncaught `RangeError`. `validate()` reports it as a normal syntax error rather than a stack-overflow message.
+- `maxArrayLength` is now enforced on array-returning methods (`split`, `map`, `flatMap`, `flat`, `concat`, `toSorted`, `toReversed`, `with`, `toSpliced`), not just array literals and spread, in both the sync and async evaluators.
+- Added `maxStringLength` (default 100,000) and enforced it as a ceiling on every string produced by a method call, in both the sync and async evaluators. `padStart`/`padEnd`/`repeat` are checked before allocation (capping the produced length, not just the repeat count); all other string-returning methods (`join`, `concat`, `slice`, `toUpperCase`, ...) are checked on their output. This closes single-operation amplifiers such as `arr.join(sep)`, whose output length is array length times separator length in one native call that the cooperative timeout cannot interrupt.
+
+### Added
+
+- `maxStringLength` option on `bonsai(options)` and a `BonsaiSecurityError('MAX_STRING_LENGTH', ...)` error code.
+
 ## [0.4.0] - 2026-06-02
 
 ### Added

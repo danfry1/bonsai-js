@@ -7,6 +7,8 @@ import {
   accessMember,
   applyBinaryOp,
   applyUnaryOp,
+  checkResultArrayLength,
+  checkResultStringLength,
   expandSpreadValue,
   getIdentifierName,
   getObjectLiteralKeyName,
@@ -194,7 +196,7 @@ async function evalCallExpressionAsync(
       for (const arg of node.args) {
         await pushCallArgumentAsync(args, arg, env)
       }
-      validateMethodArgs(methodName, args)
+      validateMethodArgs(obj, methodName, args, g)
 
       // Higher-order array methods need async-aware iteration
       // because lambda callbacks may return Promises, which native
@@ -205,12 +207,15 @@ async function evalCallExpressionAsync(
         const asyncResult = await evalAsyncArrayMethod(methodName, arr, predicate)
         if (asyncResult !== undefined) {
           g.checkTimeout()
+          checkResultArrayLength(asyncResult.value, g)
           return asyncResult.value
         }
       }
 
       const result = await method.call(obj, ...args)
       g.checkTimeout()
+      checkResultArrayLength(result, g)
+      checkResultStringLength(result, g)
       return result
     } catch (e) {
       if (s) attachLocation(e, s, node.start, node.end)
@@ -378,18 +383,22 @@ async function evalLambdaBodyAsync(node: ASTNode, item: unknown, env: AsyncEvalE
               args.push(await evalArgAsync(arg, env))
             }
           }
-          validateMethodArgs(methodName, args)
+          validateMethodArgs(obj, methodName, args, g)
 
           // Async-safe higher-order array method handling (same as top-level path)
           if (Array.isArray(obj) && args.length === 1 && typeof args[0] === 'function') {
             const asyncResult = await evalAsyncArrayMethod(methodName, obj, args[0] as (item: unknown) => unknown)
             if (asyncResult !== undefined) {
               g.checkTimeout()
+              checkResultArrayLength(asyncResult.value, g)
               return asyncResult.value
             }
           }
 
-          return await method.call(obj, ...args)
+          const result = await method.call(obj, ...args)
+          checkResultArrayLength(result, g)
+          checkResultStringLength(result, g)
+          return result
         }
         ownDepth = false
         g.exitDepth()

@@ -219,8 +219,10 @@ export interface BonsaiOptions {
   timeout?: number
   /** Maximum expression nesting depth. Default: 100. */
   maxDepth?: number
-  /** Maximum array literal or spread size. Default: 100,000. */
+  /** Maximum array size produced during evaluation (literals, spread, and array-returning methods). Default: 100,000. */
   maxArrayLength?: number
+  /** Maximum string size produced by a string-returning method (padStart, padEnd, repeat, join, concat, slice, ...). Default: 100,000. */
+  maxStringLength?: number
   /** Allowlist of property/method names expressions can access. */
   allowedProperties?: string[]
   /** Denylist of property/method names expressions cannot access. */
