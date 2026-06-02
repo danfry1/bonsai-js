@@ -12,7 +12,9 @@ function bundleSize(code: string): number {
   const entry = join(tmpDir, 'entry.ts')
   writeFileSync(entry, code)
   const out = join(tmpDir, 'out.mjs')
-  execFileSync('bun', ['build', entry, '--outfile', out, '--minify', '--target=browser'], { stdio: 'pipe' })
+  execFileSync('bun', ['build', entry, '--outfile', out, '--minify', '--target=browser'], {
+    stdio: 'pipe',
+  })
   const size = readFileSync(out).byteLength
   rmSync(tmpDir, { recursive: true, force: true })
   return size

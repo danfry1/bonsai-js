@@ -7,7 +7,7 @@ function expectArray(val: unknown, name: string): unknown[] {
 }
 
 function hasPromises(results: unknown[]): boolean {
-  return results.some(r => r instanceof Promise)
+  return results.some((r) => r instanceof Promise)
 }
 
 const LAMBDA_EXPECTED = 'a lambda or function callback (e.g. .field or . > value)'
@@ -39,7 +39,9 @@ export const arrays: BonsaiPlugin = (expr) => {
   expr.addTransform('reverse', (val: unknown) => [...expectArray(val, 'reverse')].reverse())
   expr.addTransform('flatten', (val: unknown) => expectArray(val, 'flatten').flat())
   expr.addTransform('unique', (val: unknown) => [...new Set(expectArray(val, 'unique'))])
-  expr.addTransform('join', (val: unknown, sep: unknown) => expectArray(val, 'join').join(String(sep ?? ',')))
+  expr.addTransform('join', (val: unknown, sep: unknown) =>
+    expectArray(val, 'join').join(String(sep ?? ',')),
+  )
   expr.addTransform('sort', (val: unknown) => {
     const arr = [...expectArray(val, 'sort')]
     return arr.sort((a, b) => {
@@ -62,11 +64,12 @@ export const arrays: BonsaiPlugin = (expr) => {
   expr.addTransform('filter', (val: unknown, predicate: unknown) => {
     const arr = expectArray(val, 'filter')
     if (predicate === undefined) return arr.filter(Boolean)
-    if (typeof predicate !== 'function') throw new BonsaiTypeError('filter', LAMBDA_EXPECTED, predicate)
+    if (typeof predicate !== 'function')
+      throw new BonsaiTypeError('filter', LAMBDA_EXPECTED, predicate)
     const fn = predicate as (item: unknown) => unknown
     const results = arr.map(fn)
     if (hasPromises(results)) {
-      return Promise.all(results).then(resolved => arr.filter((_, i) => resolved[i]))
+      return Promise.all(results).then((resolved) => arr.filter((_, i) => resolved[i]))
     }
     return arr.filter((_, i) => results[i])
   })
@@ -82,11 +85,12 @@ export const arrays: BonsaiPlugin = (expr) => {
   expr.addTransform('find', (val: unknown, predicate: unknown) => {
     const arr = expectArray(val, 'find')
     if (predicate === undefined) return undefined
-    if (typeof predicate !== 'function') throw new BonsaiTypeError('find', LAMBDA_EXPECTED, predicate)
+    if (typeof predicate !== 'function')
+      throw new BonsaiTypeError('find', LAMBDA_EXPECTED, predicate)
     const fn = predicate as (item: unknown) => unknown
     const results = arr.map(fn)
     if (hasPromises(results)) {
-      return Promise.all(results).then(resolved => {
+      return Promise.all(results).then((resolved) => {
         const idx = resolved.findIndex(Boolean)
         return idx >= 0 ? arr[idx] : undefined
       })
@@ -98,11 +102,12 @@ export const arrays: BonsaiPlugin = (expr) => {
   expr.addTransform('some', (val: unknown, predicate: unknown) => {
     const arr = expectArray(val, 'some')
     if (predicate === undefined) return arr.some(Boolean)
-    if (typeof predicate !== 'function') throw new BonsaiTypeError('some', LAMBDA_EXPECTED, predicate)
+    if (typeof predicate !== 'function')
+      throw new BonsaiTypeError('some', LAMBDA_EXPECTED, predicate)
     const fn = predicate as (item: unknown) => unknown
     const results = arr.map(fn)
     if (hasPromises(results)) {
-      return Promise.all(results).then(resolved => resolved.some(Boolean))
+      return Promise.all(results).then((resolved) => resolved.some(Boolean))
     }
     return results.some(Boolean)
   })
@@ -110,11 +115,12 @@ export const arrays: BonsaiPlugin = (expr) => {
   expr.addTransform('every', (val: unknown, predicate: unknown) => {
     const arr = expectArray(val, 'every')
     if (predicate === undefined) return arr.every(Boolean)
-    if (typeof predicate !== 'function') throw new BonsaiTypeError('every', LAMBDA_EXPECTED, predicate)
+    if (typeof predicate !== 'function')
+      throw new BonsaiTypeError('every', LAMBDA_EXPECTED, predicate)
     const fn = predicate as (item: unknown) => unknown
     const results = arr.map(fn)
     if (hasPromises(results)) {
-      return Promise.all(results).then(resolved => resolved.every(Boolean))
+      return Promise.all(results).then((resolved) => resolved.every(Boolean))
     }
     return results.every(Boolean)
   })

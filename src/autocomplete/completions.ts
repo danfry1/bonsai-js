@@ -1,5 +1,12 @@
 import type { InferredTypeName } from '../types.js'
-import { METHODS_BY_TYPE, BLOCKED_NAMES, KEYWORDS, getMethodReturnType, isMethodReceiverType, type MethodReceiverType } from './catalog.js'
+import {
+  METHODS_BY_TYPE,
+  BLOCKED_NAMES,
+  KEYWORDS,
+  getMethodReturnType,
+  isMethodReceiverType,
+  type MethodReceiverType,
+} from './catalog.js'
 import { getPrefix, type CursorContext } from './context.js'
 import { inferType, type PropertyPolicy } from './inference.js'
 
@@ -63,8 +70,8 @@ const PREVIEW_MAX_LENGTH = 20
 const METHOD_COMPLETIONS_BY_TYPE: Record<string, Completion[]> = {}
 for (const [type, methods] of Object.entries(METHODS_BY_TYPE)) {
   METHOD_COMPLETIONS_BY_TYPE[type] = methods
-    .filter(m => !BLOCKED_NAMES.has(m))
-    .map(method => {
+    .filter((m) => !BLOCKED_NAMES.has(m))
+    .map((method) => {
       const returnType = getMethodReturnType(type as MethodReceiverType, method)
       const detail = returnType ? `${type} → ${returnType}` : type
       const isLambda = LAMBDA_METHODS.has(method)
@@ -171,9 +178,10 @@ function addIdentifierCompletions(results: Completion[], env: CompletionEnv): vo
       let detail: string = valueType
       // Show a brief preview for simple values
       if (valueType === 'string' && typeof value === 'string') {
-        detail = value.length > PREVIEW_MAX_LENGTH
-          ? `"${value.slice(0, PREVIEW_MAX_LENGTH)}…"`
-          : `"${value}"`
+        detail =
+          value.length > PREVIEW_MAX_LENGTH
+            ? `"${value.slice(0, PREVIEW_MAX_LENGTH)}…"`
+            : `"${value}"`
       } else if (valueType === 'number') {
         detail = String(value)
       } else if (valueType === 'boolean') {
@@ -186,7 +194,13 @@ function addIdentifierCompletions(results: Completion[], env: CompletionEnv): vo
   }
   for (const name of env.functions) {
     const insert = `${name}()`
-    results.push({ label: name, kind: 'function', insertText: insert, cursorOffset: insert.length - 1, sortPriority: 1 })
+    results.push({
+      label: name,
+      kind: 'function',
+      insertText: insert,
+      cursorOffset: insert.length - 1,
+      sortPriority: 1,
+    })
   }
   for (const kw of KEYWORDS) {
     results.push({ label: kw, kind: 'keyword', sortPriority: 2 })
@@ -223,8 +237,10 @@ function fuzzyScore(label: string, query: string): number {
   const queryLower = query.toLowerCase()
 
   if (label === query) return SCORE_EXACT
-  if (labelLower.startsWith(queryLower)) return SCORE_PREFIX_BASE + (query.length * SCORE_PREFIX_PER_CHAR)
-  if (labelLower.includes(queryLower)) return SCORE_CONTAINS_BASE + (query.length * SCORE_CONTAINS_PER_CHAR)
+  if (labelLower.startsWith(queryLower))
+    return SCORE_PREFIX_BASE + query.length * SCORE_PREFIX_PER_CHAR
+  if (labelLower.includes(queryLower))
+    return SCORE_CONTAINS_BASE + query.length * SCORE_CONTAINS_PER_CHAR
 
   // Fuzzy: every character in query must appear in label in order
   let qi = 0
@@ -235,7 +251,11 @@ function fuzzyScore(label: string, query: string): number {
       qi++
       score += SCORE_CHAR_MATCH
       if (li === prevMatchIdx + 1) score += SCORE_CONSECUTIVE_BONUS
-      if (li === 0 || label[li] === label[li].toUpperCase() && label[li] !== label[li].toLowerCase()) score += SCORE_BOUNDARY_BONUS
+      if (
+        li === 0 ||
+        (label[li] === label[li].toUpperCase() && label[li] !== label[li].toLowerCase())
+      )
+        score += SCORE_BOUNDARY_BONUS
       prevMatchIdx = li
     }
   }
@@ -267,14 +287,16 @@ function filterAndRank(results: Completion[], prefix: string): Completion[] {
   // Sort by fuzzy score descending, then by base priority, then by label length, then alphabetically
   scored.sort((a, b) => {
     if (a.score !== b.score) return b.score - a.score
-    if (a.completion.sortPriority !== b.completion.sortPriority) return a.completion.sortPriority - b.completion.sortPriority
-    if (a.completion.label.length !== b.completion.label.length) return a.completion.label.length - b.completion.label.length
+    if (a.completion.sortPriority !== b.completion.sortPriority)
+      return a.completion.sortPriority - b.completion.sortPriority
+    if (a.completion.label.length !== b.completion.label.length)
+      return a.completion.label.length - b.completion.label.length
     if (a.completion.label < b.completion.label) return -1
     if (a.completion.label > b.completion.label) return 1
     return 0
   })
 
-  return scored.map(s => s.completion)
+  return scored.map((s) => s.completion)
 }
 
 function comparator(a: Completion, b: Completion): number {

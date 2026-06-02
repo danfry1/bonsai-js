@@ -33,11 +33,13 @@ export const dates: BonsaiPlugin = (expr) => {
       mm: pad(date.getUTCMinutes()),
       ss: pad(date.getUTCSeconds()),
     }
-    return fmt.replace(/YYYY|MM|DD|HH|mm|ss/gu, token => parts[token])
+    return fmt.replace(/YYYY|MM|DD|HH|mm|ss/gu, (token) => parts[token])
   })
 
   expr.addTransform('diffDays', (val: unknown, other: unknown) => {
     const msPerDay = 86_400_000
-    return Math.abs(Math.round((expectNumber(val, 'diffDays') - expectNumber(other, 'diffDays')) / msPerDay))
+    return Math.abs(
+      Math.round((expectNumber(val, 'diffDays') - expectNumber(other, 'diffDays')) / msPerDay),
+    )
   })
 }

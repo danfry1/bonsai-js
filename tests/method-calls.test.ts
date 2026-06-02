@@ -138,15 +138,21 @@ describe('method calls on values', () => {
     expr.addFunction('makeRegex', () => /x/u)
 
     it('blocks function args to replace', () => {
-      expect(() => expr.evaluateSync('"abc".replace("a", makeFn())')).toThrow('callbacks are not allowed')
+      expect(() => expr.evaluateSync('"abc".replace("a", makeFn())')).toThrow(
+        'callbacks are not allowed',
+      )
     })
 
     it('blocks function args to replaceAll', () => {
-      expect(() => expr.evaluateSync('"abc".replaceAll("a", makeFn())')).toThrow('callbacks are not allowed')
+      expect(() => expr.evaluateSync('"abc".replaceAll("a", makeFn())')).toThrow(
+        'callbacks are not allowed',
+      )
     })
 
     it('blocks RegExp args to replace', () => {
-      expect(() => expr.evaluateSync('"abc".replace(makeRegex(), "x")')).toThrow('RegExp is not allowed')
+      expect(() => expr.evaluateSync('"abc".replace(makeRegex(), "x")')).toThrow(
+        'RegExp is not allowed',
+      )
     })
 
     it('allows string args to replace', () => {
@@ -160,7 +166,9 @@ describe('method calls on values', () => {
     it('blocks object args to replace (Symbol.replace hole)', () => {
       const expr2 = bonsai()
       expr2.addFunction('makeObj', () => ({ toString: () => 'a' }))
-      expect(() => expr2.evaluateSync('"abc".replace(makeObj(), "x")')).toThrow('objects are not allowed')
+      expect(() => expr2.evaluateSync('"abc".replace(makeObj(), "x")')).toThrow(
+        'objects are not allowed',
+      )
     })
 
     it('caps repeat count to prevent DoS', () => {

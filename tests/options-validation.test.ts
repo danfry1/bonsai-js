@@ -33,9 +33,13 @@ describe('BonsaiOptions validation', () => {
   })
 
   it('rejects allow/deny lists containing non-string elements', () => {
-    expect(() => bonsai({ allowedProperties: ['name', 42] as unknown as string[] })).toThrow(TypeError)
+    expect(() => bonsai({ allowedProperties: ['name', 42] as unknown as string[] })).toThrow(
+      TypeError,
+    )
     expect(() => bonsai({ deniedProperties: [null] as unknown as string[] })).toThrow(TypeError)
-    expect(() => bonsai({ allowedProperties: [undefined] as unknown as string[] })).toThrow(TypeError)
+    expect(() => bonsai({ allowedProperties: [undefined] as unknown as string[] })).toThrow(
+      TypeError,
+    )
   })
 
   it('accepts valid and boundary option values', () => {

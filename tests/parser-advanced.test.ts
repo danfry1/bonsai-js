@@ -89,7 +89,10 @@ describe('parser - objects', () => {
     expect(ast).toMatchObject({
       type: 'ObjectLiteral',
       properties: [
-        { key: { type: 'Identifier', name: 'name' }, value: { type: 'StringLiteral', value: 'Dan' } },
+        {
+          key: { type: 'Identifier', name: 'name' },
+          value: { type: 'StringLiteral', value: 'Dan' },
+        },
         { key: { type: 'Identifier', name: 'age' }, value: { type: 'NumberLiteral', value: 30 } },
       ],
     })
@@ -99,9 +102,7 @@ describe('parser - objects', () => {
     const ast = parse('{ [key]: "value" }')
     expect(ast).toMatchObject({
       type: 'ObjectLiteral',
-      properties: [
-        { computed: true, key: { type: 'Identifier', name: 'key' } },
-      ],
+      properties: [{ computed: true, key: { type: 'Identifier', name: 'key' } }],
     })
   })
 })

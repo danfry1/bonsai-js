@@ -54,7 +54,7 @@ function measure(fn: () => void): number {
   }
 
   const elapsedMs = now - start
-  return iterations * OPS_PER_SECOND / elapsedMs
+  return (iterations * OPS_PER_SECOND) / elapsedMs
 }
 
 // Floors are set to roughly one tenth of the throughput observed on a fast
@@ -121,7 +121,9 @@ if (!cachedComparison) {
 writeLine('Performance gate results:')
 for (const result of results) {
   const status = result.hz >= result.minHz ? 'PASS' : 'FAIL'
-  writeLine(`- ${result.name}: ${Math.round(result.hz).toLocaleString()} ops/sec (min ${result.minHz.toLocaleString()}) [${status}]`)
+  writeLine(
+    `- ${result.name}: ${Math.round(result.hz).toLocaleString()} ops/sec (min ${result.minHz.toLocaleString()}) [${status}]`,
+  )
 }
 
 const ratio = cachedComparison.hz / uncachedHz
@@ -132,7 +134,9 @@ const failures = results
   .map((result) => `${result.name} dropped below ${result.minHz.toLocaleString()} ops/sec`)
 
 if (ratio < 2) {
-  failures.push(`cached comparison should be at least 2x faster than uncached parsing, got ${ratio.toFixed(2)}x`)
+  failures.push(
+    `cached comparison should be at least 2x faster than uncached parsing, got ${ratio.toFixed(2)}x`,
+  )
 }
 
 if (failures.length > 0) {

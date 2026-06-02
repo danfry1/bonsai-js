@@ -11,7 +11,9 @@ function nestedContext(depth: number): Record<string, unknown> {
 }
 
 function nestedMemberExpression(depth: number): string {
-  return ['root', ...Array.from({ length: depth }, (_, index) => `level${index}`), 'value'].join('.')
+  return ['root', ...Array.from({ length: depth }, (_, index) => `level${index}`), 'value'].join(
+    '.',
+  )
 }
 
 describe('adversarial inputs', () => {
@@ -93,7 +95,9 @@ describe('sandbox hardening', () => {
     // Identifier 'secret' is not subject to allowedProperties
     expect(expr.evaluateSync('secret', { secret: 42 })).toBe(42)
     // But member access to 'secret' IS blocked
-    expect(() => expr.evaluateSync('obj.secret', { obj: { secret: 42 } })).toThrow(BonsaiSecurityError)
+    expect(() => expr.evaluateSync('obj.secret', { obj: { secret: 42 } })).toThrow(
+      BonsaiSecurityError,
+    )
   })
 
   it('AccessKind: object-key bypasses allow/deny lists', () => {
@@ -113,13 +117,19 @@ describe('sandbox hardening', () => {
 
   it('receiver-aware method validation: string methods rejected on arrays', () => {
     const expr = bonsai()
-    expect(() => expr.evaluateSync('items.startsWith("a")', { items: [1, 2] })).toThrow(BonsaiSecurityError)
-    expect(() => expr.evaluateSync('items.replace("a", "b")', { items: [1, 2] })).toThrow(BonsaiSecurityError)
+    expect(() => expr.evaluateSync('items.startsWith("a")', { items: [1, 2] })).toThrow(
+      BonsaiSecurityError,
+    )
+    expect(() => expr.evaluateSync('items.replace("a", "b")', { items: [1, 2] })).toThrow(
+      BonsaiSecurityError,
+    )
   })
 
   it('receiver-aware method validation: array methods rejected on strings', () => {
     const expr = bonsai()
-    expect(() => expr.evaluateSync('text.toFixed(2)', { text: 'hello' })).toThrow(BonsaiSecurityError)
+    expect(() => expr.evaluateSync('text.toFixed(2)', { text: 'hello' })).toThrow(
+      BonsaiSecurityError,
+    )
   })
 
   it('receiver-aware method validation: toString only on string and number', () => {
@@ -133,7 +143,9 @@ describe('sandbox hardening', () => {
     const expr = bonsai({ timeout: 50 })
     // Async functions that exceed the timeout should throw
     expr.addFunction('slow', async () => {
-      await new Promise<void>(resolve => { setTimeout(resolve, 200) })
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 200)
+      })
       return 'done'
     })
     await expect(expr.evaluate('slow()')).rejects.toThrow('Expression timeout')
@@ -155,7 +167,9 @@ describe('sandbox hardening', () => {
   it('evaluateSync rejects Promise return from async transforms', () => {
     const expr = bonsai()
     expr.addTransform('asyncUpper', async (val: unknown) => (val as string).toUpperCase())
-    expect(() => expr.evaluateSync('"hello" |> asyncUpper')).toThrow(/synchronous transform result/u)
+    expect(() => expr.evaluateSync('"hello" |> asyncUpper')).toThrow(
+      /synchronous transform result/u,
+    )
   })
 
   it('sync Promise rejection errors identify the call kind and suggest evaluate()', () => {
@@ -174,12 +188,11 @@ describe('sandbox hardening', () => {
     expr.addTransform('map', (val: unknown, fn: unknown) => {
       const arr = val as unknown[]
       const results = arr.map(fn as (item: unknown) => unknown)
-      return results.some(r => r instanceof Promise) ? Promise.all(results) : results
+      return results.some((r) => r instanceof Promise) ? Promise.all(results) : results
     })
-    const result = await expr.evaluate(
-      'items |> map(.price + asyncTax())',
-      { items: [{ price: 10 }, { price: 20 }] },
-    )
+    const result = await expr.evaluate('items |> map(.price + asyncTax())', {
+      items: [{ price: 10 }, { price: 20 }],
+    })
     expect(result).toEqual([15, 25])
   })
 
@@ -187,20 +200,21 @@ describe('sandbox hardening', () => {
     const { arrays } = await import('../src/stdlib/index.js')
     const expr = bonsai()
     expr.use(arrays)
-    const result = await expr.evaluate(
-      'users |> filter(.active) |> map(.name)',
-      { users: [
+    const result = await expr.evaluate('users |> filter(.active) |> map(.name)', {
+      users: [
         { name: 'Alice', active: true },
         { name: 'Bob', active: false },
         { name: 'Charlie', active: true },
-      ] },
-    )
+      ],
+    })
     expect(result).toEqual(['Alice', 'Charlie'])
   })
 
   it('computed access cannot bypass denied properties', () => {
     const expr = bonsai({ deniedProperties: ['secret'] })
-    expect(() => expr.evaluateSync('obj["secret"]', { obj: { secret: 1 } })).toThrow(BonsaiSecurityError)
+    expect(() => expr.evaluateSync('obj["secret"]', { obj: { secret: 1 } })).toThrow(
+      BonsaiSecurityError,
+    )
   })
 
   it('computed method call cannot bypass denied properties', () => {
@@ -220,10 +234,7 @@ describe('sandbox hardening', () => {
     const shallow = '1 + 2'
     const ctx = { a: { b: { c: { d: { e: 42 } } } } }
 
-    const [r1, r2] = await Promise.all([
-      expr.evaluate(deep, ctx),
-      expr.evaluate(shallow),
-    ])
+    const [r1, r2] = await Promise.all([expr.evaluate(deep, ctx), expr.evaluate(shallow)])
     expect(r1).toBe(42)
     expect(r2).toBe(3)
   })
@@ -284,7 +295,9 @@ describe('resource-exhaustion limits', () => {
 
   it('caps repeat by output length as well as by count', () => {
     // 10 chars * 101 = 1010 > 1000
-    expect(() => bonsai({ maxStringLength: 1000 }).evaluateSync('"xxxxxxxxxx".repeat(101)')).toThrow(BonsaiSecurityError)
+    expect(() =>
+      bonsai({ maxStringLength: 1000 }).evaluateSync('"xxxxxxxxxx".repeat(101)'),
+    ).toThrow(BonsaiSecurityError)
     // existing count cap still applies under the default policy
     expect(() => bonsai().evaluateSync('"x".repeat(200000000)')).toThrow('count')
   })
@@ -294,14 +307,27 @@ describe('resource-exhaustion limits', () => {
   it('enforces maxArrayLength on array-producing method outputs (sync)', () => {
     const expr = bonsai({ maxArrayLength: 5 })
     expect(() => expr.evaluateSync('"a,b,c,d,e,f,g".split(",")')).toThrow(BonsaiSecurityError)
-    expect(() => expr.evaluateSync('items.map(. + 1)', { items: [1, 2, 3, 4, 5, 6] })).toThrow(BonsaiSecurityError)
-    expect(() => expr.evaluateSync('a.concat(b)', { a: [1, 2, 3], b: [4, 5, 6] })).toThrow(BonsaiSecurityError)
-    expect(() => expr.evaluateSync('m.flat()', { m: [[1, 2, 3], [4, 5, 6]] })).toThrow(BonsaiSecurityError)
+    expect(() => expr.evaluateSync('items.map(. + 1)', { items: [1, 2, 3, 4, 5, 6] })).toThrow(
+      BonsaiSecurityError,
+    )
+    expect(() => expr.evaluateSync('a.concat(b)', { a: [1, 2, 3], b: [4, 5, 6] })).toThrow(
+      BonsaiSecurityError,
+    )
+    expect(() =>
+      expr.evaluateSync('m.flat()', {
+        m: [
+          [1, 2, 3],
+          [4, 5, 6],
+        ],
+      }),
+    ).toThrow(BonsaiSecurityError)
   })
 
   it('enforces maxArrayLength on array-producing method outputs (async)', async () => {
     const expr = bonsai({ maxArrayLength: 5 })
-    await expect(expr.evaluate('items.map(. + 1)', { items: [1, 2, 3, 4, 5, 6] })).rejects.toThrow(BonsaiSecurityError)
+    await expect(expr.evaluate('items.map(. + 1)', { items: [1, 2, 3, 4, 5, 6] })).rejects.toThrow(
+      BonsaiSecurityError,
+    )
     await expect(expr.evaluate('"a,b,c,d,e,f,g".split(",")')).rejects.toThrow(BonsaiSecurityError)
   })
 
@@ -384,10 +410,18 @@ describe('resource-exhaustion limits', () => {
   it('uses the documented machine-readable error codes', () => {
     const expr = bonsai({ maxStringLength: 10, maxArrayLength: 3 })
     let strCode: string | undefined
-    try { expr.evaluateSync('"x".padStart(50)') } catch (e) { strCode = (e as BonsaiSecurityError).code }
+    try {
+      expr.evaluateSync('"x".padStart(50)')
+    } catch (e) {
+      strCode = (e as BonsaiSecurityError).code
+    }
     expect(strCode).toBe('MAX_STRING_LENGTH')
     let arrCode: string | undefined
-    try { expr.evaluateSync('"a,b,c,d".split(",")') } catch (e) { arrCode = (e as BonsaiSecurityError).code }
+    try {
+      expr.evaluateSync('"a,b,c,d".split(",")')
+    } catch (e) {
+      arrCode = (e as BonsaiSecurityError).code
+    }
     expect(arrCode).toBe('MAX_ARRAY_LENGTH')
   })
 
@@ -398,7 +432,9 @@ describe('resource-exhaustion limits', () => {
     it('caps join output (the array-length x separator-length amplifier)', () => {
       const expr = bonsai({ maxStringLength: 10 })
       // 3 elements joined by a 10-char separator => 23 chars, past the cap.
-      expect(() => expr.evaluateSync('a.join(s)', { a: ['x', 'y', 'z'], s: '0123456789' })).toThrow(BonsaiSecurityError)
+      expect(() => expr.evaluateSync('a.join(s)', { a: ['x', 'y', 'z'], s: '0123456789' })).toThrow(
+        BonsaiSecurityError,
+      )
       // Within the cap is still allowed.
       expect(expr.evaluateSync('a.join(s)', { a: ['x', 'y'], s: '00' })).toBe('x00y')
     })
@@ -406,21 +442,31 @@ describe('resource-exhaustion limits', () => {
     it('uses MAX_STRING_LENGTH for an over-cap join (not a raw allocation)', () => {
       const expr = bonsai({ maxStringLength: 10 })
       let code: string | undefined
-      try { expr.evaluateSync('a.join(s)', { a: ['x', 'y', 'z'], s: '0123456789' }) } catch (e) { code = (e as BonsaiSecurityError).code }
+      try {
+        expr.evaluateSync('a.join(s)', { a: ['x', 'y', 'z'], s: '0123456789' })
+      } catch (e) {
+        code = (e as BonsaiSecurityError).code
+      }
       expect(code).toBe('MAX_STRING_LENGTH')
     })
 
     it('caps string concat and slice output', () => {
       const expr = bonsai({ maxStringLength: 10 })
-      expect(() => expr.evaluateSync('a.concat(b)', { a: 'xxxxxx', b: 'yyyyyy' })).toThrow(BonsaiSecurityError)
-      expect(() => expr.evaluateSync('big.slice(0)', { big: 'x'.repeat(11) })).toThrow(BonsaiSecurityError)
+      expect(() => expr.evaluateSync('a.concat(b)', { a: 'xxxxxx', b: 'yyyyyy' })).toThrow(
+        BonsaiSecurityError,
+      )
+      expect(() => expr.evaluateSync('big.slice(0)', { big: 'x'.repeat(11) })).toThrow(
+        BonsaiSecurityError,
+      )
       // A slice that stays within the cap is allowed.
       expect(expr.evaluateSync('big.slice(0, 10)', { big: 'x'.repeat(11) })).toHaveLength(10)
     })
 
     it('enforces the join cap in async mode too', async () => {
       const expr = bonsai({ maxStringLength: 10 })
-      await expect(expr.evaluate('a.join(s)', { a: ['x', 'y', 'z'], s: '0123456789' })).rejects.toThrow(BonsaiSecurityError)
+      await expect(
+        expr.evaluate('a.join(s)', { a: ['x', 'y', 'z'], s: '0123456789' }),
+      ).rejects.toThrow(BonsaiSecurityError)
     })
 
     it('bounds join under the default policy (regression for the documented guarantee)', () => {
@@ -429,7 +475,9 @@ describe('resource-exhaustion limits', () => {
       // call; it must be rejected rather than silently allocated.
       const expr = bonsai()
       const arr = Array.from({ length: 10 }, (_, i) => String(i))
-      expect(() => expr.evaluateSync('a.join(s)', { a: arr, s: 'x'.repeat(100000) })).toThrow(BonsaiSecurityError)
+      expect(() => expr.evaluateSync('a.join(s)', { a: arr, s: 'x'.repeat(100000) })).toThrow(
+        BonsaiSecurityError,
+      )
     })
   })
 })

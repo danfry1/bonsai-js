@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { bonsai, evaluateExpression, BonsaiTypeError, BonsaiReferenceError, formatBonsaiError } from '../src/index.js'
+import {
+  bonsai,
+  evaluateExpression,
+  BonsaiTypeError,
+  BonsaiReferenceError,
+  formatBonsaiError,
+} from '../src/index.js'
 import { all } from '../src/stdlib/index.js'
 import { strings } from '../src/stdlib/strings.js'
 import { arrays } from '../src/stdlib/arrays.js'
@@ -265,9 +271,7 @@ describe('all plugin', () => {
 
 describe('method chaining', () => {
   it('use() returns this for chaining', () => {
-    const expr = bonsai()
-      .use(strings)
-      .use(arrays)
+    const expr = bonsai().use(strings).use(arrays)
     expect(expr.evaluateSync('"hello" |> upper')).toBe('HELLO')
     expect(expr.evaluateSync('items |> count', { items: [1, 2] })).toBe(2)
   })
@@ -280,8 +284,10 @@ describe('method chaining', () => {
   })
 
   it('addFunction returns this for chaining', () => {
-    const expr = bonsai()
-      .addFunction('add', (a: unknown, b: unknown) => (a as number) + (b as number))
+    const expr = bonsai().addFunction(
+      'add',
+      (a: unknown, b: unknown) => (a as number) + (b as number),
+    )
     expect(expr.evaluateSync('add(1, 2)')).toBe(3)
   })
 

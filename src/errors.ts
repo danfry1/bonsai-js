@@ -16,11 +16,7 @@ export class ExpressionError extends Error {
   readonly source: string
   readonly suggestion?: string
 
-  constructor(
-    message: string,
-    location: ErrorLocation,
-    suggestion?: string,
-  ) {
+  constructor(message: string, location: ErrorLocation, suggestion?: string) {
     const formatted = formatError(message, location, suggestion)
     super(formatted)
     this.name = 'ExpressionError'
@@ -123,17 +119,23 @@ export function offsetToPosition(source: string, offset: number): SourcePosition
   return { line, column, offset: safeOffset }
 }
 
-function hasErrorLocation(error: unknown): error is BonsaiRuntimeError & { location: ErrorLocation } {
+function hasErrorLocation(
+  error: unknown,
+): error is BonsaiRuntimeError & { location: ErrorLocation } {
   return (
-    (error instanceof BonsaiTypeError
-      || error instanceof BonsaiSecurityError
-      || error instanceof BonsaiReferenceError)
-    && error.location !== undefined
+    (error instanceof BonsaiTypeError ||
+      error instanceof BonsaiSecurityError ||
+      error instanceof BonsaiReferenceError) &&
+    error.location !== undefined
   )
 }
 
 export function attachLocation(error: unknown, source: string, start: number, end: number): void {
-  if (error instanceof BonsaiTypeError || error instanceof BonsaiSecurityError || error instanceof BonsaiReferenceError) {
+  if (
+    error instanceof BonsaiTypeError ||
+    error instanceof BonsaiSecurityError ||
+    error instanceof BonsaiReferenceError
+  ) {
     if (!error.location) {
       error.location = { source, start, end }
       error.formatted = formatError(error.message, error.location)
@@ -142,11 +144,7 @@ export function attachLocation(error: unknown, source: string, start: number, en
 }
 
 /** Format an error message with source context, caret display, and position info. */
-export function formatError(
-  message: string,
-  location: ErrorLocation,
-  suggestion?: string,
-): string {
+export function formatError(message: string, location: ErrorLocation, suggestion?: string): string {
   const { source } = location
   const start = clampOffset(source, location.start)
   const rawEnd = clampOffset(source, location.end)
@@ -185,11 +183,7 @@ export function formatBonsaiError(error: unknown): string {
 
 const MAX_SUGGEST_LENGTH = 64
 
-export function suggest(
-  input: string,
-  known: string[],
-  maxDistance = 2,
-): string | undefined {
+export function suggest(input: string, known: string[], maxDistance = 2): string | undefined {
   if (input.length > MAX_SUGGEST_LENGTH) return undefined
   let best: string | undefined
   let bestDistance = maxDistance + 1
@@ -216,11 +210,7 @@ function levenshtein(a: string, b: string): number {
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1
-      dp[i][j] = Math.min(
-        dp[i - 1][j] + 1,
-        dp[i][j - 1] + 1,
-        dp[i - 1][j - 1] + cost,
-      )
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost)
     }
   }
 

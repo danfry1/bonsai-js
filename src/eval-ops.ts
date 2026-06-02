@@ -15,20 +15,36 @@ function toPropertyKey(value: unknown): string {
   return String(value)
 }
 
-export function applyBinaryOp(operator: BinaryExpressionOperator, left: unknown, right: unknown): unknown {
+export function applyBinaryOp(
+  operator: BinaryExpressionOperator,
+  left: unknown,
+  right: unknown,
+): unknown {
   switch (operator) {
-    case '+': return (left as number) + (right as number)
-    case '-': return (left as number) - (right as number)
-    case '*': return (left as number) * (right as number)
-    case '/': return (left as number) / (right as number)
-    case '%': return (left as number) % (right as number)
-    case '**': return (left as number) ** (right as number)
-    case '==': return left === right
-    case '!=': return left !== right
-    case '<': return (left as number) < (right as number)
-    case '>': return (left as number) > (right as number)
-    case '<=': return (left as number) <= (right as number)
-    case '>=': return (left as number) >= (right as number)
+    case '+':
+      return (left as number) + (right as number)
+    case '-':
+      return (left as number) - (right as number)
+    case '*':
+      return (left as number) * (right as number)
+    case '/':
+      return (left as number) / (right as number)
+    case '%':
+      return (left as number) % (right as number)
+    case '**':
+      return (left as number) ** (right as number)
+    case '==':
+      return left === right
+    case '!=':
+      return left !== right
+    case '<':
+      return (left as number) < (right as number)
+    case '>':
+      return (left as number) > (right as number)
+    case '<=':
+      return (left as number) <= (right as number)
+    case '>=':
+      return (left as number) >= (right as number)
     case 'in': {
       if (typeof right === 'string') return (right as string).includes(left as string)
       if (Array.isArray(right)) return right.includes(left)
@@ -39,16 +55,21 @@ export function applyBinaryOp(operator: BinaryExpressionOperator, left: unknown,
       if (Array.isArray(right)) return !right.includes(left)
       throw new BonsaiTypeError('not in', 'a string or array', right)
     }
-    default: throw new Error(`Unknown binary operator: ${operator}`)
+    default:
+      throw new Error(`Unknown binary operator: ${operator}`)
   }
 }
 
 export function applyUnaryOp(operator: UnaryOperator, operand: unknown): unknown {
   switch (operator) {
-    case '!': return !operand
-    case '-': return -(operand as number)
-    case '+': return Number(operand)
-    default: throw new Error(`Unknown unary operator: ${operator}`)
+    case '!':
+      return !operand
+    case '-':
+      return -(operand as number)
+    case '+':
+      return Number(operand)
+    default:
+      throw new Error(`Unknown unary operator: ${operator}`)
   }
 }
 
@@ -70,7 +91,10 @@ export function validateMethodCall(
   return method as SafeMethod
 }
 
-export function resolveTransform(name: string, transforms: Record<string, TransformFn>): TransformFn {
+export function resolveTransform(
+  name: string,
+  transforms: Record<string, TransformFn>,
+): TransformFn {
   if (!Object.hasOwn(transforms, name)) {
     const suggestion = suggest(name, Object.keys(transforms))
     throw new BonsaiReferenceError('transform', name, suggestion)
@@ -103,7 +127,10 @@ export function getIdentifierName(node: ASTNode, message = 'Expected identifier'
   return node.name
 }
 
-export function getObjectLiteralKeyName(node: ASTNode, message = 'Expected identifier or string literal'): string {
+export function getObjectLiteralKeyName(
+  node: ASTNode,
+  message = 'Expected identifier or string literal',
+): string {
   if (node.type === 'Identifier' || node.type === 'StringLiteral') {
     return node.type === 'Identifier' ? node.name : node.value
   }
@@ -146,7 +173,15 @@ const MAX_REPEAT_COUNT = 100_000
 // mistake (commonly `arr.map(fn(.x))`, where the lambda shorthand was passed to
 // a function and evaluated to a value); fail with a typed error rather than
 // leaking a raw native TypeError.
-const HIGHER_ORDER_METHODS = new Set(['map', 'filter', 'find', 'findIndex', 'some', 'every', 'flatMap'])
+const HIGHER_ORDER_METHODS = new Set([
+  'map',
+  'filter',
+  'find',
+  'findIndex',
+  'some',
+  'every',
+  'flatMap',
+])
 const LAMBDA_CALLBACK_EXPECTED = 'a lambda or function callback (e.g. .field or . > value)'
 
 export function validateMethodArgs(
@@ -224,7 +259,9 @@ export function accessMember(
   computedValue: unknown,
   guard: ExecutionContext,
 ): unknown {
-  const key = computed ? toPropertyKey(computedValue) : getIdentifierName(propertyNode, 'Expected identifier property')
+  const key = computed
+    ? toPropertyKey(computedValue)
+    : getIdentifierName(propertyNode, 'Expected identifier property')
   guard.checkNameAccess(key, 'member')
   return (object as Record<string, unknown>)?.[key]
 }

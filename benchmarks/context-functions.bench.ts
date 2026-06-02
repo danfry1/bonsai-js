@@ -23,7 +23,9 @@ const compiledPure = pureExpr.compile('id(1)')
 const compiledCtx = ctxExpr.compile('current()')
 // Six context-function calls in one expression. The context is passed by
 // reference, so each call is the same cheap hand-off with no copy.
-const compiledCtxMany = ctxExprMany.compile('current() + current() + current() + current() + current() + current()')
+const compiledCtxMany = ctxExprMany.compile(
+  'current() + current() + current() + current() + current() + current()',
+)
 
 describe('context-functions: zero-regression on pure path', () => {
   bench('pure function call: id(1)', () => {
@@ -44,9 +46,15 @@ describe('context-functions: many calls in one expression', () => {
 })
 
 describe('context-functions: context realism', () => {
-  const richExpr = bonsai<{ userId: string; perms: readonly string[]; tenantId: string; trace: { reqId: string } }>()
+  const richExpr = bonsai<{
+    userId: string
+    perms: readonly string[]
+    tenantId: string
+    trace: { reqId: string }
+  }>()
   richExpr.addContextFunction('hasPermission', (ctx, action) =>
-    ctx.perms.includes(action as string))
+    ctx.perms.includes(action as string),
+  )
   const compiledRich = richExpr.compile('hasPermission("write")')
 
   bench('hasPermission("write") with 4-field context', () => {

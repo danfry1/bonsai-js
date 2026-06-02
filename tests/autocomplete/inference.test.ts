@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { inferType, resolvePropertyChain, inferElementType, inferMethodReturnType, enumerateProperties } from '../../src/autocomplete/inference.js'
+import {
+  inferType,
+  resolvePropertyChain,
+  inferElementType,
+  inferMethodReturnType,
+  enumerateProperties,
+} from '../../src/autocomplete/inference.js'
 
 describe('inferType', () => {
   it('infers string', () => expect(inferType('hello')).toBe('string'))
@@ -65,11 +71,9 @@ describe('resolvePropertyChain', () => {
       expect(result).toEqual({ found: false, reason: 'blocked' })
     })
     it('allows when in allowedProperties', () => {
-      const result = resolvePropertyChain(
-        { user: { name: 'Alice' } },
-        ['user', 'name'],
-        { allowedProperties: new Set(['user', 'name']) },
-      )
+      const result = resolvePropertyChain({ user: { name: 'Alice' } }, ['user', 'name'], {
+        allowedProperties: new Set(['user', 'name']),
+      })
       expect(result).toEqual({ found: true, value: 'Alice' })
     })
   })

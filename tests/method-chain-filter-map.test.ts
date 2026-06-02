@@ -7,14 +7,20 @@ describe('JS-style .filter().map() with lambdas (sync)', () => {
 
   it('users.filter(.age >= 18)', () => {
     const result = expr.evaluateSync('users.filter(.age >= 18)', {
-      users: [{ name: 'Alice', age: 25 }, { name: 'Bob', age: 15 }]
+      users: [
+        { name: 'Alice', age: 25 },
+        { name: 'Bob', age: 15 },
+      ],
     })
     expect(result).toEqual([{ name: 'Alice', age: 25 }])
   })
 
   it('users.filter(.age >= 18).map(.name)', () => {
     const result = expr.evaluateSync('users.filter(.age >= 18).map(.name)', {
-      users: [{ name: 'Alice', age: 25 }, { name: 'Bob', age: 15 }]
+      users: [
+        { name: 'Alice', age: 25 },
+        { name: 'Bob', age: 15 },
+      ],
     })
     expect(result).toEqual(['Alice'])
   })
@@ -57,14 +63,15 @@ describe('JS-style .filter().map() with lambdas (sync)', () => {
 
   it('chained: users.filter(.name.startsWith("A"))', () => {
     const result = expr.evaluateSync('users.filter(.name.startsWith("A"))', {
-      users: [{ name: 'Alice' }, { name: 'Bob' }]
+      users: [{ name: 'Alice' }, { name: 'Bob' }],
     })
     expect(result).toEqual([{ name: 'Alice' }])
   })
 
   it('triple chain: arr.filter(. > 1).map(. * 10).filter(. < 40)', () => {
-    expect(expr.evaluateSync('[1,2,3,4].filter(. > 1).map(. * 10).filter(. < 40)'))
-      .toEqual([20, 30])
+    expect(expr.evaluateSync('[1,2,3,4].filter(. > 1).map(. * 10).filter(. < 40)')).toEqual([
+      20, 30,
+    ])
   })
 
   it('[].every(. > 0) returns true (vacuous truth)', () => {
@@ -81,21 +88,31 @@ describe('JS-style .filter().map() with lambdas (sync)', () => {
 
   it('nested lambda method: users.find(.name.startsWith("B"))', () => {
     const result = expr.evaluateSync('users.find(.name.startsWith("B"))', {
-      users: [{ name: 'Alice' }, { name: 'Bob' }]
+      users: [{ name: 'Alice' }, { name: 'Bob' }],
     })
     expect(result).toEqual({ name: 'Bob' })
   })
 
   it('users.some(.age >= 18)', () => {
-    expect(expr.evaluateSync('users.some(.age >= 18)', {
-      users: [{ name: 'Alice', age: 25 }, { name: 'Bob', age: 15 }]
-    })).toBe(true)
+    expect(
+      expr.evaluateSync('users.some(.age >= 18)', {
+        users: [
+          { name: 'Alice', age: 25 },
+          { name: 'Bob', age: 15 },
+        ],
+      }),
+    ).toBe(true)
   })
 
   it('users.every(.age >= 18)', () => {
-    expect(expr.evaluateSync('users.every(.age >= 18)', {
-      users: [{ name: 'Alice', age: 25 }, { name: 'Bob', age: 15 }]
-    })).toBe(false)
+    expect(
+      expr.evaluateSync('users.every(.age >= 18)', {
+        users: [
+          { name: 'Alice', age: 25 },
+          { name: 'Bob', age: 15 },
+        ],
+      }),
+    ).toBe(false)
   })
 
   it('identity lambda with nullish coalescing: . ?? "default"', () => {
@@ -112,9 +129,15 @@ describe('native array methods (non-callback)', () => {
   })
 
   it('chained: users.filter(.age >= 18).map(.name).join(", ")', () => {
-    expect(expr.evaluateSync('users.filter(.age >= 18).map(.name).join(", ")', {
-      users: [{ name: 'Alice', age: 25 }, { name: 'Bob', age: 15 }, { name: 'Carol', age: 30 }]
-    })).toBe('Alice, Carol')
+    expect(
+      expr.evaluateSync('users.filter(.age >= 18).map(.name).join(", ")', {
+        users: [
+          { name: 'Alice', age: 25 },
+          { name: 'Bob', age: 15 },
+          { name: 'Carol', age: 30 },
+        ],
+      }),
+    ).toBe('Alice, Carol')
   })
 
   it('[[1,2],[3,4]].flat()', () => {
@@ -227,7 +250,10 @@ describe('JS-style .filter().map() with lambdas (async)', () => {
 
   it('users.filter(.age >= 18) async', async () => {
     const result = await expr.evaluate('users.filter(.age >= 18)', {
-      users: [{ name: 'Alice', age: 25 }, { name: 'Bob', age: 15 }]
+      users: [
+        { name: 'Alice', age: 25 },
+        { name: 'Bob', age: 15 },
+      ],
     })
     expect(result).toEqual([{ name: 'Alice', age: 25 }])
   })
@@ -258,7 +284,10 @@ describe('JS-style .filter().map() with lambdas (async)', () => {
 
   it('chained async: users.filter(.age >= 18).map(.name)', async () => {
     const result = await expr.evaluate('users.filter(.age >= 18).map(.name)', {
-      users: [{ name: 'Alice', age: 25 }, { name: 'Bob', age: 15 }]
+      users: [
+        { name: 'Alice', age: 25 },
+        { name: 'Bob', age: 15 },
+      ],
     })
     expect(result).toEqual(['Alice'])
   })
@@ -269,34 +298,33 @@ describe('nested async array methods inside lambdas', () => {
     const expr = bonsai()
     const result = await expr.evaluate('groups.map(.users.filter(.age >= 18))', {
       groups: [
-        { users: [{ name: 'Alice', age: 25 }, { name: 'Bob', age: 15 }] },
+        {
+          users: [
+            { name: 'Alice', age: 25 },
+            { name: 'Bob', age: 15 },
+          ],
+        },
         { users: [{ name: 'Carol', age: 30 }] },
-      ]
+      ],
     })
-    expect(result).toEqual([
-      [{ name: 'Alice', age: 25 }],
-      [{ name: 'Carol', age: 30 }],
-    ])
+    expect(result).toEqual([[{ name: 'Alice', age: 25 }], [{ name: 'Carol', age: 30 }]])
   })
 
   it('groups.map(.items.map(. * 2)) async', async () => {
     const expr = bonsai()
     const result = await expr.evaluate('groups.map(.items.map(. * 2))', {
-      groups: [
-        { items: [1, 2, 3] },
-        { items: [4, 5] },
-      ]
+      groups: [{ items: [1, 2, 3] }, { items: [4, 5] }],
     })
-    expect(result).toEqual([[2, 4, 6], [8, 10]])
+    expect(result).toEqual([
+      [2, 4, 6],
+      [8, 10],
+    ])
   })
 
   it('groups.map(.users.every(.age >= 18)) async', async () => {
     const expr = bonsai()
     const result = await expr.evaluate('groups.map(.users.every(.age >= 18))', {
-      groups: [
-        { users: [{ age: 25 }, { age: 30 }] },
-        { users: [{ age: 25 }, { age: 15 }] },
-      ]
+      groups: [{ users: [{ age: 25 }, { age: 30 }] }, { users: [{ age: 25 }, { age: 15 }] }],
     })
     expect(result).toEqual([true, false])
   })
@@ -304,10 +332,7 @@ describe('nested async array methods inside lambdas', () => {
   it('groups.map(.users.some(. > 20)) async with primitives', async () => {
     const expr = bonsai()
     const result = await expr.evaluate('groups.map(.scores.some(. > 90))', {
-      groups: [
-        { scores: [85, 92, 78] },
-        { scores: [60, 70, 80] },
-      ]
+      groups: [{ scores: [85, 92, 78] }, { scores: [60, 70, 80] }],
     })
     expect(result).toEqual([true, false])
   })
@@ -315,10 +340,7 @@ describe('nested async array methods inside lambdas', () => {
   it('groups.map(.users.find(.name == "Alice")) async', async () => {
     const expr = bonsai()
     const result = await expr.evaluate('groups.map(.users.find(.name == "Alice"))', {
-      groups: [
-        { users: [{ name: 'Alice' }, { name: 'Bob' }] },
-        { users: [{ name: 'Carol' }] },
-      ]
+      groups: [{ users: [{ name: 'Alice' }, { name: 'Bob' }] }, { users: [{ name: 'Carol' }] }],
     })
     expect(result).toEqual([{ name: 'Alice' }, undefined])
   })
@@ -355,23 +377,29 @@ describe('bare dot lambda parse errors', () => {
 describe('security: array methods respect property guards', () => {
   it('allowedProperties blocks lambda property access inside method call', () => {
     const expr = bonsai({ allowedProperties: ['filter', 'age'] })
-    expect(() => expr.evaluateSync('users.filter(.secret == "x")', {
-      users: [{ age: 25, secret: 'x' }]
-    })).toThrow('secret')
+    expect(() =>
+      expr.evaluateSync('users.filter(.secret == "x")', {
+        users: [{ age: 25, secret: 'x' }],
+      }),
+    ).toThrow('secret')
   })
 
   it('allowedProperties blocks lambda property access in pipe', () => {
     const expr = bonsai({ allowedProperties: ['age'] }).use(arrays)
-    expect(() => expr.evaluateSync('users |> filter(.secret == "x")', {
-      users: [{ age: 25, secret: 'x' }]
-    })).toThrow('secret')
+    expect(() =>
+      expr.evaluateSync('users |> filter(.secret == "x")', {
+        users: [{ age: 25, secret: 'x' }],
+      }),
+    ).toThrow('secret')
   })
 
   it('deniedProperties blocks lambda property access inside method call', () => {
     const expr = bonsai({ deniedProperties: ['secret'] })
-    expect(() => expr.evaluateSync('users.filter(.secret == "x")', {
-      users: [{ age: 25, secret: 'x' }]
-    })).toThrow('secret')
+    expect(() =>
+      expr.evaluateSync('users.filter(.secret == "x")', {
+        users: [{ age: 25, secret: 'x' }],
+      }),
+    ).toThrow('secret')
   })
 
   it('null receiver throws BonsaiTypeError', () => {

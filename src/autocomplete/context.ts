@@ -5,11 +5,11 @@ interface CursorContextBase {
 }
 
 export type CursorContext =
-  | CursorContextBase & { kind: 'top-level-member'; precedingTokens: Token[] }
-  | CursorContextBase & { kind: 'lambda-start'; depth: number }
-  | CursorContextBase & { kind: 'lambda-member'; chain: string[]; depth: number }
-  | CursorContextBase & { kind: 'pipe-transform' }
-  | CursorContextBase & { kind: 'identifier' }
+  | (CursorContextBase & { kind: 'top-level-member'; precedingTokens: Token[] })
+  | (CursorContextBase & { kind: 'lambda-start'; depth: number })
+  | (CursorContextBase & { kind: 'lambda-member'; chain: string[]; depth: number })
+  | (CursorContextBase & { kind: 'pipe-transform' })
+  | (CursorContextBase & { kind: 'identifier' })
   | { kind: 'none' }
 
 /** Extract prefix from any non-none CursorContext. */
@@ -24,17 +24,23 @@ function tokenKey(t: Token): string {
 }
 
 const LAMBDA_TRIGGERS = new Set([
-  'Punctuation:(', 'Punctuation:,',
-  'Punctuation:?', 'Punctuation::',
+  'Punctuation:(',
+  'Punctuation:,',
+  'Punctuation:?',
+  'Punctuation::',
 ])
 
 const VALUE_PRODUCERS = new Set([
-  'Identifier', 'Number', 'String', 'Boolean',
-  'Punctuation:)', 'Punctuation:]',
+  'Identifier',
+  'Number',
+  'String',
+  'Boolean',
+  'Punctuation:)',
+  'Punctuation:]',
 ])
 
 export function classifyCursor(tokens: Token[], cursor: number): CursorContext {
-  const before = tokens.filter(t => t.start < cursor)
+  const before = tokens.filter((t) => t.start < cursor)
   if (before.length === 0) return { kind: 'identifier', prefix: '' }
 
   const last = before[before.length - 1]
@@ -66,26 +72,40 @@ export function classifyCursor(tokens: Token[], cursor: number): CursorContext {
       if (!prevToken || LAMBDA_TRIGGERS.has(prevKey) || OPERATOR_TYPES.has(prevToken.type)) {
         return { kind: 'lambda-start', prefix, depth: state.depth }
       }
-      if (state.lambdaActive[state.depth] && prevToken && VALUE_PRODUCERS.has(tokenKey(prevToken))) {
+      if (
+        state.lambdaActive[state.depth] &&
+        prevToken &&
+        VALUE_PRODUCERS.has(tokenKey(prevToken))
+      ) {
         return { kind: 'lambda-member', prefix, chain: [...state.currentChain], depth: state.depth }
       }
     }
 
     // Top-level member access
-    return { kind: 'top-level-member', prefix, precedingTokens: before.slice(0, before.indexOf(dotToken)) }
+    return {
+      kind: 'top-level-member',
+      prefix,
+      precedingTokens: before.slice(0, before.indexOf(dotToken)),
+    }
   }
 
   // Identifier context
-  if (OPERATOR_TYPES.has(last.type) ||
-      (last.type === 'Punctuation' && '(,'.includes(last.value))) {
+  if (OPERATOR_TYPES.has(last.type) || (last.type === 'Punctuation' && '(,'.includes(last.value))) {
     return { kind: 'identifier', prefix: '' }
   }
 
   if (lastIsPartial) {
-    if (!secondLast || OPERATOR_TYPES.has(secondLast.type) ||
-        (secondLast.type === 'Punctuation' && '(,'.includes(secondLast.value))) {
+    if (
+      !secondLast ||
+      OPERATOR_TYPES.has(secondLast.type) ||
+      (secondLast.type === 'Punctuation' && '(,'.includes(secondLast.value))
+    ) {
       // Check if inside lambda scope — if so and secondLast is lambda trigger, it's lambda start
-      if (state.depth > 0 && secondLast && (LAMBDA_TRIGGERS.has(tokenKey(secondLast)) || OPERATOR_TYPES.has(secondLast.type))) {
+      if (
+        state.depth > 0 &&
+        secondLast &&
+        (LAMBDA_TRIGGERS.has(tokenKey(secondLast)) || OPERATOR_TYPES.has(secondLast.type))
+      ) {
         return { kind: 'lambda-start', prefix: last.value, depth: state.depth }
       }
       return { kind: 'identifier', prefix: last.value }

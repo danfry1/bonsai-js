@@ -11,22 +11,26 @@ describe('addContextFunction', () => {
 
     it('receives call arguments after the context', () => {
       const expr = bonsai<{ name: string }>()
-      expr.addContextFunction('greet', (ctx, salutation) =>
-        `${String(salutation)}, ${ctx.name}`)
+      expr.addContextFunction('greet', (ctx, salutation) => `${String(salutation)}, ${ctx.name}`)
       expect(expr.evaluateSync('greet("Hello")', { name: 'Dan' })).toBe('Hello, Dan')
     })
 
     it('works with multiple call arguments', () => {
       const expr = bonsai<{ value: string }>()
-      expr.addContextFunction('format', (ctx, prefix, suffix) =>
-        `${String(prefix)}${ctx.value}${String(suffix)}`)
+      expr.addContextFunction(
+        'format',
+        (ctx, prefix, suffix) => `${String(prefix)}${ctx.value}${String(suffix)}`,
+      )
       expect(expr.evaluateSync('format("<", ">")', { value: 'x' })).toBe('<x>')
     })
 
     it('receives a default empty context object when none is provided', () => {
       const expr = bonsai()
       let captured: unknown
-      expr.addContextFunction('grab', (ctx) => { captured = ctx; return null })
+      expr.addContextFunction('grab', (ctx) => {
+        captured = ctx
+        return null
+      })
       expr.evaluateSync('grab()')
       expect(captured).toEqual({})
       expect(Object.isFrozen(captured)).toBe(false)
@@ -37,7 +41,10 @@ describe('addContextFunction', () => {
     it('passes the live context object to the function by reference', () => {
       const expr = bonsai<{ a: number; b: string }>()
       let captured: Readonly<{ a: number; b: string }> | undefined
-      expr.addContextFunction('grab', (ctx) => { captured = ctx; return null })
+      expr.addContextFunction('grab', (ctx) => {
+        captured = ctx
+        return null
+      })
       const original = { a: 1, b: 'two' }
       expr.evaluateSync('grab()', original)
       // The context is handed over as-is: no defensive copy, no freeze. The
@@ -64,7 +71,10 @@ describe('addContextFunction', () => {
     it('passes the same context object to every context-function call in one evaluation', () => {
       const expr = bonsai<{ x: number }>()
       const captured: unknown[] = []
-      expr.addContextFunction('snap', (ctx) => { captured.push(ctx); return ctx.x })
+      expr.addContextFunction('snap', (ctx) => {
+        captured.push(ctx)
+        return ctx.x
+      })
       const original = { x: 1 }
       expr.evaluateSync('snap() + snap() + snap()', original)
       expect(captured.length).toBe(3)
@@ -76,7 +86,10 @@ describe('addContextFunction', () => {
     it('passes through the exact context given to each top-level evaluation', () => {
       const expr = bonsai<{ x: number }>()
       const captured: unknown[] = []
-      expr.addContextFunction('snap', (ctx) => { captured.push(ctx); return ctx.x })
+      expr.addContextFunction('snap', (ctx) => {
+        captured.push(ctx)
+        return ctx.x
+      })
       const first = { x: 1 }
       const second = { x: 2 }
       expr.evaluateSync('snap()', first)
@@ -98,7 +111,9 @@ describe('addContextFunction', () => {
     it('works with async context functions via evaluate', async () => {
       const expr = bonsai<{ tier: 'pro' | 'free' }>()
       expr.addContextFunction('asyncLookup', async (ctx) => {
-        await new Promise(resolve => { setTimeout(resolve, 1) })
+        await new Promise((resolve) => {
+          setTimeout(resolve, 1)
+        })
         return ctx.tier
       })
       const result = await expr.evaluate('asyncLookup() == "pro"', { tier: 'pro' })
@@ -114,7 +129,9 @@ describe('addContextFunction', () => {
     it('supports parallel-safe context across async functions', async () => {
       const expr = bonsai<{ userId: string }>()
       expr.addContextFunction('slow', async (ctx) => {
-        await new Promise(r => { setTimeout(r, 5) })
+        await new Promise((r) => {
+          setTimeout(r, 5)
+        })
         return ctx.userId
       })
 
@@ -201,7 +218,9 @@ describe('addContextFunction', () => {
     it('throws a helpful BonsaiReferenceError for unknown function names', () => {
       const expr = bonsai<{ userId: string }>()
       expr.addContextFunction('lookupUser', (ctx) => ctx.userId)
-      expect(() => expr.evaluateSync('lookupUsr()', { userId: 'u_1' })).toThrow(BonsaiReferenceError)
+      expect(() => expr.evaluateSync('lookupUsr()', { userId: 'u_1' })).toThrow(
+        BonsaiReferenceError,
+      )
     })
 
     it('suggests context-registered names in reference errors', () => {
@@ -249,7 +268,9 @@ describe('addContextFunction', () => {
       // BonsaiReferenceError) with source-location formatting.
       const expr = bonsai<{ userId: string }>()
       const sentinel = new Error('intentional')
-      expr.addContextFunction('boom', () => { throw sentinel })
+      expr.addContextFunction('boom', () => {
+        throw sentinel
+      })
       try {
         expr.evaluateSync('1 + boom()', { userId: 'u_1' })
         throw new Error('should have thrown')
@@ -260,7 +281,9 @@ describe('addContextFunction', () => {
 
     it('errors thrown from async functions propagate via the returned promise', async () => {
       const expr = bonsai<{ userId: string }>()
-      expr.addContextFunction('boom', async () => { throw new Error('async-boom') })
+      expr.addContextFunction('boom', async () => {
+        throw new Error('async-boom')
+      })
       await expect(expr.evaluate('boom()', { userId: 'u_1' })).rejects.toThrow(/async-boom/u)
     })
 
@@ -273,7 +296,9 @@ describe('addContextFunction', () => {
 
   describe('plugin integration', () => {
     it('plugins can register context-aware functions', () => {
-      interface Ctx { tenantId: string }
+      interface Ctx {
+        tenantId: string
+      }
       const tenancy: BonsaiPlugin<Ctx> = (e) => {
         e.addContextFunction('currentTenant', (ctx) => ctx.tenantId)
       }
@@ -283,8 +308,12 @@ describe('addContextFunction', () => {
     })
 
     it('plugins typed against a narrower context work on wider instances', () => {
-      interface PluginCtx { tenantId: string }
-      interface AppCtx extends PluginCtx { userId: string }
+      interface PluginCtx {
+        tenantId: string
+      }
+      interface AppCtx extends PluginCtx {
+        userId: string
+      }
       const tenancy: BonsaiPlugin<PluginCtx> = (e) => {
         e.addContextFunction('currentTenant', (ctx) => ctx.tenantId)
       }
@@ -319,13 +348,16 @@ describe('addContextFunction', () => {
     })
 
     it('can be used inside lambdas (array.filter with bonsai lambda syntax)', () => {
-      interface Ctx { minAge: number; users: readonly { age: number }[] }
+      interface Ctx {
+        minAge: number
+        users: readonly { age: number }[]
+      }
       const expr = bonsai<Ctx>()
       expr.addContextFunction('threshold', (ctx) => ctx.minAge)
-      const result = expr.evaluateSync(
-        'users.filter(.age >= threshold())',
-        { minAge: 18, users: [{ age: 16 }, { age: 21 }, { age: 19 }] },
-      )
+      const result = expr.evaluateSync('users.filter(.age >= threshold())', {
+        minAge: 18,
+        users: [{ age: 16 }, { age: 21 }, { age: 19 }],
+      })
       expect(result).toEqual([{ age: 21 }, { age: 19 }])
     })
   })

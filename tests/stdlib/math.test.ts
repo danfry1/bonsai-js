@@ -30,10 +30,14 @@ describe('stdlib - math element type validation', () => {
   expr.use(math)
 
   it('sum throws on mixed array with strings', () => {
-    expect(() => expr.evaluateSync('items |> sum', { items: [1, 'two', 3] })).toThrow(BonsaiTypeError)
+    expect(() => expr.evaluateSync('items |> sum', { items: [1, 'two', 3] })).toThrow(
+      BonsaiTypeError,
+    )
   })
 
   it('avg throws on mixed array', () => {
-    expect(() => expr.evaluateSync('items |> avg', { items: [1, null, 3] })).toThrow(BonsaiTypeError)
+    expect(() => expr.evaluateSync('items |> avg', { items: [1, null, 3] })).toThrow(
+      BonsaiTypeError,
+    )
   })
 })

@@ -86,8 +86,12 @@ describe('ExecutionContext', () => {
     const ec = new ExecutionContext(policy)
     ec.enterDepth()
     try {
-      ec.withDepth(() => { throw new Error('boom') })
-    } catch { /* expected */ }
+      ec.withDepth(() => {
+        throw new Error('boom')
+      })
+    } catch {
+      /* expected */
+    }
     expect(() => ec.enterDepth()).not.toThrow()
   })
 

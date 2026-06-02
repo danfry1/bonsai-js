@@ -63,12 +63,16 @@ describe('formatDate input validation', () => {
   it('throws on NaN timestamp', () => {
     const expr = bonsai()
     expr.use(dates)
-    expect(() => expr.evaluateSync('ts |> formatDate("YYYY-MM-DD")', { ts: NaN })).toThrow(BonsaiTypeError)
+    expect(() => expr.evaluateSync('ts |> formatDate("YYYY-MM-DD")', { ts: NaN })).toThrow(
+      BonsaiTypeError,
+    )
   })
 
   it('throws on Infinity timestamp', () => {
     const expr = bonsai()
     expr.use(dates)
-    expect(() => expr.evaluateSync('ts |> formatDate("YYYY-MM-DD")', { ts: Infinity })).toThrow('valid timestamp')
+    expect(() => expr.evaluateSync('ts |> formatDate("YYYY-MM-DD")', { ts: Infinity })).toThrow(
+      'valid timestamp',
+    )
   })
 })

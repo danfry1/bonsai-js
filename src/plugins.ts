@@ -68,13 +68,27 @@ export function createPluginRegistry(): PluginRegistry {
       if (r) functionsDirty = true
       return r
     },
-    getTransform(name) { return transformMap.get(name) },
-    getFunction(name) { return functionMap.get(name) },
-    isContextFunction(name) { return functionMap.get(name)?.kind === 'context' },
-    hasFunction(name) { return functionMap.has(name) },
-    getTransformNames() { return [...transformMap.keys()] },
-    getFunctionNames() { return [...functionMap.keys()] },
-    use(plugin) { plugin(registry) },
+    getTransform(name) {
+      return transformMap.get(name)
+    },
+    getFunction(name) {
+      return functionMap.get(name)
+    },
+    isContextFunction(name) {
+      return functionMap.get(name)?.kind === 'context'
+    },
+    hasFunction(name) {
+      return functionMap.has(name)
+    },
+    getTransformNames() {
+      return [...transformMap.keys()]
+    },
+    getFunctionNames() {
+      return [...functionMap.keys()]
+    },
+    use(plugin) {
+      plugin(registry)
+    },
     get transforms() {
       if (transformsDirty) {
         transformsCache = Object.fromEntries(transformMap)

@@ -33,7 +33,15 @@ const cases: Array<[string, Record<string, unknown>]> = [
   ['"Hello".toUpperCase()', {}],
   ['name |> upper', { name: 'dan' }],
   ['nums |> sum', { nums: [1, 2, 3] }],
-  ['users |> filter(.active) |> map(.name)', { users: [{ name: 'A', active: true }, { name: 'B', active: false }] }],
+  [
+    'users |> filter(.active) |> map(.name)',
+    {
+      users: [
+        { name: 'A', active: true },
+        { name: 'B', active: false },
+      ],
+    },
+  ],
 ]
 
 describe('sync/async evaluation parity', () => {

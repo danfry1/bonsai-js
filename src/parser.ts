@@ -21,7 +21,7 @@ const PRECEDENCE: Readonly<Record<OperatorValue | '??', number | undefined>> = {
   '>': 40,
   '<=': 40,
   '>=': 40,
-  'in': 40,
+  in: 40,
   '+': 50,
   '-': 50,
   '*': 60,
@@ -30,7 +30,7 @@ const PRECEDENCE: Readonly<Record<OperatorValue | '??', number | undefined>> = {
   '**': 70,
   // Unary-only operators have no binary precedence
   '!': undefined,
-  'not': undefined,
+  not: undefined,
 }
 
 const MAX_PARSE_DEPTH = 32
@@ -45,10 +45,11 @@ const MAX_GRAMMAR_DEPTH = 1000
 
 export function parse(source: string, _depth = 0): ASTNode {
   if (_depth > MAX_PARSE_DEPTH) {
-    throw new ExpressionError(
-      'Maximum template nesting depth exceeded',
-      { source, start: 0, end: source.length },
-    )
+    throw new ExpressionError('Maximum template nesting depth exceeded', {
+      source,
+      start: 0,
+      end: source.length,
+    })
   }
   const tokens = tokenize(source)
   let pos = 0
@@ -77,10 +78,11 @@ export function parse(source: string, _depth = 0): ASTNode {
     if (++grammarDepth > MAX_GRAMMAR_DEPTH) {
       grammarDepth--
       const tok = current()
-      throw new ExpressionError(
-        'Maximum expression nesting depth exceeded',
-        { source, start: tok.start, end: tok.end },
-      )
+      throw new ExpressionError('Maximum expression nesting depth exceeded', {
+        source,
+        start: tok.start,
+        end: tok.end,
+      })
     }
   }
 
@@ -443,10 +445,11 @@ export function parse(source: string, _depth = 0): ASTNode {
     let node: ASTNode
     if (current().type !== 'Identifier') {
       if (current().type !== 'Operator' && current().type !== 'NullishCoalescing') {
-        throw new ExpressionError(
-          `Expected property name or operator after "."`,
-          { source, start, end: start + 1 },
-        )
+        throw new ExpressionError(`Expected property name or operator after "."`, {
+          source,
+          start,
+          end: start + 1,
+        })
       }
       node = { type: 'LambdaIdentity', start, end: start + 1 }
     } else {
@@ -468,7 +471,12 @@ export function parse(source: string, _depth = 0): ASTNode {
         node = {
           type: 'MemberExpression',
           object: node,
-          property: { type: 'Identifier', name: nextProp.value, start: nextProp.start, end: nextProp.end },
+          property: {
+            type: 'Identifier',
+            name: nextProp.value,
+            start: nextProp.start,
+            end: nextProp.end,
+          },
           computed: false,
           start: node.start,
           end: nextProp.end,
@@ -481,7 +489,12 @@ export function parse(source: string, _depth = 0): ASTNode {
         node = {
           type: 'OptionalMemberExpression',
           object: node,
-          property: { type: 'Identifier', name: nextProp.value, start: nextProp.start, end: nextProp.end },
+          property: {
+            type: 'Identifier',
+            name: nextProp.value,
+            start: nextProp.start,
+            end: nextProp.end,
+          },
           computed: false,
           start: node.start,
           end: nextProp.end,
@@ -660,7 +673,12 @@ export function parse(source: string, _depth = 0): ASTNode {
           // Shorthand: { name } → { name: name }
           const next = current()
           if (next.type === 'Punctuation' && (next.value === ',' || next.value === '}')) {
-            const value: ASTNode = { type: 'Identifier', name: tok.value, start: tok.start, end: tok.end }
+            const value: ASTNode = {
+              type: 'Identifier',
+              name: tok.value,
+              start: tok.start,
+              end: tok.end,
+            }
             properties.push({
               type: 'ObjectProperty',
               key,
@@ -675,10 +693,11 @@ export function parse(source: string, _depth = 0): ASTNode {
           advance()
           key = { type: 'StringLiteral', value: tok.value, start: tok.start, end: tok.end }
         } else {
-          throw new ExpressionError(
-            `Expected property name but got "${tok.value}"`,
-            { source, start: tok.start, end: tok.end },
-          )
+          throw new ExpressionError(`Expected property name but got "${tok.value}"`, {
+            source,
+            start: tok.start,
+            end: tok.end,
+          })
         }
       }
 
@@ -758,10 +777,11 @@ export function parse(source: string, _depth = 0): ASTNode {
 
   if (current().type !== 'EOF') {
     const tok = current()
-    throw new ExpressionError(
-      `Unexpected token "${tok.value}"`,
-      { source, start: tok.start, end: tok.end },
-    )
+    throw new ExpressionError(`Unexpected token "${tok.value}"`, {
+      source,
+      start: tok.start,
+      end: tok.end,
+    })
   }
 
   return result

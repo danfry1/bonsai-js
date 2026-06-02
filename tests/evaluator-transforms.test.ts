@@ -21,51 +21,73 @@ function run(
 
 describe('evaluator - functions', () => {
   it('should call registered functions', () => {
-    const result = run('isAdult()', {}, {}, {
-      isAdult: () => true,
-    })
+    const result = run(
+      'isAdult()',
+      {},
+      {},
+      {
+        isAdult: () => true,
+      },
+    )
     expect(result).toBe(true)
   })
 
   it('should pass arguments to functions', () => {
-    const result = run('max(3, 7)', {}, {}, {
-      max: (a: unknown, b: unknown) => Math.max(a as number, b as number),
-    })
+    const result = run(
+      'max(3, 7)',
+      {},
+      {},
+      {
+        max: (a: unknown, b: unknown) => Math.max(a as number, b as number),
+      },
+    )
     expect(result).toBe(7)
   })
 
   it('should throw on unknown function with suggestion', () => {
-    expect(() => run('isAdlt()', {}, {}, { isAdult: () => true }))
-      .toThrow()
+    expect(() => run('isAdlt()', {}, {}, { isAdult: () => true })).toThrow()
   })
 })
 
 describe('evaluator - transforms (pipes)', () => {
   it('should apply simple transform', () => {
-    const result = run('name |> upper', { name: 'dan' }, {
-      upper: (val: unknown) => (val as string).toUpperCase(),
-    })
+    const result = run(
+      'name |> upper',
+      { name: 'dan' },
+      {
+        upper: (val: unknown) => (val as string).toUpperCase(),
+      },
+    )
     expect(result).toBe('DAN')
   })
 
   it('should chain transforms', () => {
-    const result = run('name |> trim |> upper', { name: '  dan  ' }, {
-      trim: (val: unknown) => (val as string).trim(),
-      upper: (val: unknown) => (val as string).toUpperCase(),
-    })
+    const result = run(
+      'name |> trim |> upper',
+      { name: '  dan  ' },
+      {
+        trim: (val: unknown) => (val as string).trim(),
+        upper: (val: unknown) => (val as string).toUpperCase(),
+      },
+    )
     expect(result).toBe('DAN')
   })
 
   it('should pass extra args to transforms', () => {
-    const result = run('value |> default("N/A")', { value: null }, {
-      default: (val: unknown, fallback: unknown) => val ?? fallback,
-    })
+    const result = run(
+      'value |> default("N/A")',
+      { value: null },
+      {
+        default: (val: unknown, fallback: unknown) => val ?? fallback,
+      },
+    )
     expect(result).toBe('N/A')
   })
 
   it('should throw BonsaiReferenceError on unknown transform with suggestion', () => {
-    expect(() => run('x |> uper', { x: 'hi' }, { upper: (v: unknown) => v }))
-      .toThrow(BonsaiReferenceError)
+    expect(() => run('x |> uper', { x: 'hi' }, { upper: (v: unknown) => v })).toThrow(
+      BonsaiReferenceError,
+    )
   })
 })
 
@@ -76,14 +98,18 @@ describe('evaluator - lambda accessors in transforms', () => {
       { name: 'Bob', active: false },
       { name: 'Charlie', active: true },
     ]
-    const result = run('users |> filter(.active)', { users }, {
-      filter: (val: unknown, predicate: unknown) => {
-        return (val as unknown[]).filter(item => {
-          if (typeof predicate === 'function') return predicate(item)
-          return false
-        })
+    const result = run(
+      'users |> filter(.active)',
+      { users },
+      {
+        filter: (val: unknown, predicate: unknown) => {
+          return (val as unknown[]).filter((item) => {
+            if (typeof predicate === 'function') return predicate(item)
+            return false
+          })
+        },
       },
-    })
+    )
     expect(result).toEqual([
       { name: 'Alice', active: true },
       { name: 'Charlie', active: true },
