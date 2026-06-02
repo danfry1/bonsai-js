@@ -203,6 +203,8 @@ Inside array methods, `.` refers to the current item:
 
 Compound predicates work too: `.age >= 18 && .active`
 
+A lambda is built from the accessor plus operators, member access, and methods. The shorthand is itself a function value, so it cannot be passed *into* another function call: `map(myFn(.x))` does not mean `map(item => myFn(item.x))` and will throw a `BonsaiTypeError`. To transform each item through a function, chain instead: `items |> map(.x) |> map(myFn)` (or `items.map(.x).map(myFn)`).
+
 ### Pipe transforms (via stdlib)
 
 ```ts

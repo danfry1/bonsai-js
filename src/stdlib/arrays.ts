@@ -10,6 +10,8 @@ function hasPromises(results: unknown[]): boolean {
   return results.some(r => r instanceof Promise)
 }
 
+const LAMBDA_EXPECTED = 'a lambda or function callback (e.g. .field or . > value)'
+
 export const arrays: BonsaiPlugin = (expr) => {
   expr.addTransform('count', (val: unknown) => expectArray(val, 'count').length)
   expr.addTransform('first', (val: unknown) => expectArray(val, 'first')[0])
@@ -29,9 +31,16 @@ export const arrays: BonsaiPlugin = (expr) => {
     })
   })
 
+  // Higher-order transforms. A `undefined` predicate selects the no-argument
+  // default behavior (`|> filter` keeps truthy values, `|> map` is identity).
+  // Any other non-function value is a mistake (e.g. `map(inc(.x))`, where the
+  // lambda shorthand `.x` was passed to a function and evaluated to a value
+  // rather than used as a callback) and fails loud rather than silently
+  // returning the input.
   expr.addTransform('filter', (val: unknown, predicate: unknown) => {
     const arr = expectArray(val, 'filter')
-    if (typeof predicate !== 'function') return arr.filter(Boolean)
+    if (predicate === undefined) return arr.filter(Boolean)
+    if (typeof predicate !== 'function') throw new BonsaiTypeError('filter', LAMBDA_EXPECTED, predicate)
     const fn = predicate as (item: unknown) => unknown
     const results = arr.map(fn)
     if (hasPromises(results)) {
@@ -42,14 +51,16 @@ export const arrays: BonsaiPlugin = (expr) => {
 
   expr.addTransform('map', (val: unknown, fn: unknown) => {
     const arr = expectArray(val, 'map')
-    if (typeof fn !== 'function') return arr
+    if (fn === undefined) return arr
+    if (typeof fn !== 'function') throw new BonsaiTypeError('map', LAMBDA_EXPECTED, fn)
     const results = arr.map(fn as (item: unknown) => unknown)
     return hasPromises(results) ? Promise.all(results) : results
   })
 
   expr.addTransform('find', (val: unknown, predicate: unknown) => {
     const arr = expectArray(val, 'find')
-    if (typeof predicate !== 'function') return undefined
+    if (predicate === undefined) return undefined
+    if (typeof predicate !== 'function') throw new BonsaiTypeError('find', LAMBDA_EXPECTED, predicate)
     const fn = predicate as (item: unknown) => unknown
     const results = arr.map(fn)
     if (hasPromises(results)) {
@@ -64,7 +75,8 @@ export const arrays: BonsaiPlugin = (expr) => {
 
   expr.addTransform('some', (val: unknown, predicate: unknown) => {
     const arr = expectArray(val, 'some')
-    if (typeof predicate !== 'function') return arr.some(Boolean)
+    if (predicate === undefined) return arr.some(Boolean)
+    if (typeof predicate !== 'function') throw new BonsaiTypeError('some', LAMBDA_EXPECTED, predicate)
     const fn = predicate as (item: unknown) => unknown
     const results = arr.map(fn)
     if (hasPromises(results)) {
@@ -75,7 +87,8 @@ export const arrays: BonsaiPlugin = (expr) => {
 
   expr.addTransform('every', (val: unknown, predicate: unknown) => {
     const arr = expectArray(val, 'every')
-    if (typeof predicate !== 'function') return arr.every(Boolean)
+    if (predicate === undefined) return arr.every(Boolean)
+    if (typeof predicate !== 'function') throw new BonsaiTypeError('every', LAMBDA_EXPECTED, predicate)
     const fn = predicate as (item: unknown) => unknown
     const results = arr.map(fn)
     if (hasPromises(results)) {
