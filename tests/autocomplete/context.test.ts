@@ -29,13 +29,19 @@ describe('classifyCursor', () => {
       expect(ctx('items.filter(. ')).toMatchObject({ kind: 'lambda-start', prefix: '' })
     })
     it('.verified after &&', () => {
-      expect(ctx('users.filter(.active && .ver')).toMatchObject({ kind: 'lambda-start', prefix: 'ver' })
+      expect(ctx('users.filter(.active && .ver')).toMatchObject({
+        kind: 'lambda-start',
+        prefix: 'ver',
+      })
     })
     it('. after ? (ternary)', () => {
       expect(ctx('items.filter(.x > 0 ? .na')).toMatchObject({ kind: 'lambda-start', prefix: 'na' })
     })
     it('. after : (ternary)', () => {
-      expect(ctx('items.filter(.x > 0 ? .a : .b')).toMatchObject({ kind: 'lambda-start', prefix: 'b' })
+      expect(ctx('items.filter(.x > 0 ? .a : .b')).toMatchObject({
+        kind: 'lambda-start',
+        prefix: 'b',
+      })
     })
   })
 

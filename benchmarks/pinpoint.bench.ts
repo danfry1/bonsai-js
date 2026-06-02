@@ -19,7 +19,8 @@ describe('pinpoint: literal 42', () => {
   bench('direct switch', () => {
     const node = ast as { type: string; value: number }
     switch (node.type) {
-      case 'NumberLiteral': return node.value
+      case 'NumberLiteral':
+        return node.value
     }
   })
 })

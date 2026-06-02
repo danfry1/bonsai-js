@@ -164,9 +164,11 @@ describe('evaluator - context', () => {
   })
 
   it('should resolve deeply nested properties', () => {
-    expect(run('user.address.city', {
-      user: { address: { city: 'London' } },
-    })).toBe('London')
+    expect(
+      run('user.address.city', {
+        user: { address: { city: 'London' } },
+      }),
+    ).toBe('London')
   })
 
   it('should resolve bracket notation', () => {
@@ -223,7 +225,10 @@ describe('evaluator - arrays and objects', () => {
 
   it('spread limits iterable materialization', () => {
     const expr = bonsai({ maxArrayLength: 5 })
-    function* gen() { let i = 0; while (true) yield i++ }
+    function* gen() {
+      let i = 0
+      while (true) yield i++
+    }
     expect(() => expr.evaluateSync('[...items]', { items: gen() })).toThrow('maximum')
   })
 })
@@ -288,22 +293,29 @@ describe('shorthand object properties', () => {
   })
 
   it('mixes shorthand and full properties', () => {
-    expect(run('{ name, status: "active" }', { name: 'Dan' })).toEqual({ name: 'Dan', status: 'active' })
+    expect(run('{ name, status: "active" }', { name: 'Dan' })).toEqual({
+      name: 'Dan',
+      status: 'active',
+    })
   })
 })
 
 describe('spread in function args', () => {
   it('spreads array into function args', () => {
     const expr = bonsai()
-    expr.addFunction('sum3', (a: unknown, b: unknown, c: unknown) =>
-      (a as number) + (b as number) + (c as number))
+    expr.addFunction(
+      'sum3',
+      (a: unknown, b: unknown, c: unknown) => (a as number) + (b as number) + (c as number),
+    )
     expect(expr.evaluateSync('sum3(...args)', { args: [1, 2, 3] })).toBe(6)
   })
 
   it('mixes spread and regular args', () => {
     const expr = bonsai()
-    expr.addFunction('sum3', (a: unknown, b: unknown, c: unknown) =>
-      (a as number) + (b as number) + (c as number))
+    expr.addFunction(
+      'sum3',
+      (a: unknown, b: unknown, c: unknown) => (a as number) + (b as number) + (c as number),
+    )
     expect(expr.evaluateSync('sum3(1, ...rest)', { rest: [2, 3] })).toBe(6)
   })
 
@@ -327,7 +339,9 @@ describe('Object.prototype isolation', () => {
 
   it('does not resolve hasOwnProperty as a transform', () => {
     const expr = bonsai()
-    expect(() => expr.evaluateSync('x |> hasOwnProperty', { x: 'test' })).toThrow('Unknown transform')
+    expect(() => expr.evaluateSync('x |> hasOwnProperty', { x: 'test' })).toThrow(
+      'Unknown transform',
+    )
   })
 
   it('does not resolve valueOf as a function', () => {

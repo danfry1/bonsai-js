@@ -14,7 +14,10 @@ import {
  */
 describe('addContextFunction / bonsai<TCtx>() type surface', () => {
   it('infers ctx type from the instance generic', () => {
-    interface Ctx { userId: string; perms: readonly string[] }
+    interface Ctx {
+      userId: string
+      perms: readonly string[]
+    }
     const app = bonsai<Ctx>()
     app.addContextFunction('whoami', (ctx) => {
       // ctx is Readonly<Ctx> at compile time
@@ -26,7 +29,11 @@ describe('addContextFunction / bonsai<TCtx>() type surface', () => {
   })
 
   it('accepts a function with a narrower context type (parameter contravariance)', () => {
-    interface Ctx { userId: string; perms: readonly string[]; tenantId: string }
+    interface Ctx {
+      userId: string
+      perms: readonly string[]
+      tenantId: string
+    }
     const app = bonsai<Ctx>()
     // Only declare the fields we care about. TS still accepts this because
     // every Ctx is assignable to { userId: string }.
@@ -35,7 +42,9 @@ describe('addContextFunction / bonsai<TCtx>() type surface', () => {
   })
 
   it('rejects wrong-shape context at compile time (verified via ts-expect-error)', () => {
-    interface Ctx { userId: string }
+    interface Ctx {
+      userId: string
+    }
     const app = bonsai<Ctx>()
     app.addContextFunction('whoami', (ctx) => ctx.userId)
 
@@ -60,7 +69,9 @@ describe('addContextFunction / bonsai<TCtx>() type surface', () => {
   })
 
   it('keeps the context argument optional when the context type has no required fields', () => {
-    interface OptionalCtx { userId?: string }
+    interface OptionalCtx {
+      userId?: string
+    }
     const expr = bonsai<OptionalCtx>()
     expr.addContextFunction('whoami', (ctx) => ctx.userId)
     expect(expr.evaluateSync('whoami()')).toBe(undefined)
@@ -72,7 +83,9 @@ describe('addContextFunction / bonsai<TCtx>() type surface', () => {
   })
 
   it('BonsaiInstance is generic over context', () => {
-    interface Ctx { a: number }
+    interface Ctx {
+      a: number
+    }
     const typed: BonsaiInstance<Ctx> = bonsai<Ctx>()
     const untyped: BonsaiInstance = bonsai()
     expect(typeof typed.addContextFunction).toBe('function')
@@ -80,7 +93,9 @@ describe('addContextFunction / bonsai<TCtx>() type surface', () => {
   })
 
   it('CompiledExpression is generic over context', () => {
-    interface Ctx { x: number }
+    interface Ctx {
+      x: number
+    }
     const app = bonsai<Ctx>()
     const compiled: CompiledExpression<Ctx> = app.compile('x')
     expect(compiled.evaluateSync({ x: 5 })).toBe(5)
@@ -93,7 +108,9 @@ describe('addContextFunction / bonsai<TCtx>() type surface', () => {
   })
 
   it('BonsaiPlugin is generic over context', () => {
-    interface Ctx { tenantId: string }
+    interface Ctx {
+      tenantId: string
+    }
     const plugin: BonsaiPlugin<Ctx> = (e) => {
       e.addContextFunction('tenant', (ctx) => ctx.tenantId)
     }
@@ -102,8 +119,12 @@ describe('addContextFunction / bonsai<TCtx>() type surface', () => {
   })
 
   it('plugins typed against a narrower context can be used with a wider instance context', () => {
-    interface PluginCtx { tenantId: string }
-    interface AppCtx extends PluginCtx { userId: string }
+    interface PluginCtx {
+      tenantId: string
+    }
+    interface AppCtx extends PluginCtx {
+      userId: string
+    }
     const plugin: BonsaiPlugin<PluginCtx> = (e) => {
       e.addContextFunction('tenant', (ctx) => ctx.tenantId)
     }
@@ -123,15 +144,19 @@ describe('addContextFunction / bonsai<TCtx>() type surface', () => {
   })
 
   it('ContextFunctionFn is exported and useful for explicit typing', () => {
-    interface Ctx { value: number }
-    const fn: ContextFunctionFn<Ctx> = (ctx, ...args) => (ctx.value * (args[0] as number))
+    interface Ctx {
+      value: number
+    }
+    const fn: ContextFunctionFn<Ctx> = (ctx, ...args) => ctx.value * (args[0] as number)
     const app = bonsai<Ctx>()
     app.addContextFunction('multiply', fn)
     expect(app.evaluateSync('multiply(3)', { value: 7 })).toBe(21)
   })
 
   it('addFunction signature is unchanged (no TCtx leakage)', () => {
-    interface Ctx { foo: string }
+    interface Ctx {
+      foo: string
+    }
     const app = bonsai<Ctx>()
     app.addFunction('pure', (...args) => args.length)
     expect(app.evaluateSync('pure(1, 2, 3)', { foo: 'bar' })).toBe(3)

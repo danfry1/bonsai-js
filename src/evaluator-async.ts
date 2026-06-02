@@ -88,11 +88,15 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
           const left = await evalNodeAsync(node.left, env)
           return left != null ? left : await evalNodeAsync(node.right, env)
         }
-        return applyBinaryOp(op, await evalNodeAsync(node.left, env), await evalNodeAsync(node.right, env))
+        return applyBinaryOp(
+          op,
+          await evalNodeAsync(node.left, env),
+          await evalNodeAsync(node.right, env),
+        )
       }
 
       case 'ConditionalExpression':
-        return await evalNodeAsync(node.test, env)
+        return (await evalNodeAsync(node.test, env))
           ? await evalNodeAsync(node.consequent, env)
           : await evalNodeAsync(node.alternate, env)
 
@@ -123,7 +127,9 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
         const elements: unknown[] = []
         for (const el of node.elements) {
           if (el.type === 'SpreadElement') {
-            elements.push(...expandSpreadValue(await evalNodeAsync(el.argument, env), g.policy.maxArrayLength))
+            elements.push(
+              ...expandSpreadValue(await evalNodeAsync(el.argument, env), g.policy.maxArrayLength),
+            )
           } else {
             elements.push(await evalNodeAsync(el, env))
           }
@@ -157,7 +163,8 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
       case 'TemplateLiteral': {
         let result = ''
         for (const part of node.parts) {
-          result += part.type === 'StringLiteral' ? part.value : String(await evalNodeAsync(part, env))
+          result +=
+            part.type === 'StringLiteral' ? part.value : String(await evalNodeAsync(part, env))
         }
         return result
       }
@@ -191,7 +198,9 @@ async function evalCallExpressionAsync(
   if (node.callee.type === 'MemberExpression' || node.callee.type === 'OptionalMemberExpression') {
     const obj = await evalNodeAsync(node.callee.object, env)
     if (node.callee.type === 'OptionalMemberExpression' && obj == null) return undefined
-    const computedValue = node.callee.computed ? await evalNodeAsync(node.callee.property, env) : undefined
+    const computedValue = node.callee.computed
+      ? await evalNodeAsync(node.callee.property, env)
+      : undefined
     const methodName = node.callee.computed
       ? String(computedValue)
       : getIdentifierName(node.callee.property, 'Expected method name')
@@ -238,9 +247,10 @@ async function evalCallExpressionAsync(
       }
       // Context functions receive the live evaluation context as their first
       // argument (typed Readonly<TCtx> for intent; not copied or frozen).
-      const result = resolved.kind === 'context'
-        ? await resolved.fn(env.ctx, ...args)
-        : await resolved.fn(...args)
+      const result =
+        resolved.kind === 'context'
+          ? await resolved.fn(env.ctx, ...args)
+          : await resolved.fn(...args)
       g.checkTimeout()
       return result
     } catch (e) {
@@ -252,9 +262,15 @@ async function evalCallExpressionAsync(
   throw new Error('Cannot call non-identifier')
 }
 
-async function pushCallArgumentAsync(args: unknown[], node: ASTNode, env: AsyncEvalEnv): Promise<void> {
+async function pushCallArgumentAsync(
+  args: unknown[],
+  node: ASTNode,
+  env: AsyncEvalEnv,
+): Promise<void> {
   if (node.type === 'SpreadElement') {
-    args.push(...expandSpreadValue(await evalNodeAsync(node.argument, env), env.g.policy.maxArrayLength))
+    args.push(
+      ...expandSpreadValue(await evalNodeAsync(node.argument, env), env.g.policy.maxArrayLength),
+    )
     return
   }
 
@@ -338,7 +354,11 @@ async function evalArgAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown> 
   return await evalNodeAsync(node, env)
 }
 
-async function evalPipeAsync(input: unknown, transformNode: ASTNode, env: AsyncEvalEnv): Promise<unknown> {
+async function evalPipeAsync(
+  input: unknown,
+  transformNode: ASTNode,
+  env: AsyncEvalEnv,
+): Promise<unknown> {
   const { tr, g } = env
 
   if (transformNode.type === 'CallExpression') {
@@ -362,7 +382,11 @@ async function evalPipeAsync(input: unknown, transformNode: ASTNode, env: AsyncE
   throw new Error('Invalid transform expression')
 }
 
-async function evalLambdaBodyAsync(node: ASTNode, item: unknown, env: AsyncEvalEnv): Promise<unknown> {
+async function evalLambdaBodyAsync(
+  node: ASTNode,
+  item: unknown,
+  env: AsyncEvalEnv,
+): Promise<unknown> {
   const { g } = env
   g.enterDepth()
   g.step()
@@ -391,10 +415,15 @@ async function evalLambdaBodyAsync(node: ASTNode, item: unknown, env: AsyncEvalE
       }
 
       case 'CallExpression': {
-        if (node.callee.type === 'MemberExpression' || node.callee.type === 'OptionalMemberExpression') {
+        if (
+          node.callee.type === 'MemberExpression' ||
+          node.callee.type === 'OptionalMemberExpression'
+        ) {
           const obj = await evalLambdaBodyAsync(node.callee.object, item, env)
           if (node.callee.type === 'OptionalMemberExpression' && obj == null) return undefined
-          const computedValue = node.callee.computed ? await evalNodeAsync(node.callee.property, env) : undefined
+          const computedValue = node.callee.computed
+            ? await evalNodeAsync(node.callee.property, env)
+            : undefined
           const methodName = node.callee.computed
             ? String(computedValue)
             : getIdentifierName(node.callee.property, 'Expected method name')
@@ -402,7 +431,12 @@ async function evalLambdaBodyAsync(node: ASTNode, item: unknown, env: AsyncEvalE
           const args: unknown[] = []
           for (const arg of node.args) {
             if (arg.type === 'SpreadElement') {
-              args.push(...expandSpreadValue(await evalNodeAsync(arg.argument, env), g.policy.maxArrayLength))
+              args.push(
+                ...expandSpreadValue(
+                  await evalNodeAsync(arg.argument, env),
+                  g.policy.maxArrayLength,
+                ),
+              )
             } else {
               args.push(await evalArgAsync(arg, env))
             }
@@ -411,7 +445,11 @@ async function evalLambdaBodyAsync(node: ASTNode, item: unknown, env: AsyncEvalE
 
           // Async-safe higher-order array method handling (same as top-level path)
           if (Array.isArray(obj) && args.length === 1 && typeof args[0] === 'function') {
-            const asyncResult = await evalAsyncArrayMethod(methodName, obj, args[0] as (item: unknown) => unknown)
+            const asyncResult = await evalAsyncArrayMethod(
+              methodName,
+              obj,
+              args[0] as (item: unknown) => unknown,
+            )
             if (asyncResult !== undefined) {
               g.checkTimeout()
               checkResultArrayLength(asyncResult.value, g)
@@ -443,14 +481,18 @@ async function evalLambdaBodyAsync(node: ASTNode, item: unknown, env: AsyncEvalE
           const left = await evalLambdaBodyAsync(node.left, item, env)
           return left != null ? left : await evalLambdaBodyAsync(node.right, item, env)
         }
-        return applyBinaryOp(op, await evalLambdaBodyAsync(node.left, item, env), await evalLambdaBodyAsync(node.right, item, env))
+        return applyBinaryOp(
+          op,
+          await evalLambdaBodyAsync(node.left, item, env),
+          await evalLambdaBodyAsync(node.right, item, env),
+        )
       }
 
       case 'UnaryExpression':
         return applyUnaryOp(node.operator, await evalLambdaBodyAsync(node.operand, item, env))
 
       case 'ConditionalExpression':
-        return await evalLambdaBodyAsync(node.test, item, env)
+        return (await evalLambdaBodyAsync(node.test, item, env))
           ? await evalLambdaBodyAsync(node.consequent, item, env)
           : await evalLambdaBodyAsync(node.alternate, item, env)
 
@@ -468,12 +510,17 @@ async function evalLambdaBodyAsync(node: ASTNode, item: unknown, env: AsyncEvalE
 }
 
 async function getObjectPropertyKey(prop: ObjectProperty, env: AsyncEvalEnv): Promise<string> {
-  const key = prop.computed ? String(await evalNodeAsync(prop.key, env)) : getObjectLiteralKeyName(prop.key)
+  const key = prop.computed
+    ? String(await evalNodeAsync(prop.key, env))
+    : getObjectLiteralKeyName(prop.key)
   env.g.checkNameAccess(key, 'object-key')
   return key
 }
 
-function makeLambdaAccessor(property: string, guard: ExecutionContext): (item: Record<string, unknown>) => unknown {
+function makeLambdaAccessor(
+  property: string,
+  guard: ExecutionContext,
+): (item: Record<string, unknown>) => unknown {
   return (item: Record<string, unknown>) => {
     guard.checkNameAccess(property, 'member')
     return item?.[property]

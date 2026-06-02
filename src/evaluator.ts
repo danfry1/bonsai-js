@@ -17,7 +17,11 @@ import {
   validateMethodCall,
 } from './eval-ops.js'
 
-function rejectPromise(value: unknown, kind: 'function' | 'method' | 'transform', name: string): unknown {
+function rejectPromise(
+  value: unknown,
+  kind: 'function' | 'method' | 'transform',
+  name: string,
+): unknown {
   if (value instanceof Promise) {
     throw new BonsaiTypeError(
       name,
@@ -100,7 +104,9 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
       }
 
       case 'ConditionalExpression':
-        return evalNode(node.test, env) ? evalNode(node.consequent, env) : evalNode(node.alternate, env)
+        return evalNode(node.test, env)
+          ? evalNode(node.consequent, env)
+          : evalNode(node.alternate, env)
 
       case 'MemberExpression': {
         const object = evalNode(node.object, env)
@@ -188,7 +194,10 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
   }
 }
 
-function evalCallExpression(node: Extract<ASTNode, { type: 'CallExpression' }>, env: EvalEnv): unknown {
+function evalCallExpression(
+  node: Extract<ASTNode, { type: 'CallExpression' }>,
+  env: EvalEnv,
+): unknown {
   const { fn, g, s } = env
 
   if (node.callee.type === 'MemberExpression' || node.callee.type === 'OptionalMemberExpression') {
@@ -226,9 +235,8 @@ function evalCallExpression(node: Extract<ASTNode, { type: 'CallExpression' }>, 
       // Context functions receive the live evaluation context as their first
       // argument. It is typed Readonly<TCtx> to signal read-only intent; bonsai
       // does not copy or freeze it (see the context-aware functions docs).
-      const result = resolved.kind === 'context'
-        ? resolved.fn(env.ctx, ...args)
-        : resolved.fn(...args)
+      const result =
+        resolved.kind === 'context' ? resolved.fn(env.ctx, ...args) : resolved.fn(...args)
       return rejectPromise(result, 'function', node.callee.name)
     } catch (e) {
       if (s) attachLocation(e, s, node.start, node.end)
@@ -272,7 +280,11 @@ function evalPipe(input: unknown, transformNode: ASTNode, env: EvalEnv): unknown
   }
 
   if (transformNode.type === 'Identifier') {
-    return rejectPromise(resolveTransform(transformNode.name, tr)(input), 'transform', transformNode.name)
+    return rejectPromise(
+      resolveTransform(transformNode.name, tr)(input),
+      'transform',
+      transformNode.name,
+    )
   }
 
   throw new Error('Invalid transform expression')
@@ -307,10 +319,15 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
       }
 
       case 'CallExpression': {
-        if (node.callee.type === 'MemberExpression' || node.callee.type === 'OptionalMemberExpression') {
+        if (
+          node.callee.type === 'MemberExpression' ||
+          node.callee.type === 'OptionalMemberExpression'
+        ) {
           const obj = evalLambdaBody(node.callee.object, item, env)
           if (node.callee.type === 'OptionalMemberExpression' && obj == null) return undefined
-          const computedValue = node.callee.computed ? evalNode(node.callee.property, env) : undefined
+          const computedValue = node.callee.computed
+            ? evalNode(node.callee.property, env)
+            : undefined
           const methodName = node.callee.computed
             ? String(computedValue)
             : getIdentifierName(node.callee.property, 'Expected method name')
@@ -349,7 +366,11 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
           const left = evalLambdaBody(node.left, item, env)
           return left != null ? left : evalLambdaBody(node.right, item, env)
         }
-        return applyBinaryOp(op, evalLambdaBody(node.left, item, env), evalLambdaBody(node.right, item, env))
+        return applyBinaryOp(
+          op,
+          evalLambdaBody(node.left, item, env),
+          evalLambdaBody(node.right, item, env),
+        )
       }
 
       case 'UnaryExpression':
@@ -380,7 +401,10 @@ function getObjectPropertyKey(prop: ObjectProperty, env: EvalEnv): string {
   return key
 }
 
-function makeLambdaAccessor(property: string, guard: ExecutionContext): (item: Record<string, unknown>) => unknown {
+function makeLambdaAccessor(
+  property: string,
+  guard: ExecutionContext,
+): (item: Record<string, unknown>) => unknown {
   return (item: Record<string, unknown>) => {
     guard.checkNameAccess(property, 'member')
     return item?.[property]

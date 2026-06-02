@@ -56,14 +56,18 @@ function optimize(node: ASTNode): ASTNode {
       return { ...node, input: optimize(node.input), transform: optimize(node.transform) }
 
     case 'ArrayLiteral':
-      return { ...node, elements: node.elements.map(e => optimize(e)) }
+      return { ...node, elements: node.elements.map((e) => optimize(e)) }
 
     case 'CallExpression':
-      return { ...node, args: node.args.map(a => optimize(a)) }
+      return { ...node, args: node.args.map((a) => optimize(a)) }
 
     case 'MemberExpression':
     case 'OptionalMemberExpression':
-      return { ...node, object: optimize(node.object), property: node.computed ? optimize(node.property) : node.property }
+      return {
+        ...node,
+        object: optimize(node.object),
+        property: node.computed ? optimize(node.property) : node.property,
+      }
 
     case 'LambdaExpression':
       return { ...node, body: optimize(node.body) }
@@ -74,10 +78,12 @@ function optimize(node: ASTNode): ASTNode {
 }
 
 function isConstant(node: ASTNode): boolean {
-  return node.type === 'NumberLiteral'
-    || node.type === 'StringLiteral'
-    || node.type === 'BooleanLiteral'
-    || node.type === 'NullLiteral'
+  return (
+    node.type === 'NumberLiteral' ||
+    node.type === 'StringLiteral' ||
+    node.type === 'BooleanLiteral' ||
+    node.type === 'NullLiteral'
+  )
 }
 
 function valueOf(node: ASTNode): unknown {
@@ -88,21 +94,37 @@ function valueOf(node: ASTNode): unknown {
   return undefined
 }
 
-function evalConstant(op: BinaryExpressionOperator, left: unknown, right: unknown): unknown | undefined {
+function evalConstant(
+  op: BinaryExpressionOperator,
+  left: unknown,
+  right: unknown,
+): unknown | undefined {
   if (typeof left === 'number' && typeof right === 'number') {
     switch (op) {
-      case '+': return left + right
-      case '-': return left - right
-      case '*': return left * right
-      case '/': return left / right
-      case '%': return left % right
-      case '**': return left ** right
-      case '<': return left < right
-      case '>': return left > right
-      case '<=': return left <= right
-      case '>=': return left >= right
-      case '==': return left === right
-      case '!=': return left !== right
+      case '+':
+        return left + right
+      case '-':
+        return left - right
+      case '*':
+        return left * right
+      case '/':
+        return left / right
+      case '%':
+        return left % right
+      case '**':
+        return left ** right
+      case '<':
+        return left < right
+      case '>':
+        return left > right
+      case '<=':
+        return left <= right
+      case '>=':
+        return left >= right
+      case '==':
+        return left === right
+      case '!=':
+        return left !== right
     }
   }
   if (typeof left === 'string' && typeof right === 'string' && op === '+') {

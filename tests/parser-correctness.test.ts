@@ -21,7 +21,11 @@ describe('numeric literal validation', () => {
   it('never yields NaN from a malformed numeric literal', () => {
     for (const bad of ['1e', '0x', '0b', '0o', '1e+']) {
       let threw = false
-      try { evalSync(bad) } catch { threw = true }
+      try {
+        evalSync(bad)
+      } catch {
+        threw = true
+      }
       expect(threw, bad).toBe(true)
     }
   })
@@ -33,7 +37,7 @@ describe('numeric literal validation', () => {
     expect(evalSync('1.5e-2')).toBe(0.015)
     expect(evalSync('0xff')).toBe(255)
     expect(evalSync('0XAB')).toBe(171)
-    expect(evalSync('0xDEAD_BEEF')).toBe(0xDEAD_BEEF)
+    expect(evalSync('0xDEAD_BEEF')).toBe(0xdead_beef)
     expect(evalSync('0b101')).toBe(5)
     expect(evalSync('0b1010_1010')).toBe(0b1010_1010)
     expect(evalSync('0o17')).toBe(15)
@@ -45,14 +49,29 @@ describe('numeric literal validation', () => {
   it('rejects misplaced numeric separators instead of silently coercing', () => {
     // JS rejects all of these; the old digit loops accepted them and Number()
     // would coerce (e.g. Number('0xff_') === 255, Number('1_') === NaN).
-    for (const bad of ['1_', '1__0', '0xff_', '0x_ff', '0xf__f', '0b1_', '0b1__0', '0o7_', '1_.5', '1_e5', '1e_5', '1e5_', '1.5_', '1_000_']) {
+    for (const bad of [
+      '1_',
+      '1__0',
+      '0xff_',
+      '0x_ff',
+      '0xf__f',
+      '0b1_',
+      '0b1__0',
+      '0o7_',
+      '1_.5',
+      '1_e5',
+      '1e_5',
+      '1e5_',
+      '1.5_',
+      '1_000_',
+    ]) {
       expect(() => evalSync(bad), bad).toThrow(ExpressionError)
     }
   })
 
   it('still accepts well-placed separators in every radix', () => {
     expect(evalSync('1_2_3')).toBe(123)
-    expect(evalSync('0xAB_CD')).toBe(0xABCD)
+    expect(evalSync('0xAB_CD')).toBe(0xabcd)
     expect(evalSync('0b1_0_1')).toBe(5)
     expect(evalSync('0o1_7')).toBe(15)
     expect(evalSync('1_000.000_5')).toBe(1000.0005)

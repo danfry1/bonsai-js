@@ -1,9 +1,20 @@
 import type { BonsaiInstance, Token, InferredTypeName } from '../types.js'
-import { ExpressionError, BonsaiSecurityError, BonsaiTypeError, BonsaiReferenceError } from '../errors.js'
+import {
+  ExpressionError,
+  BonsaiSecurityError,
+  BonsaiTypeError,
+  BonsaiReferenceError,
+} from '../errors.js'
 import { tolerantTokenize, isCursorInsideString, type ErrorHandler } from './tokenizer.js'
 import { classifyCursor } from './context.js'
 import { generateCompletions, type Completion, type CompletionEnv } from './completions.js'
-import { inferType, resolvePropertyChain, inferElementType, inferMethodReturnType, type ResolveOptions } from './inference.js'
+import {
+  inferType,
+  resolvePropertyChain,
+  inferElementType,
+  inferMethodReturnType,
+  type ResolveOptions,
+} from './inference.js'
 import { isMethodReceiverType } from './catalog.js'
 
 export type { Completion }
@@ -33,10 +44,12 @@ const VALID_IDENTIFIER = /^[a-zA-Z_$][\w$]*$/u
 
 /** Check if an error is an expected Bonsai error (syntax, security, type, or reference). */
 function isExpectedError(err: unknown): boolean {
-  return err instanceof ExpressionError
-    || err instanceof BonsaiSecurityError
-    || err instanceof BonsaiTypeError
-    || err instanceof BonsaiReferenceError
+  return (
+    err instanceof ExpressionError ||
+    err instanceof BonsaiSecurityError ||
+    err instanceof BonsaiTypeError ||
+    err instanceof BonsaiReferenceError
+  )
 }
 
 export function createAutocomplete(
@@ -50,7 +63,9 @@ export function createAutocomplete(
   // Cache policy at construction — it's immutable per-instance
   const rawPolicy = instance.getPolicy()
   const policy = {
-    allowedProperties: rawPolicy.allowedProperties ? new Set(rawPolicy.allowedProperties) : undefined,
+    allowedProperties: rawPolicy.allowedProperties
+      ? new Set(rawPolicy.allowedProperties)
+      : undefined,
     deniedProperties: rawPolicy.deniedProperties ? new Set(rawPolicy.deniedProperties) : undefined,
   }
   // Resolve policy for property chain resolution (shared across calls)
@@ -88,7 +103,9 @@ export function createAutocomplete(
 
     // Defer listTransforms/listFunctions to branches that need them (avoids allocation on every call)
     const env: CompletionEnv = {
-      transforms: [], functions: [], policy,
+      transforms: [],
+      functions: [],
+      policy,
     }
 
     if (cursorCtx.kind === 'pipe-transform') {
@@ -97,8 +114,14 @@ export function createAutocomplete(
       const inputType = inferPipeInputType(expression, cursor, instance, context, onError)
       env.pipe = { inputType, transformTypes: options.transformTypes }
       if (inputType && !options.transformTypes) {
-        const accepted = probeAcceptedTransforms(instance, inputType, probeCache, transforms, onError)
-        env.transforms = transforms.filter(name => accepted.has(name))
+        const accepted = probeAcceptedTransforms(
+          instance,
+          inputType,
+          probeCache,
+          transforms,
+          onError,
+        )
+        env.transforms = transforms.filter((name) => accepted.has(name))
       }
     } else if (cursorCtx.kind === 'top-level-member') {
       // Fast path: try static chain resolution first (avoids evaluateSync for simple chains)
@@ -115,7 +138,11 @@ export function createAutocomplete(
           }
         } else {
           // Static failed with prefix — try type inference from token chain
-          const inferred = inferTypeFromTokenChain(cursorCtx.precedingTokens, context, resolvePolicy)
+          const inferred = inferTypeFromTokenChain(
+            cursorCtx.precedingTokens,
+            context,
+            resolvePolicy,
+          )
           if (inferred) {
             env.member = { resolvedType: inferred }
           }
@@ -195,12 +222,15 @@ function tryEvalPrefix(
   onError?: ErrorHandler,
 ): unknown | undefined {
   // Find the expression prefix before the final dot
-  const before = tokens.filter(t => t.end <= cursor)
+  const before = tokens.filter((t) => t.end <= cursor)
   if (before.length === 0) return undefined
 
   // Walk backward to find where the expression starts (skip the trailing dot)
   let endIdx = before.length - 1
-  if (before[endIdx].type === 'Punctuation' && before[endIdx].value === '.' || before[endIdx].type === 'OptionalChain') {
+  if (
+    (before[endIdx].type === 'Punctuation' && before[endIdx].value === '.') ||
+    before[endIdx].type === 'OptionalChain'
+  ) {
     endIdx--
   }
   if (endIdx < 0) return undefined
@@ -238,7 +268,10 @@ function inferTypeFromTokenChain(
   for (; i < tokens.length; i++) {
     if (tokens[i].type === 'Identifier') {
       chain.push(tokens[i].value)
-    } else if ((tokens[i].type === 'Punctuation' && tokens[i].value === '.') || tokens[i].type === 'OptionalChain') {
+    } else if (
+      (tokens[i].type === 'Punctuation' && tokens[i].value === '.') ||
+      tokens[i].type === 'OptionalChain'
+    ) {
       continue
     } else if (tokens[i].type === 'Punctuation' && tokens[i].value === '(') {
       // Method call — use the last identifier as method name
@@ -259,7 +292,7 @@ function inferTypeFromTokenChain(
 
       if (currentType && isMethodReceiverType(currentType)) {
         const returned = inferMethodReturnType(currentType, methodName)
-        currentType = returned === 'unknown' ? undefined : returned as InferredTypeName
+        currentType = returned === 'unknown' ? undefined : (returned as InferredTypeName)
       } else {
         currentType = undefined
       }
@@ -307,7 +340,7 @@ function tryResolveNestedLambdaArray(
   context: Record<string, unknown>,
   resolveOpts?: ResolveOptions,
 ): unknown[] | undefined {
-  const before = tokens.filter(t => t.start < cursor)
+  const before = tokens.filter((t) => t.start < cursor)
 
   // Collect lambda chains at each depth level
   // For `groups.map(.users.filter(.`:
@@ -336,7 +369,7 @@ function tryResolveNestedLambdaArray(
       depth = Math.max(0, depth - 1)
     } else if (depth > 0 && t.type === 'Punctuation' && t.value === '.') {
       const prev = i > 0 ? before[i - 1] : null
-      if (prev && (prev.type === 'Punctuation' && (prev.value === '(' || prev.value === ','))) {
+      if (prev && prev.type === 'Punctuation' && (prev.value === '(' || prev.value === ',')) {
         inLambda = true
         currentChain = []
       }
@@ -357,9 +390,12 @@ function tryResolveNestedLambdaArray(
     if (before[i].type === 'Punctuation' && before[i].value === '(' && i >= 2) {
       const prev = before[i - 1]
       const prevPrev = before[i - 2]
-      if (prev.type === 'Identifier' &&
-          ((prevPrev.type === 'Punctuation' && prevPrev.value === '.') ||
-           prevPrev.type === 'OptionalChain' || prevPrev.type === 'Pipe')) {
+      if (
+        prev.type === 'Identifier' &&
+        ((prevPrev.type === 'Punctuation' && prevPrev.value === '.') ||
+          prevPrev.type === 'OptionalChain' ||
+          prevPrev.type === 'Pipe')
+      ) {
         outerParenIdx = i
         break
       }
@@ -395,7 +431,7 @@ function tryResolveNestedLambdaArray(
     currentValue = nestedResult.value
   }
 
-  return Array.isArray(currentValue) ? currentValue as unknown[] : undefined
+  return Array.isArray(currentValue) ? (currentValue as unknown[]) : undefined
 }
 
 // ── Transform probing ──────────────────────────────────────────
@@ -503,7 +539,11 @@ function extractChainBeforeOuterCall(before: Token[], outerParenIdx: number): st
   // Skip the separator (dot, optional chain, or pipe)
   if (walkIdx >= 0) {
     const sep = before[walkIdx]
-    if ((sep.type === 'Punctuation' && sep.value === '.') || sep.type === 'OptionalChain' || sep.type === 'Pipe') {
+    if (
+      (sep.type === 'Punctuation' && sep.value === '.') ||
+      sep.type === 'OptionalChain' ||
+      sep.type === 'Pipe'
+    ) {
       walkIdx--
     }
   }
@@ -523,7 +563,10 @@ function extractChainBeforeOuterCall(before: Token[], outerParenIdx: number): st
   for (let i = walkIdx; i >= 0; i--) {
     if (before[i].type === 'Identifier') {
       chain.unshift(before[i].value)
-    } else if ((before[i].type === 'Punctuation' && before[i].value === '.') || before[i].type === 'OptionalChain') {
+    } else if (
+      (before[i].type === 'Punctuation' && before[i].value === '.') ||
+      before[i].type === 'OptionalChain'
+    ) {
       continue
     } else {
       break
@@ -534,13 +577,16 @@ function extractChainBeforeOuterCall(before: Token[], outerParenIdx: number): st
 }
 
 function extractChainBeforeCall(tokens: Token[], cursor: number): string[] {
-  const before = tokens.filter(t => t.start < cursor)
+  const before = tokens.filter((t) => t.start < cursor)
   let parenIdx = -1
   let depth = 0
   for (let i = before.length - 1; i >= 0; i--) {
     if (before[i].type === 'Punctuation' && before[i].value === ')') depth++
     if (before[i].type === 'Punctuation' && before[i].value === '(') {
-      if (depth === 0) { parenIdx = i; break }
+      if (depth === 0) {
+        parenIdx = i
+        break
+      }
       depth--
     }
   }
@@ -554,9 +600,11 @@ function extractChainBeforeCall(tokens: Token[], cursor: number): string[] {
   if (preMethodIdx < 0) return []
   const preMethodToken = before[preMethodIdx]
 
-  if ((preMethodToken.type === 'Punctuation' && preMethodToken.value === '.') ||
-      preMethodToken.type === 'OptionalChain' ||
-      preMethodToken.type === 'Pipe') {
+  if (
+    (preMethodToken.type === 'Punctuation' && preMethodToken.value === '.') ||
+    preMethodToken.type === 'OptionalChain' ||
+    preMethodToken.type === 'Pipe'
+  ) {
     return extractChainFromTokens(before.slice(0, preMethodIdx))
   }
 

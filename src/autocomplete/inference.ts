@@ -29,9 +29,11 @@ export function resolvePropertyChain(
   let current: unknown = context
   for (const key of chain) {
     if (BLOCKED_PROPERTIES.has(key)) return { found: false, reason: 'blocked' }
-    if (policy?.allowedProperties && !policy.allowedProperties.has(key)) return { found: false, reason: 'blocked' }
+    if (policy?.allowedProperties && !policy.allowedProperties.has(key))
+      return { found: false, reason: 'blocked' }
     if (policy?.deniedProperties?.has(key)) return { found: false, reason: 'blocked' }
-    if (current == null || typeof current !== 'object') return { found: false, reason: 'not-object' }
+    if (current == null || typeof current !== 'object')
+      return { found: false, reason: 'not-object' }
     const obj = current as Record<string, unknown>
     if (!(key in obj)) return { found: false, reason: 'not-found' }
     current = obj[key]
@@ -50,7 +52,7 @@ export type ElementTypeInfo =
   | { type: 'array'; properties: []; value: unknown[] }
 
 export function inferElementType(array: unknown[]): ElementTypeInfo {
-  const first = array.find(el => el != null)
+  const first = array.find((el) => el != null)
   if (first === undefined) return { type: 'unknown', properties: [], value: undefined }
 
   const type = inferType(first)
@@ -68,7 +70,10 @@ export function inferElementType(array: unknown[]): ElementTypeInfo {
   return { type: 'unknown', properties: [], value: undefined }
 }
 
-export function inferMethodReturnType(receiverType: MethodReceiverType, method: string): InferredTypeName | 'unknown' {
+export function inferMethodReturnType(
+  receiverType: MethodReceiverType,
+  method: string,
+): InferredTypeName | 'unknown' {
   return getMethodReturnType(receiverType, method) ?? 'unknown'
 }
 

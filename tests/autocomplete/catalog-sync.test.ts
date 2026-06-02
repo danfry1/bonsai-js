@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { METHODS_BY_TYPE } from '../../src/autocomplete/catalog.js'
-import { isMethodAllowedOn, methodsForReceiverType, type MethodReceiverType } from '../../src/safe-methods.js'
+import {
+  isMethodAllowedOn,
+  methodsForReceiverType,
+  type MethodReceiverType,
+} from '../../src/safe-methods.js'
 
 const SAMPLES: Record<MethodReceiverType, unknown> = {
   string: 'test',
@@ -20,7 +24,9 @@ describe('autocomplete catalog matches runtime enforcement', () => {
   it('every catalogued method is a real method on its receiver type', () => {
     for (const type of Object.keys(METHODS_BY_TYPE) as MethodReceiverType[]) {
       for (const method of METHODS_BY_TYPE[type]) {
-        expect(typeof (SAMPLES[type] as Record<string, unknown>)[method], `${type}.${method}`).toBe('function')
+        expect(typeof (SAMPLES[type] as Record<string, unknown>)[method], `${type}.${method}`).toBe(
+          'function',
+        )
       }
     }
   })

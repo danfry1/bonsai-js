@@ -83,5 +83,5 @@ export function isMethodAllowedOn(obj: unknown, method: string): boolean {
 
 /** All safe method names available on a given receiver type. */
 export function methodsForReceiverType(type: MethodReceiverType): string[] {
-  return Object.keys(SAFE_METHODS).filter(method => SAFE_METHODS[method].includes(type))
+  return Object.keys(SAFE_METHODS).filter((method) => SAFE_METHODS[method].includes(type))
 }

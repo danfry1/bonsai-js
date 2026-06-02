@@ -68,7 +68,11 @@ export function isCursorInsideString(expression: string, cursor: number): boolea
     if (!inSingle && !inDouble && !inTemplate) {
       if (ch === "'") inSingle = true
       else if (ch === '"') inDouble = true
-      else if (ch === '`') { inTemplate = true; templateDepth = 0; braceStack.length = 0 }
+      else if (ch === '`') {
+        inTemplate = true
+        templateDepth = 0
+        braceStack.length = 0
+      }
     } else if (inSingle && ch === "'") {
       inSingle = false
     } else if (inDouble && ch === '"') {
@@ -96,7 +100,8 @@ export function isCursorInsideString(expression: string, cursor: number): boolea
   return inSingle || inDouble || (inTemplate && templateDepth === 0)
 }
 
-const TOKEN_RE = /\?\.|\.\.\.|\|>|\?\?|&&|\|\||[!=<>]=?|[+\-*/%]|\*\*|[.(){}[\],?:]|"(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|`(?:[^`\\$]|\\.|\$(?!\{))*`?|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?|[a-zA-Z_$][\w$]*/gu
+const TOKEN_RE =
+  /\?\.|\.\.\.|\|>|\?\?|&&|\|\||[!=<>]=?|[+\-*/%]|\*\*|[.(){}[\],?:]|"(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|`(?:[^`\\$]|\\.|\$(?!\{))*`?|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?|[a-zA-Z_$][\w$]*/gu
 
 function regexScan(expression: string, cursor: number): NonEofToken[] {
   const tokens: NonEofToken[] = []
@@ -125,7 +130,9 @@ function classifyToken(value: string, start: number, end: number): NonEofToken |
   if (/^\d/u.test(value)) return { type: 'Number', value, start, end }
   if (value.startsWith('"') || value.startsWith("'")) return { type: 'String', value, start, end }
   if (value.startsWith('`')) return { type: 'TemplateLiteral', value, start, end }
-  if (value.length === 1 && '(){}[],:?.'.includes(value)) return { type: 'Punctuation', value: value as PunctuationValue, start, end }
-  if ('+-*/%!=<>&|'.includes(value[0]) || value === '**') return { type: 'Operator', value: value as OperatorValue, start, end }
+  if (value.length === 1 && '(){}[],:?.'.includes(value))
+    return { type: 'Punctuation', value: value as PunctuationValue, start, end }
+  if ('+-*/%!=<>&|'.includes(value[0]) || value === '**')
+    return { type: 'Operator', value: value as OperatorValue, start, end }
   return null
 }

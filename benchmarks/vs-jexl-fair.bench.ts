@@ -19,8 +19,7 @@ jexl.addTransform('upper', (val: string) => val.toUpperCase())
 jexl.addTransform('sum', (arr: number[]) => arr.reduce((a, b) => a + b, 0))
 
 // Jexl's .eval is a safe expression evaluator API, not JS eval
-const jexlRun = (expression: string, ctx?: Record<string, unknown>) =>
-  jexl.eval(expression, ctx) // eslint-disable-line
+const jexlRun = (expression: string, ctx?: Record<string, unknown>) => jexl.eval(expression, ctx) // eslint-disable-line
 
 // ============================================================
 // Round 1: Default usage (how most people use each library)

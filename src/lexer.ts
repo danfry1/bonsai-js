@@ -74,7 +74,10 @@ export function tokenize(source: string): Token[] {
       if (ch === '0' && i + 1 < source.length && (source[i + 1] === 'x' || source[i + 1] === 'X')) {
         i += 2
         if (i >= source.length || !isHexDigit(source[i])) {
-          throw new ExpressionError('Invalid hexadecimal literal: expected at least one digit after "0x"', { source, start, end: i })
+          throw new ExpressionError(
+            'Invalid hexadecimal literal: expected at least one digit after "0x"',
+            { source, start, end: i },
+          )
         }
         while (i < source.length && (isHexDigit(source[i]) || source[i] === '_')) i++
         {
@@ -89,9 +92,13 @@ export function tokenize(source: string): Token[] {
       if (ch === '0' && i + 1 < source.length && (source[i + 1] === 'b' || source[i + 1] === 'B')) {
         i += 2
         if (i >= source.length || (source[i] !== '0' && source[i] !== '1')) {
-          throw new ExpressionError('Invalid binary literal: expected at least one digit after "0b"', { source, start, end: i })
+          throw new ExpressionError(
+            'Invalid binary literal: expected at least one digit after "0b"',
+            { source, start, end: i },
+          )
         }
-        while (i < source.length && (source[i] === '0' || source[i] === '1' || source[i] === '_')) i++
+        while (i < source.length && (source[i] === '0' || source[i] === '1' || source[i] === '_'))
+          i++
         {
           const value = source.slice(start, i)
           checkNumericSeparators(value, 'bin', source, start, i)
@@ -104,9 +111,13 @@ export function tokenize(source: string): Token[] {
       if (ch === '0' && i + 1 < source.length && (source[i + 1] === 'o' || source[i + 1] === 'O')) {
         i += 2
         if (i >= source.length || source[i] < '0' || source[i] > '7') {
-          throw new ExpressionError('Invalid octal literal: expected at least one digit after "0o"', { source, start, end: i })
+          throw new ExpressionError(
+            'Invalid octal literal: expected at least one digit after "0o"',
+            { source, start, end: i },
+          )
         }
-        while (i < source.length && ((source[i] >= '0' && source[i] <= '7') || source[i] === '_')) i++
+        while (i < source.length && ((source[i] >= '0' && source[i] <= '7') || source[i] === '_'))
+          i++
         {
           const value = source.slice(start, i)
           checkNumericSeparators(value, 'oct', source, start, i)
@@ -117,7 +128,12 @@ export function tokenize(source: string): Token[] {
 
       // Decimal (with optional underscore separators)
       while (i < source.length && (isDigit(source[i]) || source[i] === '_')) i++
-      if (i < source.length && source[i] === '.' && i + 1 < source.length && isDigit(source[i + 1])) {
+      if (
+        i < source.length &&
+        source[i] === '.' &&
+        i + 1 < source.length &&
+        isDigit(source[i + 1])
+      ) {
         i++ // skip '.'
         while (i < source.length && (isDigit(source[i]) || source[i] === '_')) i++
       }
@@ -127,7 +143,11 @@ export function tokenize(source: string): Token[] {
         i++
         if (i < source.length && (source[i] === '+' || source[i] === '-')) i++
         if (i >= source.length || !isDigit(source[i])) {
-          throw new ExpressionError('Invalid number: exponent has no digits', { source, start, end: i })
+          throw new ExpressionError('Invalid number: exponent has no digits', {
+            source,
+            start,
+            end: i,
+          })
         }
         while (i < source.length && (isDigit(source[i]) || source[i] === '_')) i++
       }
@@ -149,15 +169,29 @@ export function tokenize(source: string): Token[] {
           i++
           const escaped = source[i]
           switch (escaped) {
-            case 'n': value += '\n'; break
-            case 't': value += '\t'; break
-            case 'r': value += '\r'; break
-            case '\\': value += '\\'; break
-            case '0': value += '\0'; break
+            case 'n':
+              value += '\n'
+              break
+            case 't':
+              value += '\t'
+              break
+            case 'r':
+              value += '\r'
+              break
+            case '\\':
+              value += '\\'
+              break
+            case '0':
+              value += '\0'
+              break
             case 'x': {
               const hex = source.slice(i + 1, i + 3)
               if (hex.length < 2 || !isHexDigit(hex[0]) || !isHexDigit(hex[1])) {
-                throw new ExpressionError('Invalid \\x escape: expected 2 hex digits', { source, start, end: i + 3 })
+                throw new ExpressionError('Invalid \\x escape: expected 2 hex digits', {
+                  source,
+                  start,
+                  end: i + 3,
+                })
               }
               value += String.fromCharCode(parseInt(hex, 16))
               i += 2
@@ -167,21 +201,37 @@ export function tokenize(source: string): Token[] {
               if (i + 1 < source.length && source[i + 1] === '{') {
                 const closeBrace = source.indexOf('}', i + 2)
                 if (closeBrace === -1) {
-                  throw new ExpressionError('Invalid \\u{} escape: missing closing brace', { source, start, end: source.length })
+                  throw new ExpressionError('Invalid \\u{} escape: missing closing brace', {
+                    source,
+                    start,
+                    end: source.length,
+                  })
                 }
                 const hex = source.slice(i + 2, closeBrace)
                 if (hex.length === 0) {
-                  throw new ExpressionError('Invalid \\u{} escape: empty code point', { source, start, end: closeBrace + 1 })
+                  throw new ExpressionError('Invalid \\u{} escape: empty code point', {
+                    source,
+                    start,
+                    end: closeBrace + 1,
+                  })
                 }
                 for (const c of hex) {
                   if (!isHexDigit(c)) {
-                    throw new ExpressionError(`Invalid \\u{} escape: non-hex digit "${c}"`, { source, start, end: closeBrace + 1 })
+                    throw new ExpressionError(`Invalid \\u{} escape: non-hex digit "${c}"`, {
+                      source,
+                      start,
+                      end: closeBrace + 1,
+                    })
                   }
                 }
-                const MAX_UNICODE_CODE_POINT = 0x10FFFF
+                const MAX_UNICODE_CODE_POINT = 0x10ffff
                 const codePoint = parseInt(hex, 16)
                 if (codePoint > MAX_UNICODE_CODE_POINT) {
-                  throw new ExpressionError('Invalid \\u{} escape: code point out of range', { source, start, end: closeBrace + 1 })
+                  throw new ExpressionError('Invalid \\u{} escape: code point out of range', {
+                    source,
+                    start,
+                    end: closeBrace + 1,
+                  })
                 }
                 value += String.fromCodePoint(codePoint)
                 i = closeBrace
@@ -189,11 +239,19 @@ export function tokenize(source: string): Token[] {
                 const UNICODE_ESCAPE_LEN = 4
                 const hex = source.slice(i + 1, i + 1 + UNICODE_ESCAPE_LEN)
                 if (hex.length < UNICODE_ESCAPE_LEN) {
-                  throw new ExpressionError('Invalid \\u escape: expected 4 hex digits', { source, start, end: i + 1 + UNICODE_ESCAPE_LEN })
+                  throw new ExpressionError('Invalid \\u escape: expected 4 hex digits', {
+                    source,
+                    start,
+                    end: i + 1 + UNICODE_ESCAPE_LEN,
+                  })
                 }
                 for (const c of hex) {
                   if (!isHexDigit(c)) {
-                    throw new ExpressionError('Invalid \\u escape: expected 4 hex digits', { source, start, end: i + 1 + UNICODE_ESCAPE_LEN })
+                    throw new ExpressionError('Invalid \\u escape: expected 4 hex digits', {
+                      source,
+                      start,
+                      end: i + 1 + UNICODE_ESCAPE_LEN,
+                    })
                   }
                 }
                 value += String.fromCharCode(parseInt(hex, 16))
@@ -201,7 +259,9 @@ export function tokenize(source: string): Token[] {
               }
               break
             }
-            default: value += escaped; break
+            default:
+              value += escaped
+              break
           }
         } else {
           value += source[i]

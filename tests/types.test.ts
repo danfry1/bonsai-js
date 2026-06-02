@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type {
-  NumberLiteral,
-  BinaryExpression,
-} from '../src/types.js'
+import type { NumberLiteral, BinaryExpression } from '../src/types.js'
 
 describe('types', () => {
   it('should allow constructing a NumberLiteral node', () => {

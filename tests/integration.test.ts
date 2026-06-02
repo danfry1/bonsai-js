@@ -19,10 +19,14 @@ describe('integration - server-driven UI conditions', () => {
 
   it('should handle null-safe navigation', () => {
     const expr = bonsai()
-    expect(expr.evaluateSync('user?.profile?.avatar ?? "default.png"', { user: null })).toBe('default.png')
-    expect(expr.evaluateSync('user?.profile?.avatar ?? "default.png"', {
-      user: { profile: { avatar: 'me.png' } },
-    })).toBe('me.png')
+    expect(expr.evaluateSync('user?.profile?.avatar ?? "default.png"', { user: null })).toBe(
+      'default.png',
+    )
+    expect(
+      expr.evaluateSync('user?.profile?.avatar ?? "default.png"', {
+        user: { profile: { avatar: 'me.png' } },
+      }),
+    ).toBe('me.png')
   })
 })
 
@@ -61,9 +65,11 @@ describe('integration - safety', () => {
   it('should respect maxDepth', () => {
     const expr = bonsai({ maxDepth: 3 })
     // A deeply nested expression should throw
-    expect(() => expr.evaluateSync('a.b.c.d.e', {
-      a: { b: { c: { d: { e: 1 } } } },
-    })).toThrow('depth')
+    expect(() =>
+      expr.evaluateSync('a.b.c.d.e', {
+        a: { b: { c: { d: { e: 1 } } } },
+      }),
+    ).toThrow('depth')
   })
 })
 
@@ -102,16 +108,15 @@ describe('completeness integration tests', () => {
     expr.use(arrays)
     expr.addTransform('asyncEnrich', async (val: unknown) => {
       const items = val as { name: string }[]
-      return items.map(item => ({ ...item, enriched: true }))
+      return items.map((item) => ({ ...item, enriched: true }))
     })
-    const result = await expr.evaluate(
-      'users |> filter(.age >= 18) |> asyncEnrich |> map(.name)',
-      { users: [
+    const result = await expr.evaluate('users |> filter(.age >= 18) |> asyncEnrich |> map(.name)', {
+      users: [
         { name: 'Alice', age: 25 },
         { name: 'Bob', age: 15 },
         { name: 'Charlie', age: 30 },
-      ]}
-    )
+      ],
+    })
     expect(result).toEqual(['Alice', 'Charlie'])
   })
 
@@ -122,11 +127,13 @@ describe('completeness integration tests', () => {
     expr.use(math)
     const result = expr.evaluateSync(
       'items |> filter(.price < 100) |> map(.name) |> join(", ") |> upper',
-      { items: [
-        { name: 'apple', price: 50 },
-        { name: 'steak', price: 150 },
-        { name: 'bread', price: 30 },
-      ]}
+      {
+        items: [
+          { name: 'apple', price: 50 },
+          { name: 'steak', price: 150 },
+          { name: 'bread', price: 30 },
+        ],
+      },
     )
     expect(result).toBe('APPLE, BREAD')
   })
@@ -138,8 +145,10 @@ describe('completeness integration tests', () => {
 
   it('shorthand objects with trailing commas', () => {
     const expr = bonsai()
-    expect(expr.evaluateSync('{ name, age, }', { name: 'Dan', age: 30 }))
-      .toEqual({ name: 'Dan', age: 30 })
+    expect(expr.evaluateSync('{ name, age, }', { name: 'Dan', age: 30 })).toEqual({
+      name: 'Dan',
+      age: 30,
+    })
   })
 
   it('method calls chained with pipes', () => {
@@ -150,16 +159,13 @@ describe('completeness integration tests', () => {
 
   it('computed optional chaining with nullish coalescing', () => {
     const expr = bonsai()
-    expect(expr.evaluateSync('data?.[key] ?? "default"', { data: null, key: 'x' }))
-      .toBe('default')
-    expect(expr.evaluateSync('data?.[key] ?? "default"', { data: { x: 42 }, key: 'x' }))
-      .toBe(42)
+    expect(expr.evaluateSync('data?.[key] ?? "default"', { data: null, key: 'x' })).toBe('default')
+    expect(expr.evaluateSync('data?.[key] ?? "default"', { data: { x: 42 }, key: 'x' })).toBe(42)
   })
 
   it('not in operator', () => {
     const expr = bonsai()
-    expect(expr.evaluateSync('"admin" not in roles', { roles: ['user', 'editor'] }))
-      .toBe(true)
+    expect(expr.evaluateSync('"admin" not in roles', { roles: ['user', 'editor'] })).toBe(true)
   })
 
   it('spread in function calls', () => {

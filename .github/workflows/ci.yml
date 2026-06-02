@@ -31,6 +31,9 @@ jobs:
         run: bun audit
         continue-on-error: true
 
+      - name: Format
+        run: bun run format:check
+
       - name: Lint
         run: bun run lint
 

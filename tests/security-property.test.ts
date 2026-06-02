@@ -23,11 +23,25 @@ const DANGEROUS_KEYS = ['__proto__', 'constructor', 'prototype'] as const
 // Bases reachable under the default policy, spanning object/array/string
 // receivers and literals, so the dangerous-key check is exercised regardless of
 // what it is anchored to.
-const NAVIGABLE_BASES = ['obj', 'user', 'user.profile', 'items', 'text', '{ safe: 1 }', '[1, 2, 3]'] as const
+const NAVIGABLE_BASES = [
+  'obj',
+  'user',
+  'user.profile',
+  'items',
+  'text',
+  '{ safe: 1 }',
+  '[1, 2, 3]',
+] as const
 
 const dangerousAccessArbitrary = fc
-  .tuple(fc.constantFrom(...NAVIGABLE_BASES), fc.constantFrom(...DANGEROUS_KEYS), fc.constantFrom('dot', 'computed'))
-  .map(([base, key, form]) => (form === 'dot' ? `${base}.${key}` : `${base}[${JSON.stringify(key)}]`))
+  .tuple(
+    fc.constantFrom(...NAVIGABLE_BASES),
+    fc.constantFrom(...DANGEROUS_KEYS),
+    fc.constantFrom('dot', 'computed'),
+  )
+  .map(([base, key, form]) =>
+    form === 'dot' ? `${base}.${key}` : `${base}[${JSON.stringify(key)}]`,
+  )
 
 describe('security property: prototype-access is always blocked', () => {
   const expr = bonsai()
@@ -36,7 +50,9 @@ describe('security property: prototype-access is always blocked', () => {
     'throws BonsaiSecurityError (sync and async) for any dangerous-key access',
     async (source) => {
       expect(() => expr.evaluateSync(source, { ...SANDBOX_CONTEXT })).toThrow(BonsaiSecurityError)
-      await expect(expr.evaluate(source, { ...SANDBOX_CONTEXT })).rejects.toBeInstanceOf(BonsaiSecurityError)
+      await expect(expr.evaluate(source, { ...SANDBOX_CONTEXT })).rejects.toBeInstanceOf(
+        BonsaiSecurityError,
+      )
     },
   )
 })
@@ -82,7 +98,16 @@ describe('security property: evaluated objects have null prototypes', () => {
 
 // Names placed only on the prototype of the context object. None are own
 // properties, so resolving the bare identifier must miss.
-const INHERITED_NAMES = ['alpha', 'beta', 'gamma', 'secret', 'token', 'role', 'admin', 'inherited'] as const
+const INHERITED_NAMES = [
+  'alpha',
+  'beta',
+  'gamma',
+  'secret',
+  'token',
+  'role',
+  'admin',
+  'inherited',
+] as const
 
 describe('security property: inherited context properties never resolve', () => {
   const expr = bonsai()
@@ -90,12 +115,15 @@ describe('security property: inherited context properties never resolve', () => 
   it.prop([fc.constantFrom(...INHERITED_NAMES), fc.constantFrom('LEAK', 42, true)], {
     seed: SEED_OWN_ONLY,
     numRuns: 100,
-  })('a property present only on the prototype resolves to undefined, not the inherited value', (name, sentinel) => {
-    const proto = { [name]: sentinel }
-    const ctx = Object.create(proto) as Record<string, unknown>
-    ctx.own = 'safe'
+  })(
+    'a property present only on the prototype resolves to undefined, not the inherited value',
+    (name, sentinel) => {
+      const proto = { [name]: sentinel }
+      const ctx = Object.create(proto) as Record<string, unknown>
+      ctx.own = 'safe'
 
-    expect(expr.evaluateSync(name, ctx)).toBeUndefined()
-    expect(expr.evaluateSync('own', ctx)).toBe('safe')
-  })
+      expect(expr.evaluateSync(name, ctx)).toBeUndefined()
+      expect(expr.evaluateSync('own', ctx)).toBe('safe')
+    },
+  )
 })

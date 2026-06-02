@@ -17,9 +17,7 @@ const SEED_EXPRESSION = 0xc0ffee
 const SEED_HOF = 0x5eed01
 const SEED_FUZZ = 0xbad5eed
 
-type Outcome =
-  | { ok: true; value: unknown }
-  | { ok: false; name: string; message: string }
+type Outcome = { ok: true; value: unknown } | { ok: false; name: string; message: string }
 
 const CONTEXT = {
   num: 3,
@@ -124,14 +122,21 @@ const { expr: expressionArbitrary } = fc.letrec<{ expr: string }>((tie) => ({
     {
       weight: 2,
       arbitrary: fc
-        .tuple(tie('expr'), fc.constantFrom(...MEMBERSHIP_OPERATORS), fc.constantFrom(...MEMBERSHIP_RIGHT))
+        .tuple(
+          tie('expr'),
+          fc.constantFrom(...MEMBERSHIP_OPERATORS),
+          fc.constantFrom(...MEMBERSHIP_RIGHT),
+        )
         .map(([left, operator, right]) => `(${left} ${operator} ${right})`),
     },
     {
       weight: 2,
       arbitrary: fc
         .tuple(tie('expr'), tie('expr'), tie('expr'))
-        .map(([condition, consequent, alternative]) => `(${condition} ? ${consequent} : ${alternative})`),
+        .map(
+          ([condition, consequent, alternative]) =>
+            `(${condition} ? ${consequent} : ${alternative})`,
+        ),
     },
     {
       weight: 2,
@@ -162,10 +167,20 @@ describe('property-based evaluator invariants', () => {
       const optimized = compile(parsed)
       const compiled = expr.compile(source)
       const direct = captureOutcome(() =>
-        evaluate(parsed, { ...CONTEXT }, { transforms: {}, functions: {} }, new ExecutionContext(new SecurityPolicy())),
+        evaluate(
+          parsed,
+          { ...CONTEXT },
+          { transforms: {}, functions: {} },
+          new ExecutionContext(new SecurityPolicy()),
+        ),
       )
       const optimizedDirect = captureOutcome(() =>
-        evaluate(optimized, { ...CONTEXT }, { transforms: {}, functions: {} }, new ExecutionContext(new SecurityPolicy())),
+        evaluate(
+          optimized,
+          { ...CONTEXT },
+          { transforms: {}, functions: {} },
+          new ExecutionContext(new SecurityPolicy()),
+        ),
       )
       const syncResult = captureOutcome(() => expr.evaluateSync(source, { ...CONTEXT }))
       const compiledResult = captureOutcome(() => compiled.evaluateSync({ ...CONTEXT }))
@@ -196,7 +211,16 @@ const HOF_CONTEXT = {
 
 const NUM_LAMBDAS = ['. > 1', '. * 2', '. + 1', '. % 2 == 0'] as const
 const USER_LAMBDAS = ['.age', '.name', '.active', '.age > 18', '.age >= 18 && .active'] as const
-const ARRAY_REDUCERS = ['count', 'first', 'last', 'reverse', 'unique', 'sort', 'sum', 'avg'] as const
+const ARRAY_REDUCERS = [
+  'count',
+  'first',
+  'last',
+  'reverse',
+  'unique',
+  'sort',
+  'sum',
+  'avg',
+] as const
 const NUM_TRANSFORMS = ['round', 'floor', 'ceil', 'abs'] as const
 const HOF_METHODS = ['map', 'filter', 'find', 'some', 'every', 'flatMap'] as const
 
@@ -237,7 +261,10 @@ const userPipeArbitrary = fc
 const methodChainArbitrary = fc.constantFrom('items', 'nums', 'users').chain((base) => {
   const lambdas = base === 'users' ? USER_LAMBDAS : NUM_LAMBDAS
   return fc
-    .array(fc.tuple(fc.constantFrom(...HOF_METHODS), fc.constantFrom(...lambdas)), { minLength: 1, maxLength: 2 })
+    .array(fc.tuple(fc.constantFrom(...HOF_METHODS), fc.constantFrom(...lambdas)), {
+      minLength: 1,
+      maxLength: 2,
+    })
     .map((ops) => {
       let source: string = base
       for (const [method, lambda] of ops) source += `.${method}(${lambda})`
@@ -271,7 +298,9 @@ describe('property-based higher-order parity', () => {
 })
 
 const JUNK_CHARS =
-  '()[]{}?:.,|&!=<>+-*/%\'"`abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$ \t\n'.split('')
+  '()[]{}?:.,|&!=<>+-*/%\'"`abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$ \t\n'.split(
+    '',
+  )
 
 // Random junk drawn from the language's own character set: ill-formed but
 // plausibly tokenizable. The invariant is that the parser fails cleanly with an

@@ -29,7 +29,7 @@ describe('tolerantTokenize', () => {
     const result = tolerantTokenize('user.name == "hel', 17)
     expect(result.partial).toBe(true)
     expect(result.insideString).toBe(true)
-    const identifiers = result.tokens.filter(t => t.type === 'Identifier')
+    const identifiers = result.tokens.filter((t) => t.type === 'Identifier')
     expect(identifiers.length).toBeGreaterThanOrEqual(1)
   })
 
@@ -46,13 +46,13 @@ describe('tolerantTokenize', () => {
   it('extracts dot and optional chain tokens', () => {
     const result = tolerantTokenize('user.na', 7)
     expect(result.partial).toBe(false)
-    const hasDot = result.tokens.some(t => t.type === 'Punctuation' && t.value === '.')
+    const hasDot = result.tokens.some((t) => t.type === 'Punctuation' && t.value === '.')
     expect(hasDot).toBe(true)
   })
 
   it('extracts pipe token', () => {
     const result = tolerantTokenize('x |> ', 5)
-    const hasPipe = result.tokens.some(t => t.type === 'Pipe')
+    const hasPipe = result.tokens.some((t) => t.type === 'Pipe')
     expect(hasPipe).toBe(true)
   })
 
@@ -64,13 +64,13 @@ describe('tolerantTokenize', () => {
 
   it('extracts optional chain token', () => {
     const result = tolerantTokenize('user?.name', 10)
-    const hasOptChain = result.tokens.some(t => t.type === 'OptionalChain')
+    const hasOptChain = result.tokens.some((t) => t.type === 'OptionalChain')
     expect(hasOptChain).toBe(true)
   })
 
   it('extracts nullish coalescing token', () => {
     const result = tolerantTokenize('x ?? y', 6)
-    const hasNullish = result.tokens.some(t => t.type === 'NullishCoalescing')
+    const hasNullish = result.tokens.some((t) => t.type === 'NullishCoalescing')
     expect(hasNullish).toBe(true)
   })
 })

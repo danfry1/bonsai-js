@@ -15,7 +15,9 @@ describe('stdlib correctness', () => {
     })
 
     it('still formats a normal pattern', () => {
-      expect(expr.evaluateSync('ts |> formatDate("YYYY-MM-DD HH:mm:ss")', { ts })).toBe('2021-02-03 04:05:06')
+      expect(expr.evaluateSync('ts |> formatDate("YYYY-MM-DD HH:mm:ss")', { ts })).toBe(
+        '2021-02-03 04:05:06',
+      )
     })
   })
 
@@ -48,8 +50,12 @@ describe('stdlib correctness', () => {
     })
 
     it('rejects non-finite bounds', () => {
-      expect(() => expr.evaluateSync('5 |> clamp(lo, 10)', { lo: Number.NaN })).toThrow(BonsaiTypeError)
-      expect(() => expr.evaluateSync('5 |> clamp(0, hi)', { hi: Number.POSITIVE_INFINITY })).toThrow(BonsaiTypeError)
+      expect(() => expr.evaluateSync('5 |> clamp(lo, 10)', { lo: Number.NaN })).toThrow(
+        BonsaiTypeError,
+      )
+      expect(() =>
+        expr.evaluateSync('5 |> clamp(0, hi)', { hi: Number.POSITIVE_INFINITY }),
+      ).toThrow(BonsaiTypeError)
     })
 
     it('still clamps with valid bounds', () => {
@@ -66,15 +72,21 @@ describe('stdlib correctness', () => {
       // Code-point order puts uppercase before lowercase ('B' = 66 < 'a' = 97),
       // unlike locale-aware ordering which is environment-dependent.
       expect(expr.evaluateSync('items |> sort', { items: ['a', 'B'] })).toEqual(['B', 'a'])
-      expect(expr.evaluateSync('items |> sort', { items: ['banana', 'Apple', 'cherry'] })).toEqual(['Apple', 'banana', 'cherry'])
+      expect(expr.evaluateSync('items |> sort', { items: ['banana', 'Apple', 'cherry'] })).toEqual([
+        'Apple',
+        'banana',
+        'cherry',
+      ])
     })
 
     it('orders astral-plane characters by true code point, not UTF-16 code unit', () => {
       // U+1F600 (emoji, code point 128512, leading surrogate 0xD83D = 55357) vs
       // U+FB00 (BMP, code point 64256). A code-unit `<` would order the emoji
       // first (55357 < 64256); true code-point order puts U+FB00 first.
-      expect(expr.evaluateSync('items |> sort', { items: ['\u{1F600}', 'ﬀ'] }))
-        .toEqual(['ﬀ', '\u{1F600}'])
+      expect(expr.evaluateSync('items |> sort', { items: ['\u{1F600}', 'ﬀ'] })).toEqual([
+        'ﬀ',
+        '\u{1F600}',
+      ])
     })
 
     it('still sorts numbers numerically', () => {

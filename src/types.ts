@@ -1,7 +1,14 @@
 // === Inferred Type Names ===
 
 /** Closed set of type names produced by runtime type inference. */
-export type InferredTypeName = 'string' | 'number' | 'boolean' | 'array' | 'object' | 'null' | 'undefined'
+export type InferredTypeName =
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'array'
+  | 'object'
+  | 'null'
+  | 'undefined'
 
 // === Policy Snapshot ===
 
@@ -29,11 +36,22 @@ export interface SourcePosition {
 // === Token Types ===
 
 export type BinaryOperator =
-  | '||' | '&&'
-  | '==' | '!='
-  | '<' | '>' | '<=' | '>='
-  | '+' | '-' | '*' | '/' | '%' | '**'
-  | 'in' | 'not'
+  | '||'
+  | '&&'
+  | '=='
+  | '!='
+  | '<'
+  | '>'
+  | '<='
+  | '>='
+  | '+'
+  | '-'
+  | '*'
+  | '/'
+  | '%'
+  | '**'
+  | 'in'
+  | 'not'
 
 export type UnaryOperator = '!' | '-' | '+'
 export type BinaryExpressionOperator = Exclude<BinaryOperator, 'not'> | 'not in' | '??'
@@ -48,20 +66,20 @@ interface BaseToken {
 }
 
 export type Token =
-  | { type: 'Number'; value: string } & BaseToken
-  | { type: 'String'; value: string } & BaseToken
-  | { type: 'TemplateLiteral'; value: string } & BaseToken
-  | { type: 'Boolean'; value: 'true' | 'false' } & BaseToken
-  | { type: 'Null'; value: 'null' } & BaseToken
-  | { type: 'Undefined'; value: 'undefined' } & BaseToken
-  | { type: 'Identifier'; value: string } & BaseToken
-  | { type: 'Operator'; value: OperatorValue } & BaseToken
-  | { type: 'Punctuation'; value: PunctuationValue } & BaseToken
-  | { type: 'Pipe'; value: '|>' } & BaseToken
-  | { type: 'OptionalChain'; value: '?.' } & BaseToken
-  | { type: 'NullishCoalescing'; value: '??' } & BaseToken
-  | { type: 'Spread'; value: '...' } & BaseToken
-  | { type: 'EOF'; value: '' } & BaseToken
+  | ({ type: 'Number'; value: string } & BaseToken)
+  | ({ type: 'String'; value: string } & BaseToken)
+  | ({ type: 'TemplateLiteral'; value: string } & BaseToken)
+  | ({ type: 'Boolean'; value: 'true' | 'false' } & BaseToken)
+  | ({ type: 'Null'; value: 'null' } & BaseToken)
+  | ({ type: 'Undefined'; value: 'undefined' } & BaseToken)
+  | ({ type: 'Identifier'; value: string } & BaseToken)
+  | ({ type: 'Operator'; value: OperatorValue } & BaseToken)
+  | ({ type: 'Punctuation'; value: PunctuationValue } & BaseToken)
+  | ({ type: 'Pipe'; value: '|>' } & BaseToken)
+  | ({ type: 'OptionalChain'; value: '?.' } & BaseToken)
+  | ({ type: 'NullishCoalescing'; value: '??' } & BaseToken)
+  | ({ type: 'Spread'; value: '...' } & BaseToken)
+  | ({ type: 'EOF'; value: '' } & BaseToken)
 
 export type TokenType = Token['type']
 
@@ -256,8 +274,10 @@ export type EvaluationContextArgs<TCtx extends BonsaiContext = Record<string, un
  * not copied or frozen, so treat it as read-only. Registered via
  * {@link BonsaiInstance.addContextFunction}.
  */
-export type ContextFunctionFn<TCtx extends BonsaiContext = Record<string, unknown>> =
-  (context: Readonly<TCtx>, ...args: unknown[]) => unknown | Promise<unknown>
+export type ContextFunctionFn<TCtx extends BonsaiContext = Record<string, unknown>> = (
+  context: Readonly<TCtx>,
+  ...args: unknown[]
+) => unknown | Promise<unknown>
 
 /**
  * A registry entry for a callable invoked as `name(args)` in expressions,
@@ -271,8 +291,9 @@ export type RegisteredFunction =
   | { kind: 'context'; fn: ContextFunctionFn }
 
 /** A plugin receives a Bonsai instance and extends it with transforms or functions. */
-export type BonsaiPlugin<TCtx extends BonsaiContext = Record<string, unknown>> =
-  (instance: BonsaiInstance<TCtx>) => void
+export type BonsaiPlugin<TCtx extends BonsaiContext = Record<string, unknown>> = (
+  instance: BonsaiInstance<TCtx>,
+) => void
 
 /**
  * Core Bonsai instance returned by `bonsai()`.

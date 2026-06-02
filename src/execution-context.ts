@@ -8,7 +8,9 @@ import { BonsaiSecurityError } from './errors.js'
 export type AccessKind = 'identifier' | 'member' | 'method' | 'object-key'
 
 export const BLOCKED_PROPERTIES: ReadonlySet<string> = new Set([
-  '__proto__', 'constructor', 'prototype',
+  '__proto__',
+  'constructor',
+  'prototype',
 ])
 
 const MAX_INDEX_DIGITS = 10
@@ -41,9 +43,7 @@ export class SecurityPolicy {
     this.allowedProperties = options.allowedProperties
       ? new Set(options.allowedProperties)
       : undefined
-    this.deniedProperties = options.deniedProperties
-      ? new Set(options.deniedProperties)
-      : undefined
+    this.deniedProperties = options.deniedProperties ? new Set(options.deniedProperties) : undefined
   }
 }
 

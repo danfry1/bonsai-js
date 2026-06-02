@@ -42,20 +42,35 @@ describe('lexer', () => {
 
   it('should tokenize arithmetic operators', () => {
     const tokens = tokenize('+ - * / % **')
-    expect(tokens.filter(t => t.type === 'Operator').map(t => t.value))
-      .toEqual(['+', '-', '*', '/', '%', '**'])
+    expect(tokens.filter((t) => t.type === 'Operator').map((t) => t.value)).toEqual([
+      '+',
+      '-',
+      '*',
+      '/',
+      '%',
+      '**',
+    ])
   })
 
   it('should tokenize comparison operators', () => {
     const tokens = tokenize('== != < > <= >=')
-    expect(tokens.filter(t => t.type === 'Operator').map(t => t.value))
-      .toEqual(['==', '!=', '<', '>', '<=', '>='])
+    expect(tokens.filter((t) => t.type === 'Operator').map((t) => t.value)).toEqual([
+      '==',
+      '!=',
+      '<',
+      '>',
+      '<=',
+      '>=',
+    ])
   })
 
   it('should tokenize logical operators', () => {
     const tokens = tokenize('&& || !')
-    expect(tokens.filter(t => t.type === 'Operator').map(t => t.value))
-      .toEqual(['&&', '||', '!'])
+    expect(tokens.filter((t) => t.type === 'Operator').map((t) => t.value)).toEqual([
+      '&&',
+      '||',
+      '!',
+    ])
   })
 
   it('should tokenize pipe operator |>', () => {
@@ -80,19 +95,32 @@ describe('lexer', () => {
 
   it('should tokenize punctuation', () => {
     const tokens = tokenize('( ) [ ] { } , : .')
-    expect(tokens.filter(t => t.type === 'Punctuation').map(t => t.value))
-      .toEqual(['(', ')', '[', ']', '{', '}', ',', ':', '.'])
+    expect(tokens.filter((t) => t.type === 'Punctuation').map((t) => t.value)).toEqual([
+      '(',
+      ')',
+      '[',
+      ']',
+      '{',
+      '}',
+      ',',
+      ':',
+      '.',
+    ])
   })
 
   it('should tokenize a complex expression', () => {
     const tokens = tokenize('user.age >= 18 && user.verified')
-    const types = tokens.filter(t => t.type !== 'EOF').map(t => t.type)
+    const types = tokens.filter((t) => t.type !== 'EOF').map((t) => t.type)
     expect(types).toEqual([
-      'Identifier', 'Punctuation', 'Identifier',
+      'Identifier',
+      'Punctuation',
+      'Identifier',
       'Operator',
       'Number',
       'Operator',
-      'Identifier', 'Punctuation', 'Identifier',
+      'Identifier',
+      'Punctuation',
+      'Identifier',
     ])
   })
 
