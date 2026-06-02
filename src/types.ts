@@ -221,7 +221,7 @@ export interface BonsaiOptions {
   maxDepth?: number
   /** Maximum array size produced during evaluation (literals, spread, and array-returning methods). Default: 100,000. */
   maxArrayLength?: number
-  /** Maximum string size produced by string-growing methods (padStart, padEnd, repeat). Default: 100,000. */
+  /** Maximum string size produced by a string-returning method (padStart, padEnd, repeat, join, concat, slice, ...). Default: 100,000. */
   maxStringLength?: number
   /** Allowlist of property/method names expressions can access. */
   allowedProperties?: string[]

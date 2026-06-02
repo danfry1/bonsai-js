@@ -390,4 +390,46 @@ describe('resource-exhaustion limits', () => {
     try { expr.evaluateSync('"a,b,c,d".split(",")') } catch (e) { arrCode = (e as BonsaiSecurityError).code }
     expect(arrCode).toBe('MAX_ARRAY_LENGTH')
   })
+
+  // String-output cap on every string-returning method. padStart/padEnd/repeat
+  // are checked before allocation; join/concat/slice/... are checked on output.
+  // arr.join(sep) is the worst single-call amplifier (length x separator length).
+  describe('maxStringLength bounds every string-returning method output', () => {
+    it('caps join output (the array-length x separator-length amplifier)', () => {
+      const expr = bonsai({ maxStringLength: 10 })
+      // 3 elements joined by a 10-char separator => 23 chars, past the cap.
+      expect(() => expr.evaluateSync('a.join(s)', { a: ['x', 'y', 'z'], s: '0123456789' })).toThrow(BonsaiSecurityError)
+      // Within the cap is still allowed.
+      expect(expr.evaluateSync('a.join(s)', { a: ['x', 'y'], s: '00' })).toBe('x00y')
+    })
+
+    it('uses MAX_STRING_LENGTH for an over-cap join (not a raw allocation)', () => {
+      const expr = bonsai({ maxStringLength: 10 })
+      let code: string | undefined
+      try { expr.evaluateSync('a.join(s)', { a: ['x', 'y', 'z'], s: '0123456789' }) } catch (e) { code = (e as BonsaiSecurityError).code }
+      expect(code).toBe('MAX_STRING_LENGTH')
+    })
+
+    it('caps string concat and slice output', () => {
+      const expr = bonsai({ maxStringLength: 10 })
+      expect(() => expr.evaluateSync('a.concat(b)', { a: 'xxxxxx', b: 'yyyyyy' })).toThrow(BonsaiSecurityError)
+      expect(() => expr.evaluateSync('big.slice(0)', { big: 'x'.repeat(11) })).toThrow(BonsaiSecurityError)
+      // A slice that stays within the cap is allowed.
+      expect(expr.evaluateSync('big.slice(0, 10)', { big: 'x'.repeat(11) })).toHaveLength(10)
+    })
+
+    it('enforces the join cap in async mode too', async () => {
+      const expr = bonsai({ maxStringLength: 10 })
+      await expect(expr.evaluate('a.join(s)', { a: ['x', 'y', 'z'], s: '0123456789' })).rejects.toThrow(BonsaiSecurityError)
+    })
+
+    it('bounds join under the default policy (regression for the documented guarantee)', () => {
+      // Default maxStringLength = 100,000. A separator at the cap joined across a
+      // handful of elements produces a multi-hundred-KB string in one native
+      // call; it must be rejected rather than silently allocated.
+      const expr = bonsai()
+      const arr = Array.from({ length: 10 }, (_, i) => String(i))
+      expect(() => expr.evaluateSync('a.join(s)', { a: arr, s: 'x'.repeat(100000) })).toThrow(BonsaiSecurityError)
+    })
+  })
 })

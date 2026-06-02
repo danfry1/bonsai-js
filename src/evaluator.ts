@@ -7,6 +7,7 @@ import {
   applyBinaryOp,
   applyUnaryOp,
   checkResultArrayLength,
+  checkResultStringLength,
   expandSpreadValue,
   getIdentifierName,
   getObjectLiteralKeyName,
@@ -207,6 +208,7 @@ function evalCallExpression(node: Extract<ASTNode, { type: 'CallExpression' }>, 
       validateMethodArgs(obj, methodName, args, g)
       const result = rejectPromise(method.call(obj, ...args), 'method', methodName)
       checkResultArrayLength(result, g)
+      checkResultStringLength(result, g)
       return result
     } catch (e) {
       if (s) attachLocation(e, s, node.start, node.end)
@@ -328,6 +330,7 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
           validateMethodArgs(obj, methodName, args, g)
           const result = rejectPromise(method.call(obj, ...args), 'method', methodName)
           checkResultArrayLength(result, g)
+          checkResultStringLength(result, g)
           return result
         }
         // Delegate to evalNode for non-method calls (e.g. registered functions)

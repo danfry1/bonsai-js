@@ -297,7 +297,7 @@ const expr = bonsai(options?: BonsaiOptions)
 | `timeout` | `number` | `0` | Evaluation timeout in milliseconds. `0` disables the timeout check. |
 | `maxDepth` | `number` | `100` | Maximum evaluation depth before throwing `BonsaiSecurityError('MAX_DEPTH', ...)`. |
 | `maxArrayLength` | `number` | `100000` | Maximum array size produced during evaluation, including array literals, expanded spread, and array-returning methods (`split`, `map`, `flat`, `concat`, ...). Exceeding it throws `BonsaiSecurityError('MAX_ARRAY_LENGTH', ...)`. |
-| `maxStringLength` | `number` | `100000` | Maximum string size produced by string-growing methods (`padStart`, `padEnd`, `repeat`). Exceeding it throws `BonsaiSecurityError('MAX_STRING_LENGTH', ...)`. |
+| `maxStringLength` | `number` | `100000` | Maximum string size produced by a string-returning method (`padStart`, `padEnd`, `repeat`, `join`, `concat`, `slice`, ...). Applies to the produced length (e.g. `arr.join(sep)` is bounded by its full output, not just the inputs). Exceeding it throws `BonsaiSecurityError('MAX_STRING_LENGTH', ...)`. |
 | `cacheSize` | `number` | `256` | Per-instance cache size for compiled expressions and parsed AST reuse. |
 | `allowedProperties` | `string[]` | `undefined` | Whitelist of allowed member/method names. Does not apply to root identifiers or object-literal keys. |
 | `deniedProperties` | `string[]` | `undefined` | Denylist of blocked member/method names. Does not apply to root identifiers or object-literal keys. |

@@ -8,6 +8,7 @@ import {
   applyBinaryOp,
   applyUnaryOp,
   checkResultArrayLength,
+  checkResultStringLength,
   expandSpreadValue,
   getIdentifierName,
   getObjectLiteralKeyName,
@@ -214,6 +215,7 @@ async function evalCallExpressionAsync(
       const result = await method.call(obj, ...args)
       g.checkTimeout()
       checkResultArrayLength(result, g)
+      checkResultStringLength(result, g)
       return result
     } catch (e) {
       if (s) attachLocation(e, s, node.start, node.end)
@@ -395,6 +397,7 @@ async function evalLambdaBodyAsync(node: ASTNode, item: unknown, env: AsyncEvalE
 
           const result = await method.call(obj, ...args)
           checkResultArrayLength(result, g)
+          checkResultStringLength(result, g)
           return result
         }
         ownDepth = false

@@ -226,6 +226,22 @@ export function checkResultArrayLength(result: unknown, guard: ExecutionContext)
   }
 }
 
+/**
+ * Enforce the string-size limit on a value produced by a method call. The
+ * argument-time checks on padStart/padEnd/repeat stop the worst single-call
+ * amplifiers before allocation, but string-returning methods such as join,
+ * concat, slice, and toUpperCase can still produce a string past the ceiling
+ * (notably `arr.join(sep)`, whose output is array length times separator length
+ * in a single native call). Checking the produced length here makes
+ * maxStringLength a real ceiling on every string that flows through evaluation,
+ * mirroring checkResultArrayLength.
+ */
+export function checkResultStringLength(result: unknown, guard: ExecutionContext): void {
+  if (typeof result === 'string') {
+    guard.checkStringLength(result.length)
+  }
+}
+
 export function accessMember(
   object: unknown,
   propertyNode: ASTNode,
