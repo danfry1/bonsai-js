@@ -6,6 +6,7 @@ import { evaluate } from '../src/evaluator.js'
 import { parse } from '../src/parser.js'
 import { SecurityPolicy, ExecutionContext } from '../src/execution-context.js'
 import { bonsai } from '../src/index.js'
+import { arrays, strings, math } from '../src/stdlib/index.js'
 
 type Outcome =
   | { ok: true; value: unknown }
@@ -185,6 +186,82 @@ describe('property-based evaluator invariants', () => {
       expect(syncResult).toEqual(direct)
       expect(compiledResult).toEqual(direct)
       expect(asyncResult).toEqual(direct)
+    }
+  })
+})
+
+// Higher-order coverage: the base property test never registers transforms or
+// generates pipes/methods/lambdas, so the async-array-method path is unguarded
+// by the parity invariant. These generators exercise transforms, stdlib
+// functions, pipe chains, method chains, and lambdas through both evaluators.
+const HOF_CONTEXT = {
+  items: [1, 2, 3, 4],
+  nums: [3, 1, 2],
+  users: [
+    { age: 30, name: 'Dan', active: true },
+    { age: 15, name: 'Eve', active: false },
+    { age: 40, name: 'Sam', active: true },
+  ],
+  text: 'hello world',
+} as const
+
+const NUM_LAMBDAS = ['. > 1', '. * 2', '. + 1', '. % 2 == 0'] as const
+const USER_LAMBDAS = ['.age', '.name', '.active', '.age > 18', '.age >= 18 && .active'] as const
+const ARRAY_REDUCERS = ['count', 'first', 'last', 'reverse', 'unique', 'sort', 'sum', 'avg'] as const
+const NUM_TRANSFORMS = ['round', 'floor', 'ceil', 'abs'] as const
+const HOF_METHODS = ['map', 'filter', 'find', 'some', 'every', 'flatMap'] as const
+
+function generateHof(rand: () => number): string {
+  const style = rand()
+
+  // Numeric pipe pipeline: items |> map/filter(...) |> reducer |> numTransform
+  if (style < 0.4) {
+    let e = 'items'
+    const ops = 1 + int(rand, 2)
+    for (let i = 0; i < ops; i++) {
+      e += ` |> ${pick(rand, ['map', 'filter'] as const)}(${pick(rand, NUM_LAMBDAS)})`
+    }
+    if (rand() < 0.7) e += ` |> ${pick(rand, ARRAY_REDUCERS)}`
+    if (rand() < 0.4) e += ` |> ${pick(rand, NUM_TRANSFORMS)}`
+    return e
+  }
+
+  // User pipe pipeline
+  if (style < 0.7) {
+    let e = 'users'
+    if (rand() < 0.85) e += ` |> filter(${pick(rand, USER_LAMBDAS)})`
+    if (rand() < 0.85) e += ` |> map(${pick(rand, USER_LAMBDAS)})`
+    if (rand() < 0.4) e += ' |> count'
+    return e
+  }
+
+  // Method chaining: base.method(lambda).method(lambda)
+  const base = pick(rand, ['items', 'nums', 'users'] as const)
+  const lambdas = base === 'users' ? USER_LAMBDAS : NUM_LAMBDAS
+  let e: string = base
+  const ops = 1 + int(rand, 2)
+  for (let i = 0; i < ops; i++) {
+    e += `.${pick(rand, HOF_METHODS)}(${pick(rand, lambdas)})`
+  }
+  return e
+}
+
+describe('property-based higher-order parity', () => {
+  it('keeps sync, async, and compiled aligned across generated transforms, methods, and lambdas', async () => {
+    const expr = bonsai().use(arrays).use(strings).use(math)
+    const rand = mulberry32(0x5EED01)
+
+    for (let i = 0; i < 400; i++) {
+      const source = generateHof(rand)
+      const syncResult = captureOutcome(() => expr.evaluateSync(source, { ...HOF_CONTEXT }))
+      const asyncResult = await captureAsyncOutcome(() => expr.evaluate(source, { ...HOF_CONTEXT }))
+      const compiled = expr.compile(source)
+      const compiledSync = captureOutcome(() => compiled.evaluateSync({ ...HOF_CONTEXT }))
+      const compiledAsync = await captureAsyncOutcome(() => compiled.evaluate({ ...HOF_CONTEXT }))
+
+      expect(asyncResult, source).toEqual(syncResult)
+      expect(compiledSync, source).toEqual(syncResult)
+      expect(compiledAsync, source).toEqual(syncResult)
     }
   })
 })
