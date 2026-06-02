@@ -47,9 +47,24 @@
     "typecheck": "tsc -p tsconfig.typecheck.json --noEmit",
     "build:website": "bun website/build.ts",
     "prepare": "test -n \"$CI\" || lefthook install",
-    "prepublishOnly": "bun run lint && bun run typecheck && bun run test && bun run bench:gate && bun run check:package"
+    "prepublishOnly": "bun run lint && bun run typecheck && bun run test && bun run bench:gate && bun run check:package",
+    "test:coverage": "vitest run --coverage"
   },
-  "keywords": ["expression", "evaluator", "parser", "safe", "sandbox", "template", "pipe", "transform", "formula", "dsl", "ast", "jexl", "compiler"],
+  "keywords": [
+    "expression",
+    "evaluator",
+    "parser",
+    "safe",
+    "sandbox",
+    "template",
+    "pipe",
+    "transform",
+    "formula",
+    "dsl",
+    "ast",
+    "jexl",
+    "compiler"
+  ],
   "author": "Daniel Fry",
   "license": "MIT",
   "engines": {
@@ -58,6 +73,7 @@
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.3",
     "@types/node": "22.19.19",
+    "@vitest/coverage-v8": "4.1.7",
     "jexl": "2.3.0",
     "lefthook": "2.1.8",
     "oxlint": "1.67.0",
