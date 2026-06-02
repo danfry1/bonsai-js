@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect } from 'vitest'
 import { deepStrictEqual } from 'node:assert/strict'
-import fc from 'fast-check'
+import { it, fc } from '@fast-check/vitest'
 import { compile } from '../src/compiler.js'
 import { ExpressionError } from '../src/errors.js'
 import { evaluate } from '../src/evaluator.js'
@@ -151,34 +151,32 @@ const { expr: expressionArbitrary } = fc.letrec<{ expr: string }>((tie) => ({
 }))
 
 describe('property-based evaluator invariants', () => {
-  it('keeps parse, compile, sync, and async evaluation aligned across generated expressions', async () => {
-    const expr = bonsai()
+  const expr = bonsai()
 
-    await fc.assert(
-      fc.asyncProperty(expressionArbitrary, async (source) => {
-        const parsed = parse(source)
-        deepStrictEqual(parse(source), parsed)
+  it.prop([expressionArbitrary], { seed: SEED_EXPRESSION, numRuns: 250 })(
+    'keeps parse, compile, sync, and async evaluation aligned across generated expressions',
+    async (source) => {
+      const parsed = parse(source)
+      deepStrictEqual(parse(source), parsed)
 
-        const optimized = compile(parsed)
-        const compiled = expr.compile(source)
-        const direct = captureOutcome(() =>
-          evaluate(parsed, { ...CONTEXT }, { transforms: {}, functions: {} }, new ExecutionContext(new SecurityPolicy())),
-        )
-        const optimizedDirect = captureOutcome(() =>
-          evaluate(optimized, { ...CONTEXT }, { transforms: {}, functions: {} }, new ExecutionContext(new SecurityPolicy())),
-        )
-        const syncResult = captureOutcome(() => expr.evaluateSync(source, { ...CONTEXT }))
-        const compiledResult = captureOutcome(() => compiled.evaluateSync({ ...CONTEXT }))
-        const asyncResult = await captureAsyncOutcome(() => expr.evaluate(source, { ...CONTEXT }))
+      const optimized = compile(parsed)
+      const compiled = expr.compile(source)
+      const direct = captureOutcome(() =>
+        evaluate(parsed, { ...CONTEXT }, { transforms: {}, functions: {} }, new ExecutionContext(new SecurityPolicy())),
+      )
+      const optimizedDirect = captureOutcome(() =>
+        evaluate(optimized, { ...CONTEXT }, { transforms: {}, functions: {} }, new ExecutionContext(new SecurityPolicy())),
+      )
+      const syncResult = captureOutcome(() => expr.evaluateSync(source, { ...CONTEXT }))
+      const compiledResult = captureOutcome(() => compiled.evaluateSync({ ...CONTEXT }))
+      const asyncResult = await captureAsyncOutcome(() => expr.evaluate(source, { ...CONTEXT }))
 
-        expect(optimizedDirect, source).toEqual(direct)
-        expect(syncResult, source).toEqual(direct)
-        expect(compiledResult, source).toEqual(direct)
-        expect(asyncResult, source).toEqual(direct)
-      }),
-      { seed: SEED_EXPRESSION, numRuns: 250 },
-    )
-  })
+      expect(optimizedDirect).toEqual(direct)
+      expect(syncResult).toEqual(direct)
+      expect(compiledResult).toEqual(direct)
+      expect(asyncResult).toEqual(direct)
+    },
+  )
 })
 
 // Higher-order coverage: the base property test never registers transforms or
@@ -254,24 +252,22 @@ const hofArbitrary = fc.oneof(
 )
 
 describe('property-based higher-order parity', () => {
-  it('keeps sync, async, and compiled aligned across generated transforms, methods, and lambdas', async () => {
-    const expr = bonsai().use(arrays).use(strings).use(math)
+  const expr = bonsai().use(arrays).use(strings).use(math)
 
-    await fc.assert(
-      fc.asyncProperty(hofArbitrary, async (source) => {
-        const syncResult = captureOutcome(() => expr.evaluateSync(source, { ...HOF_CONTEXT }))
-        const asyncResult = await captureAsyncOutcome(() => expr.evaluate(source, { ...HOF_CONTEXT }))
-        const compiled = expr.compile(source)
-        const compiledSync = captureOutcome(() => compiled.evaluateSync({ ...HOF_CONTEXT }))
-        const compiledAsync = await captureAsyncOutcome(() => compiled.evaluate({ ...HOF_CONTEXT }))
+  it.prop([hofArbitrary], { seed: SEED_HOF, numRuns: 400 })(
+    'keeps sync, async, and compiled aligned across generated transforms, methods, and lambdas',
+    async (source) => {
+      const syncResult = captureOutcome(() => expr.evaluateSync(source, { ...HOF_CONTEXT }))
+      const asyncResult = await captureAsyncOutcome(() => expr.evaluate(source, { ...HOF_CONTEXT }))
+      const compiled = expr.compile(source)
+      const compiledSync = captureOutcome(() => compiled.evaluateSync({ ...HOF_CONTEXT }))
+      const compiledAsync = await captureAsyncOutcome(() => compiled.evaluate({ ...HOF_CONTEXT }))
 
-        expect(asyncResult, source).toEqual(syncResult)
-        expect(compiledSync, source).toEqual(syncResult)
-        expect(compiledAsync, source).toEqual(syncResult)
-      }),
-      { seed: SEED_HOF, numRuns: 400 },
-    )
-  })
+      expect(asyncResult, source).toEqual(syncResult)
+      expect(compiledSync, source).toEqual(syncResult)
+      expect(compiledAsync, source).toEqual(syncResult)
+    },
+  )
 })
 
 const JUNK_CHARS =
@@ -285,16 +281,14 @@ const junkArbitrary = fc
   .map((chars) => chars.join(''))
 
 describe('parser fuzzing', () => {
-  it('throws only ExpressionError for malformed random sources', () => {
-    fc.assert(
-      fc.property(junkArbitrary, (source) => {
-        try {
-          parse(source)
-        } catch (error) {
-          expect(error).toBeInstanceOf(ExpressionError)
-        }
-      }),
-      { seed: SEED_FUZZ, numRuns: 750 },
-    )
-  })
+  it.prop([junkArbitrary], { seed: SEED_FUZZ, numRuns: 750 })(
+    'throws only ExpressionError for malformed random sources',
+    (source) => {
+      try {
+        parse(source)
+      } catch (error) {
+        expect(error).toBeInstanceOf(ExpressionError)
+      }
+    },
+  )
 })
