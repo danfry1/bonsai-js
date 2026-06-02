@@ -177,6 +177,13 @@ export function expandSpreadValue(value: unknown, maxLength?: number): unknown[]
 const REPLACE_METHODS = new Set(['replace', 'replaceAll'])
 const MAX_REPEAT_COUNT = 100_000
 
+// Array methods that take a callback. A non-function first argument here is a
+// mistake (commonly `arr.map(fn(.x))`, where the lambda shorthand was passed to
+// a function and evaluated to a value); fail with a typed error rather than
+// leaking a raw native TypeError.
+const HIGHER_ORDER_METHODS = new Set(['map', 'filter', 'find', 'findIndex', 'some', 'every', 'flatMap'])
+const LAMBDA_CALLBACK_EXPECTED = 'a lambda or function callback (e.g. .field or . > value)'
+
 export function validateMethodArgs(
   receiver: unknown,
   methodName: string,
@@ -211,6 +218,9 @@ export function validateMethodArgs(
     // padStart/padEnd allocate up to the requested target length in a single
     // native call that the cooperative timeout cannot interrupt; cap it.
     guard.checkStringLength(Number(args[0]))
+  }
+  if (HIGHER_ORDER_METHODS.has(methodName) && typeof args[0] !== 'function') {
+    throw new BonsaiTypeError(methodName, LAMBDA_CALLBACK_EXPECTED, args[0])
   }
 }
 
