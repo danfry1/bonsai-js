@@ -250,10 +250,10 @@ export interface BonsaiOptions {
 }
 
 /** A transform receives the piped value as its first argument: `value |> myTransform(arg)`. */
-export type TransformFn = (value: unknown, ...args: unknown[]) => unknown | Promise<unknown>
+export type TransformFn = (value: unknown, ...args: unknown[]) => unknown
 
 /** A function is called directly by name: `myFunction(arg1, arg2)`. */
-export type FunctionFn = (...args: unknown[]) => unknown | Promise<unknown>
+export type FunctionFn = (...args: unknown[]) => unknown
 
 /** The shape of an evaluation context object. */
 export type BonsaiContext = object
@@ -277,7 +277,7 @@ export type EvaluationContextArgs<TCtx extends BonsaiContext = Record<string, un
 export type ContextFunctionFn<TCtx extends BonsaiContext = Record<string, unknown>> = (
   context: Readonly<TCtx>,
   ...args: unknown[]
-) => unknown | Promise<unknown>
+) => unknown
 
 /**
  * A registry entry for a callable invoked as `name(args)` in expressions,

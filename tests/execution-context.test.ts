@@ -9,14 +9,20 @@ describe('SecurityPolicy', () => {
       deniedProperties: ['secret'],
     })
     const ec = new ExecutionContext(policy)
-    expect(() => ec.checkNameAccess('name', 'member')).not.toThrow()
-    expect(() => ec.checkNameAccess('secret', 'member')).toThrow(BonsaiSecurityError)
+    expect(() => {
+      ec.checkNameAccess('name', 'member')
+    }).not.toThrow()
+    expect(() => {
+      ec.checkNameAccess('secret', 'member')
+    }).toThrow(BonsaiSecurityError)
   })
 
   it('uses defaults when no options provided', () => {
     const policy = new SecurityPolicy()
     const ec = new ExecutionContext(policy)
-    expect(() => ec.checkNameAccess('anything', 'member')).not.toThrow()
+    expect(() => {
+      ec.checkNameAccess('anything', 'member')
+    }).not.toThrow()
   })
 })
 
@@ -26,7 +32,9 @@ describe('ExecutionContext', () => {
     for (const blocked of BLOCKED_PROPERTIES) {
       for (const kind of ['identifier', 'member', 'method', 'object-key'] as const) {
         const ec = new ExecutionContext(policy)
-        expect(() => ec.checkNameAccess(blocked, kind)).toThrow(BonsaiSecurityError)
+        expect(() => {
+          ec.checkNameAccess(blocked, kind)
+        }).toThrow(BonsaiSecurityError)
       }
     }
   })
@@ -34,33 +42,53 @@ describe('ExecutionContext', () => {
   it('does NOT apply allow/deny lists to identifiers', () => {
     const policy = new SecurityPolicy({ deniedProperties: ['secret'] })
     const ec = new ExecutionContext(policy)
-    expect(() => ec.checkNameAccess('secret', 'identifier')).not.toThrow()
-    expect(() => ec.checkNameAccess('secret', 'member')).toThrow(BonsaiSecurityError)
+    expect(() => {
+      ec.checkNameAccess('secret', 'identifier')
+    }).not.toThrow()
+    expect(() => {
+      ec.checkNameAccess('secret', 'member')
+    }).toThrow(BonsaiSecurityError)
   })
 
   it('does NOT apply allow/deny lists to object-key', () => {
     const policy = new SecurityPolicy({ allowedProperties: ['name'] })
     const ec = new ExecutionContext(policy)
-    expect(() => ec.checkNameAccess('age', 'object-key')).not.toThrow()
-    expect(() => ec.checkNameAccess('__proto__', 'object-key')).toThrow(BonsaiSecurityError)
+    expect(() => {
+      ec.checkNameAccess('age', 'object-key')
+    }).not.toThrow()
+    expect(() => {
+      ec.checkNameAccess('__proto__', 'object-key')
+    }).toThrow(BonsaiSecurityError)
   })
 
   it('applies allow/deny to member and method', () => {
     const policy = new SecurityPolicy({ allowedProperties: ['name'] })
     const ec = new ExecutionContext(policy)
     for (const kind of ['member', 'method'] as const) {
-      expect(() => ec.checkNameAccess('name', kind)).not.toThrow()
-      expect(() => ec.checkNameAccess('age', kind)).toThrow(BonsaiSecurityError)
+      expect(() => {
+        ec.checkNameAccess('name', kind)
+      }).not.toThrow()
+      expect(() => {
+        ec.checkNameAccess('age', kind)
+      }).toThrow(BonsaiSecurityError)
     }
   })
 
   it('canonical numeric indices bypass allow/deny lists', () => {
     const policy = new SecurityPolicy({ allowedProperties: ['name'] })
     const ec = new ExecutionContext(policy)
-    expect(() => ec.checkNameAccess('0', 'member')).not.toThrow()
-    expect(() => ec.checkNameAccess('1', 'member')).not.toThrow()
-    expect(() => ec.checkNameAccess('42', 'member')).not.toThrow()
-    expect(() => ec.checkNameAccess('age', 'member')).toThrow(BonsaiSecurityError)
+    expect(() => {
+      ec.checkNameAccess('0', 'member')
+    }).not.toThrow()
+    expect(() => {
+      ec.checkNameAccess('1', 'member')
+    }).not.toThrow()
+    expect(() => {
+      ec.checkNameAccess('42', 'member')
+    }).not.toThrow()
+    expect(() => {
+      ec.checkNameAccess('age', 'member')
+    }).toThrow(BonsaiSecurityError)
   })
 
   it('enforces depth limits', () => {
@@ -69,7 +97,9 @@ describe('ExecutionContext', () => {
     ec.enterDepth()
     ec.enterDepth()
     ec.enterDepth()
-    expect(() => ec.enterDepth()).toThrow('Maximum expression depth')
+    expect(() => {
+      ec.enterDepth()
+    }).toThrow('Maximum expression depth')
   })
 
   it('exitDepth decrements correctly', () => {
@@ -78,7 +108,9 @@ describe('ExecutionContext', () => {
     ec.enterDepth()
     ec.enterDepth()
     ec.exitDepth()
-    expect(() => ec.enterDepth()).not.toThrow()
+    expect(() => {
+      ec.enterDepth()
+    }).not.toThrow()
   })
 
   it('withDepth exits even on throw', () => {
@@ -92,14 +124,20 @@ describe('ExecutionContext', () => {
     } catch {
       /* expected */
     }
-    expect(() => ec.enterDepth()).not.toThrow()
+    expect(() => {
+      ec.enterDepth()
+    }).not.toThrow()
   })
 
   it('enforces array length', () => {
     const policy = new SecurityPolicy({ maxArrayLength: 5 })
     const ec = new ExecutionContext(policy)
-    expect(() => ec.checkArrayLength(3)).not.toThrow()
-    expect(() => ec.checkArrayLength(10)).toThrow('Array length')
+    expect(() => {
+      ec.checkArrayLength(3)
+    }).not.toThrow()
+    expect(() => {
+      ec.checkArrayLength(10)
+    }).toThrow('Array length')
   })
 
   it('enforces timeout via step() with injectable clock', () => {
@@ -110,16 +148,22 @@ describe('ExecutionContext', () => {
     for (let i = 0; i < 999; i++) ec.step()
 
     now = 200
-    expect(() => ec.step()).toThrow(BonsaiSecurityError)
+    expect(() => {
+      ec.step()
+    }).toThrow(BonsaiSecurityError)
   })
 
   it('checkTimeout() always checks wall clock', () => {
     let now = 0
     const policy = new SecurityPolicy({ timeout: 100 })
     const ec = new ExecutionContext(policy, () => now)
-    expect(() => ec.checkTimeout()).not.toThrow()
+    expect(() => {
+      ec.checkTimeout()
+    }).not.toThrow()
     now = 200
-    expect(() => ec.checkTimeout()).toThrow(BonsaiSecurityError)
+    expect(() => {
+      ec.checkTimeout()
+    }).toThrow(BonsaiSecurityError)
   })
 
   it('does not enforce timeout when timeout is 0', () => {
@@ -128,7 +172,9 @@ describe('ExecutionContext', () => {
     const ec = new ExecutionContext(policy, () => now)
     now = 999999
     for (let i = 0; i < 2000; i++) ec.step()
-    expect(() => ec.checkTimeout()).not.toThrow()
+    expect(() => {
+      ec.checkTimeout()
+    }).not.toThrow()
   })
 
   it('each ExecutionContext has independent state', () => {
@@ -137,6 +183,8 @@ describe('ExecutionContext', () => {
     const ec2 = new ExecutionContext(policy)
     ec1.enterDepth()
     ec1.enterDepth()
-    expect(() => ec2.enterDepth()).not.toThrow()
+    expect(() => {
+      ec2.enterDepth()
+    }).not.toThrow()
   })
 })

@@ -31,7 +31,7 @@ export function resolvePropertyChain(
     if (BLOCKED_PROPERTIES.has(key)) return { found: false, reason: 'blocked' }
     if (policy?.allowedProperties && !policy.allowedProperties.has(key))
       return { found: false, reason: 'blocked' }
-    if (policy?.deniedProperties?.has(key)) return { found: false, reason: 'blocked' }
+    if (policy?.deniedProperties?.has(key) === true) return { found: false, reason: 'blocked' }
     if (current == null || typeof current !== 'object')
       return { found: false, reason: 'not-object' }
     const obj = current as Record<string, unknown>

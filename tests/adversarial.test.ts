@@ -71,7 +71,8 @@ describe('sandbox hardening', () => {
     const expr = bonsai()
     const result = expr.evaluateSync('{ a: 1, b: 2 }') as object
     expect(Object.getPrototypeOf(result)).toBeNull()
-    expect((result as Record<string, unknown>).hasOwnProperty).toBeUndefined()
+    const key = 'hasOwnProperty'
+    expect((result as Record<string, unknown>)[key]).toBeUndefined()
   })
 
   it('blocks __proto__, constructor, prototype on member access', () => {
@@ -160,13 +161,15 @@ describe('sandbox hardening', () => {
 
   it('evaluateSync rejects Promise return from async functions', () => {
     const expr = bonsai()
-    expr.addFunction('slow', async () => 'done')
+    expr.addFunction('slow', () => Promise.resolve('done'))
     expect(() => expr.evaluateSync('slow()')).toThrow(/synchronous function result/u)
   })
 
   it('evaluateSync rejects Promise return from async transforms', () => {
     const expr = bonsai()
-    expr.addTransform('asyncUpper', async (val: unknown) => (val as string).toUpperCase())
+    expr.addTransform('asyncUpper', (val: unknown) =>
+      Promise.resolve((val as string).toUpperCase()),
+    )
     expect(() => expr.evaluateSync('"hello" |> asyncUpper')).toThrow(
       /synchronous transform result/u,
     )
@@ -174,8 +177,8 @@ describe('sandbox hardening', () => {
 
   it('sync Promise rejection errors identify the call kind and suggest evaluate()', () => {
     const expr = bonsai()
-    expr.addFunction('asyncFn', async () => 1)
-    expr.addTransform('asyncTx', async (v: unknown) => v)
+    expr.addFunction('asyncFn', () => Promise.resolve(1))
+    expr.addTransform('asyncTx', (v: unknown) => Promise.resolve(v))
 
     expect(() => expr.evaluateSync('asyncFn()')).toThrow(/synchronous function result/u)
     expect(() => expr.evaluateSync('"x" |> asyncTx')).toThrow(/synchronous transform result/u)
@@ -184,7 +187,7 @@ describe('sandbox hardening', () => {
 
   it('async lambdas correctly await async function calls', async () => {
     const expr = bonsai()
-    expr.addFunction('asyncTax', async () => 5)
+    expr.addFunction('asyncTax', () => Promise.resolve(5))
     expr.addTransform('map', (val: unknown, fn: unknown) => {
       const arr = val as unknown[]
       const results = arr.map(fn as (item: unknown) => unknown)

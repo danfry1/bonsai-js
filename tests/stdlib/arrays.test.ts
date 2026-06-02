@@ -6,12 +6,19 @@ describe('stdlib - arrays', () => {
   const expr = bonsai()
   expr.use(arrays)
 
-  it('count', () => expect(expr.evaluateSync('items |> count', { items: [1, 2, 3] })).toBe(3))
-  it('first', () => expect(expr.evaluateSync('items |> first', { items: [1, 2, 3] })).toBe(1))
-  it('last', () => expect(expr.evaluateSync('items |> last', { items: [1, 2, 3] })).toBe(3))
-  it('reverse', () =>
-    expect(expr.evaluateSync('items |> reverse', { items: [1, 2, 3] })).toEqual([3, 2, 1]))
-  it('flatten', () =>
+  it('count', () => {
+    expect(expr.evaluateSync('items |> count', { items: [1, 2, 3] })).toBe(3)
+  })
+  it('first', () => {
+    expect(expr.evaluateSync('items |> first', { items: [1, 2, 3] })).toBe(1)
+  })
+  it('last', () => {
+    expect(expr.evaluateSync('items |> last', { items: [1, 2, 3] })).toBe(3)
+  })
+  it('reverse', () => {
+    expect(expr.evaluateSync('items |> reverse', { items: [1, 2, 3] })).toEqual([3, 2, 1])
+  })
+  it('flatten', () => {
     expect(
       expr.evaluateSync('items |> flatten', {
         items: [
@@ -19,13 +26,17 @@ describe('stdlib - arrays', () => {
           [3, 4],
         ],
       }),
-    ).toEqual([1, 2, 3, 4]))
-  it('unique', () =>
-    expect(expr.evaluateSync('items |> unique', { items: [1, 2, 2, 3, 3] })).toEqual([1, 2, 3]))
-  it('join', () =>
-    expect(expr.evaluateSync('items |> join(", ")', { items: ['a', 'b', 'c'] })).toBe('a, b, c'))
-  it('sort numbers', () =>
-    expect(expr.evaluateSync('items |> sort', { items: [3, 1, 2] })).toEqual([1, 2, 3]))
+    ).toEqual([1, 2, 3, 4])
+  })
+  it('unique', () => {
+    expect(expr.evaluateSync('items |> unique', { items: [1, 2, 2, 3, 3] })).toEqual([1, 2, 3])
+  })
+  it('join', () => {
+    expect(expr.evaluateSync('items |> join(", ")', { items: ['a', 'b', 'c'] })).toBe('a, b, c')
+  })
+  it('sort numbers', () => {
+    expect(expr.evaluateSync('items |> sort', { items: [3, 1, 2] })).toEqual([1, 2, 3])
+  })
 })
 
 describe('stdlib - arrays type guards', () => {
@@ -205,7 +216,7 @@ describe('async array transforms with mixed sync/async lambdas', () => {
   it('stdlib map correctly resolves async lambdas via evaluate()', async () => {
     const expr = bonsai()
     expr.use(arrays)
-    expr.addFunction('asyncTax', async () => 5)
+    expr.addFunction('asyncTax', () => Promise.resolve(5))
     const result = await expr.evaluate('items |> map(.price + asyncTax())', {
       items: [{ price: 10 }, { price: 20 }],
     })

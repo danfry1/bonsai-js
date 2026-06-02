@@ -8,13 +8,27 @@ import {
 } from '../../src/autocomplete/inference.js'
 
 describe('inferType', () => {
-  it('infers string', () => expect(inferType('hello')).toBe('string'))
-  it('infers number', () => expect(inferType(42)).toBe('number'))
-  it('infers boolean', () => expect(inferType(true)).toBe('boolean'))
-  it('infers array', () => expect(inferType([1, 2])).toBe('array'))
-  it('infers object', () => expect(inferType({ a: 1 })).toBe('object'))
-  it('infers null', () => expect(inferType(null)).toBe('null'))
-  it('infers undefined', () => expect(inferType(undefined)).toBe('undefined'))
+  it('infers string', () => {
+    expect(inferType('hello')).toBe('string')
+  })
+  it('infers number', () => {
+    expect(inferType(42)).toBe('number')
+  })
+  it('infers boolean', () => {
+    expect(inferType(true)).toBe('boolean')
+  })
+  it('infers array', () => {
+    expect(inferType([1, 2])).toBe('array')
+  })
+  it('infers object', () => {
+    expect(inferType({ a: 1 })).toBe('object')
+  })
+  it('infers null', () => {
+    expect(inferType(null)).toBe('null')
+  })
+  it('infers undefined', () => {
+    expect(inferType(undefined)).toBe('undefined')
+  })
 })
 
 describe('resolvePropertyChain', () => {

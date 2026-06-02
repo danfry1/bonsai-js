@@ -106,9 +106,9 @@ describe('completeness integration tests', () => {
   it('async pipeline with filter and map', async () => {
     const expr = bonsai()
     expr.use(arrays)
-    expr.addTransform('asyncEnrich', async (val: unknown) => {
+    expr.addTransform('asyncEnrich', (val: unknown) => {
       const items = val as { name: string }[]
-      return items.map((item) => ({ ...item, enriched: true }))
+      return Promise.resolve(items.map((item) => ({ ...item, enriched: true })))
     })
     const result = await expr.evaluate('users |> filter(.age >= 18) |> asyncEnrich |> map(.name)', {
       users: [

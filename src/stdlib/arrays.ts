@@ -10,6 +10,14 @@ function hasPromises(results: unknown[]): boolean {
   return results.some((r) => r instanceof Promise)
 }
 
+// Coerce an arbitrary argument value to a string using JS default coercion.
+// Argument values originate from user expressions and may be anything; the
+// `unknown` parameter keeps the rule from narrowing to `{}` while preserving
+// the exact `String(value)` runtime semantics.
+function coerceToString(value: unknown): string {
+  return String(value)
+}
+
 const LAMBDA_EXPECTED = 'a lambda or function callback (e.g. .field or . > value)'
 
 // Compare two strings by Unicode code point, deterministically and independent
@@ -22,7 +30,8 @@ function compareCodePoints(a: string, b: string): number {
   for (;;) {
     const x = ia.next()
     const y = ib.next()
-    if (x.done || y.done) return (x.done ? 0 : 1) - (y.done ? 0 : 1)
+    if (x.done === true || y.done === true)
+      return (x.done === true ? 0 : 1) - (y.done === true ? 0 : 1)
     if (x.value !== y.value) {
       return (x.value.codePointAt(0) ?? 0) - (y.value.codePointAt(0) ?? 0)
     }
@@ -40,7 +49,7 @@ export const arrays: BonsaiPlugin = (expr) => {
   expr.addTransform('flatten', (val: unknown) => expectArray(val, 'flatten').flat())
   expr.addTransform('unique', (val: unknown) => [...new Set(expectArray(val, 'unique'))])
   expr.addTransform('join', (val: unknown, sep: unknown) =>
-    expectArray(val, 'join').join(String(sep ?? ',')),
+    expectArray(val, 'join').join(coerceToString(sep ?? ',')),
   )
   expr.addTransform('sort', (val: unknown) => {
     const arr = [...expectArray(val, 'sort')]
@@ -69,9 +78,9 @@ export const arrays: BonsaiPlugin = (expr) => {
     const fn = predicate as (item: unknown) => unknown
     const results = arr.map(fn)
     if (hasPromises(results)) {
-      return Promise.all(results).then((resolved) => arr.filter((_, i) => resolved[i]))
+      return Promise.all(results).then((resolved) => arr.filter((_, i) => Boolean(resolved[i])))
     }
-    return arr.filter((_, i) => results[i])
+    return arr.filter((_, i) => Boolean(results[i]))
   })
 
   expr.addTransform('map', (val: unknown, fn: unknown) => {

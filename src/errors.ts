@@ -72,9 +72,10 @@ export class BonsaiReferenceError extends Error {
   formatted?: string
 
   constructor(kind: 'transform' | 'function' | 'method', identifier: string, suggestion?: string) {
-    const msg = suggestion
-      ? `Unknown ${kind} "${identifier}". Did you mean "${suggestion}"?`
-      : `Unknown ${kind} "${identifier}"`
+    const msg =
+      suggestion !== undefined && suggestion !== ''
+        ? `Unknown ${kind} "${identifier}". Did you mean "${suggestion}"?`
+        : `Unknown ${kind} "${identifier}"`
     super(msg)
     this.name = 'BonsaiReferenceError'
     this.identifier = identifier
@@ -162,7 +163,7 @@ export function formatError(message: string, location: ErrorLocation, suggestion
 
   let result = `${message}\n\n${gutter}${lineText}\n${padding}${carets}`
 
-  if (suggestion) {
+  if (suggestion !== undefined && suggestion !== '') {
     result += ` Did you mean "${suggestion}"?`
   }
 

@@ -6,26 +6,41 @@ describe('stdlib - strings', () => {
   const expr = bonsai()
   expr.use(strings)
 
-  it('upper', () => expect(expr.evaluateSync('name |> upper', { name: 'dan' })).toBe('DAN'))
-  it('lower', () => expect(expr.evaluateSync('name |> lower', { name: 'DAN' })).toBe('dan'))
-  it('trim', () => expect(expr.evaluateSync('name |> trim', { name: '  dan  ' })).toBe('dan'))
-  it('split', () =>
-    expect(expr.evaluateSync('s |> split(",")', { s: 'a,b,c' })).toEqual(['a', 'b', 'c']))
-  it('replace', () =>
+  it('upper', () => {
+    expect(expr.evaluateSync('name |> upper', { name: 'dan' })).toBe('DAN')
+  })
+  it('lower', () => {
+    expect(expr.evaluateSync('name |> lower', { name: 'DAN' })).toBe('dan')
+  })
+  it('trim', () => {
+    expect(expr.evaluateSync('name |> trim', { name: '  dan  ' })).toBe('dan')
+  })
+  it('split', () => {
+    expect(expr.evaluateSync('s |> split(",")', { s: 'a,b,c' })).toEqual(['a', 'b', 'c'])
+  })
+  it('replace', () => {
     expect(expr.evaluateSync('s |> replace("world", "Dan")', { s: 'hello world' })).toBe(
       'hello Dan',
-    ))
-  it('replaceAll', () =>
-    expect(expr.evaluateSync('s |> replaceAll("l", "r")', { s: 'hello llama' })).toBe(
-      'herro rrama',
-    ))
-  it('startsWith', () =>
-    expect(expr.evaluateSync('s |> startsWith("he")', { s: 'hello' })).toBe(true))
-  it('endsWith', () => expect(expr.evaluateSync('s |> endsWith("lo")', { s: 'hello' })).toBe(true))
-  it('includes', () => expect(expr.evaluateSync('s |> includes("ell")', { s: 'hello' })).toBe(true))
-  it('padStart', () =>
-    expect(expr.evaluateSync('s |> padStart(5, "0")', { s: '42' })).toBe('00042'))
-  it('padEnd', () => expect(expr.evaluateSync('s |> padEnd(5, "0")', { s: '42' })).toBe('42000'))
+    )
+  })
+  it('replaceAll', () => {
+    expect(expr.evaluateSync('s |> replaceAll("l", "r")', { s: 'hello llama' })).toBe('herro rrama')
+  })
+  it('startsWith', () => {
+    expect(expr.evaluateSync('s |> startsWith("he")', { s: 'hello' })).toBe(true)
+  })
+  it('endsWith', () => {
+    expect(expr.evaluateSync('s |> endsWith("lo")', { s: 'hello' })).toBe(true)
+  })
+  it('includes', () => {
+    expect(expr.evaluateSync('s |> includes("ell")', { s: 'hello' })).toBe(true)
+  })
+  it('padStart', () => {
+    expect(expr.evaluateSync('s |> padStart(5, "0")', { s: '42' })).toBe('00042')
+  })
+  it('padEnd', () => {
+    expect(expr.evaluateSync('s |> padEnd(5, "0")', { s: '42' })).toBe('42000')
+  })
 })
 
 describe('stdlib - strings type guards', () => {

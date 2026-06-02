@@ -46,30 +46,33 @@ export function applyBinaryOp(
     case '>=':
       return (left as number) >= (right as number)
     case 'in': {
-      if (typeof right === 'string') return (right as string).includes(left as string)
+      if (typeof right === 'string') return right.includes(left as string)
       if (Array.isArray(right)) return right.includes(left)
       throw new BonsaiTypeError('in', 'a string or array', right)
     }
     case 'not in': {
-      if (typeof right === 'string') return !(right as string).includes(left as string)
+      if (typeof right === 'string') return !right.includes(left as string)
       if (Array.isArray(right)) return !right.includes(left)
       throw new BonsaiTypeError('not in', 'a string or array', right)
     }
+    case '&&':
+    case '||':
+    case '??':
     default:
-      throw new Error(`Unknown binary operator: ${operator}`)
+      throw new Error(`Unknown binary operator: ${operator as string}`)
   }
 }
 
 export function applyUnaryOp(operator: UnaryOperator, operand: unknown): unknown {
   switch (operator) {
     case '!':
-      return !operand
+      return !(operand as boolean)
     case '-':
       return -(operand as number)
     case '+':
       return Number(operand)
     default:
-      throw new Error(`Unknown unary operator: ${operator}`)
+      throw new Error(`Unknown unary operator: ${operator as string}`)
   }
 }
 

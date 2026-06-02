@@ -67,7 +67,7 @@ export function parse(source: string, _depth = 0): ASTNode {
     const tok = current()
     if (tok.type !== type || (value !== undefined && tok.value !== value)) {
       throw new ExpressionError(
-        `Expected ${value ? `"${value}"` : type} but got ${tok.value ? `"${tok.value}"` : tok.type}`,
+        `Expected ${value !== undefined ? `"${value}"` : type} but got ${tok.value !== '' ? `"${tok.value}"` : tok.type}`,
         { source, start: tok.start, end: tok.end },
       )
     }
@@ -141,8 +141,8 @@ export function parse(source: string, _depth = 0): ASTNode {
         // Handle 'not in' as a combined operator
         if (tok.value === 'not') {
           const nextTok = tokens[pos + 1]
-          if (nextTok && nextTok.type === 'Operator' && nextTok.value === 'in') {
-            prec = PRECEDENCE['in']
+          if (nextTok !== undefined && nextTok.type === 'Operator' && nextTok.value === 'in') {
+            prec = PRECEDENCE.in
           }
         }
       } else if (tok.type === 'NullishCoalescing') {
@@ -543,8 +543,8 @@ export function parse(source: string, _depth = 0): ASTNode {
       prec = PRECEDENCE[tok.value]
       if (tok.value === 'not') {
         const nextTok = tokens[pos + 1]
-        if (nextTok && nextTok.type === 'Operator' && nextTok.value === 'in') {
-          prec = PRECEDENCE['in']
+        if (nextTok !== undefined && nextTok.type === 'Operator' && nextTok.value === 'in') {
+          prec = PRECEDENCE.in
         }
       }
     } else if (tok.type === 'NullishCoalescing') {
@@ -561,8 +561,8 @@ export function parse(source: string, _depth = 0): ASTNode {
           opPrec = PRECEDENCE[opTok.value]
           if (opTok.value === 'not') {
             const nextTok = tokens[pos + 1]
-            if (nextTok && nextTok.type === 'Operator' && nextTok.value === 'in') {
-              opPrec = PRECEDENCE['in']
+            if (nextTok !== undefined && nextTok.type === 'Operator' && nextTok.value === 'in') {
+              opPrec = PRECEDENCE.in
             }
           }
         } else if (opTok.type === 'NullishCoalescing') {

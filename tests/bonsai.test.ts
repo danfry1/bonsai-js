@@ -58,7 +58,7 @@ describe('bonsai()', () => {
 
   it('should register and use functions', () => {
     const expr = bonsai()
-    expr.addFunction('greet', (name: unknown) => `Hello, ${name}!`)
+    expr.addFunction('greet', (name: unknown) => `Hello, ${String(name)}!`)
     expect(expr.evaluateSync('greet("Dan")')).toBe('Hello, Dan!')
   })
 
@@ -294,7 +294,7 @@ describe('method chaining', () => {
   it('full chain from factory to evaluation', () => {
     const result = bonsai()
       .use(strings)
-      .addTransform('exclaim', (v: unknown) => `${v}!`)
+      .addTransform('exclaim', (v: unknown) => `${String(v)}!`)
       .evaluateSync('"hello" |> upper |> exclaim')
     expect(result).toBe('HELLO!')
   })
