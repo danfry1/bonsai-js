@@ -53,7 +53,7 @@
   "author": "Daniel Fry",
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.3",
