@@ -1,0 +1,31 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Entry points that legitimately "consume" code. The published package entries
+  // (src/index.ts, src/stdlib/index.ts, src/autocomplete/index.ts) are detected
+  // automatically from the package.json "exports" field, so only the non-src
+  // graphs are listed here. Including them means their imports count as usage, so
+  // devDependencies like jexl (benchmarks) are not falsely reported as unused.
+  "entry": [
+    "tests/**/*.test.ts",
+    "benchmarks/**/*.bench.ts",
+    "scripts/*.ts",
+    "website/**/*.{ts,js}"
+  ],
+  "project": ["src/**/*.ts"],
+  "ignoreDependencies": [
+    // Used via @fast-check/vitest's re-export (import { it, fc } from
+    // '@fast-check/vitest'), so it is never imported by bare specifier. Kept as
+    // an explicit, exact-pinned direct devDependency anyway: the property suite
+    // uses fast-check's arbitrary API directly, and pinning it here gives precise
+    // version control instead of letting it float within the binding's range.
+    "fast-check"
+  ],
+  "rules": {
+    // Unused *value* exports are real dead code and fail the gate. Unused *type*
+    // exports are not: for a parser library the exported AST/error interfaces are
+    // a public contract for consumers typing parse() output, even when nothing
+    // imports them internally. Reporting them would be noise, so type-export
+    // analysis is disabled rather than worked around per-symbol.
+    "types": "off"
+  }
+}

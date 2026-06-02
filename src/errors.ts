@@ -123,7 +123,7 @@ export function offsetToPosition(source: string, offset: number): SourcePosition
   return { line, column, offset: safeOffset }
 }
 
-export function hasErrorLocation(error: unknown): error is BonsaiRuntimeError & { location: ErrorLocation } {
+function hasErrorLocation(error: unknown): error is BonsaiRuntimeError & { location: ErrorLocation } {
   return (
     (error instanceof BonsaiTypeError
       || error instanceof BonsaiSecurityError

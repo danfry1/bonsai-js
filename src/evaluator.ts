@@ -278,10 +278,6 @@ function evalPipe(input: unknown, transformNode: ASTNode, env: EvalEnv): unknown
   throw new Error('Invalid transform expression')
 }
 
-export function evaluateLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
-  return evalLambdaBody(node, item, env)
-}
-
 function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
   const { g } = env
   g.enterDepth()
