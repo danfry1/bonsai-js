@@ -6,6 +6,7 @@ import {
   accessMember,
   applyBinaryOp,
   applyUnaryOp,
+  checkResultArrayLength,
   expandSpreadValue,
   getIdentifierName,
   getObjectLiteralKeyName,
@@ -203,8 +204,10 @@ function evalCallExpression(node: Extract<ASTNode, { type: 'CallExpression' }>, 
       for (const arg of node.args) {
         pushCallArgument(args, arg, env)
       }
-      validateMethodArgs(methodName, args)
-      return rejectPromise(method.call(obj, ...args), 'method', methodName)
+      validateMethodArgs(obj, methodName, args, g)
+      const result = rejectPromise(method.call(obj, ...args), 'method', methodName)
+      checkResultArrayLength(result, g)
+      return result
     } catch (e) {
       if (s) attachLocation(e, s, node.start, node.end)
       throw e
@@ -322,8 +325,10 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
               args.push(evalArg(arg, env))
             }
           }
-          validateMethodArgs(methodName, args)
-          return rejectPromise(method.call(obj, ...args), 'method', methodName)
+          validateMethodArgs(obj, methodName, args, g)
+          const result = rejectPromise(method.call(obj, ...args), 'method', methodName)
+          checkResultArrayLength(result, g)
+          return result
         }
         // Delegate to evalNode for non-method calls (e.g. registered functions)
         ownDepth = false

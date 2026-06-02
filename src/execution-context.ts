@@ -22,11 +22,13 @@ function isCanonicalIndex(key: string): boolean {
 const TIMEOUT_CHECK_INTERVAL = 1000
 const DEFAULT_MAX_DEPTH = 100
 const DEFAULT_MAX_ARRAY_LENGTH = 100_000
+const DEFAULT_MAX_STRING_LENGTH = 100_000
 
 /** Immutable per-instance security configuration derived from BonsaiOptions. */
 export class SecurityPolicy {
   readonly maxDepth: number
   readonly maxArrayLength: number
+  readonly maxStringLength: number
   readonly timeout: number
   readonly allowedProperties?: ReadonlySet<string>
   readonly deniedProperties?: ReadonlySet<string>
@@ -34,6 +36,7 @@ export class SecurityPolicy {
   constructor(options: BonsaiOptions = {}) {
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH
     this.maxArrayLength = options.maxArrayLength ?? DEFAULT_MAX_ARRAY_LENGTH
+    this.maxStringLength = options.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH
     this.timeout = options.timeout ?? 0
     this.allowedProperties = options.allowedProperties
       ? new Set(options.allowedProperties)
@@ -141,6 +144,15 @@ export class ExecutionContext {
       throw new BonsaiSecurityError(
         'MAX_ARRAY_LENGTH',
         `Array length (${length}) exceeds maximum (${this.policy.maxArrayLength})`,
+      )
+    }
+  }
+
+  checkStringLength(length: number): void {
+    if (length > this.policy.maxStringLength) {
+      throw new BonsaiSecurityError(
+        'MAX_STRING_LENGTH',
+        `String length (${length}) exceeds maximum (${this.policy.maxStringLength})`,
       )
     }
   }

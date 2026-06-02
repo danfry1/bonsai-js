@@ -177,7 +177,12 @@ export function expandSpreadValue(value: unknown, maxLength?: number): unknown[]
 const REPLACE_METHODS = new Set(['replace', 'replaceAll'])
 const MAX_REPEAT_COUNT = 100_000
 
-export function validateMethodArgs(methodName: string, args: unknown[]): void {
+export function validateMethodArgs(
+  receiver: unknown,
+  methodName: string,
+  args: unknown[],
+  guard: ExecutionContext,
+): void {
   if (REPLACE_METHODS.has(methodName)) {
     for (const arg of args) {
       if (typeof arg === 'function') {
@@ -196,6 +201,28 @@ export function validateMethodArgs(methodName: string, args: unknown[]): void {
     if (!Number.isFinite(count) || count < 0 || count > MAX_REPEAT_COUNT) {
       throw new BonsaiTypeError('repeat', `a count between 0 and ${MAX_REPEAT_COUNT}`, args[0])
     }
+    // Bound the produced string size, not just the count: a long receiver
+    // repeated a permitted number of times can still blow past the limit.
+    if (typeof receiver === 'string') {
+      guard.checkStringLength(receiver.length * count)
+    }
+  }
+  if (methodName === 'padStart' || methodName === 'padEnd') {
+    // padStart/padEnd allocate up to the requested target length in a single
+    // native call that the cooperative timeout cannot interrupt; cap it.
+    guard.checkStringLength(Number(args[0]))
+  }
+}
+
+/**
+ * Enforce the array-size limit on a value produced by a method call. Array
+ * literals and spread are checked at construction; array-returning methods
+ * (split, map, flat, concat, toSorted, ...) are checked here so maxArrayLength
+ * is a real ceiling on every array that flows through evaluation.
+ */
+export function checkResultArrayLength(result: unknown, guard: ExecutionContext): void {
+  if (Array.isArray(result)) {
+    guard.checkArrayLength(result.length)
   }
 }
 
