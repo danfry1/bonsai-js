@@ -11,7 +11,7 @@ import type {
 
 type SafeMethod = (...args: unknown[]) => unknown
 
-export function toPropertyKey(value: unknown): string {
+function toPropertyKey(value: unknown): string {
   return String(value)
 }
 

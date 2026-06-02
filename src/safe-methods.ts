@@ -62,10 +62,10 @@ const SAFE_METHODS_TABLE = {
 } as const
 
 /** Method name -> the receiver types it is permitted on. */
-export const SAFE_METHODS: Readonly<Record<string, readonly MethodReceiverType[]>> = SAFE_METHODS_TABLE
+const SAFE_METHODS: Readonly<Record<string, readonly MethodReceiverType[]>> = SAFE_METHODS_TABLE
 
 /** Map a runtime value to its method-receiver type, or undefined if it has none. */
-export function receiverTypeOf(obj: unknown): MethodReceiverType | undefined {
+function receiverTypeOf(obj: unknown): MethodReceiverType | undefined {
   const t = typeof obj
   if (t === 'string') return 'string'
   if (t === 'number') return 'number'
