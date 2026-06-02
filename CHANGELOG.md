@@ -9,10 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Context-aware functions** (`addContextFunction`): register functions that receive a shallow-frozen snapshot of the evaluation context as their first parameter, enabling auth/permission/personalization patterns without threading context through expression arguments. Pure and context-aware functions share a single namespace; `isContextFunction(name)` introspects the kind.
+- **Context-aware functions** (`addContextFunction`): register functions that receive the evaluation context as their first parameter (typed `Readonly<TCtx>`, passed by reference), enabling auth/permission/personalization patterns without threading context through expression arguments. Pure and context-aware functions share a single namespace; `isContextFunction(name)` introspects the kind.
 - **Generic context typing** (`bonsai<TCtx>()`): the factory is now generic over context type, with end-to-end type safety through `evaluate`, `evaluateSync`, `compile`, and `addContextFunction`. Backward compatible: defaults to `Record<string, unknown>` when unspecified.
 - New exported types: `ContextFunctionFn`, generic `BonsaiPlugin<TCtx>`, generic `CompiledExpression<TCtx>`, generic `BonsaiInstance<TCtx>`.
-- Internal `Bindings` snapshot consolidates transforms / functions / context-functions into a single cached object passed to the evaluator.
+- Internal: pure and context-aware functions share one tagged registry, and the cached `Bindings` snapshot consolidates transforms and that registry into a single object passed to the evaluator.
 
 ### Resolves
 

@@ -1017,7 +1017,7 @@ expr.evaluateSync(<span class="string">'between(order.total, 50, 200)'</span>, {
         </div>
 
         <h3>Context-aware functions</h3>
-        <p>Some functions need to read the evaluation context directly (think auth, permissions, personalization). Register them with <code>addContextFunction</code>: the function receives a shallow-frozen snapshot of the context as its first parameter, followed by the call's arguments.</p>
+        <p>Some functions need to read the evaluation context directly (think auth, permissions, personalization). Register them with <code>addContextFunction</code>: the function receives the evaluation context (typed read-only) as its first parameter, followed by the call's arguments.</p>
 
         <div class="doc-code">
 <span class="keyword">type</span> ContextFunctionFn&lt;TCtx&gt; =
@@ -1049,7 +1049,7 @@ app.addContextFunction(<span class="string">'hasPermission'</span>, (ctx, action
 
         <p>Pure functions (<code>addFunction</code>) and context-aware functions share a single namespace. Registering the same name with either method overwrites the prior registration. Use <code>isContextFunction(name)</code> for introspection.</p>
 
-        <p>The frozen-context snapshot is created lazily once per evaluation and shared across every context-function call in that evaluation. Pure-function-only expressions never pay any shallow-copy cost.</p>
+        <p>The context is passed to your function by reference, not copied or frozen. The <code>Readonly&lt;TCtx&gt;</code> parameter type flags reassigning its top-level fields, but Bonsai does not deep-freeze it, so nested mutation and writes from untyped JavaScript reach the object you passed in. Pass a fresh context per evaluation if you need isolation.</p>
 
         <div class="doc-tip">
           <strong>Tip:</strong> typing the instance with <code>bonsai&lt;AppContext&gt;()</code> propagates <code>AppContext</code> through every method that touches context, so <code>evaluate</code>, <code>evaluateSync</code>, <code>compile</code>, and <code>addContextFunction</code> are all checked against the same shape. If your context type has required fields, the context argument becomes required at call sites.

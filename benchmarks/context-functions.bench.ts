@@ -5,9 +5,9 @@ import { bonsai } from '../src/index.js'
  * Validate that:
  *   1. Pure function calls are unaffected by the context-functions feature
  *      (we want zero regression on the hot path for users who do not adopt it).
- *   2. Context function calls have predictable cost (one shallow-frozen copy
- *      per top-level evaluation, amortised across multiple calls).
- *   3. Lazy frozen-context caching genuinely avoids per-call freeze cost.
+ *   2. Context function calls add negligible overhead: the context is passed
+ *      by reference, so there is no per-call or per-evaluation copy.
+ *   3. Many context calls in one expression scale linearly with the call count.
  */
 
 const pureExpr = bonsai()
@@ -21,8 +21,8 @@ ctxExprMany.addContextFunction('current', (ctx) => ctx.value)
 
 const compiledPure = pureExpr.compile('id(1)')
 const compiledCtx = ctxExpr.compile('current()')
-// Six calls in one expression. With lazy-cached freeze this should pay the
-// freeze cost once, then five "free" calls.
+// Six context-function calls in one expression. The context is passed by
+// reference, so each call is the same cheap hand-off with no copy.
 const compiledCtxMany = ctxExprMany.compile('current() + current() + current() + current() + current() + current()')
 
 describe('context-functions: zero-regression on pure path', () => {
@@ -37,8 +37,8 @@ describe('context-functions: single call', () => {
   })
 })
 
-describe('context-functions: amortised freeze cost', () => {
-  bench('six context calls in one expression (amortised freeze)', () => {
+describe('context-functions: many calls in one expression', () => {
+  bench('six context calls in one expression', () => {
     compiledCtxMany.evaluateSync({ value: 42 })
   })
 })

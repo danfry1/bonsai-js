@@ -248,9 +248,11 @@ export type EvaluationContextArgs<TCtx extends BonsaiContext = Record<string, un
   EmptyContext extends TCtx ? [context?: TCtx] : [context: TCtx]
 
 /**
- * A context-aware function. Receives a shallow-frozen copy of the evaluation
- * context as its first parameter, followed by the call's argument values.
- * Registered via {@link BonsaiInstance.addContextFunction}.
+ * A context-aware function. Receives the live evaluation context as its first
+ * parameter, followed by the call's argument values. The context is typed
+ * `Readonly<TCtx>` to signal read-only intent; it is passed by reference and is
+ * not copied or frozen, so treat it as read-only. Registered via
+ * {@link BonsaiInstance.addContextFunction}.
  */
 export type ContextFunctionFn<TCtx extends BonsaiContext = Record<string, unknown>> =
   (context: Readonly<TCtx>, ...args: unknown[]) => unknown | Promise<unknown>
@@ -280,8 +282,9 @@ export interface BonsaiInstance<TCtx extends BonsaiContext = Record<string, unkn
   addFunction(name: string, fn: FunctionFn): this
   /**
    * Register a context-aware function callable as `name(args)` in expressions.
-   * The function receives a frozen snapshot of the evaluation context as its
-   * first parameter. Shares a namespace with {@link addFunction}: registering
+   * The function receives the live evaluation context as its first parameter
+   * (typed `Readonly<TCtx>` for read-only intent; passed by reference, not
+   * copied or frozen). Shares a namespace with {@link addFunction}: registering
    * the same name with either method overwrites the previous registration.
    */
   addContextFunction(name: string, fn: ContextFunctionFn<TCtx>): this

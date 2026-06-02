@@ -128,7 +128,7 @@ await expr.evaluate('lookupTier(userId) == "pro"', { userId: 'u_123' })
 ### Context-aware functions
 
 Register functions that read the evaluation context directly. The function
-receives a shallow-frozen snapshot of the context as its first parameter, so
+receives the evaluation context as its first parameter (typed read-only), so
 you can keep expressions terse and let the function pull what it needs:
 
 ```ts
@@ -159,14 +159,23 @@ The instance is generic over the context type (`bonsai<AppContext>()`), giving
 you end-to-end type safety: `ctx` is typed inside the function, and the call
 site is type-checked against the same shape. If your context type has required
 fields, TypeScript also requires you to pass the `context` argument to
-`evaluate`, `evaluateSync`, and compiled-expression evaluation. The frozen
-snapshot guarantees functions cannot mutate shared evaluation state.
+`evaluate`, `evaluateSync`, and compiled-expression evaluation.
+
+The context is passed to your function by reference, not copied or frozen. The
+`Readonly<TCtx>` parameter type signals that you should treat it as read-only:
+TypeScript flags reassigning its top-level fields. Bonsai does not deep-freeze
+it, so nested mutation and writes from untyped JavaScript reach the object you
+passed in. If you need isolation between evaluations, pass a fresh context
+object each time.
 
 Pure functions (`addFunction`) and context-aware functions (`addContextFunction`)
 share a single namespace. Registering the same name with either method
-overwrites the prior registration. Use `isContextFunction(name)` for
-introspection when needed. Plugins typed against a minimal context requirement
-can still be applied to instances with a wider context shape.
+overwrites the prior registration, so re-registering a context-aware name with
+`addFunction` turns it back into a pure function (check `isContextFunction(name)`
+if the kind matters). Functions registered with `addFunction` never receive the
+context; reach for `addContextFunction` when a function needs it. Plugins typed
+against a minimal context requirement can still be applied to instances with a
+wider context shape.
 
 ### Editor validation
 
@@ -431,7 +440,7 @@ Method notes:
 
 - `use()` runs a plugin immediately and returns the same instance.
 - `addTransform()`, `addFunction()`, and `addContextFunction()` overwrite any existing registration with the same name. Pure and context-aware functions share a single namespace.
-- `addContextFunction()` registers a function that receives a shallow-frozen snapshot of the evaluation context as its first argument. See [Context-aware functions](#context-aware-functions).
+- `addContextFunction()` registers a function that receives the live evaluation context as its first argument (typed read-only; passed by reference, not copied or frozen). See [Context-aware functions](#context-aware-functions).
 - `isContextFunction()` returns `true` if the named function was registered via `addContextFunction()`.
 - `listTransforms()` and `listFunctions()` return the currently registered names. `listFunctions()` includes both pure and context-aware functions.
 - `clearCache()` clears the internal AST cache and compiled-expression cache. It does not remove registered transforms/functions.
