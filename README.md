@@ -534,6 +534,12 @@ Modules:
 | `dates` | function `now`; transforms `formatDate`, `diffDays` |
 | `all` | registers every stdlib module above |
 
+Notes on stdlib semantics:
+
+- **`sort`** orders strings by code point (not locale), so results are deterministic across runtimes and locales. Numbers sort numerically.
+- **`min`/`max`** validate that every argument is a number and return `undefined` for no arguments (rather than `Infinity`/`-Infinity`). **`clamp`** requires finite bounds with `min <= max`.
+- **`NaN` is passed through** by the numeric transforms (`sum`, `avg`, `round`, etc.): a `NaN` input yields a `NaN` result (which serializes to `null` in JSON). Validate inputs upstream if you need to reject non-finite numbers.
+
 ## Error Handling
 
 Runtime exports:
