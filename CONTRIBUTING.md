@@ -100,6 +100,10 @@ Alternatively, approve from the **Staged Packages** tab on the package page at n
 
 ## Project Structure
 
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for how the pieces fit together (the
+lexer to parser to compiler to evaluator pipeline, the deliberate sync/async
+split, caching, and the security model). A quick file map:
+
 ```
 src/
   index.ts          # Public API: bonsai(), evaluateExpression()

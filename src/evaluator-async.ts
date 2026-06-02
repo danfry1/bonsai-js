@@ -20,6 +20,12 @@ import {
 
 type AsyncEvalEnv = EvalEnv
 
+// This is the async mirror of src/evaluator.ts. The two walks are kept separate
+// to preserve the synchronous fast path (see ARCHITECTURE.md). Any change to
+// evaluation semantics or a security guard here must also be made in the
+// synchronous evaluator and both lambda-body walks; tests/parity.test.ts and
+// tests/property.test.ts assert the two evaluators stay aligned.
+
 export async function evaluateAsync(
   node: ASTNode,
   context: Record<string, unknown>,
