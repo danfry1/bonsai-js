@@ -32,7 +32,9 @@ try {
   mkdirSync(packDir, { recursive: true })
   mkdirSync(extractDir, { recursive: true })
   mkdirSync(smokeDir, { recursive: true })
-  const packOutput = JSON.parse(run('npm', ['pack', '--json', '--pack-destination', packDir]))
+  const packOutput = JSON.parse(
+    run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', packDir]),
+  )
   const filename = packOutput[0]?.filename as string | undefined
   if (!filename) {
     throw new Error('npm pack did not return a tarball filename')
