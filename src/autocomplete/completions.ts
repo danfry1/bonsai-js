@@ -134,14 +134,15 @@ function addMethodCompletions(results: Completion[], env: CompletionEnv): void {
   if (!type || !isMethodReceiverType(type)) return
   const cached = METHOD_COMPLETIONS_BY_TYPE[type]
   if (!cached) return
-  // BLOCKED_NAMES is already filtered in the pre-computed cache.
-  // Only deniedProperties needs runtime checking (it varies per instance).
-  if (env.policy.deniedProperties) {
-    for (const c of cached) {
-      if (!env.policy.deniedProperties.has(c.label)) results.push(c)
-    }
-  } else {
-    for (const c of cached) results.push(c)
+  // BLOCKED_NAMES is already filtered in the pre-computed cache. allow/deny
+  // lists vary per instance and the evaluator applies BOTH to method names
+  // (ExecutionContext.checkNameAccess, kind === 'method'), so completions must
+  // mirror that or it would suggest methods that then throw.
+  const { allowedProperties, deniedProperties } = env.policy
+  for (const c of cached) {
+    if (allowedProperties && !allowedProperties.has(c.label)) continue
+    if (deniedProperties && deniedProperties.has(c.label)) continue
+    results.push(c)
   }
 }
 

@@ -170,16 +170,28 @@ describe('generateCompletions', () => {
       expect(labels).not.toContain('secret')
     })
 
-    it('allowedProperties does NOT block method completions', () => {
+    it('restricts method completions to allowedProperties (matches the evaluator)', () => {
       const ctx: CursorContext = { kind: 'top-level-member', prefix: '', precedingTokens: [] }
       const result = generateCompletions(ctx, env({
         member: { resolvedValue: 'hello', resolvedType: 'string' },
-        policy: { allowedProperties: new Set(['name']) },
+        policy: { allowedProperties: new Set(['trim']) },
       }))
-      const methods = result.filter(c => c.kind === 'method')
-      expect(methods.length).toBeGreaterThan(0)
-      expect(methods.map(c => c.label)).toContain('trim')
-      expect(methods.map(c => c.label)).toContain('toLowerCase')
+      const methods = result.filter(c => c.kind === 'method').map(c => c.label)
+      // The evaluator's checkNameAccess applies allowedProperties to method names,
+      // so completions must not offer a method that would then be rejected.
+      expect(methods).toContain('trim')
+      expect(methods).not.toContain('toLowerCase')
+    })
+
+    it('still offers all methods when no allowedProperties is set', () => {
+      const ctx: CursorContext = { kind: 'top-level-member', prefix: '', precedingTokens: [] }
+      const result = generateCompletions(ctx, env({
+        member: { resolvedValue: 'hello', resolvedType: 'string' },
+        policy: {},
+      }))
+      const methods = result.filter(c => c.kind === 'method').map(c => c.label)
+      expect(methods).toContain('trim')
+      expect(methods).toContain('toLowerCase')
     })
   })
 })

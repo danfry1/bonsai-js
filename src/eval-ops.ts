@@ -1,4 +1,5 @@
 import { suggest, BonsaiReferenceError, BonsaiSecurityError, BonsaiTypeError } from './errors.js'
+import { isMethodAllowedOn } from './safe-methods.js'
 import type { ExecutionContext } from './execution-context.js'
 import type {
   ASTNode,
@@ -9,42 +10,6 @@ import type {
 } from './types.js'
 
 type SafeMethod = (...args: unknown[]) => unknown
-
-/** Receiver type check for safe methods. */
-function isAllowedReceiver(obj: unknown, methodName: string): boolean {
-  const t = typeof obj
-  switch (methodName) {
-    // String-only
-    case 'startsWith': case 'endsWith': case 'substring':
-    case 'charAt': case 'charCodeAt': case 'repeat':
-    case 'trim': case 'trimStart': case 'trimEnd':
-    case 'toLowerCase': case 'toUpperCase':
-    case 'replace': case 'replaceAll':
-    case 'padStart': case 'padEnd':
-    case 'split':
-      return t === 'string'
-    // String + Array
-    case 'includes': case 'indexOf': case 'lastIndexOf':
-    case 'slice': case 'at': case 'concat':
-      return t === 'string' || Array.isArray(obj)
-    // Array-only (higher-order)
-    case 'filter': case 'map': case 'find': case 'findIndex':
-    case 'some': case 'every': case 'flatMap':
-      return Array.isArray(obj)
-    // Array-only (non-callback, non-mutating)
-    case 'join': case 'flat':
-    case 'toReversed': case 'toSorted': case 'toSpliced': case 'with':
-      return Array.isArray(obj)
-    // Number
-    case 'toFixed':
-      return t === 'number'
-    // Number + String
-    case 'toString':
-      return t === 'string' || t === 'number'
-    default:
-      return false
-  }
-}
 
 export function toPropertyKey(value: unknown): string {
   return String(value)
@@ -94,7 +59,7 @@ export function validateMethodCall(
 ): SafeMethod {
   guard.checkNameAccess(methodName, 'method')
   if (obj == null) throw new BonsaiTypeError(methodName, 'a non-null value', obj)
-  if (!isAllowedReceiver(obj, methodName)) {
+  if (!isMethodAllowedOn(obj, methodName)) {
     throw new BonsaiSecurityError(
       'METHOD_NOT_ALLOWED',
       `Method "${methodName}" is not allowed on ${typeof obj}`,
