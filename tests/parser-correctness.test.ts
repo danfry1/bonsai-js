@@ -41,6 +41,23 @@ describe('numeric literal validation', () => {
     expect(evalSync('3.14')).toBe(3.14)
     expect(evalSync('1_000_000')).toBe(1000000)
   })
+
+  it('rejects misplaced numeric separators instead of silently coercing', () => {
+    // JS rejects all of these; the old digit loops accepted them and Number()
+    // would coerce (e.g. Number('0xff_') === 255, Number('1_') === NaN).
+    for (const bad of ['1_', '1__0', '0xff_', '0x_ff', '0xf__f', '0b1_', '0b1__0', '0o7_', '1_.5', '1_e5', '1e_5', '1e5_', '1.5_', '1_000_']) {
+      expect(() => evalSync(bad), bad).toThrow(ExpressionError)
+    }
+  })
+
+  it('still accepts well-placed separators in every radix', () => {
+    expect(evalSync('1_2_3')).toBe(123)
+    expect(evalSync('0xAB_CD')).toBe(0xABCD)
+    expect(evalSync('0b1_0_1')).toBe(5)
+    expect(evalSync('0o1_7')).toBe(15)
+    expect(evalSync('1_000.000_5')).toBe(1000.0005)
+    expect(evalSync('1e1_0')).toBe(1e10)
+  })
 })
 
 describe('template literal brace handling', () => {
@@ -73,5 +90,13 @@ describe('template literal brace handling', () => {
 
   it('still handles plain interpolations and surrounding text', () => {
     expect(bonsai().evaluateSync('`hi ${name}, ${1 + 2}`', { name: 'dan' })).toBe('hi dan, 3')
+  })
+
+  it('handles nested template literals, including braces inside them', () => {
+    expect(evalSync('`${ `x` }`')).toBe('x')
+    expect(evalSync('`${ `a}b` }`')).toBe('a}b')
+    expect(evalSync('`${ `{` }`')).toBe('{')
+    expect(evalSync('`outer ${ `inner ${1 + 1}` }`')).toBe('outer inner 2')
+    expect(evalSync('`${ `a}b` }-${ `c{d` }`')).toBe('a}b-c{d')
   })
 })
