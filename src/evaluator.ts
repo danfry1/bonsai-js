@@ -32,22 +32,6 @@ export interface EvalEnv {
   fn: Record<string, RegisteredFunction>
   g: ExecutionContext
   s?: string
-  /**
-   * Lazily materialised shallow-frozen copy of `ctx`, shared across all
-   * context-function invocations within a single evaluation. Computed on
-   * the first context-function call. Undefined means no context function
-   * has been called yet in this evaluation.
-   */
-  frozenCtx?: Readonly<Record<string, unknown>>
-}
-
-/** Return (and lazily create) the frozen context snapshot for context functions. */
-export function getFrozenContext(env: EvalEnv): Readonly<Record<string, unknown>> {
-  if (!env.frozenCtx) {
-    // Shallow copy so we never freeze the user's own context object.
-    env.frozenCtx = Object.freeze({ ...env.ctx })
-  }
-  return env.frozenCtx
 }
 
 export function evaluate(
@@ -234,8 +218,11 @@ function evalCallExpression(node: Extract<ASTNode, { type: 'CallExpression' }>, 
       for (const arg of node.args) {
         pushCallArgument(args, arg, env)
       }
+      // Context functions receive the live evaluation context as their first
+      // argument. It is typed Readonly<TCtx> to signal read-only intent; bonsai
+      // does not copy or freeze it (see the context-aware functions docs).
       const result = resolved.kind === 'context'
-        ? resolved.fn(getFrozenContext(env), ...args)
+        ? resolved.fn(env.ctx, ...args)
         : resolved.fn(...args)
       return rejectPromise(result, 'function', node.callee.name)
     } catch (e) {

@@ -23,56 +23,66 @@ describe('addContextFunction', () => {
       expect(expr.evaluateSync('format("<", ">")', { value: 'x' })).toBe('<x>')
     })
 
-    it('returns an empty frozen object when no context is provided', () => {
+    it('receives a default empty context object when none is provided', () => {
       const expr = bonsai()
       let captured: unknown
       expr.addContextFunction('grab', (ctx) => { captured = ctx; return null })
       expr.evaluateSync('grab()')
       expect(captured).toEqual({})
-      expect(Object.isFrozen(captured)).toBe(true)
+      expect(Object.isFrozen(captured)).toBe(false)
     })
   })
 
-  describe('isolation', () => {
-    it('passes a frozen context to the function', () => {
+  describe('context delivery', () => {
+    it('passes the live context object to the function by reference', () => {
       const expr = bonsai<{ a: number; b: string }>()
       let captured: Readonly<{ a: number; b: string }> | undefined
       expr.addContextFunction('grab', (ctx) => { captured = ctx; return null })
-      expr.evaluateSync('grab()', { a: 1, b: 'two' })
-      expect(Object.isFrozen(captured)).toBe(true)
+      const original = { a: 1, b: 'two' }
+      expr.evaluateSync('grab()', original)
+      // The context is handed over as-is: no defensive copy, no freeze. The
+      // function receives the exact object the caller supplied.
+      expect(captured).toBe(original)
+      expect(Object.isFrozen(captured)).toBe(false)
     })
 
-    it('does not mutate the original context object when the function tries to write', () => {
+    it('treats the context as read-only by type, but writes reach the caller object', () => {
+      // ctx is typed Readonly<TCtx> to signal read-only intent, yet it is the
+      // live object. A function that deliberately casts away readonly and writes
+      // mutates the caller's context. This test documents that contract.
       const expr = bonsai<{ name: string }>()
-      expr.addContextFunction('mutate', (ctx) => {
-        // Attempt to mutate the frozen copy. Throws in strict mode (ESM modules
-        // are always strict), so swallow to assert isolation regardless.
-        try { (ctx as { name: string; injected?: string }).injected = 'bad' } catch { /* expected */ }
+      expr.addContextFunction('inject', (ctx) => {
+        const mutable = ctx as { name: string; injected?: string }
+        mutable.injected = 'value'
         return null
       })
-      const original = { name: 'Dan' }
-      expr.evaluateSync('mutate()', original)
-      expect(original).toEqual({ name: 'Dan' })
-      expect(Object.isFrozen(original)).toBe(false)
+      const original: { name: string; injected?: string } = { name: 'Dan' }
+      expr.evaluateSync('inject()', original)
+      expect(original.injected).toBe('value')
     })
 
-    it('shares one frozen snapshot across multiple context-function calls in one evaluation', () => {
+    it('passes the same context object to every context-function call in one evaluation', () => {
       const expr = bonsai<{ x: number }>()
       const captured: unknown[] = []
       expr.addContextFunction('snap', (ctx) => { captured.push(ctx); return ctx.x })
-      expr.evaluateSync('snap() + snap() + snap()', { x: 1 })
+      const original = { x: 1 }
+      expr.evaluateSync('snap() + snap() + snap()', original)
       expect(captured.length).toBe(3)
-      expect(captured[0]).toBe(captured[1])
-      expect(captured[1]).toBe(captured[2])
+      expect(captured[0]).toBe(original)
+      expect(captured[1]).toBe(original)
+      expect(captured[2]).toBe(original)
     })
 
-    it('creates a fresh snapshot per top-level evaluation', () => {
+    it('passes through the exact context given to each top-level evaluation', () => {
       const expr = bonsai<{ x: number }>()
       const captured: unknown[] = []
       expr.addContextFunction('snap', (ctx) => { captured.push(ctx); return ctx.x })
-      expr.evaluateSync('snap()', { x: 1 })
-      expr.evaluateSync('snap()', { x: 2 })
-      expect(captured[0]).not.toBe(captured[1])
+      const first = { x: 1 }
+      const second = { x: 2 }
+      expr.evaluateSync('snap()', first)
+      expr.evaluateSync('snap()', second)
+      expect(captured[0]).toBe(first)
+      expect(captured[1]).toBe(second)
     })
 
     it('does not pass context to pure functions registered via addFunction', () => {
