@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { deepStrictEqual } from 'node:assert/strict'
+import fc from 'fast-check'
 import { compile } from '../src/compiler.js'
 import { ExpressionError } from '../src/errors.js'
 import { evaluate } from '../src/evaluator.js'
@@ -8,28 +9,17 @@ import { SecurityPolicy, ExecutionContext } from '../src/execution-context.js'
 import { bonsai } from '../src/index.js'
 import { arrays, strings, math } from '../src/stdlib/index.js'
 
+// Fixed seeds keep CI runs deterministic and reproducible. On failure fast-check
+// shrinks the generated source to a minimal counterexample and prints the seed
+// plus a repro path, so a regression points straight at the smallest breaking
+// expression instead of whatever large form the generator happened to emit.
+const SEED_EXPRESSION = 0xc0ffee
+const SEED_HOF = 0x5eed01
+const SEED_FUZZ = 0xbad5eed
+
 type Outcome =
   | { ok: true; value: unknown }
   | { ok: false; name: string; message: string }
-
-function mulberry32(seed: number): () => number {
-  let state = seed >>> 0
-  return () => {
-    state += 0x6D2B79F5
-    let t = state
-    t = Math.imul(t ^ t >>> 15, t | 1)
-    t ^= t + Math.imul(t ^ t >>> 7, t | 61)
-    return ((t ^ t >>> 14) >>> 0) / 4294967296
-  }
-}
-
-function pick<T>(rand: () => number, values: readonly T[]): T {
-  return values[Math.floor(rand() * values.length)]
-}
-
-function int(rand: () => number, max: number): number {
-  return Math.floor(rand() * max)
-}
 
 const CONTEXT = {
   num: 3,
@@ -89,6 +79,8 @@ const BINARY_OPERATORS = [
   '??',
 ] as const
 
+const UNARY_OPERATORS = ['!', '-', '+'] as const
+const MEMBERSHIP_OPERATORS = ['in', 'not in'] as const
 const MEMBERSHIP_RIGHT = ['items', '"hello"', '["x", "hello"]'] as const
 
 function captureOutcome(fn: () => unknown): Outcome {
@@ -109,84 +101,83 @@ async function captureAsyncOutcome(fn: () => Promise<unknown>): Promise<Outcome>
   }
 }
 
-function makeArray(rand: () => number, depth: number): string {
-  const count = 1 + int(rand, 3)
-  const parts = Array.from({ length: count }, () => generateExpression(rand, depth - 1))
-  if (rand() < 0.35) {
-    parts.push('...items')
-  }
-  return `[${parts.join(', ')}]`
-}
-
-function makeObject(rand: () => number, depth: number): string {
-  return `{ a: ${generateExpression(rand, depth - 1)}, b: ${generateExpression(rand, depth - 1)} }`
-}
-
-function makeTemplate(rand: () => number, depth: number): string {
-  return `\`value:${'${'}${generateExpression(rand, depth - 1)}${'}'}\``
-}
-
-function generateExpression(rand: () => number, depth: number): string {
-  if (depth <= 0) {
-    return pick(rand, ATOMS)
-  }
-
-  const roll = rand()
-  if (roll < 0.2) return pick(rand, ATOMS)
-  if (roll < 0.32) return `(${pick(rand, ['!', '-', '+'] as const)}${generateExpression(rand, depth - 1)})`
-  if (roll < 0.62) {
-    const left = generateExpression(rand, depth - 1)
-    const operator = pick(rand, BINARY_OPERATORS)
-    const right = generateExpression(rand, depth - 1)
-    return `(${left} ${operator} ${right})`
-  }
-  if (roll < 0.72) {
-    const left = generateExpression(rand, depth - 1)
-    const operator = pick(rand, ['in', 'not in'] as const)
-    const right = pick(rand, MEMBERSHIP_RIGHT)
-    return `(${left} ${operator} ${right})`
-  }
-  if (roll < 0.82) {
-    return `(${generateExpression(rand, depth - 1)} ? ${generateExpression(rand, depth - 1)} : ${generateExpression(rand, depth - 1)})`
-  }
-  if (roll < 0.9) return makeArray(rand, depth)
-  if (roll < 0.97) return makeObject(rand, depth)
-  return makeTemplate(rand, depth)
-}
-
-function randomJunk(rand: () => number): string {
-  const chars = '()[]{}?:.,|&!=<>+-*/%\'"`abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$ \t\n'
-  const length = int(rand, 64)
-  let out = ''
-  for (let i = 0; i < length; i++) {
-    out += chars[int(rand, chars.length)]
-  }
-  return out
-}
+// Recursive expression grammar. fc.letrec ties the `expr` rule to itself and the
+// `maxDepth` constraint bounds nesting; at the depth limit oneof falls back to
+// the terminating `atom` branch. Weights mirror the original generator's roll
+// buckets so the distribution of forms stays comparable.
+const { expr: expressionArbitrary } = fc.letrec<{ expr: string }>((tie) => ({
+  expr: fc.oneof(
+    { maxDepth: 3, depthSize: 'medium' },
+    { weight: 4, arbitrary: fc.constantFrom(...ATOMS) },
+    {
+      weight: 2,
+      arbitrary: fc
+        .tuple(fc.constantFrom(...UNARY_OPERATORS), tie('expr'))
+        .map(([operator, operand]) => `(${operator}${operand})`),
+    },
+    {
+      weight: 6,
+      arbitrary: fc
+        .tuple(tie('expr'), fc.constantFrom(...BINARY_OPERATORS), tie('expr'))
+        .map(([left, operator, right]) => `(${left} ${operator} ${right})`),
+    },
+    {
+      weight: 2,
+      arbitrary: fc
+        .tuple(tie('expr'), fc.constantFrom(...MEMBERSHIP_OPERATORS), fc.constantFrom(...MEMBERSHIP_RIGHT))
+        .map(([left, operator, right]) => `(${left} ${operator} ${right})`),
+    },
+    {
+      weight: 2,
+      arbitrary: fc
+        .tuple(tie('expr'), tie('expr'), tie('expr'))
+        .map(([condition, consequent, alternative]) => `(${condition} ? ${consequent} : ${alternative})`),
+    },
+    {
+      weight: 2,
+      arbitrary: fc
+        .tuple(fc.array(tie('expr'), { minLength: 1, maxLength: 4 }), fc.boolean())
+        .map(([parts, spread]) => `[${[...parts, ...(spread ? ['...items'] : [])].join(', ')}]`),
+    },
+    {
+      weight: 1,
+      arbitrary: fc.tuple(tie('expr'), tie('expr')).map(([a, b]) => `{ a: ${a}, b: ${b} }`),
+    },
+    {
+      weight: 1,
+      arbitrary: tie('expr').map((inner) => `\`value:${'${'}${inner}${'}'}\``),
+    },
+  ),
+}))
 
 describe('property-based evaluator invariants', () => {
   it('keeps parse, compile, sync, and async evaluation aligned across generated expressions', async () => {
     const expr = bonsai()
-    const rand = mulberry32(0xC0FFEE)
 
-    for (let i = 0; i < 250; i++) {
-      const source = generateExpression(rand, 3)
-      const parsed = parse(source)
-      deepStrictEqual(parse(source), parsed)
+    await fc.assert(
+      fc.asyncProperty(expressionArbitrary, async (source) => {
+        const parsed = parse(source)
+        deepStrictEqual(parse(source), parsed)
 
-      const optimized = compile(parsed)
-      const compiled = expr.compile(source)
-      const direct = captureOutcome(() => evaluate(parsed, { ...CONTEXT }, { transforms: {}, functions: {} }, new ExecutionContext(new SecurityPolicy())))
-      const optimizedDirect = captureOutcome(() => evaluate(optimized, { ...CONTEXT }, { transforms: {}, functions: {} }, new ExecutionContext(new SecurityPolicy())))
-      const syncResult = captureOutcome(() => expr.evaluateSync(source, { ...CONTEXT }))
-      const compiledResult = captureOutcome(() => compiled.evaluateSync({ ...CONTEXT }))
-      const asyncResult = await captureAsyncOutcome(() => expr.evaluate(source, { ...CONTEXT }))
+        const optimized = compile(parsed)
+        const compiled = expr.compile(source)
+        const direct = captureOutcome(() =>
+          evaluate(parsed, { ...CONTEXT }, { transforms: {}, functions: {} }, new ExecutionContext(new SecurityPolicy())),
+        )
+        const optimizedDirect = captureOutcome(() =>
+          evaluate(optimized, { ...CONTEXT }, { transforms: {}, functions: {} }, new ExecutionContext(new SecurityPolicy())),
+        )
+        const syncResult = captureOutcome(() => expr.evaluateSync(source, { ...CONTEXT }))
+        const compiledResult = captureOutcome(() => compiled.evaluateSync({ ...CONTEXT }))
+        const asyncResult = await captureAsyncOutcome(() => expr.evaluate(source, { ...CONTEXT }))
 
-      expect(optimizedDirect).toEqual(direct)
-      expect(syncResult).toEqual(direct)
-      expect(compiledResult).toEqual(direct)
-      expect(asyncResult).toEqual(direct)
-    }
+        expect(optimizedDirect, source).toEqual(direct)
+        expect(syncResult, source).toEqual(direct)
+        expect(compiledResult, source).toEqual(direct)
+        expect(asyncResult, source).toEqual(direct)
+      }),
+      { seed: SEED_EXPRESSION, numRuns: 250 },
+    )
   })
 })
 
@@ -211,72 +202,99 @@ const ARRAY_REDUCERS = ['count', 'first', 'last', 'reverse', 'unique', 'sort', '
 const NUM_TRANSFORMS = ['round', 'floor', 'ceil', 'abs'] as const
 const HOF_METHODS = ['map', 'filter', 'find', 'some', 'every', 'flatMap'] as const
 
-function generateHof(rand: () => number): string {
-  const style = rand()
+// Numeric pipe pipeline: items |> map/filter(...) |> reducer? |> numTransform?
+const numericPipeArbitrary = fc
+  .tuple(
+    fc.array(fc.tuple(fc.constantFrom('map', 'filter'), fc.constantFrom(...NUM_LAMBDAS)), {
+      minLength: 1,
+      maxLength: 2,
+    }),
+    fc.option(fc.constantFrom(...ARRAY_REDUCERS), { nil: undefined }),
+    fc.option(fc.constantFrom(...NUM_TRANSFORMS), { nil: undefined }),
+  )
+  .map(([ops, reducer, transform]) => {
+    let source = 'items'
+    for (const [method, lambda] of ops) source += ` |> ${method}(${lambda})`
+    if (reducer) source += ` |> ${reducer}`
+    if (transform) source += ` |> ${transform}`
+    return source
+  })
 
-  // Numeric pipe pipeline: items |> map/filter(...) |> reducer |> numTransform
-  if (style < 0.4) {
-    let e = 'items'
-    const ops = 1 + int(rand, 2)
-    for (let i = 0; i < ops; i++) {
-      e += ` |> ${pick(rand, ['map', 'filter'] as const)}(${pick(rand, NUM_LAMBDAS)})`
-    }
-    if (rand() < 0.7) e += ` |> ${pick(rand, ARRAY_REDUCERS)}`
-    if (rand() < 0.4) e += ` |> ${pick(rand, NUM_TRANSFORMS)}`
-    return e
-  }
+// User pipe pipeline: users |> filter(...)? |> map(...)? |> count?
+const userPipeArbitrary = fc
+  .tuple(
+    fc.option(fc.constantFrom(...USER_LAMBDAS), { nil: undefined }),
+    fc.option(fc.constantFrom(...USER_LAMBDAS), { nil: undefined }),
+    fc.boolean(),
+  )
+  .map(([filterLambda, mapLambda, count]) => {
+    let source = 'users'
+    if (filterLambda) source += ` |> filter(${filterLambda})`
+    if (mapLambda) source += ` |> map(${mapLambda})`
+    if (count) source += ' |> count'
+    return source
+  })
 
-  // User pipe pipeline
-  if (style < 0.7) {
-    let e = 'users'
-    if (rand() < 0.85) e += ` |> filter(${pick(rand, USER_LAMBDAS)})`
-    if (rand() < 0.85) e += ` |> map(${pick(rand, USER_LAMBDAS)})`
-    if (rand() < 0.4) e += ' |> count'
-    return e
-  }
-
-  // Method chaining: base.method(lambda).method(lambda)
-  const base = pick(rand, ['items', 'nums', 'users'] as const)
+// Method chaining: base.method(lambda).method(lambda)
+const methodChainArbitrary = fc.constantFrom('items', 'nums', 'users').chain((base) => {
   const lambdas = base === 'users' ? USER_LAMBDAS : NUM_LAMBDAS
-  let e: string = base
-  const ops = 1 + int(rand, 2)
-  for (let i = 0; i < ops; i++) {
-    e += `.${pick(rand, HOF_METHODS)}(${pick(rand, lambdas)})`
-  }
-  return e
-}
+  return fc
+    .array(fc.tuple(fc.constantFrom(...HOF_METHODS), fc.constantFrom(...lambdas)), { minLength: 1, maxLength: 2 })
+    .map((ops) => {
+      let source: string = base
+      for (const [method, lambda] of ops) source += `.${method}(${lambda})`
+      return source
+    })
+})
+
+const hofArbitrary = fc.oneof(
+  { weight: 4, arbitrary: numericPipeArbitrary },
+  { weight: 3, arbitrary: userPipeArbitrary },
+  { weight: 3, arbitrary: methodChainArbitrary },
+)
 
 describe('property-based higher-order parity', () => {
   it('keeps sync, async, and compiled aligned across generated transforms, methods, and lambdas', async () => {
     const expr = bonsai().use(arrays).use(strings).use(math)
-    const rand = mulberry32(0x5EED01)
 
-    for (let i = 0; i < 400; i++) {
-      const source = generateHof(rand)
-      const syncResult = captureOutcome(() => expr.evaluateSync(source, { ...HOF_CONTEXT }))
-      const asyncResult = await captureAsyncOutcome(() => expr.evaluate(source, { ...HOF_CONTEXT }))
-      const compiled = expr.compile(source)
-      const compiledSync = captureOutcome(() => compiled.evaluateSync({ ...HOF_CONTEXT }))
-      const compiledAsync = await captureAsyncOutcome(() => compiled.evaluate({ ...HOF_CONTEXT }))
+    await fc.assert(
+      fc.asyncProperty(hofArbitrary, async (source) => {
+        const syncResult = captureOutcome(() => expr.evaluateSync(source, { ...HOF_CONTEXT }))
+        const asyncResult = await captureAsyncOutcome(() => expr.evaluate(source, { ...HOF_CONTEXT }))
+        const compiled = expr.compile(source)
+        const compiledSync = captureOutcome(() => compiled.evaluateSync({ ...HOF_CONTEXT }))
+        const compiledAsync = await captureAsyncOutcome(() => compiled.evaluate({ ...HOF_CONTEXT }))
 
-      expect(asyncResult, source).toEqual(syncResult)
-      expect(compiledSync, source).toEqual(syncResult)
-      expect(compiledAsync, source).toEqual(syncResult)
-    }
+        expect(asyncResult, source).toEqual(syncResult)
+        expect(compiledSync, source).toEqual(syncResult)
+        expect(compiledAsync, source).toEqual(syncResult)
+      }),
+      { seed: SEED_HOF, numRuns: 400 },
+    )
   })
 })
 
+const JUNK_CHARS =
+  '()[]{}?:.,|&!=<>+-*/%\'"`abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$ \t\n'.split('')
+
+// Random junk drawn from the language's own character set: ill-formed but
+// plausibly tokenizable. The invariant is that the parser fails cleanly with an
+// ExpressionError and never leaks a raw runtime error.
+const junkArbitrary = fc
+  .array(fc.constantFrom(...JUNK_CHARS), { maxLength: 64 })
+  .map((chars) => chars.join(''))
+
 describe('parser fuzzing', () => {
   it('throws only ExpressionError for malformed random sources', () => {
-    const rand = mulberry32(0xBAD5EED)
-
-    for (let i = 0; i < 750; i++) {
-      const source = randomJunk(rand)
-      try {
-        parse(source)
-      } catch (error) {
-        expect(error).toBeInstanceOf(ExpressionError)
-      }
-    }
+    fc.assert(
+      fc.property(junkArbitrary, (source) => {
+        try {
+          parse(source)
+        } catch (error) {
+          expect(error).toBeInstanceOf(ExpressionError)
+        }
+      }),
+      { seed: SEED_FUZZ, numRuns: 750 },
+    )
   })
 })
