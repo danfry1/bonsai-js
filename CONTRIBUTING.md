@@ -18,6 +18,7 @@ Requires [Bun](https://bun.sh/) and Node.js 22+.
 |---------|-------------|
 | `bun test` | Run all tests |
 | `bun test:watch` | Run tests in watch mode |
+| `bun run test:coverage` | Run tests with coverage and enforce thresholds (also runs in CI) |
 | `bun run lint` | Lint with oxlint |
 | `bun run typecheck` | Type-check with tsc |
 | `bun run build` | Build with tsdown |

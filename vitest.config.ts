@@ -6,5 +6,19 @@ export default defineConfig({
     benchmark: {
       include: ['benchmarks/**/*.bench.ts'],
     },
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.ts'],
+      reporter: ['text-summary'],
+      // Floors a few points below the measured level: a ratchet that catches
+      // coverage backsliding without failing on minor per-PR dips. Raise
+      // deliberately as coverage improves.
+      thresholds: {
+        statements: 87,
+        branches: 80,
+        functions: 93,
+        lines: 88,
+      },
+    },
   },
 })

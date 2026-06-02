@@ -3,3 +3,4 @@ dist
 *.tsbuildinfo
 website/*.bundle.js
 .worktrees
+coverage
