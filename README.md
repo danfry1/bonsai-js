@@ -300,12 +300,13 @@ const expr = bonsai(options?: BonsaiOptions)
 | `maxDepth` | `number` | `100` | Maximum evaluation depth before throwing `BonsaiSecurityError('MAX_DEPTH', ...)`. |
 | `maxArrayLength` | `number` | `100000` | Maximum array size produced during evaluation, including array literals, expanded spread, and array-returning methods (`split`, `map`, `flat`, `concat`, ...). Exceeding it throws `BonsaiSecurityError('MAX_ARRAY_LENGTH', ...)`. |
 | `maxStringLength` | `number` | `100000` | Maximum string size produced by a string-returning method (`padStart`, `padEnd`, `repeat`, `join`, `concat`, `slice`, ...). Applies to the produced length (e.g. `arr.join(sep)` is bounded by its full output, not just the inputs). Exceeding it throws `BonsaiSecurityError('MAX_STRING_LENGTH', ...)`. |
-| `cacheSize` | `number` | `256` | Per-instance cache size for compiled expressions and parsed AST reuse. |
+| `cacheSize` | `number` | `256` | Per-instance cache size for compiled expressions and parsed AST reuse. `0` disables caching. |
 | `allowedProperties` | `string[]` | `undefined` | Whitelist of allowed member/method names. Does not apply to root identifiers or object-literal keys. |
 | `deniedProperties` | `string[]` | `undefined` | Denylist of blocked member/method names. Does not apply to root identifiers or object-literal keys. |
 
 Important notes:
 
+- Options are validated at construction: out-of-range values (a negative `cacheSize`, a non-positive `maxDepth`, a negative size limit, a negative/non-finite `timeout`) throw a `RangeError`/`TypeError` immediately rather than failing silently later.
 - `allowedProperties` and `deniedProperties` apply to **member access** (`obj.name`) and **method calls** (`str.slice()`), not root identifiers (`name`) or object-literal keys (`{ name: value }`).
 - If you whitelist `user.name`, you must allow both `user` and `name` as member names.
 - Numeric array indices (e.g., `items[0]`) bypass allow/deny lists automatically.

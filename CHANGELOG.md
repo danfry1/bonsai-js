@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `maxStringLength` option on `bonsai(options)` and a `BonsaiSecurityError('MAX_STRING_LENGTH', ...)` error code.
+- `bonsai(options)` now validates its options and throws a `RangeError`/`TypeError` at construction for out-of-range values (negative `cacheSize`, non-positive `maxDepth`, negative `maxArrayLength`/`maxStringLength`, negative or non-finite `timeout`, allow/deny lists that are not arrays of strings). Previously a negative `cacheSize` silently disabled caching and other bad values failed later with confusing errors.
 
 ### Fixed
 

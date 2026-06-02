@@ -42,6 +42,40 @@ export type {
 
 const DEFAULT_CACHE_SIZE = 256
 
+/**
+ * Validate options at construction so misconfiguration fails fast with a clear
+ * error rather than silently producing surprising behavior (e.g. a negative
+ * cacheSize quietly disabling the cache).
+ */
+function assertValidOptions(options: BonsaiOptions): void {
+  const requireNonNegativeInt = (name: string, value: number | undefined): void => {
+    if (value !== undefined && (!Number.isInteger(value) || value < 0)) {
+      throw new RangeError(`bonsai: "${name}" must be a non-negative integer, received ${String(value)}`)
+    }
+  }
+  requireNonNegativeInt('cacheSize', options.cacheSize)
+  requireNonNegativeInt('maxArrayLength', options.maxArrayLength)
+  requireNonNegativeInt('maxStringLength', options.maxStringLength)
+
+  if (options.maxDepth !== undefined && (!Number.isInteger(options.maxDepth) || options.maxDepth < 1)) {
+    throw new RangeError(`bonsai: "maxDepth" must be a positive integer, received ${String(options.maxDepth)}`)
+  }
+  if (options.timeout !== undefined && (typeof options.timeout !== 'number' || !Number.isFinite(options.timeout) || options.timeout < 0)) {
+    throw new RangeError(`bonsai: "timeout" must be a non-negative, finite number of milliseconds, received ${String(options.timeout)}`)
+  }
+  const requireStringArray = (name: string, value: readonly unknown[] | undefined): void => {
+    if (value === undefined) return
+    if (!Array.isArray(value)) {
+      throw new TypeError(`bonsai: "${name}" must be an array of strings`)
+    }
+    if (!value.every(item => typeof item === 'string')) {
+      throw new TypeError(`bonsai: "${name}" must contain only strings`)
+    }
+  }
+  requireStringArray('allowedProperties', options.allowedProperties)
+  requireStringArray('deniedProperties', options.deniedProperties)
+}
+
 // Shared instance for standalone one-off evaluation
 let sharedInstance: BonsaiInstance | undefined
 
@@ -80,6 +114,7 @@ export function evaluateExpression<T = unknown>(expression: string, context?: Re
 export function bonsai<TCtx extends BonsaiContext = Record<string, unknown>>(
   options: BonsaiOptions = {},
 ): BonsaiInstance<TCtx> {
+  assertValidOptions(options)
   const registry = createPluginRegistry()
   const cache = new LRUCache<string, CompiledExpression<TCtx>>(options.cacheSize ?? DEFAULT_CACHE_SIZE)
   const astCache = new LRUCache<string, ASTNode>(options.cacheSize ?? DEFAULT_CACHE_SIZE)
