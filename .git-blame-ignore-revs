@@ -1,0 +1,7 @@
+# Revisions to skip in `git blame` (large mechanical changes, no authorship value).
+#
+# GitHub honors this file automatically. For local git, run once:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style: format codebase with oxfmt
+53ac21a0282971508912f8ba4a68d4ac3ecb0ede
