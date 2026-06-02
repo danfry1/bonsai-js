@@ -3,8 +3,8 @@ import type { ExecutionContext } from './execution-context.js'
 import type {
   ASTNode,
   BinaryExpressionOperator,
+  RegisteredFunction,
   TransformFn,
-  FunctionFn,
   UnaryOperator,
 } from './types.js'
 
@@ -113,12 +113,22 @@ export function resolveTransform(name: string, transforms: Record<string, Transf
   return transforms[name]
 }
 
-export function resolveFunction(name: string, functions: Record<string, FunctionFn>): FunctionFn {
-  if (!Object.hasOwn(functions, name)) {
-    const suggestion = suggest(name, Object.keys(functions))
-    throw new BonsaiReferenceError('function', name, suggestion)
+/**
+ * Resolve a callable by name in the shared function namespace. Pure and context
+ * functions occupy one registry keyed by name, so a single lookup returns the
+ * tagged entry; the call site uses `kind` to decide how to invoke it (pure
+ * functions take only call args; context functions receive the evaluation
+ * context first, then call args).
+ */
+export function resolveCallable(
+  name: string,
+  functions: Record<string, RegisteredFunction>,
+): RegisteredFunction {
+  if (Object.hasOwn(functions, name)) {
+    return functions[name]
   }
-  return functions[name]
+  const suggestion = suggest(name, Object.keys(functions))
+  throw new BonsaiReferenceError('function', name, suggestion)
 }
 
 export function getIdentifierName(node: ASTNode, message = 'Expected identifier'): string {

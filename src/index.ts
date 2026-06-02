@@ -1,12 +1,11 @@
 import type {
   BonsaiOptions,
+  BonsaiContext,
   BonsaiInstance,
   CompiledExpression,
-  ValidationResult,
+  EvaluationContextArgs,
   ExpressionReferences,
-  TransformFn,
-  FunctionFn,
-  BonsaiPlugin,
+  ContextFunctionFn,
   ASTNode,
 } from './types.js'
 import { parse } from './parser.js'
@@ -38,36 +37,51 @@ export type {
   BonsaiOptions,
   TransformFn,
   FunctionFn,
+  ContextFunctionFn,
 } from './types.js'
 
 const DEFAULT_CACHE_SIZE = 256
 
 // Shared instance for standalone one-off evaluation
-let _shared: BonsaiInstance | undefined
+let sharedInstance: BonsaiInstance | undefined
 
 /**
  * Evaluate a single expression with default options. Uses a shared instance internally.
  * For repeated evaluation or custom configuration, use `bonsai()` to create a dedicated instance.
  */
 export function evaluateExpression<T = unknown>(expression: string, context?: Record<string, unknown>): T {
-  if (!_shared) _shared = bonsai()
-  return _shared.evaluateSync<T>(expression, context)
+  if (!sharedInstance) sharedInstance = bonsai()
+  return sharedInstance.evaluateSync<T>(expression, context)
 }
 
 /**
  * Create a new Bonsai instance with optional safety and caching configuration.
- * Register transforms and functions via `.use()`, `.addTransform()`, and `.addFunction()`.
+ * Register transforms and functions via `.use()`, `.addTransform()`, `.addFunction()`,
+ * and `.addContextFunction()`.
+ *
+ * Pass a context type argument to get end-to-end type safety on the evaluation
+ * context: `bonsai<MyContext>()` will type-check `evaluate(expr, ctx)` calls,
+ * require a context argument when `MyContext` has required fields, and
+ * propagate `MyContext` into context-aware function signatures.
  *
  * @example
  * ```ts
  * const expr = bonsai({ timeout: 50 })
  * expr.use(strings)
  * expr.evaluateSync('name |> trim |> upper', { name: '  hello  ' }) // "HELLO"
+ *
+ * type AppCtx = { userId: string; perms: string[] }
+ * const app = bonsai<AppCtx>()
+ * app.addContextFunction('hasPermission', (ctx, action) =>
+ *   ctx.perms.includes(String(action)))
+ * app.evaluateSync('hasPermission("write")', { userId: 'u_1', perms: ['write'] })
  * ```
  */
-export function bonsai(options: BonsaiOptions = {}): BonsaiInstance {
+export function bonsai<TCtx extends BonsaiContext = Record<string, unknown>>(
+  options: BonsaiOptions = {},
+): BonsaiInstance<TCtx> {
   const registry = createPluginRegistry()
-  const cache = new LRUCache<string, CompiledExpression>(options.cacheSize ?? DEFAULT_CACHE_SIZE)
+  const cache = new LRUCache<string, CompiledExpression<TCtx>>(options.cacheSize ?? DEFAULT_CACHE_SIZE)
   const astCache = new LRUCache<string, ASTNode>(options.cacheSize ?? DEFAULT_CACHE_SIZE)
 
   const policy = new SecurityPolicy(options)
@@ -88,26 +102,28 @@ export function bonsai(options: BonsaiOptions = {}): BonsaiInstance {
     return ast
   }
 
-  function compileExpr(source: string): CompiledExpression {
+  function compileExpr(source: string): CompiledExpression<TCtx> {
     const cached = cache.get(source)
     if (cached) return cached
 
     const optimized = getAst(source)
 
-    const compiled: CompiledExpression = {
+    const compiled: CompiledExpression<TCtx> = {
       ast: optimized,
       source,
-      async evaluate<T = unknown>(context = {}) {
-        return evaluateAsync(optimized, context, registry.transforms, registry.functions, createExecutionContext(), source) as Promise<T>
+      async evaluate<T = unknown>(...args: EvaluationContextArgs<TCtx>) {
+        const ctx = (args[0] ?? {}) as Record<string, unknown>
+        return evaluateAsync(optimized, ctx, registry.bindings, createExecutionContext(), source) as Promise<T>
       },
-      evaluateSync<T = unknown>(context = {}) {
+      evaluateSync<T = unknown>(...args: EvaluationContextArgs<TCtx>) {
+        const ctx = (args[0] ?? {}) as Record<string, unknown>
         if (syncCtxInUse) {
-          return evaluate(optimized, context, registry.transforms, registry.functions, createExecutionContext(), source) as T
+          return evaluate(optimized, ctx, registry.bindings, createExecutionContext(), source) as T
         }
         syncCtxInUse = true
         try {
           syncCtx.reset()
-          return evaluate(optimized, context, registry.transforms, registry.functions, syncCtx, source) as T
+          return evaluate(optimized, ctx, registry.bindings, syncCtx, source) as T
         } finally {
           syncCtxInUse = false
         }
@@ -118,14 +134,25 @@ export function bonsai(options: BonsaiOptions = {}): BonsaiInstance {
     return compiled
   }
 
-  const instance: BonsaiInstance = {
-    use(plugin) { plugin(instance); return instance },
+  const instance: BonsaiInstance<TCtx> = {
+    use(plugin) {
+      plugin(instance)
+      return instance
+    },
     addTransform(name, fn) { registry.addTransform(name, fn); return instance },
     addFunction(name, fn) { registry.addFunction(name, fn); return instance },
+    addContextFunction(name, fn) {
+      // Cast: internal registry stores context functions as ContextFunctionFn
+      // (default generic), public API exposes them typed against TCtx. The
+      // runtime treats the ctx arg as opaque, so the cast is sound.
+      registry.addContextFunction(name, fn as unknown as ContextFunctionFn)
+      return instance
+    },
     removeTransform(name) { return registry.removeTransform(name) },
     removeFunction(name) { return registry.removeFunction(name) },
     hasTransform(name) { return registry.getTransform(name) !== undefined },
-    hasFunction(name) { return registry.getFunction(name) !== undefined },
+    hasFunction(name) { return registry.hasFunction(name) },
+    isContextFunction(name) { return registry.isContextFunction(name) },
     listTransforms() { return registry.getTransformNames() },
     listFunctions() { return registry.getFunctionNames() },
     getPolicy() {
@@ -136,21 +163,23 @@ export function bonsai(options: BonsaiOptions = {}): BonsaiInstance {
     },
     clearCache() { cache.clear(); astCache.clear() },
     compile(expression) { return compileExpr(expression) },
-    async evaluate<T = unknown>(expression: string, context = {}) {
+    async evaluate<T = unknown>(expression: string, ...args: EvaluationContextArgs<TCtx>) {
       const ast = getAst(expression)
-      return evaluateAsync(ast, context, registry.transforms, registry.functions, createExecutionContext(), expression) as Promise<T>
+      const ctx = (args[0] ?? {}) as Record<string, unknown>
+      return evaluateAsync(ast, ctx, registry.bindings, createExecutionContext(), expression) as Promise<T>
     },
-    evaluateSync<T = unknown>(expression: string, context = {}) {
+    evaluateSync<T = unknown>(expression: string, ...args: EvaluationContextArgs<TCtx>) {
       // Hot path: reuse pooled ExecutionContext to avoid per-call allocation
       const ast = getAst(expression)
+      const ctx = (args[0] ?? {}) as Record<string, unknown>
       if (syncCtxInUse) {
-        // Reentrant call (e.g., custom function calling evaluateSync) — fresh allocation
-        return evaluate(ast, context, registry.transforms, registry.functions, createExecutionContext(), expression) as T
+        // Reentrant call (e.g. custom function calling evaluateSync). Allocate fresh.
+        return evaluate(ast, ctx, registry.bindings, createExecutionContext(), expression) as T
       }
       syncCtxInUse = true
       try {
         syncCtx.reset()
-        return evaluate(ast, context, registry.transforms, registry.functions, syncCtx, expression) as T
+        return evaluate(ast, ctx, registry.bindings, syncCtx, expression) as T
       } finally {
         syncCtxInUse = false
       }

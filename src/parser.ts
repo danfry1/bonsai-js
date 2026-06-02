@@ -317,7 +317,7 @@ export function parse(source: string, _depth = 0): ASTNode {
     // Number
     if (tok.type === 'Number') {
       advance()
-      const raw = tok.value.replace(/_/g, '')
+      const raw = tok.value.replace(/_/gu, '')
       return { type: 'NumberLiteral', value: Number(raw), start: tok.start, end: tok.end }
     }
 

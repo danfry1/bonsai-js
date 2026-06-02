@@ -96,7 +96,7 @@ export function isCursorInsideString(expression: string, cursor: number): boolea
   return inSingle || inDouble || (inTemplate && templateDepth === 0)
 }
 
-const TOKEN_RE = /\?\.|\.\.\.|\|>|\?\?|&&|\|\||[!=<>]=?|[+\-*/%]|\*\*|[.(){}[\],?:]|"(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|`(?:[^`\\$]|\\.|\$(?!\{))*`?|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?|[a-zA-Z_$][\w$]*/g
+const TOKEN_RE = /\?\.|\.\.\.|\|>|\?\?|&&|\|\||[!=<>]=?|[+\-*/%]|\*\*|[.(){}[\],?:]|"(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|`(?:[^`\\$]|\\.|\$(?!\{))*`?|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?|[a-zA-Z_$][\w$]*/gu
 
 function regexScan(expression: string, cursor: number): NonEofToken[] {
   const tokens: NonEofToken[] = []
@@ -121,8 +121,8 @@ function classifyToken(value: string, start: number, end: number): NonEofToken |
   if (value === 'true' || value === 'false') return { type: 'Boolean', value, start, end }
   if (value === 'null') return { type: 'Null', value, start, end }
   if (value === 'undefined') return { type: 'Undefined', value, start, end }
-  if (/^[a-zA-Z_$]/.test(value)) return { type: 'Identifier', value, start, end }
-  if (/^\d/.test(value)) return { type: 'Number', value, start, end }
+  if (/^[a-zA-Z_$]/u.test(value)) return { type: 'Identifier', value, start, end }
+  if (/^\d/u.test(value)) return { type: 'Number', value, start, end }
   if (value.startsWith('"') || value.startsWith("'")) return { type: 'String', value, start, end }
   if (value.startsWith('`')) return { type: 'TemplateLiteral', value, start, end }
   if (value.length === 1 && '(){}[],:?.'.includes(value)) return { type: 'Punctuation', value: value as PunctuationValue, start, end }

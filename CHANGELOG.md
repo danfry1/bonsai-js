@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Context-aware functions** (`addContextFunction`): register functions that receive the evaluation context as their first parameter (typed `Readonly<TCtx>`, passed by reference), enabling auth/permission/personalization patterns without threading context through expression arguments. Pure and context-aware functions share a single namespace; `isContextFunction(name)` introspects the kind.
+- **Generic context typing** (`bonsai<TCtx>()`): the factory is now generic over context type, with end-to-end type safety through `evaluate`, `evaluateSync`, `compile`, and `addContextFunction`. Backward compatible: defaults to `Record<string, unknown>` when unspecified.
+- New exported types: `ContextFunctionFn`, generic `BonsaiPlugin<TCtx>`, generic `CompiledExpression<TCtx>`, generic `BonsaiInstance<TCtx>`.
+- Internal: pure and context-aware functions share one tagged registry, and the cached `Bindings` snapshot consolidates transforms and that registry into a single object passed to the evaluator.
+
+### Resolves
+
+- #33: context access from registered functions.
+
+### Credits
+
+- Thanks to @jaenyf for raising #33 and contributing PR #34.
+
 ## [0.3.0] - 2026-03-21
 
 ### Added
@@ -58,11 +75,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bare dot identity lambda:** `. > 2` and `. * 10` now work as lambda shorthand for the current item itself, in both method calls and pipe transforms (e.g., `[1,2,3,4].filter(. > 2)`, `[1,2,3] |> map(. * 10)`)
 - Async-safe evaluation for all higher-order array methods — lambda predicates that return Promises are correctly resolved in both top-level and nested contexts via `evaluate()`
 - Documentation for array methods, lambda shorthand, and method chaining in README and website docs
-
-## [Unreleased]
-
-### Added
-
 - Deterministic property-based parser and evaluator invariant tests
 - Random fuzz coverage for malformed parser input
 - Adversarial regression tests for deep nesting, oversized arrays, nested blocked keys, and spread misuse

@@ -1,7 +1,8 @@
-import type { ASTNode, FunctionFn, ObjectProperty, TransformFn } from './types.js'
+import type { ASTNode, ObjectProperty } from './types.js'
+import type { Bindings } from './plugins.js'
 import type { ExecutionContext } from './execution-context.js'
 import { attachLocation } from './errors.js'
-import { type EvalEnv } from './evaluator.js'
+import type { EvalEnv } from './evaluator.js'
 import {
   accessMember,
   applyBinaryOp,
@@ -9,7 +10,7 @@ import {
   expandSpreadValue,
   getIdentifierName,
   getObjectLiteralKeyName,
-  resolveFunction,
+  resolveCallable,
   resolveTransform,
   validateMethodArgs,
   validateMethodCall,
@@ -20,12 +21,17 @@ type AsyncEvalEnv = EvalEnv
 export async function evaluateAsync(
   node: ASTNode,
   context: Record<string, unknown>,
-  transforms: Record<string, TransformFn>,
-  functions: Record<string, FunctionFn>,
+  bindings: Bindings,
   guard: ExecutionContext,
   source?: string,
 ): Promise<unknown> {
-  const env: AsyncEvalEnv = { ctx: context, tr: transforms, fn: functions, g: guard, s: source }
+  const env: AsyncEvalEnv = {
+    ctx: context,
+    tr: bindings.transforms,
+    fn: bindings.functions,
+    g: guard,
+    s: source,
+  }
   const result = await evalNodeAsync(node, env)
   guard.checkTimeout()
   return result
@@ -214,12 +220,16 @@ async function evalCallExpressionAsync(
 
   if (node.callee.type === 'Identifier') {
     try {
-      const func = resolveFunction(node.callee.name, fn)
+      const resolved = resolveCallable(node.callee.name, fn)
       const args: unknown[] = []
       for (const arg of node.args) {
         await pushCallArgumentAsync(args, arg, env)
       }
-      const result = await func(...args)
+      // Context functions receive the live evaluation context as their first
+      // argument (typed Readonly<TCtx> for intent; not copied or frozen).
+      const result = resolved.kind === 'context'
+        ? await resolved.fn(env.ctx, ...args)
+        : await resolved.fn(...args)
       g.checkTimeout()
       return result
     } catch (e) {

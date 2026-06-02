@@ -149,13 +149,13 @@ describe('sandbox hardening', () => {
   it('evaluateSync rejects Promise return from async functions', () => {
     const expr = bonsai()
     expr.addFunction('slow', async () => 'done')
-    expect(() => expr.evaluateSync('slow()')).toThrow(/synchronous function result/)
+    expect(() => expr.evaluateSync('slow()')).toThrow(/synchronous function result/u)
   })
 
   it('evaluateSync rejects Promise return from async transforms', () => {
     const expr = bonsai()
     expr.addTransform('asyncUpper', async (val: unknown) => (val as string).toUpperCase())
-    expect(() => expr.evaluateSync('"hello" |> asyncUpper')).toThrow(/synchronous transform result/)
+    expect(() => expr.evaluateSync('"hello" |> asyncUpper')).toThrow(/synchronous transform result/u)
   })
 
   it('sync Promise rejection errors identify the call kind and suggest evaluate()', () => {
@@ -163,9 +163,9 @@ describe('sandbox hardening', () => {
     expr.addFunction('asyncFn', async () => 1)
     expr.addTransform('asyncTx', async (v: unknown) => v)
 
-    expect(() => expr.evaluateSync('asyncFn()')).toThrow(/synchronous function result/)
-    expect(() => expr.evaluateSync('"x" |> asyncTx')).toThrow(/synchronous transform result/)
-    expect(() => expr.evaluateSync('asyncFn()')).toThrow(/evaluate\(\)/)
+    expect(() => expr.evaluateSync('asyncFn()')).toThrow(/synchronous function result/u)
+    expect(() => expr.evaluateSync('"x" |> asyncTx')).toThrow(/synchronous transform result/u)
+    expect(() => expr.evaluateSync('asyncFn()')).toThrow(/evaluate\(\)/u)
   })
 
   it('async lambdas correctly await async function calls', async () => {

@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const root = resolve(__dirname, '..')
+const scriptDir = dirname(fileURLToPath(import.meta.url))
+const root = resolve(scriptDir, '..')
 
 function writeLine(message: string): void {
   process.stdout.write(`${message}\n`)

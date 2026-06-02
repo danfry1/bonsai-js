@@ -7,7 +7,7 @@ import { bonsai, BonsaiTypeError } from '../src/index.js'
 function run(expr: string, context: Record<string, unknown> = {}) {
   const ast = parse(expr)
   const ec = new ExecutionContext(new SecurityPolicy())
-  return evaluate(ast, context, {}, {}, ec)
+  return evaluate(ast, context, { transforms: {}, functions: {} }, ec)
 }
 
 describe('evaluator - literals', () => {

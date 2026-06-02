@@ -55,7 +55,8 @@ expr.evaluateSync('`Hello ${name}!`', { name: 'world' }) // "Hello world!"
 - **Lambda predicates**: `.age >= 18` shorthand for `item => item.age >= 18`
 - **Template literals**: Backtick strings with `${expression}` interpolation
 - **Safe sandbox**: Blocks prototype access, enforces timeout/depth/array limits, own-property-only context lookup, null-prototype object literals, receiver-aware method validation, sync Promise guards
-- **Plugin system**: Extend with custom transforms and functions
+- **Plugin system**: Extend with custom transforms, pure functions, and context-aware functions
+- **End-to-end typed context**: `bonsai<AppContext>()` propagates the context type through evaluation, compilation, and context-aware function registration
 - **Standard library**: Modular stdlib for strings, arrays, math, types, dates
 
 ## Documentation

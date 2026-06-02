@@ -24,7 +24,7 @@ describe('overhead: literal 42', () => {
     compiled.evaluateSync({})
   })
   bench('raw evaluate (no cache lookup)', () => {
-    evaluate(ast, {}, transforms, functions, new ExecutionContext(policy))
+    evaluate(ast, {}, { transforms, functions }, new ExecutionContext(policy))
   })
   bench('baseline: just return 42', () => {
     const node = ast as { value: number }
@@ -41,7 +41,7 @@ describe('overhead: property access user.name', () => {
     compiled.evaluateSync(context)
   })
   bench('raw evaluate (no cache lookup)', () => {
-    evaluate(ast, context, {}, {}, new ExecutionContext(policy))
+    evaluate(ast, context, { transforms: {}, functions: {} }, new ExecutionContext(policy))
   })
 })
 
@@ -54,6 +54,6 @@ describe('overhead: comparison user.age >= 18 && user.verified', () => {
     compiled.evaluateSync(context)
   })
   bench('raw evaluate (no cache lookup)', () => {
-    evaluate(ast, context, {}, {}, new ExecutionContext(policy))
+    evaluate(ast, context, { transforms: {}, functions: {} }, new ExecutionContext(policy))
   })
 })

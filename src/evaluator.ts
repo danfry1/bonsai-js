@@ -1,4 +1,5 @@
-import type { ASTNode, FunctionFn, ObjectProperty, TransformFn } from './types.js'
+import type { ASTNode, ObjectProperty, RegisteredFunction, TransformFn } from './types.js'
+import type { Bindings } from './plugins.js'
 import type { ExecutionContext } from './execution-context.js'
 import { attachLocation, BonsaiTypeError } from './errors.js'
 import {
@@ -8,7 +9,7 @@ import {
   expandSpreadValue,
   getIdentifierName,
   getObjectLiteralKeyName,
-  resolveFunction,
+  resolveCallable,
   resolveTransform,
   validateMethodArgs,
   validateMethodCall,
@@ -28,7 +29,7 @@ function rejectPromise(value: unknown, kind: 'function' | 'method' | 'transform'
 export interface EvalEnv {
   ctx: Record<string, unknown>
   tr: Record<string, TransformFn>
-  fn: Record<string, FunctionFn>
+  fn: Record<string, RegisteredFunction>
   g: ExecutionContext
   s?: string
 }
@@ -36,12 +37,17 @@ export interface EvalEnv {
 export function evaluate(
   node: ASTNode,
   context: Record<string, unknown>,
-  transforms: Record<string, TransformFn>,
-  functions: Record<string, FunctionFn>,
+  bindings: Bindings,
   guard: ExecutionContext,
   source?: string,
 ): unknown {
-  return evalNode(node, { ctx: context, tr: transforms, fn: functions, g: guard, s: source })
+  return evalNode(node, {
+    ctx: context,
+    tr: bindings.transforms,
+    fn: bindings.functions,
+    g: guard,
+    s: source,
+  })
 }
 
 function evalNode(node: ASTNode, env: EvalEnv): unknown {
@@ -207,12 +213,18 @@ function evalCallExpression(node: Extract<ASTNode, { type: 'CallExpression' }>, 
 
   if (node.callee.type === 'Identifier') {
     try {
-      const func = resolveFunction(node.callee.name, fn)
+      const resolved = resolveCallable(node.callee.name, fn)
       const args: unknown[] = []
       for (const arg of node.args) {
         pushCallArgument(args, arg, env)
       }
-      return rejectPromise(func(...args), 'function', node.callee.name)
+      // Context functions receive the live evaluation context as their first
+      // argument. It is typed Readonly<TCtx> to signal read-only intent; bonsai
+      // does not copy or freeze it (see the context-aware functions docs).
+      const result = resolved.kind === 'context'
+        ? resolved.fn(env.ctx, ...args)
+        : resolved.fn(...args)
+      return rejectPromise(result, 'function', node.callee.name)
     } catch (e) {
       if (s) attachLocation(e, s, node.start, node.end)
       throw e
