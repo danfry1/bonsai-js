@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `maxStringLength` option on `bonsai(options)` and a `BonsaiSecurityError('MAX_STRING_LENGTH', ...)` error code.
 
+### Fixed
+
+- Async/sync parity for higher-order array methods (`map`, `filter`, `find`, `some`, `every`, `findIndex`, `flatMap`). Predicates now evaluate sequentially in the async evaluator, matching the synchronous one: `some`/`every`/`find`/`findIndex` short-circuit at the first decisive element, and `maxDepth` is no longer inflated by array length (an expression that succeeded with `evaluateSync` could previously throw a spurious `Maximum expression depth` error with `evaluate`).
+- Malformed numeric literals now raise a parse-time `ExpressionError` instead of silently evaluating to `NaN` or coercing: a base prefix or exponent with no digits (`1e`, `1e+`, `0x`, `0b`, `0o`), and misplaced numeric separators (`1_`, `1__0`, `0xff_`), which are rejected the way JavaScript rejects them.
+- Template interpolations containing string literals or nested template literals with braces (for example `` `${ "x}" }` `` or `` `${ `a}b` }` ``) now parse correctly instead of failing with an "Unterminated string"/"Unterminated template literal" error.
+
 ## [0.4.0] - 2026-06-02
 
 ### Added

@@ -713,13 +713,25 @@ export function parse(source: string, _depth = 0): ASTNode {
           const text = raw.slice(textStart, i)
           parts.push({ type: 'StringLiteral', value: text, start: tok.start, end: tok.end })
         }
-        // Find matching }
+        // Find matching }. Skip over string literals and nested template
+        // literals so that braces or quotes inside them (e.g. `${ "x}" }` or a
+        // nested `` `${ `a}b` }` ``) do not throw off the brace count.
         i += 2
         let depth = 1
         const exprStart = i
         while (i < raw.length && depth > 0) {
-          if (raw[i] === '{') depth++
-          else if (raw[i] === '}') depth--
+          const c = raw[i]
+          if (c === '"' || c === "'" || c === '`') {
+            i++ // opening quote / backtick
+            while (i < raw.length && raw[i] !== c) {
+              if (raw[i] === '\\') i++ // skip the escaped character
+              i++
+            }
+            i++ // closing quote / backtick
+            continue
+          }
+          if (c === '{') depth++
+          else if (c === '}') depth--
           if (depth > 0) i++
         }
         const exprSource = raw.slice(exprStart, i)

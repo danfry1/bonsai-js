@@ -258,6 +258,14 @@ async function pushCallArgumentAsync(args: unknown[], node: ASTNode, env: AsyncE
 // Async-safe higher-order array method evaluation. Native JS array methods
 // call predicates synchronously, but our lambdas may return Promises.
 // Returns { value } if handled, undefined if the method isn't higher-order.
+//
+// Predicates are awaited sequentially (one element fully resolves before the
+// next begins) so that this path matches the synchronous evaluator exactly:
+//   - depth/step accounting stays balanced per element (a concurrent fan-out
+//     would enter depth for every element before any exits, so maxDepth would
+//     scale with array length instead of nesting);
+//   - some/every/find/findIndex short-circuit at the first decisive element,
+//     so side effects and evaluation counts match native (and sync) semantics.
 async function evalAsyncArrayMethod(
   methodName: string,
   arr: unknown[],
@@ -265,39 +273,49 @@ async function evalAsyncArrayMethod(
 ): Promise<{ value: unknown } | undefined> {
   switch (methodName) {
     case 'filter': {
-      const results = arr.map(predicate)
-      const resolved = results.some(r => r instanceof Promise) ? await Promise.all(results) : results
-      return { value: arr.filter((_, i) => resolved[i]) }
+      const out: unknown[] = []
+      for (const item of arr) {
+        if (await predicate(item)) out.push(item)
+      }
+      return { value: out }
     }
     case 'map': {
-      const results = arr.map(predicate)
-      return { value: results.some(r => r instanceof Promise) ? await Promise.all(results) : results }
-    }
-    case 'find': {
-      const results = arr.map(predicate)
-      const resolved = results.some(r => r instanceof Promise) ? await Promise.all(results) : results
-      const idx = resolved.findIndex(Boolean)
-      return { value: idx >= 0 ? arr[idx] : undefined }
-    }
-    case 'some': {
-      const results = arr.map(predicate)
-      const resolved = results.some(r => r instanceof Promise) ? await Promise.all(results) : results
-      return { value: resolved.some(Boolean) }
-    }
-    case 'every': {
-      const results = arr.map(predicate)
-      const resolved = results.some(r => r instanceof Promise) ? await Promise.all(results) : results
-      return { value: resolved.every(Boolean) }
-    }
-    case 'findIndex': {
-      const results = arr.map(predicate)
-      const resolved = results.some(r => r instanceof Promise) ? await Promise.all(results) : results
-      return { value: resolved.findIndex(Boolean) }
+      const out: unknown[] = []
+      for (const item of arr) {
+        out.push(await predicate(item))
+      }
+      return { value: out }
     }
     case 'flatMap': {
-      const results = arr.map(predicate)
-      const resolved = results.some(r => r instanceof Promise) ? await Promise.all(results) : results
-      return { value: (resolved as unknown[]).flat() }
+      const out: unknown[] = []
+      for (const item of arr) {
+        out.push(await predicate(item))
+      }
+      return { value: out.flat() }
+    }
+    case 'find': {
+      for (const item of arr) {
+        if (await predicate(item)) return { value: item }
+      }
+      return { value: undefined }
+    }
+    case 'findIndex': {
+      for (let i = 0; i < arr.length; i++) {
+        if (await predicate(arr[i])) return { value: i }
+      }
+      return { value: -1 }
+    }
+    case 'some': {
+      for (const item of arr) {
+        if (await predicate(item)) return { value: true }
+      }
+      return { value: false }
+    }
+    case 'every': {
+      for (const item of arr) {
+        if (!(await predicate(item))) return { value: false }
+      }
+      return { value: true }
     }
     default:
       return undefined

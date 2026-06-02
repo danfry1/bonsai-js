@@ -26,6 +26,33 @@ function isHexDigit(ch: string): boolean {
   return isDigit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')
 }
 
+// A numeric separator `_` is only legal between two digits of the same radix.
+// The digit-consuming loops below accept `_` freely, so validate the produced
+// literal here to reject leading, trailing, or doubled separators (`1_`,
+// `1__0`, `0xff_`), which JS rejects and which Number() would otherwise coerce
+// silently (e.g. Number('0xff_') === 255, Number('1_') === NaN).
+const NUMERIC_SEPARATOR_PATTERNS = {
+  hex: /^0[xX][0-9a-fA-F]+(?:_[0-9a-fA-F]+)*$/u,
+  bin: /^0[bB][01]+(?:_[01]+)*$/u,
+  oct: /^0[oO][0-7]+(?:_[0-7]+)*$/u,
+  dec: /^\d+(?:_\d+)*(?:\.\d+(?:_\d+)*)?(?:[eE][+-]?\d+(?:_\d+)*)?$/u,
+} as const
+
+function checkNumericSeparators(
+  value: string,
+  kind: keyof typeof NUMERIC_SEPARATOR_PATTERNS,
+  source: string,
+  start: number,
+  end: number,
+): void {
+  if (!NUMERIC_SEPARATOR_PATTERNS[kind].test(value)) {
+    throw new ExpressionError(
+      `Invalid numeric literal "${value}": "_" separators must sit between digits`,
+      { source, start, end },
+    )
+  }
+}
+
 export function tokenize(source: string): Token[] {
   const tokens: Token[] = []
   let i = 0
@@ -46,24 +73,45 @@ export function tokenize(source: string): Token[] {
       // Hex: 0x...
       if (ch === '0' && i + 1 < source.length && (source[i + 1] === 'x' || source[i + 1] === 'X')) {
         i += 2
+        if (i >= source.length || !isHexDigit(source[i])) {
+          throw new ExpressionError('Invalid hexadecimal literal: expected at least one digit after "0x"', { source, start, end: i })
+        }
         while (i < source.length && (isHexDigit(source[i]) || source[i] === '_')) i++
-        tokens.push({ type: 'Number', value: source.slice(start, i), start, end: i })
+        {
+          const value = source.slice(start, i)
+          checkNumericSeparators(value, 'hex', source, start, i)
+          tokens.push({ type: 'Number', value, start, end: i })
+        }
         continue
       }
 
       // Binary: 0b...
       if (ch === '0' && i + 1 < source.length && (source[i + 1] === 'b' || source[i + 1] === 'B')) {
         i += 2
+        if (i >= source.length || (source[i] !== '0' && source[i] !== '1')) {
+          throw new ExpressionError('Invalid binary literal: expected at least one digit after "0b"', { source, start, end: i })
+        }
         while (i < source.length && (source[i] === '0' || source[i] === '1' || source[i] === '_')) i++
-        tokens.push({ type: 'Number', value: source.slice(start, i), start, end: i })
+        {
+          const value = source.slice(start, i)
+          checkNumericSeparators(value, 'bin', source, start, i)
+          tokens.push({ type: 'Number', value, start, end: i })
+        }
         continue
       }
 
       // Octal: 0o...
       if (ch === '0' && i + 1 < source.length && (source[i + 1] === 'o' || source[i + 1] === 'O')) {
         i += 2
+        if (i >= source.length || source[i] < '0' || source[i] > '7') {
+          throw new ExpressionError('Invalid octal literal: expected at least one digit after "0o"', { source, start, end: i })
+        }
         while (i < source.length && ((source[i] >= '0' && source[i] <= '7') || source[i] === '_')) i++
-        tokens.push({ type: 'Number', value: source.slice(start, i), start, end: i })
+        {
+          const value = source.slice(start, i)
+          checkNumericSeparators(value, 'oct', source, start, i)
+          tokens.push({ type: 'Number', value, start, end: i })
+        }
         continue
       }
 
@@ -74,14 +122,19 @@ export function tokenize(source: string): Token[] {
         while (i < source.length && (isDigit(source[i]) || source[i] === '_')) i++
       }
 
-      // Scientific notation: e/E followed by optional +/- and digits
+      // Scientific notation: e/E followed by optional +/- and at least one digit
       if (i < source.length && (source[i] === 'e' || source[i] === 'E')) {
         i++
         if (i < source.length && (source[i] === '+' || source[i] === '-')) i++
+        if (i >= source.length || !isDigit(source[i])) {
+          throw new ExpressionError('Invalid number: exponent has no digits', { source, start, end: i })
+        }
         while (i < source.length && (isDigit(source[i]) || source[i] === '_')) i++
       }
 
-      tokens.push({ type: 'Number', value: source.slice(start, i), start, end: i })
+      const value = source.slice(start, i)
+      checkNumericSeparators(value, 'dec', source, start, i)
+      tokens.push({ type: 'Number', value, start, end: i })
       continue
     }
 
@@ -190,6 +243,27 @@ export function tokenize(source: string): Token[] {
               }
               if (i < source.length) {
                 raw += source[i] // closing quote
+                i++
+              }
+              continue
+            }
+            // Skip nested template literals so their raw braces (and the braces
+            // of their own interpolations) do not throw off this brace count.
+            // The nested template is preserved verbatim and re-parsed later.
+            if (ic === '`') {
+              raw += ic
+              i++
+              while (i < source.length && source[i] !== '`') {
+                if (source[i] === '\\' && i + 1 < source.length) {
+                  raw += source[i] + source[i + 1]
+                  i += 2
+                  continue
+                }
+                raw += source[i]
+                i++
+              }
+              if (i < source.length) {
+                raw += source[i] // closing backtick
                 i++
               }
               continue
