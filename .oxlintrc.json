@@ -22,7 +22,6 @@
     "typescript/no-explicit-any": "error",
     "typescript/no-non-null-assertion": "off",
     "typescript/consistent-type-imports": "warn",
-    "typescript/method-signature-style": "off",
     "no-unsafe-function-type": "warn",
 
     "max-lines-per-function": "off",
