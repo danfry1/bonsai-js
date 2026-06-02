@@ -20,6 +20,8 @@ Requires [Bun](https://bun.sh/) and Node.js 22+.
 | `bun test:watch` | Run tests in watch mode |
 | `bun run test:coverage` | Run tests with coverage and enforce thresholds (also runs in CI) |
 | `bun run lint` | Lint with oxlint |
+| `bun run format` | Format with oxfmt |
+| `bun run format:check` | Check formatting without writing |
 | `bun run typecheck` | Type-check with tsc |
 | `bun run build` | Build with tsdown |
 | `bun run bench` | Run benchmarks |
@@ -31,7 +33,7 @@ Requires [Bun](https://bun.sh/) and Node.js 22+.
 2. Write or update tests for your change.
 3. Run the full quality suite before pushing:
    ```bash
-   bun run lint && bun run typecheck && bun test
+   bun run format:check && bun run lint && bun run typecheck && bun test
    ```
 4. Open a pull request against `main`.
 
@@ -39,7 +41,7 @@ Requires [Bun](https://bun.sh/) and Node.js 22+.
 
 - **TypeScript, ESM-only.** All source is in `src/`, tests in `tests/`.
 - **Linting:** [oxlint](https://oxc.rs/) with strict rules. Run `bun run lint` and fix all errors.
-- **Formatting:** [oxfmt](https://oxc.rs/) for consistent formatting.
+- **Formatting:** [oxfmt](https://oxc.rs/) for consistent formatting. Run `bun run format` before committing (CI runs `bun run format:check`).
 - **No runtime dependencies.** Do not add `dependencies` to package.json.
 
 ## Testing

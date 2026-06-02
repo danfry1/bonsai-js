@@ -44,11 +44,13 @@
     "bench:gate": "bun run scripts/perf-gate.ts",
     "check:package": "bun run build && bun run scripts/check-package.ts",
     "lint": "oxlint --deny-warnings src tests scripts",
+    "format": "oxfmt src tests scripts benchmarks tsdown.config.ts vitest.config.ts",
+    "format:check": "oxfmt --check src tests scripts benchmarks tsdown.config.ts vitest.config.ts",
     "knip": "knip",
     "typecheck": "tsc -p tsconfig.typecheck.json --noEmit",
     "build:website": "bun website/build.ts",
     "prepare": "test -n \"$CI\" || lefthook install",
-    "prepublishOnly": "bun run lint && bun run typecheck && bun run test && bun run bench:gate && bun run check:package",
+    "prepublishOnly": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run bench:gate && bun run check:package",
     "test:coverage": "vitest run --coverage"
   },
   "keywords": [
@@ -80,6 +82,7 @@
     "jexl": "2.3.0",
     "knip": "6.14.2",
     "lefthook": "2.1.8",
+    "oxfmt": "0.53.0",
     "oxlint": "1.67.0",
     "tsdown": "0.22.0",
     "typescript": "6.0.3",
