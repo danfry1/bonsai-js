@@ -12,6 +12,23 @@ function hasPromises(results: unknown[]): boolean {
 
 const LAMBDA_EXPECTED = 'a lambda or function callback (e.g. .field or . > value)'
 
+// Compare two strings by Unicode code point, deterministically and independent
+// of locale. String iteration yields whole code points (surrogate pairs as one
+// unit), so astral-plane characters order by their scalar value rather than by
+// the leading UTF-16 surrogate, which a plain `<` comparison would use.
+function compareCodePoints(a: string, b: string): number {
+  const ia = a[Symbol.iterator]()
+  const ib = b[Symbol.iterator]()
+  for (;;) {
+    const x = ia.next()
+    const y = ib.next()
+    if (x.done || y.done) return (x.done ? 0 : 1) - (y.done ? 0 : 1)
+    if (x.value !== y.value) {
+      return (x.value.codePointAt(0) ?? 0) - (y.value.codePointAt(0) ?? 0)
+    }
+  }
+}
+
 export const arrays: BonsaiPlugin = (expr) => {
   expr.addTransform('count', (val: unknown) => expectArray(val, 'count').length)
   expr.addTransform('first', (val: unknown) => expectArray(val, 'first')[0])
@@ -27,7 +44,12 @@ export const arrays: BonsaiPlugin = (expr) => {
     const arr = [...expectArray(val, 'sort')]
     return arr.sort((a, b) => {
       if (typeof a === 'number' && typeof b === 'number') return a - b
-      return String(a).localeCompare(String(b))
+      // Code-point comparison rather than localeCompare: deterministic across
+      // runtimes/locales, which matters for a rules engine that must behave
+      // identically everywhere. Iterating by code point (not the UTF-16
+      // code-unit `<`) keeps astral-plane characters ordered by their actual
+      // scalar value.
+      return compareCodePoints(String(a), String(b))
     })
   })
 

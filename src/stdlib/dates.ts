@@ -22,13 +22,18 @@ export const dates: BonsaiPlugin = (expr) => {
     const PAD_WIDTH = 2
     const pad = (n: number) => String(n).padStart(PAD_WIDTH, '0')
 
-    return fmt
-      .replace('YYYY', String(date.getUTCFullYear()))
-      .replace('MM', pad(date.getUTCMonth() + 1))
-      .replace('DD', pad(date.getUTCDate()))
-      .replace('HH', pad(date.getUTCHours()))
-      .replace('mm', pad(date.getUTCMinutes()))
-      .replace('ss', pad(date.getUTCSeconds()))
+    // Single global pass so every occurrence of a token is replaced (chained
+    // String.replace only replaces the first match) and tokens cannot interfere
+    // with each other's output.
+    const parts: Record<string, string> = {
+      YYYY: String(date.getUTCFullYear()),
+      MM: pad(date.getUTCMonth() + 1),
+      DD: pad(date.getUTCDate()),
+      HH: pad(date.getUTCHours()),
+      mm: pad(date.getUTCMinutes()),
+      ss: pad(date.getUTCSeconds()),
+    }
+    return fmt.replace(/YYYY|MM|DD|HH|mm|ss/gu, token => parts[token])
   })
 
   expr.addTransform('diffDays', (val: unknown, other: unknown) => {
