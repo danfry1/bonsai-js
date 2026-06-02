@@ -1,5 +1,6 @@
 import { suggest, BonsaiReferenceError, BonsaiSecurityError, BonsaiTypeError } from './errors.js'
 import { isMethodAllowedOn } from './safe-methods.js'
+import { coerceToString } from './coerce.js'
 import type { ExecutionContext } from './execution-context.js'
 import type {
   ASTNode,
@@ -10,10 +11,6 @@ import type {
 } from './types.js'
 
 type SafeMethod = (...args: unknown[]) => unknown
-
-function toPropertyKey(value: unknown): string {
-  return String(value)
-}
 
 export function applyBinaryOp(
   operator: BinaryExpressionOperator,
@@ -263,7 +260,7 @@ export function accessMember(
   guard: ExecutionContext,
 ): unknown {
   const key = computed
-    ? toPropertyKey(computedValue)
+    ? coerceToString(computedValue)
     : getIdentifierName(propertyNode, 'Expected identifier property')
   guard.checkNameAccess(key, 'member')
   return (object as Record<string, unknown>)?.[key]

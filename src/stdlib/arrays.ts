@@ -1,5 +1,6 @@
 import type { BonsaiPlugin } from '../types.js'
 import { BonsaiTypeError } from '../errors.js'
+import { coerceToString } from '../coerce.js'
 
 function expectArray(val: unknown, name: string): unknown[] {
   if (!Array.isArray(val)) throw new BonsaiTypeError(name, 'an array', val)
@@ -8,14 +9,6 @@ function expectArray(val: unknown, name: string): unknown[] {
 
 function hasPromises(results: unknown[]): boolean {
   return results.some((r) => r instanceof Promise)
-}
-
-// Coerce an arbitrary argument value to a string using JS default coercion.
-// Argument values originate from user expressions and may be anything; the
-// `unknown` parameter keeps the rule from narrowing to `{}` while preserving
-// the exact `String(value)` runtime semantics.
-function coerceToString(value: unknown): string {
-  return String(value)
 }
 
 const LAMBDA_EXPECTED = 'a lambda or function callback (e.g. .field or . > value)'
@@ -60,7 +53,7 @@ export const arrays: BonsaiPlugin = (expr) => {
       // identically everywhere. Iterating by code point (not the UTF-16
       // code-unit `<`) keeps astral-plane characters ordered by their actual
       // scalar value.
-      return compareCodePoints(String(a), String(b))
+      return compareCodePoints(coerceToString(a), coerceToString(b))
     })
   })
 
