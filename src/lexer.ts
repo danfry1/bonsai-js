@@ -46,6 +46,9 @@ export function tokenize(source: string): Token[] {
       // Hex: 0x...
       if (ch === '0' && i + 1 < source.length && (source[i + 1] === 'x' || source[i + 1] === 'X')) {
         i += 2
+        if (i >= source.length || !isHexDigit(source[i])) {
+          throw new ExpressionError('Invalid hexadecimal literal: expected at least one digit after "0x"', { source, start, end: i })
+        }
         while (i < source.length && (isHexDigit(source[i]) || source[i] === '_')) i++
         tokens.push({ type: 'Number', value: source.slice(start, i), start, end: i })
         continue
@@ -54,6 +57,9 @@ export function tokenize(source: string): Token[] {
       // Binary: 0b...
       if (ch === '0' && i + 1 < source.length && (source[i + 1] === 'b' || source[i + 1] === 'B')) {
         i += 2
+        if (i >= source.length || (source[i] !== '0' && source[i] !== '1')) {
+          throw new ExpressionError('Invalid binary literal: expected at least one digit after "0b"', { source, start, end: i })
+        }
         while (i < source.length && (source[i] === '0' || source[i] === '1' || source[i] === '_')) i++
         tokens.push({ type: 'Number', value: source.slice(start, i), start, end: i })
         continue
@@ -62,6 +68,9 @@ export function tokenize(source: string): Token[] {
       // Octal: 0o...
       if (ch === '0' && i + 1 < source.length && (source[i + 1] === 'o' || source[i + 1] === 'O')) {
         i += 2
+        if (i >= source.length || source[i] < '0' || source[i] > '7') {
+          throw new ExpressionError('Invalid octal literal: expected at least one digit after "0o"', { source, start, end: i })
+        }
         while (i < source.length && ((source[i] >= '0' && source[i] <= '7') || source[i] === '_')) i++
         tokens.push({ type: 'Number', value: source.slice(start, i), start, end: i })
         continue
@@ -74,10 +83,13 @@ export function tokenize(source: string): Token[] {
         while (i < source.length && (isDigit(source[i]) || source[i] === '_')) i++
       }
 
-      // Scientific notation: e/E followed by optional +/- and digits
+      // Scientific notation: e/E followed by optional +/- and at least one digit
       if (i < source.length && (source[i] === 'e' || source[i] === 'E')) {
         i++
         if (i < source.length && (source[i] === '+' || source[i] === '-')) i++
+        if (i >= source.length || !isDigit(source[i])) {
+          throw new ExpressionError('Invalid number: exponent has no digits', { source, start, end: i })
+        }
         while (i < source.length && (isDigit(source[i]) || source[i] === '_')) i++
       }
 
