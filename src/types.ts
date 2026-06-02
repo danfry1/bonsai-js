@@ -272,7 +272,20 @@ export type RegisteredFunction =
 export type BonsaiPlugin<TCtx extends BonsaiContext = Record<string, unknown>> =
   (instance: BonsaiInstance<TCtx>) => void
 
-/** Core Bonsai instance returned by `bonsai()`. */
+/**
+ * Core Bonsai instance returned by `bonsai()`.
+ *
+ * The members below are intentionally declared with method signatures rather
+ * than property signatures (so `oxlint`'s `typescript/method-signature-style`
+ * is disabled for this package). Method signatures are bivariant in their
+ * parameters, and that bivariance is load-bearing: it is what lets a plugin
+ * typed against a narrower context (`BonsaiPlugin<Minimal>`) apply to an
+ * instance with a wider context (`bonsai<Wider>()`), and lets an untyped
+ * plugin apply to a typed instance. Property signatures enforce strict
+ * contravariance, which rejects both of those documented affordances (because
+ * `TCtx` flows into the `context` parameter of `evaluate`/`evaluateSync`/
+ * `compile`). See the plugin-widening tests in `tests/context-functions*.ts`.
+ */
 export interface BonsaiInstance<TCtx extends BonsaiContext = Record<string, unknown>> {
   /** Register a plugin that extends this instance with transforms/functions. */
   use(plugin: BonsaiPlugin<TCtx>): this

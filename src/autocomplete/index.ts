@@ -456,10 +456,10 @@ function inferPipeInputType(
   onError?: ErrorHandler,
 ): InferredTypeName | undefined {
   const before = expression.slice(0, cursor)
-  const pipeMatch = before.match(/^(.*)\|>\s*\w*\s*$/su)
+  const pipeMatch = before.match(/^(?<input>.*)\|>\s*\w*\s*$/su)
   if (!pipeMatch) return undefined
 
-  const exprBefore = pipeMatch[1].trim()
+  const exprBefore = (pipeMatch.groups?.input ?? '').trim()
   if (!exprBefore) return undefined
 
   try {
