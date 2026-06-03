@@ -23,8 +23,16 @@ export {
   BonsaiTypeError,
   BonsaiSecurityError,
   BonsaiReferenceError,
+  isBonsaiError,
+  isBonsaiRuntimeError,
   formatError,
   formatBonsaiError,
+} from './errors.js'
+export type {
+  BonsaiError,
+  BonsaiRuntimeError,
+  BonsaiSecurityCode,
+  ErrorLocation,
 } from './errors.js'
 export { tokenize } from './lexer.js'
 export { parse } from './parser.js'
@@ -40,6 +48,7 @@ export type {
   BonsaiInstance,
   CompiledExpression,
   ValidationResult,
+  ValidationError,
   ExpressionReferences,
   BonsaiOptions,
   TransformFn,
