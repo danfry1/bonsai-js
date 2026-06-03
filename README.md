@@ -173,9 +173,10 @@ share a single namespace. Registering the same name with either method
 overwrites the prior registration, so re-registering a context-aware name with
 `addFunction` turns it back into a pure function (check `isContextFunction(name)`
 if the kind matters). Functions registered with `addFunction` never receive the
-context; reach for `addContextFunction` when a function needs it. Plugins typed
-against a minimal context requirement can still be applied to instances with a
-wider context shape.
+context; reach for `addContextFunction` when a function needs it. A plugin applies
+to any instance whose context provides what the plugin requires (see
+[Plugins](#plugins)); a context-agnostic plugin applies anywhere, whether your
+context generic is declared with `type` or `interface`.
 
 ### Editor validation
 
@@ -490,19 +491,46 @@ type FunctionFn = (...args: unknown[]) => unknown | Promise<unknown>
 
 ### Plugins
 
-Plugins are just functions that receive an `BonsaiInstance`.
+A plugin is a function that receives a `PluginRegistrar`: the registration surface
+(`use`, `addTransform`, `addFunction`, `addContextFunction`, and the `has`/`list`/`remove`
+helpers). It does not receive the evaluation methods, so a plugin cannot evaluate
+against a context it did not supply.
 
 ```ts
 import type { BonsaiPlugin } from 'bonsai-js'
 
-const currency: BonsaiPlugin = (expr) => {
-  expr.addTransform('usd', (value) => `$${Number(value).toFixed(2)}`)
-  expr.addFunction('discount', (price, pct) => Number(price) * (1 - Number(pct) / 100))
+const currency: BonsaiPlugin = (registrar) => {
+  registrar.addTransform('usd', (value) => `$${Number(value).toFixed(2)}`)
+  registrar.addFunction('discount', (price, pct) => Number(price) * (1 - Number(pct) / 100))
 }
 
 const expr = bonsai().use(currency)
 
 expr.evaluateSync('discount(price, 20) |> usd', { price: 100 }) // '$80.00'
+```
+
+A plugin's type parameter is the context it _requires_. It defaults to `object` (no
+requirement), so a context-agnostic plugin like the one above, and every stdlib plugin,
+applies to any instance regardless of its context type. A plugin that reads context via
+`addContextFunction` declares the fields it needs, and `.use()` accepts it only on
+instances whose context provides them. This is checked without casts whether your
+context is declared with `type` or `interface`:
+
+```ts
+import { arrays } from 'bonsai-js/stdlib'
+
+interface AppContext {
+  items: number[]
+}
+
+bonsai<AppContext>().use(arrays) // ok: arrays requires no context
+
+// A plugin that reads `tenantId` only applies where the context provides it.
+const tenantRules: BonsaiPlugin<{ tenantId: string }> = (r) =>
+  r.addContextFunction('tenant', (ctx) => ctx.tenantId)
+
+bonsai<{ tenantId: string; userId: string }>().use(tenantRules) // ok
+// bonsai<AppContext>().use(tenantRules)                         // type error: no tenantId
 ```
 
 Important note: custom transforms, functions, and plugins run as normal host JavaScript. Bonsai constrains the expression language, not the code you register into it.
