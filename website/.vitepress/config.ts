@@ -9,9 +9,6 @@ export default defineConfig({
   base: '/bonsai-js/',
   cleanUrls: true,
   lastUpdated: true,
-  // TEMPORARY: /playground and /how-it-works pages are added in later phases.
-  // Remove this once both pages exist (deploy/cleanup task).
-  ignoreDeadLinks: [/^\/playground/, /^\/how-it-works/],
   sitemap: { hostname: 'https://danfry1.github.io/bonsai-js/' },
   vite: {
     resolve: {
