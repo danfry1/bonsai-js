@@ -10,6 +10,8 @@ export interface ErrorLocation {
 
 /** Syntax error thrown during parsing. Contains source location and formatted caret display. */
 export class ExpressionError extends Error {
+  /** Literal discriminant: narrow a caught error with `switch (err.name)`. */
+  readonly name = 'ExpressionError'
   readonly rawMessage: string
   readonly start: number
   readonly end: number
@@ -19,7 +21,6 @@ export class ExpressionError extends Error {
   constructor(message: string, location: ErrorLocation, suggestion?: string) {
     const formatted = formatError(message, location, suggestion)
     super(formatted)
-    this.name = 'ExpressionError'
     this.rawMessage = message
     this.start = location.start
     this.end = location.end
@@ -30,6 +31,8 @@ export class ExpressionError extends Error {
 
 /** Runtime type error when a transform, function, or method receives an unexpected value type. */
 export class BonsaiTypeError extends Error {
+  /** Literal discriminant: narrow a caught error with `switch (err.name)`. */
+  readonly name = 'BonsaiTypeError'
   readonly transform: string
   readonly expected: string
   readonly received: string
@@ -43,28 +46,46 @@ export class BonsaiTypeError extends Error {
     else if (Array.isArray(value)) received = 'array'
     else received = typeof value
     super(`"${transform}" expects ${expected}, got ${received}`)
-    this.name = 'BonsaiTypeError'
     this.transform = transform
     this.expected = expected
     this.received = received
   }
 }
 
+/**
+ * Why a {@link BonsaiSecurityError} was raised. A closed set so consumers can
+ * branch on it exhaustively (e.g. surface a `TIMEOUT` differently from a
+ * `BLOCKED_PROPERTY`).
+ */
+export type BonsaiSecurityCode =
+  | 'BLOCKED_PROPERTY'
+  | 'PROPERTY_NOT_ALLOWED'
+  | 'PROPERTY_DENIED'
+  | 'METHOD_NOT_ALLOWED'
+  | 'MAX_DEPTH'
+  | 'MAX_ARRAY_LENGTH'
+  | 'MAX_STRING_LENGTH'
+  | 'TIMEOUT'
+
 /** Security violation: blocked property access, timeout, depth limit, or array size limit. */
 export class BonsaiSecurityError extends Error {
-  readonly code: string
+  /** Literal discriminant: narrow a caught error with `switch (err.name)`. */
+  readonly name = 'BonsaiSecurityError'
+  /** Which guard fired. See {@link BonsaiSecurityCode}. */
+  readonly code: BonsaiSecurityCode
   location?: ErrorLocation
   formatted?: string
 
-  constructor(code: string, message: string) {
+  constructor(code: BonsaiSecurityCode, message: string) {
     super(message)
-    this.name = 'BonsaiSecurityError'
     this.code = code
   }
 }
 
 /** Unknown transform, function, or method name. Includes a "did you mean?" suggestion when possible. */
 export class BonsaiReferenceError extends Error {
+  /** Literal discriminant: narrow a caught error with `switch (err.name)`. */
+  readonly name = 'BonsaiReferenceError'
   readonly identifier: string
   readonly kind: 'transform' | 'function' | 'method'
   readonly suggestion?: string
@@ -77,7 +98,6 @@ export class BonsaiReferenceError extends Error {
         ? `Unknown ${kind} "${identifier}". Did you mean "${suggestion}"?`
         : `Unknown ${kind} "${identifier}"`
     super(msg)
-    this.name = 'BonsaiReferenceError'
     this.identifier = identifier
     this.kind = kind
     this.suggestion = suggestion
@@ -86,6 +106,29 @@ export class BonsaiReferenceError extends Error {
 
 export type BonsaiRuntimeError = BonsaiTypeError | BonsaiSecurityError | BonsaiReferenceError
 export type BonsaiError = ExpressionError | BonsaiRuntimeError
+
+/**
+ * Type guard for any error Bonsai throws (parse or runtime). Use it in a `catch`
+ * to narrow `unknown` to {@link BonsaiError}, then switch on `error.name` or read
+ * the per-error fields.
+ */
+export function isBonsaiError(error: unknown): error is BonsaiError {
+  return (
+    error instanceof ExpressionError ||
+    error instanceof BonsaiTypeError ||
+    error instanceof BonsaiSecurityError ||
+    error instanceof BonsaiReferenceError
+  )
+}
+
+/** Type guard for the runtime subset (everything except parse-time {@link ExpressionError}). */
+export function isBonsaiRuntimeError(error: unknown): error is BonsaiRuntimeError {
+  return (
+    error instanceof BonsaiTypeError ||
+    error instanceof BonsaiSecurityError ||
+    error instanceof BonsaiReferenceError
+  )
+}
 
 function clampOffset(source: string, offset: number): number {
   return Math.max(0, Math.min(offset, source.length))

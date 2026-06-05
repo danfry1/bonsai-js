@@ -405,15 +405,20 @@ export interface ExpressionReferences {
   functions: string[]
 }
 
-/** Result of {@link BonsaiInstance.validate}. Discriminated on the `valid` field. */
+/**
+ * Result of {@link BonsaiInstance.validate}. Discriminated on the `valid` field:
+ * narrow with `if (result.valid)` to reach `references`/`ast`, or the `errors`.
+ */
 export type ValidationResult =
   | { valid: true; errors: []; ast: ASTNode; references: ExpressionReferences }
   | { valid: false; errors: ValidationError[] }
 
 /** A syntax error with position information from {@link BonsaiInstance.validate}. */
 export interface ValidationError {
+  /** Human-readable message without source context. */
   message: string
+  /** 1-based line/column of the error in the source expression. */
   position: { line: number; column: number }
-  suggestion?: string
-  formatted?: string
+  /** Message with source context and a caret pointing at the error. Always present. */
+  formatted: string
 }

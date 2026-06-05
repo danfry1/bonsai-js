@@ -578,34 +578,56 @@ import {
   BonsaiReferenceError,
   BonsaiSecurityError,
   BonsaiTypeError,
+  isBonsaiError,
+  isBonsaiRuntimeError,
   formatError,
   formatBonsaiError,
+} from 'bonsai-js'
+
+import type {
+  BonsaiError,
+  BonsaiRuntimeError,
+  BonsaiSecurityCode,
+  ErrorLocation,
 } from 'bonsai-js'
 ```
 
 Error classes:
 
-| Error | When | Useful fields |
-| --- | --- | --- |
-| `ExpressionError` | parse/syntax errors | `source`, `start`, `end`, `suggestion?` |
-| `BonsaiTypeError` | wrong runtime value type or sync/async mismatch | `transform`, `expected`, `received`, `location?`, `formatted?` |
-| `BonsaiReferenceError` | unknown transform/function/method | `kind`, `identifier`, `suggestion?`, `location?`, `formatted?` |
-| `BonsaiSecurityError` | blocked access or resource limit violation | `code`, `location?`, `formatted?` |
+| Error | `name` | When | Useful fields |
+| --- | --- | --- | --- |
+| `ExpressionError` | `'ExpressionError'` | parse/syntax errors | `source`, `start`, `end`, `suggestion?` |
+| `BonsaiTypeError` | `'BonsaiTypeError'` | wrong runtime value type or sync/async mismatch | `transform`, `expected`, `received`, `location?`, `formatted?` |
+| `BonsaiReferenceError` | `'BonsaiReferenceError'` | unknown transform/function/method | `kind`, `identifier`, `suggestion?`, `location?`, `formatted?` |
+| `BonsaiSecurityError` | `'BonsaiSecurityError'` | blocked access or resource limit violation | `code` (`BonsaiSecurityCode`), `location?`, `formatted?` |
 
-Example:
+Every class carries a literal `name`, so `isBonsaiError()` narrows a caught
+`unknown` to the `BonsaiError` union and you can switch on `name` exhaustively,
+with each branch narrowed to its specific fields:
 
 ```ts
 try {
-  expr.evaluateSync('name |> unknownTransform', { name: 'Alice' })
+  expr.evaluateSync(storedRule, ctx)
 } catch (error) {
-  if (error instanceof BonsaiReferenceError) {
-    console.error(error.identifier)
-    console.error(error.suggestion)
-    console.error(error.location)
-    console.error(error.formatted ?? formatBonsaiError(error))
+  if (!isBonsaiError(error)) throw error // not ours: rethrow
+  switch (error.name) {
+    case 'ExpressionError':
+      return reportSyntax(error.formatted) // start, end, source available
+    case 'BonsaiReferenceError':
+      return reportTypo(error.identifier, error.suggestion) // "did you mean?"
+    case 'BonsaiSecurityError':
+      return reportBlocked(error.code) // 'TIMEOUT' | 'BLOCKED_PROPERTY' | ...
+    case 'BonsaiTypeError':
+      return reportType(error.transform, error.expected, error.received)
   }
 }
 ```
+
+`isBonsaiRuntimeError()` narrows to the runtime subset (everything except
+parse-time `ExpressionError`). `BonsaiSecurityCode` is the closed set of reasons a
+`BonsaiSecurityError` can fire: `BLOCKED_PROPERTY`, `PROPERTY_NOT_ALLOWED`,
+`PROPERTY_DENIED`, `METHOD_NOT_ALLOWED`, `MAX_DEPTH`, `MAX_ARRAY_LENGTH`,
+`MAX_STRING_LENGTH`, `TIMEOUT`.
 
 `formatError()` formats a source span directly, and `formatBonsaiError()` formats a caught Bonsai runtime error using its attached location:
 

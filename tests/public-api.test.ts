@@ -15,6 +15,8 @@ describe('public API stability', () => {
       'evaluateExpression',
       'formatBonsaiError',
       'formatError',
+      'isBonsaiError',
+      'isBonsaiRuntimeError',
       'parse',
       'tokenize',
     ])
