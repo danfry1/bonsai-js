@@ -1,21 +1,122 @@
+/* ──────────────────────────────────────────────────────────────
+   Bonsai theme — refined VitePress.
+   A tuned bonsai-green palette, a calmer type scale, brand-aligned
+   callouts, and styled reference tables. Keeps the familiar docs
+   structure; just polishes it.
+   ────────────────────────────────────────────────────────────── */
+
+/* Brand palette ------------------------------------------------- */
 :root {
-  --vp-c-brand-1: #3fae6e;
-  --vp-c-brand-2: #34995f;
-  --vp-c-brand-3: #2c8452;
-  --vp-c-brand-soft: rgba(63, 174, 110, 0.16);
+  /* Darker green for links/inline-code so they read on white. */
+  --vp-c-brand-1: #1f8a50;
+  --vp-c-brand-2: #2c8452;
+  --vp-c-brand-3: #3fae6e;
+  --vp-c-brand-soft: rgba(63, 174, 110, 0.14);
 
   --vp-home-hero-name-color: transparent;
-  --vp-home-hero-name-background: linear-gradient(120deg, #3fae6e, #7ee0a5);
+  --vp-home-hero-name-background: linear-gradient(120deg, #2c8452 8%, #5fc98a);
+
+  /* Tip callouts adopt the brand tint; warning/danger keep their
+     conventional amber/red so severity stays legible. */
+  --vp-custom-block-tip-border: transparent;
+  --vp-custom-block-tip-bg: var(--vp-c-brand-soft);
+  --vp-custom-block-tip-code-bg: rgba(63, 174, 110, 0.08);
 }
 
 .dark {
   --vp-c-bg: #0a0a0f;
   --vp-c-bg-alt: #111118;
+  --vp-c-bg-soft: #14141d;
+  --vp-c-bg-elv: #14141d;
+  /* Brighter greens for contrast on the near-black background. */
   --vp-c-brand-1: #5fc98a;
   --vp-c-brand-2: #4cbb79;
   --vp-c-brand-3: #3fae6e;
 }
 
-.vp-doc code {
+/* Typography ---------------------------------------------------- */
+.vp-doc h1 {
+  letter-spacing: -0.02em;
+}
+
+.vp-doc h2 {
+  margin-top: 2.75rem;
+  padding-top: 1.5rem;
+  letter-spacing: -0.01em;
+  border-top: 1px solid var(--vp-c-divider);
+}
+
+.vp-doc h3 {
+  margin-top: 2rem;
+  letter-spacing: -0.01em;
+}
+
+/* Inline code reads as brand-tinted, with a soft chip background. */
+.vp-doc :not(pre) > code {
   color: var(--vp-c-brand-1);
+  background-color: var(--vp-c-brand-soft);
+  font-weight: 500;
+}
+
+/* Code blocks --------------------------------------------------- */
+.vp-doc div[class*='language-'] {
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 10px;
+}
+
+/* Reference tables ---------------------------------------------- */
+/* The docs lean on dense "Expression / Result / Context" tables;
+   give them real structure instead of bare rules. */
+.vp-doc table {
+  display: table;
+  width: 100%;
+  margin: 1.25rem 0;
+  border-collapse: collapse;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 14px;
+}
+
+.vp-doc tr {
+  background: transparent;
+  border: none;
+  transition: background-color 0.15s ease;
+}
+
+.vp-doc th {
+  background: var(--vp-c-bg-soft);
+  color: var(--vp-c-text-2);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.vp-doc th,
+.vp-doc td {
+  border: none;
+  border-bottom: 1px solid var(--vp-c-divider);
+  padding: 10px 16px;
+}
+
+.vp-doc tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.vp-doc tbody tr:hover {
+  background: var(--vp-c-bg-soft);
+}
+
+/* First column of reference tables is usually the expression. */
+.vp-doc td:first-child code {
+  white-space: nowrap;
+}
+
+/* Keep tables usable on narrow screens. */
+@media (max-width: 640px) {
+  .vp-doc table {
+    display: block;
+    overflow-x: auto;
+  }
 }
