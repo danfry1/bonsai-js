@@ -13,7 +13,7 @@ Operators cover math, comparison, branching, and membership tests. The rules are
 
 | Expression | Result | Context / Note |
 |---|---|---|
-| `basePrice + addOnPrice * seats` | `85` | `{ basePrice: 49, addOnPrice: 12, seats: 3 }` — `*` runs before `+` |
+| `basePrice + addOnPrice * seats` | `85` | `{ basePrice: 49, addOnPrice: 12, seats: 3 }` (`*` runs before `+`) |
 | `2 ** 10` | `1024` | exponentiation |
 
 ## Comparison & equality

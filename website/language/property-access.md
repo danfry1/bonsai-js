@@ -23,7 +23,7 @@ Use `?.` when you want to say, directly in the expression, that a missing branch
 
 | Expression | Result | Note |
 |---|---|---|
-| `customer?.billing?.country` | `undefined` | `{ customer: null }` — no error thrown |
+| `customer?.billing?.country` | `undefined` | `{ customer: null }` (no error thrown) |
 | `customer?.billing?.country ?? "GB"` | `"GB"` | combine with `??` for fallbacks |
 | `messages?.[locale] ?? messages?.en` | `"Bonjour"` | optional chaining also works with computed keys |
 
