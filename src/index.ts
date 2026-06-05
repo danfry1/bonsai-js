@@ -37,6 +37,7 @@ export type {
   PolicySnapshot,
   ResolveResult,
   BonsaiPlugin,
+  PluginRegistrar,
   BonsaiInstance,
   CompiledExpression,
   ValidationResult,
@@ -203,6 +204,8 @@ export function bonsai<TCtx extends BonsaiContext = Record<string, unknown>>(
 
   const instance: BonsaiInstance<TCtx> = {
     use(plugin) {
+      // The instance is a `PluginRegistrar<TCtx>` (BonsaiInstance extends it), so
+      // the plugin receives exactly the registration surface it asked for. No cast.
       plugin(instance)
       return instance
     },

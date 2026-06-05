@@ -290,74 +290,108 @@ export type RegisteredFunction =
   | { kind: 'pure'; fn: FunctionFn }
   | { kind: 'context'; fn: ContextFunctionFn }
 
-/** A plugin receives a Bonsai instance and extends it with transforms or functions. */
-export type BonsaiPlugin<TCtx extends BonsaiContext = Record<string, unknown>> = (
-  instance: BonsaiInstance<TCtx>,
-) => void
-
 /**
- * Core Bonsai instance returned by `bonsai()`.
+ * The extension surface handed to a {@link BonsaiPlugin}: everything needed to
+ * register transforms and functions (and to compose other plugins via
+ * {@link PluginRegistrar.use}), but deliberately *not* the context-consuming
+ * members (`evaluate`, `evaluateSync`, `compile`).
  *
- * The members below are intentionally declared with method signatures rather
- * than property signatures (so `oxlint`'s `typescript/method-signature-style`
- * is disabled for this package). Method signatures are bivariant in their
- * parameters, and that bivariance is load-bearing: it is what lets a plugin
- * typed against a narrower context (`BonsaiPlugin<Minimal>`) apply to an
- * instance with a wider context (`bonsai<Wider>()`), and lets an untyped
- * plugin apply to a typed instance. Property signatures enforce strict
- * contravariance, which rejects both of those documented affordances (because
- * `TCtx` flows into the `context` parameter of `evaluate`/`evaluateSync`/
- * `compile`). See the plugin-widening tests in `tests/context-functions*.ts`.
+ * Omitting those is what makes this interface **covariant** in `TCtx`: the only
+ * place `TCtx` appears is the `ctx` parameter of an {@link addContextFunction}
+ * callback (an input of an input). A registrar for a wider context is therefore
+ * usable wherever a registrar for a narrower one is expected, which is exactly
+ * what lets {@link PluginRegistrar.use} accept a plugin whose context
+ * requirement `TCtx` satisfies, soundly and without casts, for contexts declared
+ * with either `type` or `interface`.
+ *
+ * The `TCtx`-bearing members are declared as property signatures so their
+ * variance is exact, rather than the bivariance TypeScript grants to method
+ * signatures.
  */
-export interface BonsaiInstance<TCtx extends BonsaiContext = Record<string, unknown>> {
-  /** Register a plugin that extends this instance with transforms/functions. */
-  use(plugin: BonsaiPlugin<TCtx>): this
+export interface PluginRegistrar<TCtx extends BonsaiContext = Record<string, unknown>> {
+  /**
+   * Apply another plugin. Accepts any plugin whose required context `TCtx`
+   * satisfies: a plugin written for this exact context, a context-agnostic
+   * plugin (`BonsaiPlugin`, i.e. `BonsaiPlugin<object>`), or one written against
+   * any context that `TCtx` is assignable to. A plugin that requires a field
+   * this context does not provide is a type error.
+   */
+  use: (plugin: BonsaiPlugin<TCtx>) => this
   /** Register a named transform for use with the pipe operator (`|>`). */
-  addTransform(name: string, fn: TransformFn): this
+  addTransform: (name: string, fn: TransformFn) => this
   /** Register a named function callable as `name(args)` in expressions. */
-  addFunction(name: string, fn: FunctionFn): this
+  addFunction: (name: string, fn: FunctionFn) => this
   /**
    * Register a context-aware function callable as `name(args)` in expressions.
    * The function receives the live evaluation context as its first parameter
    * (typed `Readonly<TCtx>` for read-only intent; passed by reference, not
    * copied or frozen). Shares a namespace with {@link addFunction}: registering
-   * the same name with either method overwrites the previous registration.
+   * the same name with either overwrites the previous registration.
+   *
+   * The callback may read any subset of `TCtx`; reading a field `TCtx` does not
+   * declare is a type error, so a function can never observe context the
+   * evaluator is not guaranteed to supply.
    */
-  addContextFunction(name: string, fn: ContextFunctionFn<TCtx>): this
+  addContextFunction: (name: string, fn: ContextFunctionFn<TCtx>) => this
   /** Remove a previously registered transform. Returns true if it existed. */
-  removeTransform(name: string): boolean
+  removeTransform: (name: string) => boolean
   /** Remove a previously registered function (pure or context-aware). Returns true if it existed. */
-  removeFunction(name: string): boolean
+  removeFunction: (name: string) => boolean
   /** Check whether a transform with the given name is registered. */
-  hasTransform(name: string): boolean
+  hasTransform: (name: string) => boolean
   /** Check whether a function (pure or context-aware) with the given name is registered. */
-  hasFunction(name: string): boolean
+  hasFunction: (name: string) => boolean
   /** Check whether a function with the given name was registered via {@link addContextFunction}. */
-  isContextFunction(name: string): boolean
+  isContextFunction: (name: string) => boolean
   /** List all registered transform names. */
-  listTransforms(): string[]
+  listTransforms: () => string[]
   /** List all registered function names (both pure and context-aware). */
-  listFunctions(): string[]
+  listFunctions: () => string[]
+}
+
+/**
+ * A plugin extends an instance with transforms and functions. It receives a
+ * {@link PluginRegistrar}, never the full instance, so it cannot evaluate
+ * against a context it did not supply.
+ *
+ * `TCtx` is the context the plugin *requires* (the fields its context functions
+ * read). It defaults to `object`, the top of the context lattice that every
+ * context satisfies, so a plugin registering only transforms/pure functions is
+ * context-agnostic and applies to any instance.
+ */
+export type BonsaiPlugin<TCtx extends BonsaiContext = object> = (
+  registrar: PluginRegistrar<TCtx>,
+) => void
+
+/**
+ * Core Bonsai instance returned by `bonsai()`. Extends {@link PluginRegistrar}
+ * with the context-consuming members plus instance-level utilities. The
+ * context-bearing members are property signatures so their context parameter is
+ * checked with strict (sound) variance.
+ */
+export interface BonsaiInstance<
+  TCtx extends BonsaiContext = Record<string, unknown>,
+> extends PluginRegistrar<TCtx> {
   /** Returns a read-only snapshot of the security policy for autocomplete filtering. */
-  getPolicy(): PolicySnapshot
+  getPolicy: () => PolicySnapshot
   /** Clear the compiled expression and AST caches. */
-  clearCache(): void
+  clearCache: () => void
   /** Pre-compile an expression for repeated evaluation. */
-  compile(expression: string): CompiledExpression<TCtx>
+  compile: (expression: string) => CompiledExpression<TCtx>
   /** Evaluate an expression asynchronously. Required when transforms/functions are async. */
-  evaluate<T = unknown>(expression: string, ...args: EvaluationContextArgs<TCtx>): Promise<T>
+  evaluate: <T = unknown>(expression: string, ...args: EvaluationContextArgs<TCtx>) => Promise<T>
   /** Evaluate an expression synchronously. Throws if a transform/function returns a Promise. */
-  evaluateSync<T = unknown>(expression: string, ...args: EvaluationContextArgs<TCtx>): T
+  evaluateSync: <T = unknown>(expression: string, ...args: EvaluationContextArgs<TCtx>) => T
   /** Check if an expression is syntactically valid without evaluating it. */
-  validate(expression: string): ValidationResult
+  validate: (expression: string) => ValidationResult
 }
 
 /** A pre-compiled expression that can be evaluated repeatedly with different contexts. */
 export interface CompiledExpression<TCtx extends BonsaiContext = Record<string, unknown>> {
   /** Evaluate asynchronously. Required when transforms/functions are async. */
-  evaluate<T = unknown>(...args: EvaluationContextArgs<TCtx>): Promise<T>
+  evaluate: <T = unknown>(...args: EvaluationContextArgs<TCtx>) => Promise<T>
   /** Evaluate synchronously. Throws if a transform/function returns a Promise. */
-  evaluateSync<T = unknown>(...args: EvaluationContextArgs<TCtx>): T
+  evaluateSync: <T = unknown>(...args: EvaluationContextArgs<TCtx>) => T
   /** The optimized AST after constant folding and dead branch elimination. */
   readonly ast: ASTNode
   /** The original expression string. */
