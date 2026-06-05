@@ -391,7 +391,7 @@
             the whole pipeline -- and it all runs live in the Playground.
           </p>
           <div class="hiw-cta-actions">
-            <a href="./playground.html" class="cta-btn">Open Playground</a>
+            <a href="/bonsai-js/playground" class="cta-btn">Open Playground</a>
             <a
               href="https://github.com/danfry1/bonsai-js"
               class="cta-btn secondary"
