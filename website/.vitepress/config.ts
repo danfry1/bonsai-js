@@ -17,6 +17,8 @@ export default defineConfig({
     ['meta', { property: 'og:image', content: 'https://danfry1.github.io/bonsai-js/og-card.png' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
     ['meta', { name: 'twitter:image', content: 'https://danfry1.github.io/bonsai-js/og-card.png' }],
+    ['meta', { property: 'og:title', content: 'Bonsai — Safe Expressions for Rules, Filters, and Templates' }],
+    ['meta', { name: 'twitter:title', content: 'Bonsai — Safe Expressions for Rules, Filters, and Templates' }],
   ],
   themeConfig: {
     search: { provider: 'local' },

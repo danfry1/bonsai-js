@@ -51,6 +51,7 @@
     "dev:website": "vitepress dev website",
     "build:website": "bun website/build.ts",
     "build:website:vitepress": "vitepress build website",
+    "preview:website": "vitepress preview website",
     "prepare": "test -n \"$CI\" || lefthook install",
     "prepublishOnly": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run bench:gate && bun run check:package",
     "test:coverage": "vitest run --coverage"
