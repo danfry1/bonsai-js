@@ -27,7 +27,7 @@ bun add bonsai-js
 npm install bonsai-js
 ```
 
-[npm](https://www.npmjs.com/package/bonsai-js) · [Playground](https://danfry1.github.io/bonsai-js/playground.html) · [Docs](https://danfry1.github.io/bonsai-js/docs.html)
+[npm](https://www.npmjs.com/package/bonsai-js) · [Playground](https://danfry1.github.io/bonsai-js/playground) · [Docs](https://danfry1.github.io/bonsai-js/guide/)
 
 ## When to use it
 
