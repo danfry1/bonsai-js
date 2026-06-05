@@ -4,3 +4,5 @@ dist
 website/*.bundle.js
 .worktrees
 coverage
+website/.vitepress/dist
+website/.vitepress/cache
