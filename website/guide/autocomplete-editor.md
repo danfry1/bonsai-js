@@ -61,7 +61,7 @@ function applyCompletion(input, completion, replaceFrom) {
 
 ## Monaco Editor
 
-For Monaco, register a completion provider that maps Bonsai completions to Monaco's `CompletionItem` format.
+The [Playground](/playground) shows a full editor integration in action. For Monaco, register a completion provider that maps Bonsai completions to Monaco's `CompletionItem` format.
 
 ```ts
 const kindMap = {

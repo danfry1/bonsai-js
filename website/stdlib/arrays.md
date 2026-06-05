@@ -24,7 +24,7 @@ expr.use(arrays)
 
 ## Higher-order transforms
 
-These accept [lambda predicates](/guide/plugins) as arguments for filtering, mapping, and searching.
+These accept [lambda predicates](/language/lambdas) as arguments for filtering, mapping, and searching.
 
 | Transform | Example | Result |
 |---|---|---|
