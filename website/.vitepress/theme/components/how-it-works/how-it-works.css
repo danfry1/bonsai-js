@@ -30,6 +30,13 @@
   color: var(--text-primary);
 }
 
+/* Headings need an explicit line-height: the old global styles.css that set
+   one was dropped in the port, and VitePress's base leaves it too tight, so
+   wrapped headings (like the hero title) overlap without this. */
+.hiw-root :is(h1, h2, h3, h4) {
+  line-height: 1.2;
+}
+
 /* Layout container (ported from the old global .container) */
 .hiw-root .container {
   max-width: 1200px;
@@ -95,6 +102,7 @@
 
 .hiw-hero h1 {
   font-size: 3rem;
+  line-height: 1.15;
   margin-bottom: 1.25rem;
 }
 
