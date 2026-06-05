@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Redirecting… — Bonsai Docs</title>
+  <link rel="canonical" href="https://danfry1.github.io/bonsai-js/guide/">
+  <script>
+    (function () {
+      var base = '/bonsai-js/';
+      var map = {
+        'installation': 'guide/install', 'common-tasks': 'guide/',
+        'quick-start': 'guide/quick-start', 'core-concepts': 'guide/mental-model',
+        'literals': 'language/literals', 'operators': 'language/operators',
+        'property-access': 'language/property-access', 'pipes': 'language/pipe',
+        'collections': 'language/collections', 'templates': 'language/templates',
+        'lambdas': 'language/lambdas', 'api-bonsai': 'api/bonsai',
+        'api-evaluate': 'api/evaluate', 'api-compile': 'api/compile',
+        'api-extending': 'api/extending', 'api-instance-methods': 'api/instance-methods',
+        'api-evaluate-expression': 'api/evaluate-expression', 'api-errors': 'api/errors',
+        'stdlib-strings': 'stdlib/strings', 'stdlib-arrays': 'stdlib/arrays',
+        'stdlib-math': 'stdlib/math', 'stdlib-types': 'stdlib/types',
+        'stdlib-dates': 'stdlib/dates', 'stdlib-all': 'stdlib/all',
+        'guide-plugins': 'guide/plugins', 'guide-safety': 'guide/safety',
+        'guide-performance': 'guide/performance', 'autocomplete-setup': 'guide/autocomplete-setup',
+        'autocomplete-api': 'guide/autocomplete-api', 'autocomplete-editor': 'guide/autocomplete-editor',
+        'autocomplete-security': 'guide/autocomplete-security'
+      };
+      var hash = (location.hash || '').replace('#', '');
+      var dest = map[hash] || 'guide/';
+      location.replace(base + dest);
+    })();
+  </script>
+  <meta http-equiv="refresh" content="0; url=./guide/">
+</head>
+<body>Redirecting to the <a href="./guide/">Bonsai guide</a>…</body>
+</html>
