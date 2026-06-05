@@ -559,7 +559,7 @@ onMounted(() => {
   }
 
   function escapeHtml(s: string): string {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   }
 
   exprInput.addEventListener('scroll', () => {
@@ -1122,13 +1122,13 @@ onMounted(() => {
 
     if (!paramExpr) return false
 
-    exprInput.value = decodeURIComponent(paramExpr)
+    exprInput.value = paramExpr
     ctxVars = []
     nextVarId = 1
 
     if (paramCtx) {
       try {
-        const parsed = JSON.parse(decodeURIComponent(paramCtx))
+        const parsed = JSON.parse(paramCtx)
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
           for (const [k, v] of Object.entries(parsed)) {
             ctxVars.push({ id: nextVarId++, name: k, value: JSON.stringify(v) })
