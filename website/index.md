@@ -7,7 +7,7 @@ hero:
   text: Safe expressions for rules, filters, and templates.
   tagline: A constrained expression language for pricing rules, search filters, workflow conditions, and user-authored logic. Replace fragile eval()-style glue with typed errors, cacheable compilation, and real sandbox controls.
   image:
-    src: /logo.svg
+    src: /logo.png
     alt: Bonsai
   actions:
     - theme: brand
