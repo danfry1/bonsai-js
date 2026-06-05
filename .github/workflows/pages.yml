@@ -36,7 +36,9 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      - name: Build website bundles
+      - run: bun install --frozen-lockfile
+
+      - name: Build website
         run: bun run build:website
 
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
