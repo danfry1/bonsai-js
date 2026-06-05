@@ -1,7 +1,75 @@
 /* =============================================
-   How It Works -- Page-specific styles
-   Relies on base styles from styles.css
+   How It Works — page-specific styles
+   Ported from the legacy website/how-it-works.css.
+   Design tokens are mapped to VitePress theme tokens on .hiw-root.
    ============================================= */
+
+/* ── Theme variable mapping (fall back to VitePress tokens) ── */
+.hiw-root {
+  --bg-page: var(--vp-c-bg);
+  --bg-surface: var(--vp-c-bg-soft);
+  --bg-input: var(--vp-c-bg-alt);
+  --border: var(--vp-c-divider);
+  --border-mid: var(--vp-c-divider);
+  --border-strong: var(--vp-c-divider);
+  --border-stronger: var(--vp-c-text-3);
+  --text-primary: var(--vp-c-text-1);
+  --text-secondary: var(--vp-c-text-2);
+  --text-on-accent: var(--vp-c-white, #fff);
+  --accent: var(--vp-c-brand-1);
+  --accent-dark: var(--vp-c-brand-1);
+  --accent-darker: var(--vp-c-brand-2);
+  --accent-bg: var(--vp-c-brand-soft);
+  --accent-bg-strong: var(--vp-c-brand-soft);
+  --accent-border: var(--vp-c-brand-1);
+  --accent-border-strong: var(--vp-c-brand-1);
+}
+
+/* Page wrapper */
+.hiw-root {
+  color: var(--text-primary);
+}
+
+/* Layout container (ported from the old global .container) */
+.hiw-root .container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* CTA buttons (ported from the old global .cta-btn) */
+.hiw-root .cta-btn {
+  display: inline-block;
+  background: var(--accent-dark);
+  color: var(--text-on-accent);
+  font-weight: 600;
+  padding: 14px 32px;
+  border-radius: 8px;
+  font-size: 1rem;
+  transition: background 0.2s ease, transform 0.2s ease;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+}
+
+.hiw-root .cta-btn.secondary {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-stronger);
+  color: var(--text-primary);
+}
+
+.hiw-root .cta-btn:hover {
+  background: var(--accent-darker);
+  transform: translateY(-1px);
+  text-decoration: none;
+  color: var(--text-on-accent);
+}
+
+.hiw-root .cta-btn.secondary:hover {
+  color: var(--text-on-accent);
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
 
 /* Section layout */
 .hiw-section {
@@ -651,7 +719,7 @@
   flex-wrap: wrap;
 }
 
-/* Scroll reveal -- reduced motion override */
+/* Scroll reveal — reduced motion override */
 @media (prefers-reduced-motion: reduce) {
   .hiw-layout,
   .hiw-section.visible .hiw-layout {
