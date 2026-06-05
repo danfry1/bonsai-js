@@ -1,3 +1,4 @@
+import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
@@ -12,6 +13,15 @@ export default defineConfig({
   // Remove this once both pages exist (deploy/cleanup task).
   ignoreDeadLinks: [/^\/playground/, /^\/how-it-works/],
   sitemap: { hostname: 'https://danfry1.github.io/bonsai-js/' },
+  vite: {
+    resolve: {
+      alias: {
+        'bonsai-src': fileURLToPath(new URL('../../src/index.ts', import.meta.url)),
+        'bonsai-stdlib': fileURLToPath(new URL('../../src/stdlib/index.ts', import.meta.url)),
+        'bonsai-autocomplete': fileURLToPath(new URL('../../src/autocomplete/index.ts', import.meta.url)),
+      },
+    },
+  },
   head: [
     ['link', { rel: 'icon', href: '/bonsai-js/logo.png', type: 'image/png' }],
     ['meta', { name: 'theme-color', content: '#0a0a0f' }],
