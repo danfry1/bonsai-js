@@ -48,7 +48,9 @@
     "format:check": "oxfmt --check src tests scripts benchmarks tsdown.config.ts vitest.config.ts",
     "knip": "knip",
     "typecheck": "tsc -p tsconfig.typecheck.json --noEmit",
-    "build:website": "bun website/build.ts",
+    "dev:website": "vitepress dev website",
+    "build:website": "vitepress build website",
+    "preview:website": "vitepress preview website",
     "prepare": "test -n \"$CI\" || lefthook install",
     "prepublishOnly": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run bench:gate && bun run check:package",
     "test:coverage": "vitest run --coverage"
@@ -87,6 +89,7 @@
     "oxlint-tsgolint": "0.23.0",
     "tsdown": "0.22.0",
     "typescript": "6.0.3",
+    "vitepress": "1.6.4",
     "vitest": "4.1.7"
   },
   "overrides": {
