@@ -1,45 +1,95 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <linearGradient id="foliage" x1="0" y1="0" x2="0.4" y2="1">
-      <stop offset="0%" stop-color="#4ade80"/>
-      <stop offset="100%" stop-color="#16a34a"/>
+    <linearGradient id="pad-back" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#16a34a"/>
+      <stop offset="100%" stop-color="#0d6630"/>
     </linearGradient>
-    <linearGradient id="trunk" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#9b7650"/>
+    <linearGradient id="pad-front" x1="0.2" y1="0" x2="0.7" y2="1">
+      <stop offset="0%" stop-color="#4ade80"/>
+      <stop offset="100%" stop-color="#22c55e"/>
+    </linearGradient>
+    <linearGradient id="pad-top" x1="0.3" y1="0" x2="0.6" y2="1">
+      <stop offset="0%" stop-color="#86efac"/>
+      <stop offset="100%" stop-color="#4ade80"/>
+    </linearGradient>
+    <linearGradient id="bark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#c4a882"/>
+      <stop offset="40%" stop-color="#8b6d4f"/>
       <stop offset="100%" stop-color="#5c4332"/>
     </linearGradient>
-    <linearGradient id="pot" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="pot-face" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#c4956a"/>
-      <stop offset="100%" stop-color="#9c6a40"/>
+      <stop offset="100%" stop-color="#96663e"/>
+    </linearGradient>
+    <linearGradient id="pot-rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#dbb88a"/>
+      <stop offset="100%" stop-color="#b8845a"/>
     </linearGradient>
   </defs>
 
-  <!-- shadow -->
-  <ellipse cx="32" cy="60" rx="13" ry="1.6" fill="#000" opacity="0.10"/>
+  <!-- Shadow -->
+  <ellipse cx="32" cy="61.5" rx="14" ry="1.8" fill="#000" opacity="0.12"/>
 
-  <!-- pot -->
-  <rect x="22.5" y="55.3" width="3" height="2.7" rx="0.6" fill="#6f4a30"/>
-  <rect x="38.5" y="55.3" width="3" height="2.7" rx="0.6" fill="#6f4a30"/>
-  <path d="M21 47.5 L43 47.5 L40.5 56 L23.5 56 Z" fill="url(#pot)"/>
-  <rect x="18.5" y="44.8" width="27" height="3.4" rx="1.5" fill="#d2a274"/>
-  <line x1="28.7" y1="49.8" x2="28.7" y2="53.6" stroke="#f3dcb6" stroke-width="1.5" stroke-linecap="round"/>
-  <polyline points="31.8,50.1 35,51.7 31.8,53.3" fill="none" stroke="#f3dcb6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- === POT (shallow, traditional) === -->
+  <rect x="20" y="57.5" width="3.5" height="2.5" rx="0.6" fill="#7a5235"/>
+  <rect x="40.5" y="57.5" width="3.5" height="2.5" rx="0.6" fill="#7a5235"/>
+  <path d="M19.5 50 L21 57.5 L43 57.5 L44.5 50 Z" fill="url(#pot-face)"/>
+  <path d="M36 50 L43 57.5 L44.5 50 Z" fill="#7a5235" opacity="0.25"/>
+  <rect x="18" y="48" width="28" height="2.8" rx="1.2" fill="url(#pot-rim)"/>
+  <rect x="18" y="48" width="28" height="1" rx="0.5" fill="#e8cba0" opacity="0.4"/>
 
-  <!-- trunk -->
-  <path d="M31.5 48 C31 43 27.5 41 27.5 36 C27.5 32 30.5 30 33 28.5"
-        fill="none" stroke="url(#trunk)" stroke-width="5.2" stroke-linecap="round"/>
+  <!-- |> on pot -->
+  <line x1="28.5" y1="51.5" x2="28.5" y2="55.8" stroke="#e8cba0" stroke-width="1.3" stroke-linecap="round" opacity="0.7"/>
+  <polyline points="31.5,51.8 34.5,53.65 31.5,55.5" fill="none" stroke="#e8cba0" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
 
-  <!-- canopy: one cohesive cloud of merged shapes -->
-  <g fill="url(#foliage)">
-    <circle cx="22" cy="22" r="11.5"/>
-    <circle cx="33.5" cy="17.5" r="9"/>
-    <circle cx="13" cy="25" r="7.5"/>
-    <circle cx="38.5" cy="24.5" r="6.5"/>
-    <circle cx="28" cy="27" r="7"/>
-  </g>
-  <!-- top highlight -->
-  <g fill="#86efac" opacity="0.5">
-    <circle cx="20" cy="17.5" r="5.5"/>
-    <circle cx="29" cy="14" r="4"/>
-  </g>
+  <!-- === TRUNK === -->
+  <path d="M32 48 C31 45 27 43 26 40 C25 37 27 34 29 31 C30 29 31 27 31.5 25"
+        fill="none" stroke="#5c4332" stroke-width="6" stroke-linecap="round"/>
+  <path d="M32 48 C31 45 27 43 26 40 C25 37 27 34 29 31 C30 29 31 27 31.5 25"
+        fill="none" stroke="url(#bark)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M31 46 C30.5 44 28 42 27 40 C26 37.5 28 34.5 29.5 32 C30.5 30 31 28 31.5 26"
+        fill="none" stroke="#d4b896" stroke-width="1.5" stroke-linecap="round" opacity="0.45"/>
+
+  <!-- === BRANCHES === -->
+  <path d="M26.5 40 C22 38.5 17 38 12 37" fill="none" stroke="#7a5539" stroke-width="3" stroke-linecap="round"/>
+  <path d="M28 34 C33 31 38 28 43 25" fill="none" stroke="#7a5539" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M30 29 C26 27 22 25 18 22" fill="none" stroke="#7a5539" stroke-width="2" stroke-linecap="round"/>
+  <path d="M31.5 26 C33 24 36 21 39 19" fill="none" stroke="#7a5539" stroke-width="1.5" stroke-linecap="round"/>
+
+  <!-- === FOLIAGE PADS === -->
+
+  <!-- PAD 1: Lower left -->
+  <path d="M5 38 C4 34 7 31 11 31 C11 28 15 26 19 27 C21 25 25 26 26 28 C28 27 29 29 28 31 C30 32 29 35 26 36 C27 38 24 40 20 39 C17 41 11 41 8 39 C6 39 5 39 5 38 Z"
+        fill="url(#pad-back)"/>
+  <path d="M7 36 C6 33 9 30 13 31 C13 28 17 27 20 28 C22 27 25 28 25 30 C27 30 27 33 25 34 C25 36 22 38 19 37 C16 39 10 38 7 36 Z"
+        fill="url(#pad-front)"/>
+  <path d="M10 33 C10 31 13 29 16 30 C17 28 20 28 21 30 C19 29 15 30 14 32 C13 31 11 32 10 33 Z"
+        fill="url(#pad-top)" opacity="0.6"/>
+
+  <!-- PAD 2: Right middle -->
+  <path d="M38 26 C37 22 40 19 44 19 C44 17 47 15 50 17 C52 16 54 18 53 21 C55 22 54 25 51 26 C51 28 48 29 45 28 C42 30 39 29 38 26 Z"
+        fill="url(#pad-back)"/>
+  <path d="M39 25 C39 22 42 20 45 20 C45 18 48 17 50 18 C52 18 53 20 52 22 C53 23 52 25 50 25 C49 27 46 27 44 26 C42 28 40 27 39 25 Z"
+        fill="url(#pad-front)"/>
+  <path d="M42 22 C43 20 46 19 48 20 C46 19 43 20 42 22 Z" fill="url(#pad-top)" opacity="0.5"/>
+
+  <!-- PAD 3: Upper left -->
+  <path d="M13 24 C12 20 15 17 19 17 C19 14 23 13 26 14 C28 13 30 15 29 17 C31 18 30 21 27 22 C27 24 24 26 21 25 C18 27 14 26 13 24 Z"
+        fill="url(#pad-back)"/>
+  <path d="M15 22 C15 19 17 17 21 18 C21 15 24 14 27 15 C28 15 29 17 28 19 C29 20 28 22 26 22 C25 23 22 24 20 23 C17 24 15 24 15 22 Z"
+        fill="url(#pad-front)"/>
+  <path d="M19 19 C20 17 23 16 25 17 C23 16 20 17 19 19 Z" fill="url(#pad-top)" opacity="0.5"/>
+
+  <!-- PAD 4: Top apex -->
+  <path d="M25 17 C24 13 27 9 31 9 C31 6 35 5 38 7 C40 5 43 7 42 10 C44 11 43 14 40 15 C40 17 37 19 34 18 C31 20 26 19 25 17 Z"
+        fill="url(#pad-back)"/>
+  <path d="M27 15 C26 12 29 10 32 10 C33 8 36 7 38 9 C40 8 41 10 40 12 C42 13 41 15 39 15 C38 16 35 17 33 16 C31 17 28 17 27 15 Z"
+        fill="url(#pad-front)"/>
+  <path d="M30 12 C31 10 34 9 36 10 C34 9 31 10 30 12 Z" fill="url(#pad-top)" opacity="0.6"/>
+
+  <!-- PAD 5: Small accent right-top -->
+  <path d="M37 20 C37 17 39 16 42 17 C43 15 46 16 45 18 C46 19 45 21 43 21 C42 22 38 22 37 20 Z"
+        fill="url(#pad-back)"/>
+  <path d="M38 19 C38 17 40 17 42 17.5 C43 17 44 18 43 19 C43 20 40 21 38 19 Z"
+        fill="url(#pad-front)"/>
 </svg>
