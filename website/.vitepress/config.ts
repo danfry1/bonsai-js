@@ -9,8 +9,6 @@ export default defineConfig({
   cleanUrls: true,
   lastUpdated: true,
   sitemap: { hostname: 'https://danfry1.github.io/bonsai-js/' },
-  // TEMPORARY: re-enabled (set to false / removed) in the docs link-check task once all pages exist.
-  ignoreDeadLinks: true,
   head: [
     ['link', { rel: 'icon', href: '/bonsai-js/logo.png', type: 'image/png' }],
     ['meta', { name: 'theme-color', content: '#0a0a0f' }],

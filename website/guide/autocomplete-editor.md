@@ -1,6 +1,6 @@
 # Editor Integration
 
-The autocomplete API returns plain data objects with no DOM or framework dependency. Here is how to wire it into a real editor. [Try the live Monaco demo →](./monaco-demo.html)
+The autocomplete API returns plain data objects with no DOM or framework dependency. Here is how to wire it into a real editor.
 
 ## Basic input with dropdown
 
@@ -62,8 +62,6 @@ function applyCompletion(input, completion, replaceFrom) {
 ## Monaco Editor
 
 For Monaco, register a completion provider that maps Bonsai completions to Monaco's `CompletionItem` format.
-
-[See it in action →](./monaco-demo.html)
 
 ```ts
 const kindMap = {
