@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/danfry1/bonsai-js/main/website/logo.png" alt="bonsai-js" width="120" />
+  <img src="https://raw.githubusercontent.com/danfry1/bonsai-js/main/website/public/logo.png" alt="bonsai-js" width="120" />
 </p>
 
 <h1 align="center">bonsai-js</h1>
