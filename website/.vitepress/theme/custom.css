@@ -138,3 +138,29 @@
     overflow-x: auto;
   }
 }
+
+/* Home hero logo: VitePress caps the hero image at 320px, which leaves the
+   mark looking small. Render it larger on wider screens. */
+@media (min-width: 960px) {
+  .VPHero .image-container {
+    width: 460px;
+    height: 460px;
+  }
+
+  .VPHero .image-src {
+    max-width: 460px;
+    max-height: 460px;
+  }
+}
+
+@media (min-width: 640px) and (max-width: 959px) {
+  .VPHero .image-container {
+    width: 340px;
+    height: 340px;
+  }
+
+  .VPHero .image-src {
+    max-width: 340px;
+    max-height: 340px;
+  }
+}

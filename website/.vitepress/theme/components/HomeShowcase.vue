@@ -156,7 +156,6 @@ const useCases = [
   padding: 0.8rem 0.9rem;
   background: var(--vp-c-bg);
   border: 1px solid var(--vp-c-divider);
-  border-left: 2px solid var(--vp-c-brand-1);
   border-radius: 8px;
 }
 
