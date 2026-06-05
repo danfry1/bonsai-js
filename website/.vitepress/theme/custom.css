@@ -69,6 +69,18 @@
   overflow-wrap: anywhere;
 }
 
+/* Column hierarchy: the first column is the Bonsai expression being
+   demonstrated, so keep it brand-green; results and context columns
+   drop to neutral monospace so each row reads input -> output -> data
+   instead of one flat wall of green. */
+.vp-doc td code {
+  color: var(--vp-c-text-1);
+}
+
+.vp-doc td:first-child code {
+  color: var(--vp-c-brand-1);
+}
+
 /* Code blocks --------------------------------------------------- */
 .vp-doc div[class*='language-'] {
   border: 1px solid var(--vp-c-divider);
