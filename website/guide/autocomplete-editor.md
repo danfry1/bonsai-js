@@ -57,7 +57,9 @@ function applyCompletion(input, completion, replaceFrom) {
 }
 ```
 
-> **Tip:** `cursorOffset` is set on completions like `filter(.)` so the cursor lands between the parentheses, ready for the user to type a lambda predicate.
+::: tip cursorOffset places the cursor inside argument placeholders
+`cursorOffset` is set on completions like `filter(.)` so the cursor lands between the parentheses, ready for the user to type a lambda predicate.
+:::
 
 ## Monaco Editor
 

@@ -89,9 +89,13 @@ await app.evaluate(
 
 Pure functions (`addFunction`) and context-aware functions share a single namespace. Registering the same name with either method overwrites the prior registration. Use `isContextFunction(name)` for introspection.
 
-The context is passed to your function by reference, not copied or frozen. The `Readonly<TCtx>` parameter type flags reassigning its top-level fields, but Bonsai does not deep-freeze it, so nested mutation and writes from untyped JavaScript reach the object you passed in. Pass a fresh context per evaluation if you need isolation.
+::: warning Context is passed by reference, not deep-frozen
+The `Readonly<TCtx>` parameter type flags top-level reassignment, but Bonsai does not deep-freeze the context. Nested mutation and writes from untyped JavaScript reach the object you passed in. Pass a fresh context per evaluation if you need isolation.
+:::
 
-> **Tip:** typing the instance with `bonsai<AppContext>()` propagates `AppContext` through every method that touches context, so `evaluate`, `evaluateSync`, `compile`, and `addContextFunction` are all checked against the same shape. If your context type has required fields, the context argument becomes required at call sites.
+::: tip Type the instance with bonsai&lt;AppContext&gt;() for end-to-end context safety
+`AppContext` propagates through every method that touches context: `evaluate`, `evaluateSync`, `compile`, and `addContextFunction` are all checked against the same shape. If your context type has required fields, the context argument becomes required at call sites.
+:::
 
 ## Plugins
 
@@ -110,4 +114,6 @@ Registering the same name again replaces the previous implementation. Transforms
 
 Plugins can also be typed against a minimal context they require: `BonsaiPlugin<{ tenantId: string }>` applies cleanly to any instance whose context extends `{ tenantId: string }`.
 
-> **Design rule:** keep transforms small and predictable, validate their inputs, and reserve async behavior for cases where you genuinely need I/O. Custom extensions run as normal host JavaScript, so treat them as trusted code.
+::: warning Custom extensions run as trusted host code
+Keep transforms small and predictable, validate their inputs, and reserve async behavior for cases where you genuinely need I/O. Bonsai does not sandbox registered transforms or functions.
+:::

@@ -63,4 +63,6 @@ expr.evaluateSync('discount(price, 20) |> usd', { price: 100 })
 // "$80.00"
 ```
 
-> **Tip:** Treat plugin names and expression syntax as product API. If another team will read or author these expressions, bias toward boring, obvious names over DSL cleverness.
+::: tip Treat plugin names as product API
+If another team will read or author these expressions, bias toward boring, obvious names over DSL cleverness.
+:::

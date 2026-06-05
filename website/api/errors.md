@@ -138,4 +138,6 @@ try {
 }
 ```
 
-> **Tip:** Match on the error class or the security `code`. Message text can change more easily than the exported error types.
+::: tip Match on the error class or security code
+Message text can change between releases. The exported error classes and the `BonsaiSecurityError.code` values are stable API.
+:::

@@ -73,4 +73,6 @@ const expr = bonsai({ cacheSize: 1024 })
 const expr = bonsai({ cacheSize: 64 })
 ```
 
-> **Most apps do not need benchmark chasing:** the biggest wins usually come from reusing one instance, compiling repeated expressions, and avoiding async evaluation unless you genuinely need it.
+::: tip Most apps do not need benchmark chasing
+The biggest wins come from reusing one instance, compiling repeated expressions, and avoiding async evaluation unless you genuinely need it.
+:::

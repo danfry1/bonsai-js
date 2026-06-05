@@ -59,3 +59,5 @@ Each item returned by `complete()` has the following shape:
 | `insertText` | `string?` | Override text to insert instead of `label`. Used by methods that need parentheses or argument placeholders (e.g., `'filter(.)'`). |
 | `cursorOffset` | `number?` | Where to place the cursor within `insertText` after insertion. For `'filter(.)'` with offset `8`, the cursor lands between the parentheses. |
 | `sortPriority` | `number` | Lower values sort first. Fuzzy matching adjusts this so better matches rank higher. |
+
+Next: [Editor Integration](/guide/autocomplete-editor) shows how to wire autocomplete into a real input or Monaco editor.

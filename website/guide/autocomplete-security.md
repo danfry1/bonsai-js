@@ -52,4 +52,6 @@ ac.complete('users.filter(.', 15)
 // 'age' and 'role' are excluded from lambda suggestions too
 ```
 
-> **Tip:** The security policy is read once when `createAutocomplete()` is called and cached for the lifetime of the autocomplete instance. If you need different policies, create separate autocomplete instances.
+::: tip Security policy is fixed at construction time
+The security policy is read once when `createAutocomplete()` is called and cached for the lifetime of the autocomplete instance. If you need different policies for different users or roles, create separate autocomplete instances.
+:::

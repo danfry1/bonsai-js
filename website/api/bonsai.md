@@ -49,4 +49,6 @@ Blocked names like `__proto__`, `constructor`, and `prototype` are always denied
 | User-authored rules in an admin UI | Set `timeout`, `maxDepth`, `maxArrayLength`, and an `allowedProperties` allowlist. |
 | Large catalog of repeated expressions | Reuse one instance and consider increasing `cacheSize` if you have many distinct expression strings. |
 
-> **Tip:** Create the instance once at startup and reuse it. Recreating instances on every request throws away the cache and defeats most of the performance work.
+::: tip Create the instance once at startup and reuse it
+Recreating instances on every request throws away the cache and defeats most of the performance work.
+:::

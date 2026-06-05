@@ -57,4 +57,8 @@ ac.complete('user.name |> ', 13)
 // array transforms like filter and sort are excluded automatically
 ```
 
-> **Tip:** The autocomplete engine handles incomplete and mid-edit expressions gracefully. You can call `complete()` on every keystroke without worrying about parse errors.
+::: tip Call complete() on every keystroke
+The autocomplete engine handles incomplete and mid-edit expressions gracefully. Parse errors during editing are silently absorbed and never bubble up to callers.
+:::
+
+Next: [Autocomplete API Reference](/guide/autocomplete-api) documents every option and method.

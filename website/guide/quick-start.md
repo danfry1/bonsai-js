@@ -50,3 +50,5 @@ qualifiesForFreeShipping.evaluateSync({
 ```
 
 **Use `evaluate()` only when you need async host code.** If your transforms and functions are synchronous, `evaluateSync()` is the simpler and faster default.
+
+Next: [Mental Model](/guide/mental-model) explains the four ideas behind every Bonsai expression.

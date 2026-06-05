@@ -29,7 +29,15 @@ expr.evaluateSync('user.secret', {
 }) // Error: "secret" is not in allowed properties
 ```
 
-If you want to permit `user.name`, you must allow both `user` and `name` as member names. Root identifiers like `user` in `evaluateSync('user.name', { user })` are always accessible - the allow/deny lists only restrict what comes after the dot. Use an allowlist for user-authored expressions whenever possible.
+If you want to permit `user.name`, you must allow both `user` and `name` as member names.
+
+::: warning Root identifiers are always accessible
+`allowedProperties` and `deniedProperties` only restrict member access after the dot. Root identifiers (the top-level keys in your context object) are never filtered. Pass a minimal context object rather than relying on property lists to hide top-level data.
+:::
+
+::: tip Use an allowlist for user-authored expressions
+`allowedProperties` is the single most effective control for expressions you did not write yourself. Prefer it over a denylist, which requires anticipating every sensitive name.
+:::
 
 ## Defense-in-depth hardening
 
@@ -72,4 +80,10 @@ const expr = bonsai({
 | Async callbacks | Async time is checked at awaited boundaries, not by cancellation of the underlying I/O. |
 | Hard isolation | If you need a stronger boundary, run evaluation in a worker or separate process. |
 
-> **Tip:** For user-authored expressions, start with a minimal context object, use `allowedProperties`, set all three limits, and treat every custom plugin as trusted application code.
+::: warning Timeouts do not interrupt host code
+The `timeout` limit is cooperative: it is checked between evaluator steps. A custom transform or function that blocks synchronously for a long time will not be interrupted mid-execution. If you need hard preemption, run evaluation in a worker or separate process.
+:::
+
+::: tip For user-authored expressions
+Start with a minimal context object, use `allowedProperties`, set all three limits (`timeout`, `maxDepth`, `maxArrayLength`), and treat every custom plugin as trusted application code.
+:::
