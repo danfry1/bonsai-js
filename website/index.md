@@ -29,3 +29,5 @@ features:
   - title: Cacheable compilation
     details: Compile once, evaluate on hot paths. Pluggable transforms and functions extend the language without unsafe escape hatches.
 ---
+
+<HomeShowcase />
