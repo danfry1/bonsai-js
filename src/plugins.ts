@@ -12,18 +12,18 @@ export interface Bindings {
 }
 
 export interface PluginRegistry {
-  addTransform(name: string, fn: TransformFn): void
-  addFunction(name: string, fn: FunctionFn): void
-  addContextFunction(name: string, fn: ContextFunctionFn): void
-  removeTransform(name: string): boolean
-  removeFunction(name: string): boolean
-  getTransform(name: string): TransformFn | undefined
-  getFunction(name: string): RegisteredFunction | undefined
-  isContextFunction(name: string): boolean
-  hasFunction(name: string): boolean
-  getTransformNames(): string[]
-  getFunctionNames(): string[]
-  use(plugin: (registry: PluginRegistry) => void): void
+  addTransform: (name: string, fn: TransformFn) => void
+  addFunction: (name: string, fn: FunctionFn) => void
+  addContextFunction: (name: string, fn: ContextFunctionFn) => void
+  removeTransform: (name: string) => boolean
+  removeFunction: (name: string) => boolean
+  getTransform: (name: string) => TransformFn | undefined
+  getFunction: (name: string) => RegisteredFunction | undefined
+  isContextFunction: (name: string) => boolean
+  hasFunction: (name: string) => boolean
+  getTransformNames: () => string[]
+  getFunctionNames: () => string[]
+  use: (plugin: (registry: PluginRegistry) => void) => void
   readonly transforms: Record<string, TransformFn>
   readonly functions: Record<string, RegisteredFunction>
   /** Cached snapshot of all bindings. Rebuilt only when a registration changes. */
