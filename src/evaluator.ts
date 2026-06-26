@@ -1,9 +1,16 @@
-import type { ASTNode, ObjectProperty, RegisteredFunction, TransformFn } from './types.js'
+import type {
+  ASTNode,
+  Identifier,
+  ObjectProperty,
+  RegisteredFunction,
+  TransformFn,
+} from './types.js'
 import type { Bindings } from './plugins.js'
 import type { ExecutionContext } from './execution-context.js'
 import { attachLocation, BonsaiTypeError } from './errors.js'
 import {
   accessMember,
+  accessMemberByName,
   applyBinaryOp,
   applyUnaryOp,
   checkResultArrayLength,
@@ -125,9 +132,10 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
 
       case 'MemberExpression': {
         const object = evalNode(node.object, env)
-        const computedValue = node.computed ? evalNode(node.property, env) : undefined
         try {
-          return accessMember(object, node.property, node.computed, computedValue, g)
+          return node.computed
+            ? accessMember(object, node.property, true, evalNode(node.property, env), g)
+            : accessMemberByName(object, (node.property as Identifier).name, g)
         } catch (e) {
           if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
           throw e
@@ -137,9 +145,10 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
       case 'OptionalMemberExpression': {
         const object = evalNode(node.object, env)
         if (object == null) return undefined
-        const computedValue = node.computed ? evalNode(node.property, env) : undefined
         try {
-          return accessMember(object, node.property, node.computed, computedValue, g)
+          return node.computed
+            ? accessMember(object, node.property, true, evalNode(node.property, env), g)
+            : accessMemberByName(object, (node.property as Identifier).name, g)
         } catch (e) {
           if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
           throw e
@@ -329,15 +338,17 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
 
       case 'MemberExpression': {
         const object = evalLambdaBody(node.object, item, env)
-        const computedValue = node.computed ? evalNode(node.property, env) : undefined
-        return accessMember(object, node.property, node.computed, computedValue, g)
+        return node.computed
+          ? accessMember(object, node.property, true, evalNode(node.property, env), g)
+          : accessMemberByName(object, (node.property as Identifier).name, g)
       }
 
       case 'OptionalMemberExpression': {
         const object = evalLambdaBody(node.object, item, env)
         if (object == null) return undefined
-        const computedValue = node.computed ? evalNode(node.property, env) : undefined
-        return accessMember(object, node.property, node.computed, computedValue, g)
+        return node.computed
+          ? accessMember(object, node.property, true, evalNode(node.property, env), g)
+          : accessMemberByName(object, (node.property as Identifier).name, g)
       }
 
       case 'CallExpression': {

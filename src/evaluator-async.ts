@@ -1,10 +1,11 @@
-import type { ASTNode, ObjectProperty } from './types.js'
+import type { ASTNode, Identifier, ObjectProperty } from './types.js'
 import type { Bindings } from './plugins.js'
 import type { ExecutionContext } from './execution-context.js'
 import { attachLocation } from './errors.js'
 import type { EvalEnv } from './evaluator.js'
 import {
   accessMember,
+  accessMemberByName,
   applyBinaryOp,
   applyUnaryOp,
   checkResultArrayLength,
@@ -117,9 +118,10 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
 
       case 'MemberExpression': {
         const object = await evalNodeAsync(node.object, env)
-        const computedValue = node.computed ? await evalNodeAsync(node.property, env) : undefined
         try {
-          return accessMember(object, node.property, node.computed, computedValue, g)
+          return node.computed
+            ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
+            : accessMemberByName(object, (node.property as Identifier).name, g)
         } catch (e) {
           if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
           throw e
@@ -129,9 +131,10 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
       case 'OptionalMemberExpression': {
         const object = await evalNodeAsync(node.object, env)
         if (object == null) return undefined
-        const computedValue = node.computed ? await evalNodeAsync(node.property, env) : undefined
         try {
-          return accessMember(object, node.property, node.computed, computedValue, g)
+          return node.computed
+            ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
+            : accessMemberByName(object, (node.property as Identifier).name, g)
         } catch (e) {
           if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
           throw e
@@ -425,15 +428,17 @@ async function evalLambdaBodyAsync(
 
       case 'MemberExpression': {
         const object = await evalLambdaBodyAsync(node.object, item, env)
-        const computedValue = node.computed ? await evalNodeAsync(node.property, env) : undefined
-        return accessMember(object, node.property, node.computed, computedValue, g)
+        return node.computed
+          ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
+          : accessMemberByName(object, (node.property as Identifier).name, g)
       }
 
       case 'OptionalMemberExpression': {
         const object = await evalLambdaBodyAsync(node.object, item, env)
         if (object == null) return undefined
-        const computedValue = node.computed ? await evalNodeAsync(node.property, env) : undefined
-        return accessMember(object, node.property, node.computed, computedValue, g)
+        return node.computed
+          ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
+          : accessMemberByName(object, (node.property as Identifier).name, g)
       }
 
       case 'CallExpression': {
