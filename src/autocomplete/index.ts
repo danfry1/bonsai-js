@@ -35,8 +35,8 @@ export interface AutocompleteOptions {
 }
 
 export interface AutocompleteInstance {
-  complete(expression: string, cursor: number): Completion[]
-  setContext(context: Record<string, unknown>): void
+  complete: (expression: string, cursor: number) => Completion[]
+  setContext: (context: Record<string, unknown>) => void
 }
 
 // Valid identifier pattern for transform name validation
