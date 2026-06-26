@@ -410,19 +410,45 @@ async function evalLambdaBodyAsync(
   env: AsyncEvalEnv,
 ): Promise<unknown> {
   const { g } = env
+
+  // Leaf fast path — mirrors evalNodeAsync and the sync evalLambdaBody: item-
+  // independent leaves and the single accessor need no depth tracking or step
+  // counting. Keeps depth accounting identical to the main walk and the sync
+  // lambda walk (parity).
+  switch (node.type) {
+    case 'LambdaIdentity':
+      return item
+    case 'LambdaAccessor':
+      g.checkNameAccess(node.property, 'member')
+      return (item as Record<string, unknown>)?.[node.property]
+    case 'NumberLiteral':
+    case 'StringLiteral':
+    case 'BooleanLiteral':
+    case 'NullLiteral':
+    case 'UndefinedLiteral':
+    case 'Identifier':
+      return evalNodeAsync(node, env)
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+    case 'CallExpression':
+    case 'BinaryExpression':
+    case 'UnaryExpression':
+    case 'ConditionalExpression':
+    case 'LambdaExpression':
+    case 'ArrayLiteral':
+    case 'ObjectLiteral':
+    case 'PipeExpression':
+    case 'SpreadElement':
+    case 'TemplateLiteral':
+      break
+  }
+
   g.enterDepth()
   g.step()
 
   let ownDepth = true
   try {
     switch (node.type) {
-      case 'LambdaIdentity':
-        return item
-
-      case 'LambdaAccessor':
-        g.checkNameAccess(node.property, 'member')
-        return (item as Record<string, unknown>)?.[node.property]
-
       case 'MemberExpression': {
         const object = await evalLambdaBodyAsync(node.object, item, env)
         const computedValue = node.computed ? await evalNodeAsync(node.property, env) : undefined
@@ -521,12 +547,6 @@ async function evalLambdaBodyAsync(
       case 'LambdaExpression':
         return await evalLambdaBodyAsync(node.body, item, env)
 
-      case 'NumberLiteral':
-      case 'StringLiteral':
-      case 'BooleanLiteral':
-      case 'NullLiteral':
-      case 'UndefinedLiteral':
-      case 'Identifier':
       case 'ArrayLiteral':
       case 'ObjectLiteral':
       case 'PipeExpression':
