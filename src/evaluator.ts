@@ -56,6 +56,16 @@ export function evaluate(
   })
 }
 
+/**
+ * Pooled-env entry point for the hot synchronous path. The caller owns `env`
+ * and is responsible for preventing reentrant reuse (see the `syncEnv` pooling
+ * in index.ts, gated by the same flag that pools the ExecutionContext). This
+ * lets repeated evaluateSync calls avoid allocating an EvalEnv per call.
+ */
+export function evaluatePooled(node: ASTNode, env: EvalEnv): unknown {
+  return evalNode(node, env)
+}
+
 function evalNode(node: ASTNode, env: EvalEnv): unknown {
   // Fast path for leaf nodes — no depth tracking or step counting needed
   switch (node.type) {
