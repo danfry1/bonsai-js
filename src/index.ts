@@ -10,7 +10,7 @@ import type {
 } from './types.js'
 import { parse } from './parser.js'
 import { compile } from './compiler.js'
-import { evaluate } from './evaluator.js'
+import { evaluate, evaluatePooled, type EvalEnv } from './evaluator.js'
 import { evaluateAsync } from './evaluator-async.js'
 import { SecurityPolicy, ExecutionContext } from './execution-context.js'
 import { LRUCache } from './cache.js'
@@ -157,12 +157,44 @@ export function bonsai<TCtx extends BonsaiContext = Record<string, unknown>>(
 
   const policy = new SecurityPolicy(options)
 
-  // Pooled ExecutionContext for evaluateSync — avoids per-call allocation
+  // Pooled ExecutionContext and EvalEnv for evaluateSync — avoids per-call
+  // allocation on the hot path. Both are reused only on the non-reentrant path,
+  // guarded by syncCtxInUse; a reentrant call (a registered function calling
+  // back into evaluateSync) takes the fresh-allocation branch instead.
   const syncCtx = new ExecutionContext(policy)
+  const EMPTY_CTX: Record<string, unknown> = Object.freeze({})
+  const syncEnv: EvalEnv = {
+    ctx: EMPTY_CTX,
+    tr: registry.bindings.transforms,
+    fn: registry.bindings.functions,
+    g: syncCtx,
+    s: undefined,
+  }
   let syncCtxInUse = false
 
   function createExecutionContext(): ExecutionContext {
     return new ExecutionContext(policy)
+  }
+
+  // Hot synchronous path: populate and reuse the pooled env rather than
+  // allocating one per call. Caller guarantees syncCtxInUse is false.
+  function runSyncPooled<T>(ast: ASTNode, ctx: Record<string, unknown>, source: string): T {
+    syncCtxInUse = true
+    try {
+      syncCtx.reset()
+      const bindings = registry.bindings
+      syncEnv.ctx = ctx
+      syncEnv.tr = bindings.transforms
+      syncEnv.fn = bindings.functions
+      syncEnv.s = source
+      return evaluatePooled(ast, syncEnv) as T
+    } finally {
+      // Drop references to the caller's context so it is not retained between
+      // calls; the guard (syncEnv.g) is constant and stays put.
+      syncEnv.ctx = EMPTY_CTX
+      syncEnv.s = undefined
+      syncCtxInUse = false
+    }
   }
 
   function getAst(source: string): ASTNode {
@@ -197,13 +229,7 @@ export function bonsai<TCtx extends BonsaiContext = Record<string, unknown>>(
         if (syncCtxInUse) {
           return evaluate(optimized, ctx, registry.bindings, createExecutionContext(), source) as T
         }
-        syncCtxInUse = true
-        try {
-          syncCtx.reset()
-          return evaluate(optimized, ctx, registry.bindings, syncCtx, source) as T
-        } finally {
-          syncCtxInUse = false
-        }
+        return runSyncPooled<T>(optimized, ctx, source)
       },
     }
 
@@ -286,13 +312,7 @@ export function bonsai<TCtx extends BonsaiContext = Record<string, unknown>>(
         // Reentrant call (e.g. custom function calling evaluateSync). Allocate fresh.
         return evaluate(ast, ctx, registry.bindings, createExecutionContext(), expression) as T
       }
-      syncCtxInUse = true
-      try {
-        syncCtx.reset()
-        return evaluate(ast, ctx, registry.bindings, syncCtx, expression) as T
-      } finally {
-        syncCtxInUse = false
-      }
+      return runSyncPooled<T>(ast, ctx, expression)
     },
     validate(expression) {
       try {
