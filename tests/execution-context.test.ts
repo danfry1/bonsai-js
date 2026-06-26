@@ -113,22 +113,6 @@ describe('ExecutionContext', () => {
     }).not.toThrow()
   })
 
-  it('withDepth exits even on throw', () => {
-    const policy = new SecurityPolicy({ maxDepth: 2 })
-    const ec = new ExecutionContext(policy)
-    ec.enterDepth()
-    try {
-      ec.withDepth(() => {
-        throw new Error('boom')
-      })
-    } catch {
-      /* expected */
-    }
-    expect(() => {
-      ec.enterDepth()
-    }).not.toThrow()
-  })
-
   it('enforces array length', () => {
     const policy = new SecurityPolicy({ maxArrayLength: 5 })
     const ec = new ExecutionContext(policy)
@@ -186,5 +170,165 @@ describe('ExecutionContext', () => {
     expect(() => {
       ec2.enterDepth()
     }).not.toThrow()
+  })
+})
+
+// These tests pin the exact behaviour of each security guard, not merely that
+// "an error is thrown". They were added to kill mutation-testing survivors in
+// execution-context.ts (error codes, canonical-index boundaries, the timeout
+// deadline boundary and sampling interval, and reset()).
+describe('ExecutionContext security-guard invariants', () => {
+  const codeOf = (fn: () => void): string => {
+    try {
+      fn()
+    } catch (e) {
+      if (e instanceof BonsaiSecurityError) return e.code
+      throw e
+    }
+    throw new Error('expected a BonsaiSecurityError to be thrown')
+  }
+
+  it('reports the exact security code for each guard', () => {
+    const blocked = new ExecutionContext(new SecurityPolicy())
+    expect(
+      codeOf(() => {
+        blocked.checkNameAccess('__proto__', 'member')
+      }),
+    ).toBe('BLOCKED_PROPERTY')
+
+    const allowed = new ExecutionContext(new SecurityPolicy({ allowedProperties: ['name'] }))
+    expect(
+      codeOf(() => {
+        allowed.checkNameAccess('age', 'member')
+      }),
+    ).toBe('PROPERTY_NOT_ALLOWED')
+
+    const denied = new ExecutionContext(new SecurityPolicy({ deniedProperties: ['secret'] }))
+    expect(
+      codeOf(() => {
+        denied.checkNameAccess('secret', 'member')
+      }),
+    ).toBe('PROPERTY_DENIED')
+
+    const depthEc = new ExecutionContext(new SecurityPolicy({ maxDepth: 1 }))
+    depthEc.enterDepth()
+    expect(
+      codeOf(() => {
+        depthEc.enterDepth()
+      }),
+    ).toBe('MAX_DEPTH')
+
+    const arrEc = new ExecutionContext(new SecurityPolicy({ maxArrayLength: 1 }))
+    expect(
+      codeOf(() => {
+        arrEc.checkArrayLength(2)
+      }),
+    ).toBe('MAX_ARRAY_LENGTH')
+
+    const strEc = new ExecutionContext(new SecurityPolicy({ maxStringLength: 1 }))
+    expect(
+      codeOf(() => {
+        strEc.checkStringLength(2)
+      }),
+    ).toBe('MAX_STRING_LENGTH')
+
+    let now = 0
+    const timeoutEc = new ExecutionContext(new SecurityPolicy({ timeout: 10 }), () => now)
+    now = 100
+    expect(
+      codeOf(() => {
+        timeoutEc.checkTimeout()
+      }),
+    ).toBe('TIMEOUT')
+  })
+
+  it('includes the offending and limit values in size-guard messages', () => {
+    const str = new ExecutionContext(new SecurityPolicy({ maxStringLength: 7 }))
+    expect(() => {
+      str.checkStringLength(8)
+    }).toThrow(/String length.*8.*maximum.*7/u)
+    const arr = new ExecutionContext(new SecurityPolicy({ maxArrayLength: 3 }))
+    expect(() => {
+      arr.checkArrayLength(9)
+    }).toThrow(/Array length.*9.*maximum.*3/u)
+  })
+
+  describe('canonical-index detection (which keys may bypass allow/deny lists)', () => {
+    const guard = () => new ExecutionContext(new SecurityPolicy({ allowedProperties: ['name'] }))
+
+    it.each(['0', '1', '42', '10', '9999999999'])(
+      'treats "%s" as a canonical index and bypasses the list',
+      (key) => {
+        expect(() => {
+          guard().checkNameAccess(key, 'member')
+        }).not.toThrow()
+      },
+    )
+
+    it.each([
+      ['', 'empty string'],
+      ['01', 'leading zero, so String(n) !== key'],
+      ['-1', 'negative, so n >= 0 fails'],
+      ['1.5', 'non-integer'],
+      ['99999999999', 'eleven digits, exceeds MAX_INDEX_DIGITS'],
+      [' 1', 'leading whitespace'],
+      ['1e2', 'exponent form'],
+    ])('does NOT treat "%s" (%s) as a canonical index; it must obey the list', (key) => {
+      expect(() => {
+        guard().checkNameAccess(key, 'member')
+      }).toThrow(BonsaiSecurityError)
+    })
+  })
+
+  it('samples the timeout clock periodically, not on every step', () => {
+    let now = 0
+    const ec = new ExecutionContext(new SecurityPolicy({ timeout: 10 }), () => now)
+    now = 1000 // already well past the deadline
+    // A single step must not sample the clock yet (the check interval is not
+    // reached), so it must not throw. This pins periodic sampling: a mutant that
+    // checks on every step would throw here.
+    expect(() => {
+      ec.step()
+    }).not.toThrow()
+  })
+
+  it('fires the timeout exactly at the deadline (>= boundary)', () => {
+    let now = 0
+    const ec = new ExecutionContext(new SecurityPolicy({ timeout: 50 }), () => now)
+    now = 49
+    expect(() => {
+      ec.checkTimeout()
+    }).not.toThrow()
+    now = 50 // now === deadline
+    expect(() => {
+      ec.checkTimeout()
+    }).toThrow(BonsaiSecurityError)
+  })
+
+  it('reset() clears accumulated depth so a pooled context can be reused', () => {
+    const ec = new ExecutionContext(new SecurityPolicy({ maxDepth: 2 }))
+    ec.enterDepth()
+    ec.enterDepth() // depth now at the limit
+    ec.reset()
+    // If reset did nothing, depth would still be 2 and the next enterDepth throws.
+    expect(() => {
+      ec.enterDepth()
+      ec.enterDepth()
+    }).not.toThrow()
+  })
+
+  it('reset() recomputes the timeout deadline from the current clock', () => {
+    let now = 0
+    const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), () => now)
+    now = 1000
+    ec.reset() // deadline becomes now() + timeout = 1100
+    now = 1050
+    expect(() => {
+      ec.checkTimeout()
+    }).not.toThrow()
+    now = 1100
+    expect(() => {
+      ec.checkTimeout()
+    }).toThrow(BonsaiSecurityError)
   })
 })

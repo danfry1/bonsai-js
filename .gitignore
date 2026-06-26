@@ -6,3 +6,7 @@ website/*.bundle.js
 coverage
 website/.vitepress/dist
 website/.vitepress/cache
+
+# Mutation testing (Stryker)
+.stryker-tmp/
+reports/

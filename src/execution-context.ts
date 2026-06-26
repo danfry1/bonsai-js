@@ -99,15 +99,6 @@ export class ExecutionContext {
     this.depth--
   }
 
-  withDepth<T>(fn: () => T): T {
-    this.enterDepth()
-    try {
-      return fn()
-    } finally {
-      this.exitDepth()
-    }
-  }
-
   checkNameAccess(key: string, kind: AccessKind): void {
     if (BLOCKED_PROPERTIES.has(key)) {
       throw new BonsaiSecurityError(
