@@ -314,19 +314,44 @@ function evalPipe(input: unknown, transformNode: ASTNode, env: EvalEnv): unknown
 
 function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
   const { g } = env
+
+  // Leaf fast path — mirrors evalNode: item-independent leaves and the single
+  // accessor need no depth tracking or step counting. Skips enterDepth/step/
+  // exitDepth on the hottest per-element nodes (e.g. the `2` in `.x * 2`).
+  switch (node.type) {
+    case 'LambdaIdentity':
+      return item
+    case 'LambdaAccessor':
+      g.checkNameAccess(node.property, 'member')
+      return (item as Record<string, unknown>)?.[node.property]
+    case 'NumberLiteral':
+    case 'StringLiteral':
+    case 'BooleanLiteral':
+    case 'NullLiteral':
+    case 'UndefinedLiteral':
+    case 'Identifier':
+      return evalNode(node, env)
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+    case 'CallExpression':
+    case 'BinaryExpression':
+    case 'UnaryExpression':
+    case 'ConditionalExpression':
+    case 'LambdaExpression':
+    case 'ArrayLiteral':
+    case 'ObjectLiteral':
+    case 'PipeExpression':
+    case 'SpreadElement':
+    case 'TemplateLiteral':
+      break
+  }
+
   g.enterDepth()
   g.step()
 
   let ownDepth = true
   try {
     switch (node.type) {
-      case 'LambdaIdentity':
-        return item
-
-      case 'LambdaAccessor':
-        g.checkNameAccess(node.property, 'member')
-        return (item as Record<string, unknown>)?.[node.property]
-
       case 'MemberExpression': {
         const object = evalLambdaBody(node.object, item, env)
         const computedValue = node.computed ? evalNode(node.property, env) : undefined
@@ -406,12 +431,6 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
       case 'LambdaExpression':
         return evalLambdaBody(node.body, item, env)
 
-      case 'NumberLiteral':
-      case 'StringLiteral':
-      case 'BooleanLiteral':
-      case 'NullLiteral':
-      case 'UndefinedLiteral':
-      case 'Identifier':
       case 'ArrayLiteral':
       case 'ObjectLiteral':
       case 'PipeExpression':
