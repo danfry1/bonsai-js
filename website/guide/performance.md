@@ -34,11 +34,13 @@ Measured with [vitest bench](https://vitest.dev/guide/features.html#benchmarking
 
 ### vs Jexl
 
+Measured with the `vs-jexl-fair` benchmark (both libraries used the way each is meant to be: bonsai auto-cached, jexl with its own setup).
+
 | Scenario | Speedup |
 | --- | --- |
-| Default usage (parse + evaluate) | 88x faster |
-| Pre-compiled literal | 3.2x faster |
-| Pre-compiled comparison | 5.6x faster |
+| Default usage (parse + evaluate) | ~55x faster |
+| Pre-compiled literal | ~2.9x faster |
+| Pre-compiled comparison | ~4.9x faster |
 
 Run benchmarks yourself: `bunx vitest bench`
 
