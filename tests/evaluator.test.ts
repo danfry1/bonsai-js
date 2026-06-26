@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { evaluate } from '../src/evaluator.js'
 import { parse } from '../src/parser.js'
 import { SecurityPolicy, ExecutionContext } from '../src/execution-context.js'
-import { bonsai, BonsaiTypeError } from '../src/index.js'
+import { bonsai, BonsaiTypeError, BonsaiSecurityError, BonsaiReferenceError } from '../src/index.js'
 
 function run(expr: string, context: Record<string, unknown> = {}) {
   const ast = parse(expr)
@@ -374,5 +374,193 @@ describe('in operator type checking', () => {
 
   it('works with strings', () => {
     expect(run('"ell" in word', { word: 'hello' })).toBe(true)
+  })
+})
+
+// The blocks below pin behaviour that mutation testing showed was untested in
+// evaluator.ts: where source locations get attached to errors, the non-callable
+// and invalid-transform guards, lambda accessor null safety, and the optional
+// member short-circuit's interaction with the property access policy.
+
+function evaluateWith(
+  expr: string,
+  context: Record<string, unknown>,
+  source: string | undefined,
+): unknown {
+  const ec = new ExecutionContext(new SecurityPolicy())
+  return evaluate(parse(expr), context, { transforms: {}, functions: {} }, ec, source)
+}
+
+describe('evaluator - error location attachment', () => {
+  // Each throwing site attaches a source location only when a non-empty source
+  // string is present. This pins every `if (s !== undefined && s !== '')` guard
+  // in the catch blocks across three source values:
+  //   - the expression itself  -> location must be attached
+  //   - undefined (no source)   -> the original error must propagate untouched
+  //   - '' (empty source)       -> no attachment (the `s !== ''` half of the guard)
+  // Asserting the error *class* survives the no-source case matters because a
+  // mutant that always attaches calls attachLocation with an undefined source,
+  // which throws a TypeError instead of the original error.
+  const errorOf = (fn: () => unknown): unknown => {
+    try {
+      fn()
+    } catch (e) {
+      return e
+    }
+    throw new Error('expected the expression to throw')
+  }
+  const isBonsaiError = (e: unknown): boolean =>
+    e instanceof BonsaiTypeError ||
+    e instanceof BonsaiSecurityError ||
+    e instanceof BonsaiReferenceError
+  const locationOf = (e: unknown): unknown => (e as { location?: unknown }).location
+
+  const sites: [label: string, expr: string, ctx: Record<string, unknown>][] = [
+    ['member access', 'o.__proto__', { o: {} }],
+    ['optional member access', 'o?.__proto__', { o: {} }],
+    ['pipe transform', '5 |> nope', {}],
+    ['method call', 'items.nope()', { items: [] }],
+    ['function call', 'nope()', {}],
+  ]
+
+  it.each(sites)('attaches a location for %s when source is provided', (_label, expr, ctx) => {
+    expect(locationOf(errorOf(() => evaluateWith(expr, ctx, expr)))).toMatchObject({
+      start: expect.any(Number),
+      end: expect.any(Number),
+    })
+  })
+
+  it.each(sites)(
+    'propagates the original error with no location for %s when source is absent',
+    (_label, expr, ctx) => {
+      const err = errorOf(() => evaluateWith(expr, ctx, undefined))
+      expect(isBonsaiError(err)).toBe(true)
+      expect(locationOf(err)).toBeUndefined()
+    },
+  )
+
+  it.each(sites)(
+    'does not attach a location for %s when the source is the empty string',
+    (_label, expr, ctx) => {
+      expect(locationOf(errorOf(() => evaluateWith(expr, ctx, '')))).toBeUndefined()
+    },
+  )
+})
+
+describe('evaluator - non-callable and invalid-transform guards', () => {
+  it('throws "Cannot call non-identifier" when the callee is neither a name nor a member', () => {
+    expect(() => run('(1 + 2)()')).toThrow('Cannot call non-identifier')
+  })
+
+  it('throws "Invalid transform expression" when a pipe target is not a call or identifier', () => {
+    expect(() => run('5 |> 42')).toThrow('Invalid transform expression')
+  })
+})
+
+describe('evaluator - member access reads the evaluated object', () => {
+  // Pins that member access actually evaluates the object and returns the
+  // accessed value (mutants that drop the object eval or the return yield
+  // undefined instead).
+  it('returns the named property of a context object', () => {
+    expect(run('o.x', { o: { x: 5 } })).toBe(5)
+  })
+
+  it('reads a nested member inside a lambda body', () => {
+    expect(run('[{ x: { y: 5 } }].map(.x.y)')).toEqual([5])
+  })
+})
+
+describe('evaluator - lambda accessor null safety', () => {
+  it('a direct .field accessor over a null item yields undefined, not a throw', () => {
+    expect(run('[null].map(.x)')).toEqual([undefined])
+  })
+
+  it('a .field accessor inside a compound lambda body is null-safe', () => {
+    // Exercises the lambda-body accessor path (distinct from the direct-arg one).
+    expect(run('[null].map(.x ?? "d")')).toEqual(['d'])
+  })
+
+  it('a method call on an optional member of a null value short-circuits to undefined', () => {
+    expect(run('[{ x: null }].map(.x?.toString())')).toEqual([undefined])
+  })
+
+  it('a method call on an optional member of a NON-null value still runs the method', () => {
+    // Distinguishes the `callee is optional && obj == null` short-circuit guard
+    // from mutants that always (or never correctly) short-circuit.
+    expect(run('[{ x: "hi" }].map(.x?.toString())')).toEqual(['hi'])
+  })
+
+  it('a method call on a NON-optional null member throws rather than short-circuiting', () => {
+    // `.x.toString()` (no ?.) over a null x must not be treated as optional.
+    expect(() => run('[{ x: null }].map(.x.toString())')).toThrow()
+  })
+
+  it('a method call on a non-null member inside a lambda evaluates normally', () => {
+    expect(run('[{ x: 5 }].map(.x.toString())')).toEqual(['5'])
+  })
+
+  it('evaluates || inside a lambda body with left-truthy short-circuit', () => {
+    expect(run('[0, 5].map(. || 9)')).toEqual([9, 5])
+  })
+})
+
+describe('evaluator - optional member short-circuit respects the access policy', () => {
+  // `o?.b` where o is null must NOT consult the property guard for b, because b
+  // is never read. The null short-circuit is what skips checkNameAccess; a mutant
+  // that drops it would run accessMember(null, 'b') and the allow-list (which
+  // omits b) would wrongly reject instead of yielding undefined.
+  it('a null optional-member access does not run the property check', () => {
+    const ec = new ExecutionContext(new SecurityPolicy({ allowedProperties: ['a'] }))
+    const result = evaluate(parse('a?.b'), { a: null }, { transforms: {}, functions: {} }, ec)
+    expect(result).toBeUndefined()
+  })
+
+  it('a null optional-member inside a lambda body also skips the property check', () => {
+    // .a is null, so .a?.b short-circuits; the guard for b must not run, even
+    // though b is not on the allow-list (map and a are, so the lambda can run).
+    const ec = new ExecutionContext(new SecurityPolicy({ allowedProperties: ['a', 'map'] }))
+    const result = evaluate(
+      parse('[{ a: null }].map(.a?.b)'),
+      {},
+      { transforms: {}, functions: {} },
+      ec,
+    )
+    expect(result).toEqual([undefined])
+  })
+})
+
+describe('evaluator - async-in-sync guard names the kind', () => {
+  // A transform that returns a promise during a synchronous evaluation must be
+  // rejected with a message that names it a "transform" result. Pins the kind
+  // label passed to rejectPromise (a mutant blanking it drops the word).
+  const promiseTransform = { transforms: { later: () => Promise.resolve(1) }, functions: {} }
+
+  it('rejects a promise-returning bare transform as a synchronous transform result', () => {
+    const ec = new ExecutionContext(new SecurityPolicy())
+    expect(() => evaluate(parse('5 |> later'), {}, promiseTransform, ec)).toThrow(
+      'synchronous transform result',
+    )
+  })
+
+  it('rejects a promise-returning transform call as a synchronous transform result', () => {
+    // The call form (`later(...)`) takes a distinct code path from the bare form.
+    const ec = new ExecutionContext(new SecurityPolicy())
+    expect(() => evaluate(parse('5 |> later(1)'), {}, promiseTransform, ec)).toThrow(
+      'synchronous transform result',
+    )
+  })
+})
+
+describe('evaluator - depth is released after each compound node', () => {
+  // Many sibling compound nodes evaluate fine because each releases its depth on
+  // exit. A mutant that drops the `finally { g.exitDepth() }` would leak depth
+  // across siblings and trip MAX_DEPTH well before the real limit. 150 sibling
+  // additions stay far under the default maxDepth of 100 per branch, but would
+  // accumulate to ~151 if depth were never released.
+  it('evaluates many sibling compound expressions without tripping the depth guard', () => {
+    const expr = `[${Array.from({ length: 150 }, () => '1 + 1').join(', ')}]`
+    const result = run(expr) as number[]
+    expect(result).toHaveLength(150)
+    expect(result.every((v) => v === 2)).toBe(true)
   })
 })
