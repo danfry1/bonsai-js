@@ -265,3 +265,14 @@ export function accessMember(
   guard.checkNameAccess(key, 'member')
   return (object as Record<string, unknown>)?.[key]
 }
+
+/**
+ * Fast path for non-computed member access (`obj.prop`), where the property
+ * name is statically known on the AST node. Skips the computed/identifier
+ * branch and the getIdentifierName call that `accessMember` performs. The guard
+ * check and access semantics are identical to `accessMember`.
+ */
+export function accessMemberByName(object: unknown, key: string, guard: ExecutionContext): unknown {
+  guard.checkNameAccess(key, 'member')
+  return (object as Record<string, unknown> | null | undefined)?.[key]
+}

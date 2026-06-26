@@ -109,10 +109,17 @@ export class ExecutionContext {
 
     if (kind === 'identifier' || kind === 'object-key') return
 
+    const { allowedProperties, deniedProperties } = this.policy
+    // Fast path for the default configuration: with no allow/deny lists there is
+    // nothing left to check, so skip the canonical-index test (which coerces the
+    // key through Number()/String()) entirely. The index check only exists to let
+    // numeric indices bypass those lists, so it is pure overhead without them.
+    if (allowedProperties === undefined && deniedProperties === undefined) return
+
     if (isCanonicalIndex(key)) return
 
-    if (this.policy.allowedProperties) {
-      if (!this.policy.allowedProperties.has(key)) {
+    if (allowedProperties) {
+      if (!allowedProperties.has(key)) {
         throw new BonsaiSecurityError(
           'PROPERTY_NOT_ALLOWED',
           `Blocked: "${key}" is not in allowed properties`,
@@ -120,8 +127,8 @@ export class ExecutionContext {
       }
     }
 
-    if (this.policy.deniedProperties) {
-      if (this.policy.deniedProperties.has(key)) {
+    if (deniedProperties) {
+      if (deniedProperties.has(key)) {
         throw new BonsaiSecurityError(
           'PROPERTY_DENIED',
           `Blocked: "${key}" is in denied properties`,
