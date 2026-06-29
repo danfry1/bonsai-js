@@ -1,5 +1,10 @@
 # Security Policy
 
+## Security Model
+
+For what the sandbox protects, the trust boundaries it assumes, and how each
+guarantee is enforced and verified, see the [Threat Model](docs/threat-model.md).
+
 ## Supported Versions
 
 | Version | Supported          |
