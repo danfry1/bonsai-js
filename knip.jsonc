@@ -12,14 +12,6 @@
     "website/**/*.{ts,js}"
   ],
   "project": ["src/**/*.ts"],
-  "ignoreDependencies": [
-    // Used via @fast-check/vitest's re-export (import { it, fc } from
-    // '@fast-check/vitest'), so it is never imported by bare specifier. Kept as
-    // an explicit, exact-pinned direct devDependency anyway: the property suite
-    // uses fast-check's arbitrary API directly, and pinning it here gives precise
-    // version control instead of letting it float within the binding's range.
-    "fast-check"
-  ],
   "rules": {
     // Unused *value* exports are real dead code and fail the gate. Unused *type*
     // exports are not: for a parser library the exported AST/error interfaces are
