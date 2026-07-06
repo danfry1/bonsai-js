@@ -86,7 +86,7 @@
     "@vitest/coverage-v8": "4.1.9",
     "fast-check": "4.8.0",
     "jexl": "2.3.0",
-    "knip": "6.18.0",
+    "knip": "6.23.0",
     "lefthook": "2.1.9",
     "oxfmt": "0.56.0",
     "oxlint": "1.71.0",
