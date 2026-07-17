@@ -61,6 +61,13 @@ export class ExecutionContext {
   private nextCheck = TIMEOUT_CHECK_INTERVAL
   private depth = 0
   private deadline: number
+  // True only while an evaluation is walking this context. Step accounting is
+  // gated on it so that closures created during evaluation (lambda accessors,
+  // identity/expression lambdas) that a host retains and invokes *after* the
+  // evaluation returns cannot mutate this (possibly pooled and reused) context's
+  // step state or trip a stale deadline. Outside a run those closures behave as
+  // the pure getters they were before per-element accounting existed.
+  private running = false
   readonly policy: SecurityPolicy
   private readonly now: () => number
 
@@ -78,8 +85,18 @@ export class ExecutionContext {
     this.deadline = this.policy.timeout ? this.now() + this.policy.timeout : 0
   }
 
+  /** Mark the start of an evaluation walk. Paired with a `finally { endRun() }`. */
+  beginRun(): void {
+    this.running = true
+  }
+
+  /** Mark the end of an evaluation walk, disarming step accounting on this context. */
+  endRun(): void {
+    this.running = false
+  }
+
   step(): void {
-    if (this.deadline) {
+    if (this.deadline && this.running) {
       if (++this.stepCount >= this.nextCheck) {
         this.nextCheck = this.stepCount + TIMEOUT_CHECK_INTERVAL
         this.checkTimeout()
@@ -89,15 +106,15 @@ export class ExecutionContext {
 
   /**
    * Charge `n` units of work at once (bulk operations such as spreading an
-   * already-materialized array). Samples the clock once per crossed
-   * TIMEOUT_CHECK_INTERVAL boundary so a bulk charge spends the same budget
-   * as `n` individual step() calls.
+   * already-materialized array). Charges the whole amount and samples the clock
+   * once if it crosses the next check boundary, so a bulk charge spends the same
+   * budget as `n` individual step() calls without redundant clock reads.
    */
   addSteps(n: number): void {
-    if (this.deadline) {
+    if (this.deadline && this.running) {
       this.stepCount += n
-      while (this.stepCount >= this.nextCheck) {
-        this.nextCheck += TIMEOUT_CHECK_INTERVAL
+      if (this.stepCount >= this.nextCheck) {
+        this.nextCheck = this.stepCount + TIMEOUT_CHECK_INTERVAL
         this.checkTimeout()
       }
     }
@@ -110,6 +127,15 @@ export class ExecutionContext {
         `Expression timeout: exceeded ${this.policy.timeout}ms`,
       )
     }
+  }
+
+  /**
+   * Units of work charged so far this run (0 when no timeout is configured,
+   * since accounting is skipped then). Exposed for diagnostics and tests that
+   * assert bulk operations like spreads are charged proportionally.
+   */
+  get stepsTaken(): number {
+    return this.stepCount
   }
 
   enterDepth(): void {

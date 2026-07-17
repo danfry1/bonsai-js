@@ -41,9 +41,14 @@ export async function evaluateAsync(
     g: guard,
     s: source,
   }
-  const result = await evalNodeAsync(node, env)
-  guard.checkTimeout()
-  return result
+  guard.beginRun()
+  try {
+    const result = await evalNodeAsync(node, env)
+    guard.checkTimeout()
+    return result
+  } finally {
+    guard.endRun()
+  }
 }
 
 async function evalNodeAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown> {

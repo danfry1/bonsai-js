@@ -115,44 +115,131 @@ describe('per-element accounting in flat loops', () => {
     expectTimeout(() => evaluate(parse('[...gen]'), { gen }, noBindings, ec))
   })
 
-  const bigArray = Array.from({ length: 60_000 }, (_, i) => i)
+  // Spreading a materialized array is a single bulk charge, not a per-element
+  // loop, so its guarantee is that the whole length is charged against the step
+  // budget (which the timeout, and a future maxSteps, sample). stepsTaken makes
+  // that charge directly observable, which a wall-clock assertion cannot on a
+  // sub-millisecond operation. A never-firing deadline keeps accounting live.
+  const LEN = 60_000
+  const bigArray = Array.from({ length: LEN }, (_, i) => i)
+  const liveGuard = () => new ExecutionContext(new SecurityPolicy({ timeout: 100_000 }))
 
   it('sync: charges an array-literal spread of a plain array against the budget', () => {
-    const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), advancingClock())
-    expectTimeout(() => evaluate(parse('[...items]'), { items: bigArray }, noBindings, ec))
+    const ec = liveGuard()
+    evaluate(parse('[...items]'), { items: bigArray }, noBindings, ec)
+    expect(ec.stepsTaken).toBeGreaterThanOrEqual(LEN)
   })
 
   it('async: charges an array-literal spread of a plain array against the budget', async () => {
-    const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), advancingClock())
-    await expect(
-      evaluateAsync(parse('[...items]'), { items: bigArray }, noBindings, ec),
-    ).rejects.toMatchObject({ code: 'TIMEOUT' })
+    const ec = liveGuard()
+    await evaluateAsync(parse('[...items]'), { items: bigArray }, noBindings, ec)
+    expect(ec.stepsTaken).toBeGreaterThanOrEqual(LEN)
   })
 
   it('sync: charges a call-argument spread of a plain array against the budget', () => {
-    const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), advancingClock())
+    const ec = liveGuard()
     const count: RegisteredFunction = { kind: 'pure', fn: (...args: unknown[]) => args.length }
-    expectTimeout(() =>
-      evaluate(
-        parse('count(...items)'),
-        { items: bigArray },
-        { transforms: {}, functions: { count } },
-        ec,
-      ),
+    evaluate(
+      parse('count(...items)'),
+      { items: bigArray },
+      { transforms: {}, functions: { count } },
+      ec,
     )
+    expect(ec.stepsTaken).toBeGreaterThanOrEqual(LEN)
   })
 
-  it('sync: materializes an array with a custom iterator through the guarded loop', () => {
-    const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), advancingClock())
-    // An array whose own Symbol.iterator overrides the native one: returning it
-    // as-is would let the caller's native spread re-run host code unguarded.
-    const weird = Array.from({ length: 60_000 }, (_, i) => i)
+  it('sync: charges an array whose Symbol.iterator is overridden (no unguarded re-iteration)', () => {
+    // An array with an overridden iterator still takes the by-index array path,
+    // so its whole length is charged and the hostile iterator is never invoked.
+    const weird = Array.from({ length: LEN }, (_, i) => i)
+    let iteratorCalls = 0
     Object.defineProperty(weird, Symbol.iterator, {
       *value(this: number[]) {
+        iteratorCalls++
         for (let i = 0; i < this.length; i++) yield this[i]
       },
     })
-    expectTimeout(() => evaluate(parse('[...weird]'), { weird }, noBindings, ec))
+    const ec = liveGuard()
+    evaluate(parse('[...weird]'), { weird }, noBindings, ec)
+    expect(ec.stepsTaken).toBeGreaterThanOrEqual(LEN)
+    expect(iteratorCalls).toBe(0)
+  })
+})
+
+describe('sync native higher-order methods are guarded per element', () => {
+  // Native Array.map/filter/etc. would run a host-function callback over the
+  // whole array before any timeout check. The sync evaluator now iterates these
+  // itself (mirroring the async path) so the deadline pre-empts mid-loop.
+  const advancingClock = (): (() => number) => {
+    let now = 0
+    return () => (now += 2)
+  }
+  const bigItems = Array.from({ length: 60_000 }, (_, i) => i)
+
+  for (const method of ['map', 'filter', 'find', 'some', 'every'] as const) {
+    it(`sync: ${method} with a context-function callback rejects mid-loop`, () => {
+      const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), advancingClock())
+      // Force a full scan: find/some never match on false, every never fails on
+      // true; map/filter always scan. So none short-circuits early and the loop
+      // runs long enough for the deadline to pre-empt it.
+      const cb = () => method === 'every'
+      expectTimeout(() =>
+        evaluate(parse(`items.${method}(cb)`), { items: bigItems, cb }, noBindings, ec),
+      )
+    })
+  }
+
+  it('sync: find short-circuits at the first match (parity with native)', () => {
+    const ec = new ExecutionContext(new SecurityPolicy())
+    const seen: number[] = []
+    const cb = (x: unknown) => {
+      seen.push(x as number)
+      return (x as number) === 2
+    }
+    const r = evaluate(parse('items.find(cb)'), { items: [1, 2, 3, 4], cb }, noBindings, ec)
+    expect(r).toBe(2)
+    expect(seen).toEqual([1, 2]) // stopped at the match, did not scan 3 and 4
+  })
+})
+
+describe('retained lambda closures do not corrupt the pooled context', () => {
+  it('a host-retained accessor invoked after the run is an inert getter', () => {
+    const expr = bonsai({ timeout: 50 })
+    let stored: ((item: unknown) => unknown) | undefined
+    expr.addFunction('defer', (accessor: unknown) => {
+      stored = accessor as (item: unknown) => unknown
+      return 0
+    })
+    expr.evaluateSync('defer(.x)')
+    // Hammer the retained closure long after the pooled context's deadline would
+    // have lapsed. Pre-fix this stepped the pooled context and threw a spurious
+    // TIMEOUT once the accumulated steps crossed a check boundary.
+    let last: unknown
+    for (let i = 0; i < 5000; i++) last = stored?.({ x: 42 })
+    expect(last).toBe(42)
+    // The pooled context is still usable for normal evaluations.
+    expect(expr.evaluateSync('1 + 1')).toBe(2)
+  })
+})
+
+describe('timeout does not mask an async-in-sync misuse', () => {
+  it('a sync function returning a Promise past the deadline reports the misuse, not TIMEOUT', () => {
+    const expr = bonsai({ timeout: 1 })
+    expr.addFunction('bad', () => {
+      const start = performance.now()
+      while (performance.now() - start < 5) {
+        // elapse the 1ms deadline before returning
+      }
+      return Promise.resolve(1)
+    })
+    try {
+      expr.evaluateSync('bad()')
+      throw new Error('expected a throw')
+    } catch (e) {
+      // The descriptive async-misuse error, not a TIMEOUT that hides the real bug.
+      expect((e as { code?: string }).code).not.toBe('TIMEOUT')
+      expect((e as Error).message).toContain('evaluate()')
+    }
   })
 })
 
