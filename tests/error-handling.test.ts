@@ -109,6 +109,7 @@ function explainCode(code: BonsaiSecurityCode): string {
     case 'MAX_DEPTH':
     case 'MAX_ARRAY_LENGTH':
     case 'MAX_STRING_LENGTH':
+    case 'MAX_STEPS':
       return 'limit'
     case 'TIMEOUT':
       return 'timeout'

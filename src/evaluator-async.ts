@@ -41,7 +41,7 @@ export async function evaluateAsync(
     g: guard,
     s: source,
   }
-  if (!guard.hasDeadline) return evalNodeAsync(node, env)
+  if (!guard.needsAccounting) return evalNodeAsync(node, env)
   guard.beginRun()
   try {
     const result = await evalNodeAsync(node, env)

@@ -65,6 +65,7 @@ export type BonsaiSecurityCode =
   | 'MAX_DEPTH'
   | 'MAX_ARRAY_LENGTH'
   | 'MAX_STRING_LENGTH'
+  | 'MAX_STEPS'
   | 'TIMEOUT'
 
 /** Security violation: blocked property access, timeout, depth limit, or array size limit. */

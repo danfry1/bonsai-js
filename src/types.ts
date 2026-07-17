@@ -241,6 +241,14 @@ export interface BonsaiOptions {
   maxArrayLength?: number
   /** Maximum string size produced by a string-returning method (padStart, padEnd, repeat, join, concat, slice, ...). Default: 100,000. */
   maxStringLength?: number
+  /**
+   * Maximum number of evaluator steps a single evaluation may take, a
+   * deterministic bound on work that applies without a wall-clock timeout.
+   * Notably bounds a higher-order method over a large context array, whose
+   * receiver size `maxArrayLength` does not cap. Default: 1,000,000. Set to 0
+   * to disable.
+   */
+  maxSteps?: number
   /** Allowlist of property/method names expressions can access. */
   allowedProperties?: string[]
   /** Denylist of property/method names expressions cannot access. */

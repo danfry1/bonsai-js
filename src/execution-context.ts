@@ -33,12 +33,15 @@ const monotonicNow: () => number =
 const DEFAULT_MAX_DEPTH = 100
 const DEFAULT_MAX_ARRAY_LENGTH = 100_000
 const DEFAULT_MAX_STRING_LENGTH = 100_000
+const DEFAULT_MAX_STEPS = 1_000_000
 
 /** Immutable per-instance security configuration derived from BonsaiOptions. */
 export class SecurityPolicy {
   readonly maxDepth: number
   readonly maxArrayLength: number
   readonly maxStringLength: number
+  /** Maximum accounted evaluator steps per evaluation; 0 disables the bound. */
+  readonly maxSteps: number
   readonly timeout: number
   readonly allowedProperties?: ReadonlySet<string>
   readonly deniedProperties?: ReadonlySet<string>
@@ -47,6 +50,7 @@ export class SecurityPolicy {
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH
     this.maxArrayLength = options.maxArrayLength ?? DEFAULT_MAX_ARRAY_LENGTH
     this.maxStringLength = options.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH
+    this.maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS
     this.timeout = options.timeout ?? 0
     this.allowedProperties = options.allowedProperties
       ? new Set(options.allowedProperties)
@@ -68,21 +72,36 @@ export class ExecutionContext {
   // step state or trip a stale deadline. Outside a run those closures behave as
   // the pure getters they were before per-element accounting existed.
   private running = false
+  // Accounting runs when either a step budget or a wall-clock timeout is
+  // configured. Constant per instance since both come from the (immutable)
+  // policy, so the hot no-limits path can skip step tracking entirely.
+  private readonly accounting: boolean
   readonly policy: SecurityPolicy
   private readonly now: () => number
 
   constructor(policy: SecurityPolicy, now: () => number = monotonicNow) {
     this.policy = policy
     this.now = now
+    this.accounting = policy.maxSteps !== 0 || policy.timeout !== 0
     this.deadline = policy.timeout ? now() + policy.timeout : 0
+    this.nextCheck = this.computeNextCheck(0)
   }
 
   /** Reset mutable state for reuse. Avoids allocating a new instance per evaluation. */
   reset(): void {
     this.stepCount = 0
-    this.nextCheck = TIMEOUT_CHECK_INTERVAL
     this.depth = 0
     this.deadline = this.policy.timeout ? this.now() + this.policy.timeout : 0
+    this.nextCheck = this.computeNextCheck(0)
+  }
+
+  // The next stepCount at which checkpoint() must run: the maxSteps hard cap
+  // (checked exactly once, at cap + 1) and, when a timeout is armed, the next
+  // periodic clock sample. Whichever comes first.
+  private computeNextCheck(from: number): number {
+    const stepsBound = this.policy.maxSteps ? this.policy.maxSteps + 1 : Infinity
+    const timeoutBound = this.deadline ? from + TIMEOUT_CHECK_INTERVAL : Infinity
+    return Math.min(stepsBound, timeoutBound)
   }
 
   /** Mark the start of an evaluation walk. Paired with a `finally { endRun() }`. */
@@ -96,28 +115,38 @@ export class ExecutionContext {
   }
 
   step(): void {
-    if (this.deadline && this.running) {
+    if (this.accounting && this.running) {
       if (++this.stepCount >= this.nextCheck) {
-        this.nextCheck = this.stepCount + TIMEOUT_CHECK_INTERVAL
-        this.checkTimeout()
+        this.checkpoint()
       }
     }
   }
 
   /**
    * Charge `n` units of work at once (bulk operations such as spreading an
-   * already-materialized array). Charges the whole amount and samples the clock
-   * once if it crosses the next check boundary, so a bulk charge spends the same
-   * budget as `n` individual step() calls without redundant clock reads.
+   * already-materialized array), so a bulk charge spends the same budget as `n`
+   * individual step() calls without per-unit checks.
    */
   addSteps(n: number): void {
-    if (this.deadline && this.running) {
+    if (this.accounting && this.running) {
       this.stepCount += n
       if (this.stepCount >= this.nextCheck) {
-        this.nextCheck = this.stepCount + TIMEOUT_CHECK_INTERVAL
-        this.checkTimeout()
+        this.checkpoint()
       }
     }
+  }
+
+  // Runs when stepCount crosses nextCheck: enforce the step budget, sample the
+  // timeout clock, and schedule the next checkpoint.
+  private checkpoint(): void {
+    if (this.policy.maxSteps && this.stepCount > this.policy.maxSteps) {
+      throw new BonsaiSecurityError(
+        'MAX_STEPS',
+        `Expression exceeded the maximum step budget (${this.policy.maxSteps})`,
+      )
+    }
+    if (this.deadline) this.checkTimeout()
+    this.nextCheck = this.computeNextCheck(this.stepCount)
   }
 
   checkTimeout(): void {
@@ -130,19 +159,26 @@ export class ExecutionContext {
   }
 
   /**
-   * Units of work charged so far this run (0 when no timeout is configured,
-   * since accounting is skipped then). Exposed for diagnostics and tests that
-   * assert bulk operations like spreads are charged proportionally.
+   * Units of work charged so far this run (0 when no step budget or timeout is
+   * configured, since accounting is skipped then). Exposed for diagnostics and
+   * tests that assert bulk operations like spreads are charged proportionally.
    */
   get stepsTaken(): number {
     return this.stepCount
   }
 
   /**
-   * Whether a wall-clock deadline is armed for this run. Hot paths use it to
-   * skip timeout-only machinery when no timeout is configured — e.g. the sync
-   * evaluator falls back to native array methods, which need no per-element
-   * pre-emption when there is no deadline to enforce.
+   * Whether this run does step accounting (a step budget or a timeout is set).
+   * Evaluator entry points use it to skip run-tracking and per-element charging
+   * entirely on the no-limits hot path.
+   */
+  get needsAccounting(): boolean {
+    return this.accounting
+  }
+
+  /**
+   * Whether a wall-clock deadline is armed for this run. Distinct from
+   * {@link needsAccounting}: a step budget alone accounts without a deadline.
    */
   get hasDeadline(): boolean {
     return this.deadline !== 0
