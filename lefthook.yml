@@ -13,4 +13,4 @@ pre-push:
     - name: test
       run: bun run test
     - name: bump-file
-      run: bunx bumpy check --hook pre-push --no-fail
+      run: bun run check:bump --hook pre-push --no-fail

@@ -55,7 +55,8 @@
     "prepublishOnly": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run bench:gate && bun run check:package",
     "test:coverage": "vitest run --coverage",
     "test:mutation": "stryker run",
-    "fuzz": "bun run scripts/fuzz.ts"
+    "fuzz": "bun run scripts/fuzz.ts",
+    "check:bump": "bumpy check"
   },
   "keywords": [
     "expression",

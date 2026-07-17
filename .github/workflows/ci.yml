@@ -34,8 +34,10 @@ jobs:
         run: bun audit
         continue-on-error: true
 
+      # bun run resolves the lockfile-pinned binary and fails if it is absent;
+      # bunx would fall back to fetching the latest version from the registry.
       - name: Bump file
-        run: bunx bumpy check --strict
+        run: bun run check:bump --strict
 
       - name: Format
         run: bun run format:check
