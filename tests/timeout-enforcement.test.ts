@@ -166,46 +166,41 @@ describe('per-element accounting in flat loops', () => {
   })
 })
 
-describe('sync native higher-order methods are guarded per element', () => {
-  // The native method still runs; a callback wrapper charges the step budget so
-  // the deadline can pre-empt the native loop mid-iteration.
+describe('array-method callbacks and the deadline', () => {
   const advancingClock = (): (() => number) => {
     let now = 0
     return () => (now += 2)
   }
-  const bigItems = Array.from({ length: 60_000 }, (_, i) => i)
+  const bigItems = Array.from({ length: 60_000 }, (_, i) => ({ x: i }))
 
-  for (const method of ['map', 'filter', 'find', 'some', 'every'] as const) {
-    it(`sync: ${method} with a context-function callback rejects mid-loop`, () => {
-      const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), advancingClock())
-      // Force a full scan: find/some never match on false, every never fails on
-      // true; map/filter always scan. So none short-circuits early and the loop
-      // runs long enough for the deadline to pre-empt it.
-      const cb = () => method === 'every'
-      expectTimeout(() =>
-        evaluate(parse(`items.${method}(cb)`), { items: bigItems, cb }, noBindings, ec),
-      )
-    })
-  }
+  it('a bonsai-lambda callback is pre-empted mid-loop (its closure charges step)', () => {
+    // `.x` compiles to an accessor closure that charges step() per call, so a
+    // native map over a large array is interrupted without touching the method.
+    const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), advancingClock())
+    expectTimeout(() => evaluate(parse('items.map(.x)'), { items: bigItems }, noBindings, ec))
+  })
 
-  it('sync: find short-circuits at the first match (parity with native)', () => {
-    const ec = new ExecutionContext(new SecurityPolicy())
-    const seen: number[] = []
-    const cb = (x: unknown) => {
-      seen.push(x as number)
-      return (x as number) === 2
+  it('a native method with a host-function callback is checked at return', () => {
+    // The evaluator does not interpose on the native method, so enforcement is
+    // at method return, not mid-iteration. Bounded because an array method runs
+    // at most maxArrayLength callbacks; here the callback elapses the deadline.
+    let now = 0
+    const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), () => now)
+    const cb = (item: unknown): unknown => {
+      now += 60
+      return item
     }
-    const r = evaluate(parse('items.find(cb)'), { items: [1, 2, 3, 4], cb }, noBindings, ec)
-    expect(r).toBe(2)
-    expect(seen).toEqual([1, 2]) // stopped at the match, did not scan 3 and 4
+    expectTimeout(() => evaluate(parse('items.map(cb)'), { items: [1, 2, 3], cb }, noBindings, ec))
   })
 })
 
 describe('the timeout option must not change successful evaluation semantics', () => {
-  // Enforcement wraps the callback and runs the native method, so results must
-  // be identical with and without a timeout. Reimplementing the method (an
-  // earlier approach) silently dropped index/array args, iterated sparse holes,
-  // ignored thisArg, and bypassed method overrides only when a timeout was set.
+  // The evaluator runs native methods untouched, so results must be identical
+  // with and without a timeout. Earlier approaches broke this only when a
+  // timeout was set: reimplementing methods dropped index/array args, iterated
+  // sparse holes, ignored thisArg, and bypassed overrides; wrapping every
+  // function argument corrupted function-valued *data* arguments and callback
+  // identity. These pin both boundaries.
   const withTimeout = bonsai({ timeout: 10_000 })
   const noTimeout = bonsai()
   const bothAgree = (expr: string, ctx: Record<string, unknown>): unknown => {
@@ -252,6 +247,32 @@ describe('the timeout option must not change successful evaluation semantics', (
     Object.defineProperty(arr, 'map', { value: () => 'OVERRIDDEN' })
     const r = bothAgree('items.map(f)', { items: arr, f: (v: number) => v })
     expect(r).toBe('OVERRIDDEN')
+  })
+
+  // A function passed as data, not a callback: its identity must be preserved.
+  it('preserves a function-valued argument to includes (identity search)', () => {
+    const fn = (): number => 1
+    expect(bothAgree('items.includes(fn)', { items: [fn, 2, 3], fn })).toBe(true)
+  })
+
+  it('preserves a function-valued argument to concat', () => {
+    const fn = (): number => 1
+    const r = bothAgree('items.concat(fn)', { items: [1, 2], fn }) as unknown[]
+    expect(r[2]).toBe(fn) // same identity, not a wrapper
+  })
+
+  it('preserves a function-valued argument to with', () => {
+    const fn = (): number => 1
+    const r = bothAgree('items.with(0, fn)', { items: [1, 2, 3], fn }) as unknown[]
+    expect(r[0]).toBe(fn)
+  })
+
+  it('preserves callback identity for an override that inspects it', () => {
+    const fn = (v: number): number => v
+    const arr = [1, 2, 3]
+    // An override that returns whether it received the exact function it was given.
+    Object.defineProperty(arr, 'map', { value: (cb: unknown) => cb === fn })
+    expect(bothAgree('items.map(fn)', { items: arr, fn })).toBe(true)
   })
 })
 

@@ -287,13 +287,11 @@ function evalCallExpression(
       }
       validateMethodArgs(obj, methodName, args, g)
 
-      // When a deadline is armed, charge the step budget on each callback
-      // invocation so a long native iteration (map/filter/reduce/sort/...) can
-      // be pre-empted mid-loop: the native method itself still runs, preserving
-      // callback index/array arguments, sparse-hole skipping, `thisArg`, short-
-      // circuiting, and any overridden method. See chargeCallbackSteps.
-      if (g.hasDeadline) chargeCallbackSteps(args, g)
-
+      // A native method is a single opaque call from the evaluator's view, so
+      // the deadline is enforced at return, not mid-iteration. That is bounded:
+      // an array method runs at most maxArrayLength callbacks, and a bonsai
+      // lambda callback still charges step() per element via its own closure, so
+      // `items.map(.x)` over a large array is pre-empted mid-loop regardless.
       const result = rejectPromise(method.call(obj, ...args), 'method', methodName)
       g.checkTimeout()
       checkResultArrayLength(result, g)
@@ -467,10 +465,6 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
           }
           validateMethodArgs(obj, methodName, args, g)
 
-          // Same callback-budget wrapping as the top-level method path so nested
-          // higher-order iteration is pre-emptible without altering semantics.
-          if (g.hasDeadline) chargeCallbackSteps(args, g)
-
           const result = rejectPromise(method.call(obj, ...args), 'method', methodName)
           g.checkTimeout()
           checkResultArrayLength(result, g)
@@ -535,26 +529,6 @@ function getObjectPropertyKey(prop: ObjectProperty, env: EvalEnv): string {
   const key = prop.computed ? String(evalNode(prop.key, env)) : getObjectLiteralKeyName(prop.key)
   env.g.checkNameAccess(key, 'object-key')
   return key
-}
-
-// Replaces each function argument with a wrapper that charges one step before
-// delegating, so the deadline can pre-empt a long native iteration (map, filter,
-// reduce, sort's comparator, ...) mid-loop: a wrapped callback that trips the
-// timeout throws out of the native method. The native method is what actually
-// runs, so callback index/array arguments, sparse-hole skipping, `thisArg`, and
-// short-circuiting are all preserved exactly. Mutates the local `args` array in
-// place (it is built fresh per call). Only invoked when a deadline is armed.
-function chargeCallbackSteps(args: unknown[], guard: ExecutionContext): void {
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]
-    if (typeof arg === 'function') {
-      const original = arg as (...callbackArgs: unknown[]) => unknown
-      args[i] = function chargedCallback(this: unknown, ...callbackArgs: unknown[]): unknown {
-        guard.step()
-        return original.apply(this, callbackArgs)
-      }
-    }
-  }
 }
 
 function makeLambdaAccessor(
