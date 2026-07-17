@@ -59,7 +59,7 @@ export function inferElementType(array: unknown[]): ElementTypeInfo {
   if (type === 'object' && first !== null && typeof first === 'object') {
     return {
       type: 'object',
-      properties: Object.keys(first as Record<string, unknown>),
+      properties: Object.keys(first),
       value: first as Record<string, unknown>,
     }
   }
@@ -79,5 +79,5 @@ export function inferMethodReturnType(
 
 export function enumerateProperties(value: unknown): string[] {
   if (value == null || typeof value !== 'object') return []
-  return Object.keys(value as Record<string, unknown>)
+  return Object.keys(value)
 }

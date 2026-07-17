@@ -104,7 +104,7 @@ describe('applyBinaryOp - in / not in', () => {
   })
 
   it('rejects an unknown binary operator', () => {
-    expect(() => applyBinaryOp('&&' as never, true, false)).toThrow('Unknown binary operator')
+    expect(() => applyBinaryOp('&&', true, false)).toThrow('Unknown binary operator')
   })
 })
 
