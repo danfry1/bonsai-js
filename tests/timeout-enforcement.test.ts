@@ -182,8 +182,9 @@ describe('array-method callbacks and the deadline', () => {
 
   it('a native method with a host-function callback is checked at return', () => {
     // The evaluator does not interpose on the native method, so enforcement is
-    // at method return, not mid-iteration. Bounded because an array method runs
-    // at most maxArrayLength callbacks; here the callback elapses the deadline.
+    // at method return, not mid-iteration: a host callback over a large context
+    // array runs to completion first (the receiver size is not capped). Here the
+    // callback elapses the deadline, so the post-call check rejects.
     let now = 0
     const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), () => now)
     const cb = (item: unknown): unknown => {

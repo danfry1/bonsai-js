@@ -288,10 +288,12 @@ function evalCallExpression(
       validateMethodArgs(obj, methodName, args, g)
 
       // A native method is a single opaque call from the evaluator's view, so
-      // the deadline is enforced at return, not mid-iteration. That is bounded:
-      // an array method runs at most maxArrayLength callbacks, and a bonsai
-      // lambda callback still charges step() per element via its own closure, so
-      // `items.map(.x)` over a large array is pre-empted mid-loop regardless.
+      // the deadline is enforced at return, not mid-iteration. A host-function
+      // callback over a large context array therefore runs to completion before
+      // the deadline is checked (maxArrayLength bounds arrays *produced* during
+      // evaluation, not a context-array receiver). A bonsai lambda callback does
+      // still charge step() per element via its own closure, so `items.map(.x)`
+      // over a large array is pre-empted mid-loop.
       const result = rejectPromise(method.call(obj, ...args), 'method', methodName)
       g.checkTimeout()
       checkResultArrayLength(result, g)
