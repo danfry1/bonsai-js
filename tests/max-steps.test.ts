@@ -107,7 +107,7 @@ describe('maxSteps through the public API', () => {
   })
 })
 
-describe('sync and async consume the same step budget', () => {
+describe('sync and async consume the same step budget (dense arrays, built-in methods)', () => {
   const noBindings = { transforms: {}, functions: {} }
   const stepsFor = async (expr: string, ctx: Record<string, unknown>) => {
     // A live budget (timeout, no cap) so accounting runs without tripping.
@@ -149,5 +149,32 @@ describe('sync and async consume the same step budget', () => {
     const ctx = { items }
     await expect(enough.evaluate('items.map(.x)', ctx)).resolves.toBeDefined()
     await expect(tooLow.evaluate('items.map(.x)', ctx)).rejects.toMatchObject({ code: 'MAX_STEPS' })
+  })
+})
+
+describe('known async budget divergence: sparse holes and overridden methods', () => {
+  // Async must reimplement higher-order methods to await async callbacks, so it
+  // visits sparse holes and ignores an overridden method where the sync path
+  // (native method) does not — charging more steps. Full semantic parity is a
+  // deferred milestone; these characterize the boundary so it is not a silent
+  // regression and any future parity fix updates them deliberately.
+  it('a sparse array charges fewer steps synchronously than asynchronously', async () => {
+    const sparse: number[] = []
+    sparse[99] = 1 // 1 real element, 99 holes
+    const expr = bonsai({ maxSteps: 50 })
+    expect(() => expr.evaluateSync('items.map(.x)', { items: sparse })).not.toThrow()
+    await expect(expr.evaluate('items.map(.x)', { items: sparse })).rejects.toMatchObject({
+      code: 'MAX_STEPS',
+    })
+  })
+
+  it('an overridden method is honored synchronously but reimplemented asynchronously', async () => {
+    const arr = [1, 2, 3, 4, 5]
+    Object.defineProperty(arr, 'map', { value: () => 'overridden' })
+    const expr = bonsai({ maxSteps: 2 })
+    expect(expr.evaluateSync('items.map(.x)', { items: arr })).toBe('overridden')
+    await expect(expr.evaluate('items.map(.x)', { items: arr })).rejects.toMatchObject({
+      code: 'MAX_STEPS',
+    })
   })
 })

@@ -349,6 +349,8 @@ const safe = bonsai({
 | `timeout` | number | 0 | Evaluation timeout in milliseconds. `0` disables timeout checks |
 | `maxDepth` | number | 100 | Max expression nesting depth |
 | `maxArrayLength` | number | 100000 | Max array literal or expanded spread size |
+| `maxStringLength` | number | 100000 | Max string size produced by a string-returning method (throws `MAX_STRING_LENGTH`) |
+| `maxSteps` | number | 1000000 | Max accounted evaluator steps per evaluation, a default-on bound independent of `timeout`; bounds evaluator-driven work (AST walk, bonsai-lambda iteration) but not opaque host/native work (throws `MAX_STEPS`). `0` disables |
 | `cacheSize` | number | 256 | Per-instance cache size for compiled expressions and parsed AST reuse |
 | `allowedProperties` | string[] | - | Allowlist checked against every accessed identifier and member name |
 | `deniedProperties` | string[] | - | Denylist checked against every accessed identifier and member name |
@@ -706,13 +708,16 @@ Beyond configurable property restrictions, Bonsai applies several automatic prot
 
 ```js
 const expr = bonsai({
-  timeout: 50,          // cooperative timeout in ms
-  maxDepth: 50,         // max nesting depth
-  maxArrayLength: 10000 // max array size
+  timeout: 50,           // cooperative timeout in ms (opt-in)
+  maxDepth: 50,          // max nesting depth
+  maxArrayLength: 10000, // max produced array size
+  maxSteps: 500000       // max accounted evaluator steps (default 1,000,000)
 })
 ```
 
-Tip: For user-facing applications where users write their own expressions, start with a minimal context object, use `allowedProperties`, and set all three limits: `timeout`, `maxDepth`, and `maxArrayLength`.
+`maxSteps` is on by default and bounds evaluator-driven work (the AST walk and bonsai-lambda iteration such as `items.map(.x)`) even with no `timeout`; it does not count opaque host/native work.
+
+Tip: For user-facing applications where users write their own expressions, start with a minimal context object, use `allowedProperties`, and set the resource limits: `timeout`, `maxDepth`, `maxArrayLength`, `maxStringLength`, and `maxSteps`.
 
 ---
 

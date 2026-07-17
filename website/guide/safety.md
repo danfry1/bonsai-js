@@ -61,15 +61,22 @@ Beyond the configurable property restrictions, Bonsai applies several layers of 
 
 ## Resource limits
 
-Protect against resource exhaustion with `timeout`, `maxDepth`, and `maxArrayLength`.
+Protect against resource exhaustion with `maxDepth`, `maxArrayLength`,
+`maxStringLength`, a default-on `maxSteps` budget, and an optional `timeout`.
 
 ```ts
 const expr = bonsai({
-  timeout: 50,          // cooperative timeout in ms
-  maxDepth: 50,         // max nesting depth
-  maxArrayLength: 10000 // max array size
+  timeout: 50,           // cooperative timeout in ms (opt-in)
+  maxDepth: 50,          // max nesting depth
+  maxArrayLength: 10000, // max produced array size
+  maxSteps: 500000       // max accounted evaluator steps (default 1,000,000)
 })
 ```
+
+`maxSteps` is on by default and bounds evaluator-driven work (the AST walk and
+bonsai-lambda iteration such as `items.map(.x)`) even with no `timeout` set. It
+does not count work inside an opaque host function or a native method driven by
+a host-function callback.
 
 ## What Bonsai does not do
 
@@ -85,5 +92,5 @@ The `timeout` limit is cooperative: it is checked between evaluator steps. A cus
 :::
 
 ::: tip For user-authored expressions
-Start with a minimal context object, use `allowedProperties`, set all three limits (`timeout`, `maxDepth`, `maxArrayLength`), and treat every custom plugin as trusted application code.
+Start with a minimal context object, use `allowedProperties`, set the resource limits (`timeout`, `maxDepth`, `maxArrayLength`, `maxStringLength`, `maxSteps`), and treat every custom plugin as trusted application code.
 :::
