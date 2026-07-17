@@ -12,6 +12,11 @@
     "website/**/*.{ts,js}"
   ],
   "project": ["src/**/*.ts"],
+  // npm is consumed by the release workflow (node_modules/.bin/npm), which knip
+  // does not trace. It is a devDependency so the release job installs it from
+  // the lockfile, hash-pinned, instead of `npm i -g` (OSSF Scorecard
+  // Pinned-Dependencies).
+  "ignoreDependencies": ["npm"],
   "rules": {
     // Unused *value* exports are real dead code and fail the gate. Unused *type*
     // exports are not: for a parser library the exported AST/error interfaces are

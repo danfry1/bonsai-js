@@ -30,10 +30,13 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - run: npm i -g npm@11.15.0
-
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # Put the lockfile-pinned npm (a devDependency, integrity-checked by bun
+      # install) ahead of the runner's bundled npm for the rest of the job.
+      - name: Use repo-pinned npm
+        run: echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: Format
         run: bun run format:check
