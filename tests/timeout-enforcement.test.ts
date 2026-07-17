@@ -167,9 +167,8 @@ describe('per-element accounting in flat loops', () => {
 })
 
 describe('sync native higher-order methods are guarded per element', () => {
-  // Native Array.map/filter/etc. would run a host-function callback over the
-  // whole array before any timeout check. The sync evaluator now iterates these
-  // itself (mirroring the async path) so the deadline pre-empts mid-loop.
+  // The native method still runs; a callback wrapper charges the step budget so
+  // the deadline can pre-empt the native loop mid-iteration.
   const advancingClock = (): (() => number) => {
     let now = 0
     return () => (now += 2)
@@ -199,6 +198,60 @@ describe('sync native higher-order methods are guarded per element', () => {
     const r = evaluate(parse('items.find(cb)'), { items: [1, 2, 3, 4], cb }, noBindings, ec)
     expect(r).toBe(2)
     expect(seen).toEqual([1, 2]) // stopped at the match, did not scan 3 and 4
+  })
+})
+
+describe('the timeout option must not change successful evaluation semantics', () => {
+  // Enforcement wraps the callback and runs the native method, so results must
+  // be identical with and without a timeout. Reimplementing the method (an
+  // earlier approach) silently dropped index/array args, iterated sparse holes,
+  // ignored thisArg, and bypassed method overrides only when a timeout was set.
+  const withTimeout = bonsai({ timeout: 10_000 })
+  const noTimeout = bonsai()
+  const bothAgree = (expr: string, ctx: Record<string, unknown>): unknown => {
+    const a = noTimeout.evaluateSync(expr, ctx)
+    const b = withTimeout.evaluateSync(expr, ctx)
+    expect(b).toEqual(a)
+    return a
+  }
+
+  it('forwards the element index to the callback', () => {
+    const r = bothAgree('items.map(f)', { items: [10, 20, 30], f: (_v: number, i: number) => i })
+    expect(r).toEqual([0, 1, 2])
+  })
+
+  it('skips sparse-array holes instead of invoking the callback for them', () => {
+    let calls = 0
+    const f = (v: number) => {
+      calls++
+      return v
+    }
+    // eslint-disable-next-line no-sparse-arrays
+    const sparse = [1, , 3] as number[]
+    noTimeout.evaluateSync('items.map(f)', { items: sparse, f })
+    const withoutTimeout = calls
+    calls = 0
+    withTimeout.evaluateSync('items.map(f)', { items: sparse, f })
+    expect(calls).toBe(withoutTimeout)
+    expect(calls).toBe(2) // the hole at index 1 is skipped
+  })
+
+  it('honors an explicit thisArg', () => {
+    const r = bothAgree('items.map(f, t)', {
+      items: [1, 2, 3],
+      f(this: { mult: number }, v: number) {
+        return v * this.mult
+      },
+      t: { mult: 10 },
+    })
+    expect(r).toEqual([10, 20, 30])
+  })
+
+  it('uses an overridden array method rather than a reimplementation', () => {
+    const arr = [1, 2, 3]
+    Object.defineProperty(arr, 'map', { value: () => 'OVERRIDDEN' })
+    const r = bothAgree('items.map(f)', { items: arr, f: (v: number) => v })
+    expect(r).toBe('OVERRIDDEN')
   })
 })
 

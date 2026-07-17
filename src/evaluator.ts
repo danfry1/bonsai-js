@@ -287,32 +287,12 @@ function evalCallExpression(
       }
       validateMethodArgs(obj, methodName, args, g)
 
-      // Higher-order array methods are evaluated with our own guarded loop
-      // instead of the native method so per-element work is charged against the
-      // step budget and the deadline can pre-empt mid-iteration. Native map/
-      // filter/etc. would run a host-function callback over the whole array
-      // before any timeout check, letting one expression overrun its timeout by
-      // the full loop cost. Mirrors evalAsyncArrayMethod for sync/async parity.
-      // Only when a deadline is armed: with no timeout there is nothing to
-      // pre-empt, so the faster native method is used (the common case).
-      if (
-        g.hasDeadline &&
-        Array.isArray(obj) &&
-        args.length === 1 &&
-        typeof args[0] === 'function'
-      ) {
-        const syncResult = evalSyncArrayMethod(
-          methodName,
-          obj,
-          args[0] as (item: unknown) => unknown,
-          g,
-        )
-        if (syncResult !== undefined) {
-          g.checkTimeout()
-          checkResultArrayLength(syncResult.value, g)
-          return syncResult.value
-        }
-      }
+      // When a deadline is armed, charge the step budget on each callback
+      // invocation so a long native iteration (map/filter/reduce/sort/...) can
+      // be pre-empted mid-loop: the native method itself still runs, preserving
+      // callback index/array arguments, sparse-hole skipping, `thisArg`, short-
+      // circuiting, and any overridden method. See chargeCallbackSteps.
+      if (g.hasDeadline) chargeCallbackSteps(args, g)
 
       const result = rejectPromise(method.call(obj, ...args), 'method', methodName)
       g.checkTimeout()
@@ -487,27 +467,9 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
           }
           validateMethodArgs(obj, methodName, args, g)
 
-          // Guarded higher-order iteration for nested lambdas too (same as the
-          // top-level method path), so per-element work is charged and the
-          // deadline can pre-empt mid-iteration. Only when a deadline is armed.
-          if (
-            g.hasDeadline &&
-            Array.isArray(obj) &&
-            args.length === 1 &&
-            typeof args[0] === 'function'
-          ) {
-            const syncResult = evalSyncArrayMethod(
-              methodName,
-              obj,
-              args[0] as (nestedItem: unknown) => unknown,
-              g,
-            )
-            if (syncResult !== undefined) {
-              g.checkTimeout()
-              checkResultArrayLength(syncResult.value, g)
-              return syncResult.value
-            }
-          }
+          // Same callback-budget wrapping as the top-level method path so nested
+          // higher-order iteration is pre-emptible without altering semantics.
+          if (g.hasDeadline) chargeCallbackSteps(args, g)
 
           const result = rejectPromise(method.call(obj, ...args), 'method', methodName)
           g.checkTimeout()
@@ -575,80 +537,24 @@ function getObjectPropertyKey(prop: ObjectProperty, env: EvalEnv): string {
   return key
 }
 
-// Synchronous mirror of evalAsyncArrayMethod: evaluates higher-order array
-// methods with a guarded per-element loop so a host-function callback cannot run
-// over the whole array before a timeout check, and find/some/every/findIndex
-// short-circuit exactly like the native methods. Truthiness uses Boolean() to
-// match native Array semantics. Returns { value } when handled, undefined when
-// the method is not a supported higher-order method (falls back to native call).
-function evalSyncArrayMethod(
-  methodName: string,
-  arr: unknown[],
-  predicate: (item: unknown) => unknown,
-  guard: ExecutionContext,
-): { value: unknown } | undefined {
-  switch (methodName) {
-    case 'filter': {
-      const out: unknown[] = []
-      for (const item of arr) {
+// Replaces each function argument with a wrapper that charges one step before
+// delegating, so the deadline can pre-empt a long native iteration (map, filter,
+// reduce, sort's comparator, ...) mid-loop: a wrapped callback that trips the
+// timeout throws out of the native method. The native method is what actually
+// runs, so callback index/array arguments, sparse-hole skipping, `thisArg`, and
+// short-circuiting are all preserved exactly. Mutates the local `args` array in
+// place (it is built fresh per call). Only invoked when a deadline is armed.
+function chargeCallbackSteps(args: unknown[], guard: ExecutionContext): void {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    if (typeof arg === 'function') {
+      const original = arg as (...callbackArgs: unknown[]) => unknown
+      args[i] = function chargedCallback(this: unknown, ...callbackArgs: unknown[]): unknown {
         guard.step()
-        if (isTruthy(predicate(item))) out.push(item)
+        return original.apply(this, callbackArgs)
       }
-      return { value: out }
     }
-    case 'map': {
-      const out: unknown[] = []
-      for (const item of arr) {
-        guard.step()
-        out.push(predicate(item))
-      }
-      return { value: out }
-    }
-    case 'flatMap': {
-      const out: unknown[] = []
-      for (const item of arr) {
-        guard.step()
-        out.push(predicate(item))
-      }
-      return { value: out.flat() }
-    }
-    case 'find': {
-      for (const item of arr) {
-        guard.step()
-        if (isTruthy(predicate(item))) return { value: item }
-      }
-      return { value: undefined }
-    }
-    case 'findIndex': {
-      for (let i = 0; i < arr.length; i++) {
-        guard.step()
-        if (isTruthy(predicate(arr[i]))) return { value: i }
-      }
-      return { value: -1 }
-    }
-    case 'some': {
-      for (const item of arr) {
-        guard.step()
-        if (isTruthy(predicate(item))) return { value: true }
-      }
-      return { value: false }
-    }
-    case 'every': {
-      for (const item of arr) {
-        guard.step()
-        if (!isTruthy(predicate(item))) return { value: false }
-      }
-      return { value: true }
-    }
-    default:
-      return undefined
   }
-}
-
-// Native Array truthiness for higher-order predicates over `unknown` values,
-// matching evaluator-async.ts so sync and async agree.
-function isTruthy(value: unknown): boolean {
-  return Boolean(value)
 }
 
 function makeLambdaAccessor(
