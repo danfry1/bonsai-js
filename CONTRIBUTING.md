@@ -65,13 +65,33 @@ A performance gate runs on every release. If your change touches the evaluator h
 - Write a clear title and description explaining what and why.
 - Ensure CI passes (lint, typecheck, test, build, perf gate).
 
+### Bump files
+
+Releases are driven by [bumpy](https://github.com/dmno-dev/bumpy). A PR that changes published output (anything under `src/`, the build config, or release-affecting `package.json` fields) must include a **bump file** declaring its version impact and changelog entry. CI enforces this with `bumpy check --strict`; dependency-only and docs PRs are exempt.
+
+Add one with the lockfile-pinned CLI (not `bunx`, which can fetch a newer version):
+
+```bash
+bun run bump
+# non-interactive:
+bun run bump -- --packages "bonsai-js:minor" --message "Describe the change" --name "my-change"
+```
+
+Pick the level by impact: `major` (breaking), `minor` (new feature), `patch` (fix). The bump file's body becomes the CHANGELOG entry, so write it as user-facing release notes. Keep it in sync as the PR evolves.
+
 ## Releasing
 
 Releases are driven by a Git tag and use npm **staged publishing** over OIDC trusted publishing. No npm tokens are involved, and every release requires a human 2FA approval before the version becomes installable.
 
 ### 1. Cut the release
 
-Bump `version` in `package.json` and update `CHANGELOG.md` in a PR titled `chore: release X.Y.Z`, and merge it to `main`. Then tag that commit and push the tag:
+Version and changelog are derived from the [bump files](.bumpy/) that PRs accumulate on `main` (see [Bump files](#bump-files)). Apply the pending ones:
+
+```bash
+bun run bump:version
+```
+
+This consumes `.bumpy/*.md`, bumps `version` in `package.json`, and updates `CHANGELOG.md`. Open the result as a PR titled `chore: release X.Y.Z` and merge it to `main`. Then tag that commit and push the tag:
 
 ```bash
 git tag vX.Y.Z

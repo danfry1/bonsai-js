@@ -8,20 +8,25 @@ Bumpy is a modern versioning tool for JavaScript/TypeScript projects (monorepos 
 
 1. When you make a change that should trigger a release, create a bump file (typically one per PR)
 2. Bump files accumulate on your main branch until you're ready to release
-3. At release time, bumpy merges all pending bumps into a release plan, updates versions and changelogs, and publishes packages
+3. At release time `bun run bump:version` merges all pending bumps, updating `version` in `package.json` and `CHANGELOG.md`. Publishing stays on this repo's tag-driven staged-publish flow (see [CONTRIBUTING.md](../CONTRIBUTING.md#releasing)), not bumpy.
 
 ## Creating bump files
+
+> This repo pins bumpy as a devDependency. Invoke it through the `bun run`
+> script wrappers below, never `bunx bumpy` — `bunx` falls back to fetching the
+> latest version from the registry when the package is not installed locally,
+> which would diverge from the pinned version CI enforces.
 
 ### Interactive
 
 ```bash
-bunx bumpy add
+bun run bump
 ```
 
 ### Non-interactive (useful for AI-assisted development)
 
 ```bash
-bunx bumpy add --packages "package-name:minor,other-package:patch" --message "Description of changes" --name "my-change"
+bun run bump -- --packages "package-name:minor,other-package:patch" --message "Description of changes" --name "my-change"
 ```
 
 ### By hand
@@ -39,7 +44,7 @@ Added a new feature.
 ### From conventional commits
 
 ```bash
-bunx bumpy generate
+bun run bump:generate
 ```
 
 ### Empty bump files
@@ -47,7 +52,7 @@ bunx bumpy generate
 For PRs that intentionally don't need a release (docs, CI, etc.):
 
 ```bash
-bunx bumpy add --empty --name "docs-update"
+bun run bump -- --empty --name "docs-update"
 ```
 
 ## Keeping bump files up to date

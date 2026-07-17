@@ -56,7 +56,10 @@
     "test:coverage": "vitest run --coverage",
     "test:mutation": "stryker run",
     "fuzz": "bun run scripts/fuzz.ts",
-    "check:bump": "bumpy check"
+    "check:bump": "bumpy check",
+    "bump": "bumpy add",
+    "bump:generate": "bumpy generate",
+    "bump:version": "bumpy version"
   },
   "keywords": [
     "expression",
