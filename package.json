@@ -55,7 +55,11 @@
     "prepublishOnly": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run bench:gate && bun run check:package",
     "test:coverage": "vitest run --coverage",
     "test:mutation": "stryker run",
-    "fuzz": "bun run scripts/fuzz.ts"
+    "fuzz": "bun run scripts/fuzz.ts",
+    "check:bump": "bumpy check",
+    "bump": "bumpy add",
+    "bump:generate": "bumpy generate",
+    "bump:version": "bumpy version"
   },
   "keywords": [
     "expression",
@@ -83,6 +87,7 @@
     "@stryker-mutator/core": "9.6.1",
     "@stryker-mutator/vitest-runner": "9.6.1",
     "@types/node": "22.20.1",
+    "@varlock/bumpy": "1.18.1",
     "@vitest/coverage-v8": "4.1.10",
     "fast-check": "4.9.0",
     "jexl": "2.3.0",

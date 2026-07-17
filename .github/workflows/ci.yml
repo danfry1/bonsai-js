@@ -16,6 +16,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # bumpy check diffs against the base branch, so it needs history
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -30,6 +33,11 @@ jobs:
       - name: Audit dependencies
         run: bun audit
         continue-on-error: true
+
+      # bun run resolves the lockfile-pinned binary and fails if it is absent;
+      # bunx would fall back to fetching the latest version from the registry.
+      - name: Bump file
+        run: bun run check:bump --strict
 
       - name: Format
         run: bun run format:check

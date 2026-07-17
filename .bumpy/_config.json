@@ -1,0 +1,7 @@
+{
+  "$schema": "../node_modules/@varlock/bumpy/config-schema.json",
+  "baseBranch": "main",
+  "changelog": "default",
+  "changedFilePatterns": ["src/**", "package.json", "tsdown.config.ts", "tsconfig.json"],
+  "ignoredPackageJsonFields": ["devDependencies", "scripts"]
+}

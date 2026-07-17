@@ -12,3 +12,5 @@ pre-push:
   jobs:
     - name: test
       run: bun run test
+    - name: bump-file
+      run: bun run check:bump --hook pre-push --no-fail
