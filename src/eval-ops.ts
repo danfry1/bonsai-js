@@ -137,7 +137,11 @@ export function getObjectLiteralKeyName(
   throw new Error(message)
 }
 
-export function expandSpreadValue(value: unknown, maxLength?: number): unknown[] {
+export function expandSpreadValue(
+  value: unknown,
+  maxLength?: number,
+  guard?: ExecutionContext,
+): unknown[] {
   if (Array.isArray(value)) {
     if (maxLength !== undefined && value.length > maxLength) {
       throw new BonsaiSecurityError(
@@ -152,6 +156,7 @@ export function expandSpreadValue(value: unknown, maxLength?: number): unknown[]
     if (typeof iterator === 'function') {
       const result: unknown[] = []
       for (const item of value as Iterable<unknown>) {
+        guard?.step()
         result.push(item)
         if (maxLength !== undefined && result.length > maxLength) {
           throw new BonsaiSecurityError(

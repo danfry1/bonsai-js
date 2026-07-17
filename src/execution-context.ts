@@ -22,6 +22,14 @@ function isCanonicalIndex(key: string): boolean {
 }
 
 const TIMEOUT_CHECK_INTERVAL = 1000
+
+// Deadlines use a monotonic clock where the host provides one: Date.now can
+// jump backwards or forwards under NTP adjustment, which would silently widen
+// or shrink the timeout window.
+const monotonicNow: () => number =
+  typeof performance === 'object' && typeof performance.now === 'function'
+    ? () => performance.now()
+    : Date.now
 const DEFAULT_MAX_DEPTH = 100
 const DEFAULT_MAX_ARRAY_LENGTH = 100_000
 const DEFAULT_MAX_STRING_LENGTH = 100_000
@@ -55,7 +63,7 @@ export class ExecutionContext {
   readonly policy: SecurityPolicy
   private readonly now: () => number
 
-  constructor(policy: SecurityPolicy, now: () => number = Date.now) {
+  constructor(policy: SecurityPolicy, now: () => number = monotonicNow) {
     this.policy = policy
     this.now = now
     this.deadline = policy.timeout ? now() + policy.timeout : 0

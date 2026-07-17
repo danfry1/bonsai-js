@@ -144,9 +144,14 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
       case 'ArrayLiteral': {
         const elements: unknown[] = []
         for (const el of node.elements) {
+          g.step()
           if (el.type === 'SpreadElement') {
             elements.push(
-              ...expandSpreadValue(await evalNodeAsync(el.argument, env), g.policy.maxArrayLength),
+              ...expandSpreadValue(
+                await evalNodeAsync(el.argument, env),
+                g.policy.maxArrayLength,
+                g,
+              ),
             )
           } else {
             elements.push(await evalNodeAsync(el, env))
@@ -159,6 +164,7 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
       case 'ObjectLiteral': {
         const obj = Object.create(null) as Record<string, unknown>
         for (const prop of node.properties) {
+          g.step()
           const key = await getObjectPropertyKey(prop, env)
           obj[key] = await evalNodeAsync(prop.value, env)
         }
@@ -182,6 +188,7 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
       case 'TemplateLiteral': {
         let result = ''
         for (const part of node.parts) {
+          g.step()
           result +=
             part.type === 'StringLiteral' ? part.value : String(await evalNodeAsync(part, env))
         }
@@ -195,10 +202,16 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
         return makeLambdaAccessor(node.property, g)
 
       case 'LambdaIdentity':
-        return (item: unknown) => item
+        return (item: unknown) => {
+          g.step()
+          return item
+        }
 
       case 'LambdaExpression':
-        return (item: unknown) => evalLambdaBodyAsync(node.body, item, env)
+        return (item: unknown) => {
+          g.step()
+          return evalLambdaBodyAsync(node.body, item, env)
+        }
 
       case 'NumberLiteral':
       case 'StringLiteral':
@@ -244,7 +257,7 @@ async function evalCallExpressionAsync(
       if (Array.isArray(obj) && args.length === 1 && typeof args[0] === 'function') {
         const arr = obj
         const predicate = args[0] as (item: unknown) => unknown
-        const asyncResult = await evalAsyncArrayMethod(methodName, arr, predicate)
+        const asyncResult = await evalAsyncArrayMethod(methodName, arr, predicate, g)
         if (asyncResult !== undefined) {
           g.checkTimeout()
           checkResultArrayLength(asyncResult.value, g)
@@ -294,7 +307,11 @@ async function pushCallArgumentAsync(
 ): Promise<void> {
   if (node.type === 'SpreadElement') {
     args.push(
-      ...expandSpreadValue(await evalNodeAsync(node.argument, env), env.g.policy.maxArrayLength),
+      ...expandSpreadValue(
+        await evalNodeAsync(node.argument, env),
+        env.g.policy.maxArrayLength,
+        env.g,
+      ),
     )
     return
   }
@@ -317,11 +334,13 @@ async function evalAsyncArrayMethod(
   methodName: string,
   arr: unknown[],
   predicate: (item: unknown) => unknown,
+  guard: ExecutionContext,
 ): Promise<{ value: unknown } | undefined> {
   switch (methodName) {
     case 'filter': {
       const out: unknown[] = []
       for (const item of arr) {
+        guard.step()
         if (isTruthy(await predicate(item))) out.push(item)
       }
       return { value: out }
@@ -329,6 +348,7 @@ async function evalAsyncArrayMethod(
     case 'map': {
       const out: unknown[] = []
       for (const item of arr) {
+        guard.step()
         out.push(await predicate(item))
       }
       return { value: out }
@@ -336,30 +356,35 @@ async function evalAsyncArrayMethod(
     case 'flatMap': {
       const out: unknown[] = []
       for (const item of arr) {
+        guard.step()
         out.push(await predicate(item))
       }
       return { value: out.flat() }
     }
     case 'find': {
       for (const item of arr) {
+        guard.step()
         if (isTruthy(await predicate(item))) return { value: item }
       }
       return { value: undefined }
     }
     case 'findIndex': {
       for (let i = 0; i < arr.length; i++) {
+        guard.step()
         if (isTruthy(await predicate(arr[i]))) return { value: i }
       }
       return { value: -1 }
     }
     case 'some': {
       for (const item of arr) {
+        guard.step()
         if (isTruthy(await predicate(item))) return { value: true }
       }
       return { value: false }
     }
     case 'every': {
       for (const item of arr) {
+        guard.step()
         if (!isTruthy(await predicate(item))) return { value: false }
       }
       return { value: true }
@@ -374,7 +399,10 @@ async function evalArgAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown> 
     return makeLambdaAccessor(node.property, env.g)
   }
   if (node.type === 'LambdaIdentity') {
-    return (item: unknown) => item
+    return (item: unknown) => {
+      env.g.step()
+      return item
+    }
   }
   return evalNodeAsync(node, env)
 }
@@ -488,6 +516,7 @@ async function evalLambdaBodyAsync(
                 ...expandSpreadValue(
                   await evalNodeAsync(arg.argument, env),
                   g.policy.maxArrayLength,
+                  g,
                 ),
               )
             } else {
@@ -502,6 +531,7 @@ async function evalLambdaBodyAsync(
               methodName,
               obj,
               args[0] as (item: unknown) => unknown,
+              g,
             )
             if (asyncResult !== undefined) {
               g.checkTimeout()
@@ -511,6 +541,7 @@ async function evalLambdaBodyAsync(
           }
 
           const result = await method.call(obj, ...args)
+          g.checkTimeout()
           checkResultArrayLength(result, g)
           checkResultStringLength(result, g)
           return result
@@ -587,6 +618,7 @@ function makeLambdaAccessor(
   guard: ExecutionContext,
 ): (item: Record<string, unknown>) => unknown {
   return (item: Record<string, unknown>) => {
+    guard.step()
     guard.checkNameAccess(property, 'member')
     return item?.[property]
   }
