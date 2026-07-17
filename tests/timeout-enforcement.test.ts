@@ -114,6 +114,46 @@ describe('per-element accounting in flat loops', () => {
     }
     expectTimeout(() => evaluate(parse('[...gen]'), { gen }, noBindings, ec))
   })
+
+  const bigArray = Array.from({ length: 60_000 }, (_, i) => i)
+
+  it('sync: charges an array-literal spread of a plain array against the budget', () => {
+    const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), advancingClock())
+    expectTimeout(() => evaluate(parse('[...items]'), { items: bigArray }, noBindings, ec))
+  })
+
+  it('async: charges an array-literal spread of a plain array against the budget', async () => {
+    const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), advancingClock())
+    await expect(
+      evaluateAsync(parse('[...items]'), { items: bigArray }, noBindings, ec),
+    ).rejects.toMatchObject({ code: 'TIMEOUT' })
+  })
+
+  it('sync: charges a call-argument spread of a plain array against the budget', () => {
+    const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), advancingClock())
+    const count: RegisteredFunction = { kind: 'pure', fn: (...args: unknown[]) => args.length }
+    expectTimeout(() =>
+      evaluate(
+        parse('count(...items)'),
+        { items: bigArray },
+        { transforms: {}, functions: { count } },
+        ec,
+      ),
+    )
+  })
+
+  it('sync: materializes an array with a custom iterator through the guarded loop', () => {
+    const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), advancingClock())
+    // An array whose own Symbol.iterator overrides the native one: returning it
+    // as-is would let the caller's native spread re-run host code unguarded.
+    const weird = Array.from({ length: 60_000 }, (_, i) => i)
+    Object.defineProperty(weird, Symbol.iterator, {
+      *value(this: number[]) {
+        for (let i = 0; i < this.length; i++) yield this[i]
+      },
+    })
+    expectTimeout(() => evaluate(parse('[...weird]'), { weird }, noBindings, ec))
+  })
 })
 
 describe('end-to-end timeout through the public API', () => {

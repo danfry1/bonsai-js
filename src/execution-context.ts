@@ -58,6 +58,7 @@ export class SecurityPolicy {
 /** Mutable per-evaluation state: tracks depth, step count, and deadline for a single evaluation. */
 export class ExecutionContext {
   private stepCount = 0
+  private nextCheck = TIMEOUT_CHECK_INTERVAL
   private depth = 0
   private deadline: number
   readonly policy: SecurityPolicy
@@ -72,14 +73,31 @@ export class ExecutionContext {
   /** Reset mutable state for reuse. Avoids allocating a new instance per evaluation. */
   reset(): void {
     this.stepCount = 0
+    this.nextCheck = TIMEOUT_CHECK_INTERVAL
     this.depth = 0
     this.deadline = this.policy.timeout ? this.now() + this.policy.timeout : 0
   }
 
   step(): void {
     if (this.deadline) {
-      this.stepCount++
-      if (this.stepCount % TIMEOUT_CHECK_INTERVAL === 0) {
+      if (++this.stepCount >= this.nextCheck) {
+        this.nextCheck = this.stepCount + TIMEOUT_CHECK_INTERVAL
+        this.checkTimeout()
+      }
+    }
+  }
+
+  /**
+   * Charge `n` units of work at once (bulk operations such as spreading an
+   * already-materialized array). Samples the clock once per crossed
+   * TIMEOUT_CHECK_INTERVAL boundary so a bulk charge spends the same budget
+   * as `n` individual step() calls.
+   */
+  addSteps(n: number): void {
+    if (this.deadline) {
+      this.stepCount += n
+      while (this.stepCount >= this.nextCheck) {
+        this.nextCheck += TIMEOUT_CHECK_INTERVAL
         this.checkTimeout()
       }
     }

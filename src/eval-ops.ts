@@ -142,13 +142,18 @@ export function expandSpreadValue(
   maxLength?: number,
   guard?: ExecutionContext,
 ): unknown[] {
-  if (Array.isArray(value)) {
+  // Only plain-iterating arrays may be returned as-is: the caller spreads the
+  // result natively, so an array with an overridden Symbol.iterator would be
+  // re-iterated through host code outside this function's accounting and
+  // length checks. Such arrays take the guarded materialization path below.
+  if (Array.isArray(value) && value[Symbol.iterator] === Array.prototype[Symbol.iterator]) {
     if (maxLength !== undefined && value.length > maxLength) {
       throw new BonsaiSecurityError(
         'MAX_ARRAY_LENGTH',
         `Spread source length (${value.length}) exceeds maximum (${maxLength})`,
       )
     }
+    guard?.addSteps(value.length)
     return value
   }
   if (value != null) {
