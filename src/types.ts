@@ -243,10 +243,14 @@ export interface BonsaiOptions {
   maxStringLength?: number
   /**
    * Maximum number of evaluator steps a single evaluation may take, a
-   * deterministic bound on work that applies without a wall-clock timeout.
-   * Notably bounds a higher-order method over a large context array, whose
-   * receiver size `maxArrayLength` does not cap. Default: 1,000,000. Set to 0
-   * to disable.
+   * deterministic bound on work that applies without a wall-clock timeout. A
+   * "step" is one accounted evaluator operation: a compound-node visit, a
+   * lambda-callback invocation (once per element in a higher-order method),
+   * a spread element, or a template/literal-loop element. Work inside an
+   * opaque host function or a native method is NOT counted, so this bounds a
+   * higher-order method over a large context array only when the callback is a
+   * bonsai lambda (e.g. `items.map(.x)`), not a host function passed as a
+   * callback. Default: 1,000,000. Set to 0 to disable.
    */
   maxSteps?: number
   /** Allowlist of property/method names expressions can access. */

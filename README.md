@@ -301,6 +301,7 @@ const expr = bonsai(options?: BonsaiOptions)
 | `maxDepth` | `number` | `100` | Maximum evaluation depth before throwing `BonsaiSecurityError('MAX_DEPTH', ...)`. |
 | `maxArrayLength` | `number` | `100000` | Maximum array size produced during evaluation, including array literals, expanded spread, and array-returning methods (`split`, `map`, `flat`, `concat`, ...). Exceeding it throws `BonsaiSecurityError('MAX_ARRAY_LENGTH', ...)`. |
 | `maxStringLength` | `number` | `100000` | Maximum string size produced by a string-returning method (`padStart`, `padEnd`, `repeat`, `join`, `concat`, `slice`, ...). Applies to the produced length (e.g. `arr.join(sep)` is bounded by its full output, not just the inputs). Exceeding it throws `BonsaiSecurityError('MAX_STRING_LENGTH', ...)`. |
+| `maxSteps` | `number` | `1000000` | Maximum accounted evaluator steps per evaluation, a deterministic bound enforced independently of `timeout`. A step is one accounted evaluator operation (a compound-node visit, a lambda callback per element, a spread/literal-loop element); work inside an opaque host function or native method is not counted, so it bounds a higher-order method over a large context array only when the callback is a bonsai lambda (`items.map(.x)`). Sync and async consume identical budgets. Exceeding it throws `BonsaiSecurityError('MAX_STEPS', ...)`. `0` disables it. |
 | `cacheSize` | `number` | `256` | Per-instance cache size for compiled expressions and parsed AST reuse. `0` disables caching. |
 | `allowedProperties` | `string[]` | `undefined` | Whitelist of allowed member/method names. Does not apply to root identifiers or object-literal keys. |
 | `deniedProperties` | `string[]` | `undefined` | Denylist of blocked member/method names. Does not apply to root identifiers or object-literal keys. |
@@ -627,7 +628,7 @@ try {
 parse-time `ExpressionError`). `BonsaiSecurityCode` is the closed set of reasons a
 `BonsaiSecurityError` can fire: `BLOCKED_PROPERTY`, `PROPERTY_NOT_ALLOWED`,
 `PROPERTY_DENIED`, `METHOD_NOT_ALLOWED`, `MAX_DEPTH`, `MAX_ARRAY_LENGTH`,
-`MAX_STRING_LENGTH`, `TIMEOUT`.
+`MAX_STRING_LENGTH`, `MAX_STEPS`, `TIMEOUT`.
 
 `formatError()` formats a source span directly, and `formatBonsaiError()` formats a caught Bonsai runtime error using its attached location:
 
@@ -652,7 +653,7 @@ Bonsai is designed to safely evaluate expressions, but it is not a process sandb
 What Bonsai does:
 
 - blocks access to `__proto__`, `constructor`, and `prototype` at every access level, even if explicitly allowed
-- enforces `maxDepth`, `maxArrayLength`, `maxStringLength`, and optional `timeout`
+- enforces `maxDepth`, `maxArrayLength`, `maxStringLength`, a default-on `maxSteps` budget, and optional `timeout`
 - bounds parser recursion so pathologically nested input fails closed with a typed `ExpressionError` instead of overflowing the call stack
 - lets you allowlist or denylist member/method names via `allowedProperties`/`deniedProperties`
 - prevents expressions from reaching globals or importing modules
@@ -665,7 +666,7 @@ What Bonsai does:
 Important operational caveats:
 
 - `allowedProperties` and `deniedProperties` apply to member access (`obj.name`) and method calls (`str.slice()`), not root identifiers (`name`) or object-literal keys (`{ name: value }`)
-- `timeout` is cooperative and checked at evaluator step boundaries (not inside a single native operation); it cannot forcibly interrupt arbitrary synchronous code inside your own custom transforms/functions, so the size limits (`maxArrayLength`, `maxStringLength`) are the primary guard against single-operation resource exhaustion
+- `timeout` and `maxSteps` are cooperative and checked at evaluator step boundaries (not inside a single native operation); they cannot interrupt arbitrary synchronous code inside your own custom transforms/functions, nor work inside a native method driven by a host-function callback. The size limits (`maxArrayLength`, `maxStringLength`) are the primary guard against single-operation resource exhaustion; `maxSteps` bounds evaluator-driven work (AST walk, bonsai-lambda iteration) but not opaque host/native work
 - async transforms/functions are bounded only at awaited boundaries
 - custom transforms/functions/plugins are trusted host code
 

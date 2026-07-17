@@ -125,14 +125,21 @@ Allow-listed methods that could be abused are constrained:
 | Expression depth | `maxDepth` | 100 | Recursion / call-stack growth. |
 | Array length | `maxArrayLength` | 100,000 | Array literals, spread sources, and array-returning methods. |
 | String length | `maxStringLength` | 100,000 | String-producing methods, plus pre-checks on `repeat`/`padStart`/`padEnd`. |
+| Step budget | `maxSteps` | 1,000,000 | Accounted evaluator steps (AST-walk nodes, bonsai-lambda callback invocations, spread/literal-loop elements). Excludes opaque host/native work. |
 | Wall-clock time | `timeout` | 0 (off) | Total evaluation time, checked cooperatively. |
 
-Depth and the array/string ceilings are enforced by default. The timeout is
-**opt-in**: with no `timeout` set there is no wall-clock bound. The timeout is
-also *cooperative* and sampled (the deadline is checked periodically as the
-interpreter steps), so it bounds the interpreter loop rather than any single
-native call. That is why the size caps above exist: they stop the amplifiers
-that a sampled timeout could not interrupt mid-call.
+Depth, the array/string ceilings, and `maxSteps` are enforced by default. The
+timeout is **opt-in**: with no `timeout` set there is no wall-clock bound.
+Both `maxSteps` and the timeout are *cooperative* and sampled (checked as the
+interpreter steps), so they bound the interpreter loop rather than any single
+native call. A "step" is an evaluator-driven operation, so `maxSteps` bounds the
+AST walk and bonsai-lambda-driven iteration (`items.map(.x)` over a large
+context array) but **not** work inside an opaque host function or a native
+method driven by a host-function callback — the receiver of a native array
+method is not size-capped either (`maxArrayLength` caps produced arrays, not a
+context-array receiver). Sync and async consume identical step budgets. That is
+why the size caps above exist: they stop the amplifiers that a sampled bound
+could not interrupt mid-call.
 
 ### No asynchronous escape in synchronous mode
 

@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { bonsai, BonsaiSecurityError } from '../src/index.js'
 import { SecurityPolicy, ExecutionContext } from '../src/execution-context.js'
+import { evaluate } from '../src/evaluator.js'
+import { evaluateAsync } from '../src/evaluator-async.js'
+import { parse } from '../src/parser.js'
 
 // maxSteps is a default-on deterministic bound on evaluator work: it caps the
 // number of accounted steps a single evaluation may take, independent of the
@@ -101,5 +104,50 @@ describe('maxSteps through the public API', () => {
     await expect(expr.evaluate('items.map(.x)', { items })).rejects.toMatchObject({
       code: 'MAX_STEPS',
     })
+  })
+})
+
+describe('sync and async consume the same step budget', () => {
+  const noBindings = { transforms: {}, functions: {} }
+  const stepsFor = async (expr: string, ctx: Record<string, unknown>) => {
+    // A live budget (timeout, no cap) so accounting runs without tripping.
+    const sc = new ExecutionContext(new SecurityPolicy({ maxSteps: 0, timeout: 100_000 }))
+    evaluate(parse(expr), ctx, noBindings, sc)
+    const ac = new ExecutionContext(new SecurityPolicy({ maxSteps: 0, timeout: 100_000 }))
+    await evaluateAsync(parse(expr), ctx, noBindings, ac)
+    return { sync: sc.stepsTaken, async: ac.stepsTaken }
+  }
+
+  const items = Array.from({ length: 100 }, (_, i) => ({ x: i, y: i % 2 }))
+
+  it.each([
+    'items.map(.x)',
+    'items.filter(.y)',
+    'items.filter(.y).map(.x)',
+    'items.some(.y)',
+    'items.every(.y)',
+    'items.find(.x)',
+    'items.findIndex(.x)',
+  ])('charges identical steps for %s', async (expr) => {
+    const r = await stepsFor(expr, { items })
+    expect(r.async).toBe(r.sync)
+  })
+
+  it('a budget at the boundary passes (or fails) the same way in both modes', () => {
+    // items.map(.x) over 100 items charges the same in both, so a budget just
+    // above the count passes both and just below fails both — no mode skew.
+    const enough = bonsai({ maxSteps: 200 })
+    const tooLow = bonsai({ maxSteps: 50 })
+    const ctx = { items }
+    expect(() => enough.evaluateSync('items.map(.x)', ctx)).not.toThrow()
+    expectMaxSteps(() => tooLow.evaluateSync('items.map(.x)', ctx))
+  })
+
+  it('the same boundary holds for async', async () => {
+    const enough = bonsai({ maxSteps: 200 })
+    const tooLow = bonsai({ maxSteps: 50 })
+    const ctx = { items }
+    await expect(enough.evaluate('items.map(.x)', ctx)).resolves.toBeDefined()
+    await expect(tooLow.evaluate('items.map(.x)', ctx)).rejects.toMatchObject({ code: 'MAX_STEPS' })
   })
 })
