@@ -128,6 +128,7 @@ describe('ExecutionContext', () => {
     let now = 0
     const policy = new SecurityPolicy({ timeout: 100 })
     const ec = new ExecutionContext(policy, () => now)
+    ec.beginRun() // step accounting only runs inside an evaluation
 
     for (let i = 0; i < 999; i++) ec.step()
 
@@ -135,6 +136,18 @@ describe('ExecutionContext', () => {
     expect(() => {
       ec.step()
     }).toThrow(BonsaiSecurityError)
+  })
+
+  it('does not count step()s outside an evaluation run', () => {
+    let now = 0
+    const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), () => now)
+    // A lambda closure retained by a host and invoked after the run ended: its
+    // step() must be inert even once the deadline has passed.
+    for (let i = 0; i < 5000; i++) ec.step()
+    now = 200
+    expect(() => {
+      ec.step()
+    }).not.toThrow()
   })
 
   it('checkTimeout() always checks wall clock', () => {
@@ -154,6 +167,7 @@ describe('ExecutionContext', () => {
     let now = 0
     const policy = new SecurityPolicy({ timeout: 0 })
     const ec = new ExecutionContext(policy, () => now)
+    ec.beginRun()
     now = 999999
     for (let i = 0; i < 2000; i++) ec.step()
     expect(() => {
@@ -283,6 +297,7 @@ describe('ExecutionContext security-guard invariants', () => {
   it('samples the timeout clock periodically, not on every step', () => {
     let now = 0
     const ec = new ExecutionContext(new SecurityPolicy({ timeout: 10 }), () => now)
+    ec.beginRun()
     now = 1000 // already well past the deadline
     // A single step must not sample the clock yet (the check interval is not
     // reached), so it must not throw. This pins periodic sampling: a mutant that

@@ -54,13 +54,24 @@ export function evaluate(
   guard: ExecutionContext,
   source?: string,
 ): unknown {
-  return evalNode(node, {
+  const env: EvalEnv = {
     ctx: context,
     tr: bindings.transforms,
     fn: bindings.functions,
     g: guard,
     s: source,
-  })
+  }
+  // No timeout: the run-tracking, per-element accounting, and final deadline
+  // check are all inert, so skip them entirely and keep the pre-timeout hot path.
+  if (!guard.hasDeadline) return evalNode(node, env)
+  guard.beginRun()
+  try {
+    const result = evalNode(node, env)
+    guard.checkTimeout()
+    return result
+  } finally {
+    guard.endRun()
+  }
 }
 
 /**
@@ -70,7 +81,15 @@ export function evaluate(
  * lets repeated evaluateSync calls avoid allocating an EvalEnv per call.
  */
 export function evaluatePooled(node: ASTNode, env: EvalEnv): unknown {
-  return evalNode(node, env)
+  if (!env.g.hasDeadline) return evalNode(node, env)
+  env.g.beginRun()
+  try {
+    const result = evalNode(node, env)
+    env.g.checkTimeout()
+    return result
+  } finally {
+    env.g.endRun()
+  }
 }
 
 function evalNode(node: ASTNode, env: EvalEnv): unknown {
@@ -168,8 +187,11 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
       case 'ArrayLiteral': {
         const elements: unknown[] = []
         for (const el of node.elements) {
+          g.step()
           if (el.type === 'SpreadElement') {
-            elements.push(...expandSpreadValue(evalNode(el.argument, env), g.policy.maxArrayLength))
+            elements.push(
+              ...expandSpreadValue(evalNode(el.argument, env), g.policy.maxArrayLength, g),
+            )
           } else {
             elements.push(evalNode(el, env))
           }
@@ -181,6 +203,7 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
       case 'ObjectLiteral': {
         const obj = Object.create(null) as Record<string, unknown>
         for (const prop of node.properties) {
+          g.step()
           const key = getObjectPropertyKey(prop, env)
           obj[key] = evalNode(prop.value, env)
         }
@@ -204,6 +227,7 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
       case 'TemplateLiteral': {
         let result = ''
         for (const part of node.parts) {
+          g.step()
           result += part.type === 'StringLiteral' ? part.value : String(evalNode(part, env))
         }
         return result
@@ -216,10 +240,16 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
         return makeLambdaAccessor(node.property, g)
 
       case 'LambdaIdentity':
-        return (item: unknown) => item
+        return (item: unknown) => {
+          g.step()
+          return item
+        }
 
       case 'LambdaExpression':
-        return (item: unknown) => evalLambdaBody(node.body, item, env)
+        return (item: unknown) => {
+          g.step()
+          return evalLambdaBody(node.body, item, env)
+        }
 
       case 'NumberLiteral':
       case 'StringLiteral':
@@ -256,7 +286,16 @@ function evalCallExpression(
         pushCallArgument(args, arg, env)
       }
       validateMethodArgs(obj, methodName, args, g)
+
+      // A native method is a single opaque call from the evaluator's view, so
+      // the deadline is enforced at return, not mid-iteration. A host-function
+      // callback over a large context array therefore runs to completion before
+      // the deadline is checked (maxArrayLength bounds arrays *produced* during
+      // evaluation, not a context-array receiver). A bonsai lambda callback does
+      // still charge step() per element via its own closure, so `items.map(.x)`
+      // over a large array is pre-empted mid-loop.
       const result = rejectPromise(method.call(obj, ...args), 'method', methodName)
+      g.checkTimeout()
       checkResultArrayLength(result, g)
       checkResultStringLength(result, g)
       return result
@@ -276,9 +315,16 @@ function evalCallExpression(
       // Context functions receive the live evaluation context as their first
       // argument. It is typed Readonly<TCtx> to signal read-only intent; bonsai
       // does not copy or freeze it (see the context-aware functions docs).
-      const result =
-        resolved.kind === 'context' ? resolved.fn(env.ctx, ...args) : resolved.fn(...args)
-      return rejectPromise(result, 'function', node.callee.name)
+      // rejectPromise runs before checkTimeout so a sync function that mistakenly
+      // returns a Promise reports that misuse rather than being masked by an
+      // already-elapsed deadline (matches the method and transform paths).
+      const result = rejectPromise(
+        resolved.kind === 'context' ? resolved.fn(env.ctx, ...args) : resolved.fn(...args),
+        'function',
+        node.callee.name,
+      )
+      g.checkTimeout()
+      return result
     } catch (e) {
       if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
       throw e
@@ -290,7 +336,9 @@ function evalCallExpression(
 
 function pushCallArgument(args: unknown[], node: ASTNode, env: EvalEnv): void {
   if (node.type === 'SpreadElement') {
-    args.push(...expandSpreadValue(evalNode(node.argument, env), env.g.policy.maxArrayLength))
+    args.push(
+      ...expandSpreadValue(evalNode(node.argument, env), env.g.policy.maxArrayLength, env.g),
+    )
     return
   }
 
@@ -302,13 +350,16 @@ function evalArg(node: ASTNode, env: EvalEnv): unknown {
     return makeLambdaAccessor(node.property, env.g)
   }
   if (node.type === 'LambdaIdentity') {
-    return (item: unknown) => item
+    return (item: unknown) => {
+      env.g.step()
+      return item
+    }
   }
   return evalNode(node, env)
 }
 
 function evalPipe(input: unknown, transformNode: ASTNode, env: EvalEnv): unknown {
-  const { tr } = env
+  const { tr, g } = env
 
   if (transformNode.type === 'CallExpression') {
     const calleeName = getIdentifierName(transformNode.callee, 'Transform must be an identifier')
@@ -317,15 +368,19 @@ function evalPipe(input: unknown, transformNode: ASTNode, env: EvalEnv): unknown
     for (const arg of transformNode.args) {
       pushCallArgument(args, arg, env)
     }
-    return rejectPromise(func(input, ...args), 'transform', calleeName)
+    const result = rejectPromise(func(input, ...args), 'transform', calleeName)
+    g.checkTimeout()
+    return result
   }
 
   if (transformNode.type === 'Identifier') {
-    return rejectPromise(
+    const result = rejectPromise(
       resolveTransform(transformNode.name, tr)(input),
       'transform',
       transformNode.name,
     )
+    g.checkTimeout()
+    return result
   }
 
   throw new Error('Invalid transform expression')
@@ -403,13 +458,17 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
           const args: unknown[] = []
           for (const arg of node.args) {
             if (arg.type === 'SpreadElement') {
-              args.push(...expandSpreadValue(evalNode(arg.argument, env), g.policy.maxArrayLength))
+              args.push(
+                ...expandSpreadValue(evalNode(arg.argument, env), g.policy.maxArrayLength, g),
+              )
             } else {
               args.push(evalArg(arg, env))
             }
           }
           validateMethodArgs(obj, methodName, args, g)
+
           const result = rejectPromise(method.call(obj, ...args), 'method', methodName)
+          g.checkTimeout()
           checkResultArrayLength(result, g)
           checkResultStringLength(result, g)
           return result
@@ -479,6 +538,7 @@ function makeLambdaAccessor(
   guard: ExecutionContext,
 ): (item: Record<string, unknown>) => unknown {
   return (item: Record<string, unknown>) => {
+    guard.step()
     guard.checkNameAccess(property, 'member')
     return item?.[property]
   }

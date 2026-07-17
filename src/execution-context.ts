@@ -22,6 +22,14 @@ function isCanonicalIndex(key: string): boolean {
 }
 
 const TIMEOUT_CHECK_INTERVAL = 1000
+
+// Deadlines use a monotonic clock where the host provides one: Date.now can
+// jump backwards or forwards under NTP adjustment, which would silently widen
+// or shrink the timeout window.
+const monotonicNow: () => number =
+  typeof performance === 'object' && typeof performance.now === 'function'
+    ? () => performance.now()
+    : Date.now
 const DEFAULT_MAX_DEPTH = 100
 const DEFAULT_MAX_ARRAY_LENGTH = 100_000
 const DEFAULT_MAX_STRING_LENGTH = 100_000
@@ -50,12 +58,20 @@ export class SecurityPolicy {
 /** Mutable per-evaluation state: tracks depth, step count, and deadline for a single evaluation. */
 export class ExecutionContext {
   private stepCount = 0
+  private nextCheck = TIMEOUT_CHECK_INTERVAL
   private depth = 0
   private deadline: number
+  // True only while an evaluation is walking this context. Step accounting is
+  // gated on it so that closures created during evaluation (lambda accessors,
+  // identity/expression lambdas) that a host retains and invokes *after* the
+  // evaluation returns cannot mutate this (possibly pooled and reused) context's
+  // step state or trip a stale deadline. Outside a run those closures behave as
+  // the pure getters they were before per-element accounting existed.
+  private running = false
   readonly policy: SecurityPolicy
   private readonly now: () => number
 
-  constructor(policy: SecurityPolicy, now: () => number = Date.now) {
+  constructor(policy: SecurityPolicy, now: () => number = monotonicNow) {
     this.policy = policy
     this.now = now
     this.deadline = policy.timeout ? now() + policy.timeout : 0
@@ -64,14 +80,41 @@ export class ExecutionContext {
   /** Reset mutable state for reuse. Avoids allocating a new instance per evaluation. */
   reset(): void {
     this.stepCount = 0
+    this.nextCheck = TIMEOUT_CHECK_INTERVAL
     this.depth = 0
     this.deadline = this.policy.timeout ? this.now() + this.policy.timeout : 0
   }
 
+  /** Mark the start of an evaluation walk. Paired with a `finally { endRun() }`. */
+  beginRun(): void {
+    this.running = true
+  }
+
+  /** Mark the end of an evaluation walk, disarming step accounting on this context. */
+  endRun(): void {
+    this.running = false
+  }
+
   step(): void {
-    if (this.deadline) {
-      this.stepCount++
-      if (this.stepCount % TIMEOUT_CHECK_INTERVAL === 0) {
+    if (this.deadline && this.running) {
+      if (++this.stepCount >= this.nextCheck) {
+        this.nextCheck = this.stepCount + TIMEOUT_CHECK_INTERVAL
+        this.checkTimeout()
+      }
+    }
+  }
+
+  /**
+   * Charge `n` units of work at once (bulk operations such as spreading an
+   * already-materialized array). Charges the whole amount and samples the clock
+   * once if it crosses the next check boundary, so a bulk charge spends the same
+   * budget as `n` individual step() calls without redundant clock reads.
+   */
+  addSteps(n: number): void {
+    if (this.deadline && this.running) {
+      this.stepCount += n
+      if (this.stepCount >= this.nextCheck) {
+        this.nextCheck = this.stepCount + TIMEOUT_CHECK_INTERVAL
         this.checkTimeout()
       }
     }
@@ -84,6 +127,25 @@ export class ExecutionContext {
         `Expression timeout: exceeded ${this.policy.timeout}ms`,
       )
     }
+  }
+
+  /**
+   * Units of work charged so far this run (0 when no timeout is configured,
+   * since accounting is skipped then). Exposed for diagnostics and tests that
+   * assert bulk operations like spreads are charged proportionally.
+   */
+  get stepsTaken(): number {
+    return this.stepCount
+  }
+
+  /**
+   * Whether a wall-clock deadline is armed for this run. Hot paths use it to
+   * skip timeout-only machinery when no timeout is configured — e.g. the sync
+   * evaluator falls back to native array methods, which need no per-element
+   * pre-emption when there is no deadline to enforce.
+   */
+  get hasDeadline(): boolean {
+    return this.deadline !== 0
   }
 
   enterDepth(): void {

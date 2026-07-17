@@ -137,21 +137,37 @@ export function getObjectLiteralKeyName(
   throw new Error(message)
 }
 
-export function expandSpreadValue(value: unknown, maxLength?: number): unknown[] {
+export function expandSpreadValue(
+  value: unknown,
+  maxLength?: number,
+  guard?: ExecutionContext,
+): unknown[] {
+  // Arrays are materialized into a fresh array by index rather than returned
+  // as-is. The caller spreads the result natively (a second read of its
+  // iterator), so returning the source would let a Proxy-wrapped array or one
+  // with an overridden Symbol.iterator pass a one-time identity check here and
+  // then hand the caller's native spread a different, unbounded iterator
+  // (TOCTOU). Reading only indices 0..length-1 never touches Symbol.iterator and
+  // is bounded by the same length that the maxArrayLength check gates.
   if (Array.isArray(value)) {
-    if (maxLength !== undefined && value.length > maxLength) {
+    const length = value.length
+    if (maxLength !== undefined && length > maxLength) {
       throw new BonsaiSecurityError(
         'MAX_ARRAY_LENGTH',
-        `Spread source length (${value.length}) exceeds maximum (${maxLength})`,
+        `Spread source length (${length}) exceeds maximum (${maxLength})`,
       )
     }
-    return value
+    guard?.addSteps(length)
+    const out: unknown[] = new Array<unknown>(length)
+    for (let i = 0; i < length; i++) out[i] = value[i]
+    return out
   }
   if (value != null) {
     const iterator = (value as { [Symbol.iterator]?: unknown })[Symbol.iterator]
     if (typeof iterator === 'function') {
       const result: unknown[] = []
       for (const item of value as Iterable<unknown>) {
+        guard?.step()
         result.push(item)
         if (maxLength !== undefined && result.length > maxLength) {
           throw new BonsaiSecurityError(
