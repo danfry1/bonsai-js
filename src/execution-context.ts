@@ -138,6 +138,16 @@ export class ExecutionContext {
     return this.stepCount
   }
 
+  /**
+   * Whether a wall-clock deadline is armed for this run. Hot paths use it to
+   * skip timeout-only machinery when no timeout is configured — e.g. the sync
+   * evaluator falls back to native array methods, which need no per-element
+   * pre-emption when there is no deadline to enforce.
+   */
+  get hasDeadline(): boolean {
+    return this.deadline !== 0
+  }
+
   enterDepth(): void {
     if (++this.depth > this.policy.maxDepth) {
       throw new BonsaiSecurityError(

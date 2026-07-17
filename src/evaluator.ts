@@ -54,15 +54,19 @@ export function evaluate(
   guard: ExecutionContext,
   source?: string,
 ): unknown {
+  const env: EvalEnv = {
+    ctx: context,
+    tr: bindings.transforms,
+    fn: bindings.functions,
+    g: guard,
+    s: source,
+  }
+  // No timeout: the run-tracking, per-element accounting, and final deadline
+  // check are all inert, so skip them entirely and keep the pre-timeout hot path.
+  if (!guard.hasDeadline) return evalNode(node, env)
   guard.beginRun()
   try {
-    const result = evalNode(node, {
-      ctx: context,
-      tr: bindings.transforms,
-      fn: bindings.functions,
-      g: guard,
-      s: source,
-    })
+    const result = evalNode(node, env)
     guard.checkTimeout()
     return result
   } finally {
@@ -77,6 +81,7 @@ export function evaluate(
  * lets repeated evaluateSync calls avoid allocating an EvalEnv per call.
  */
 export function evaluatePooled(node: ASTNode, env: EvalEnv): unknown {
+  if (!env.g.hasDeadline) return evalNode(node, env)
   env.g.beginRun()
   try {
     const result = evalNode(node, env)
@@ -288,7 +293,14 @@ function evalCallExpression(
       // filter/etc. would run a host-function callback over the whole array
       // before any timeout check, letting one expression overrun its timeout by
       // the full loop cost. Mirrors evalAsyncArrayMethod for sync/async parity.
-      if (Array.isArray(obj) && args.length === 1 && typeof args[0] === 'function') {
+      // Only when a deadline is armed: with no timeout there is nothing to
+      // pre-empt, so the faster native method is used (the common case).
+      if (
+        g.hasDeadline &&
+        Array.isArray(obj) &&
+        args.length === 1 &&
+        typeof args[0] === 'function'
+      ) {
         const syncResult = evalSyncArrayMethod(
           methodName,
           obj,
@@ -477,8 +489,13 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
 
           // Guarded higher-order iteration for nested lambdas too (same as the
           // top-level method path), so per-element work is charged and the
-          // deadline can pre-empt mid-iteration.
-          if (Array.isArray(obj) && args.length === 1 && typeof args[0] === 'function') {
+          // deadline can pre-empt mid-iteration. Only when a deadline is armed.
+          if (
+            g.hasDeadline &&
+            Array.isArray(obj) &&
+            args.length === 1 &&
+            typeof args[0] === 'function'
+          ) {
             const syncResult = evalSyncArrayMethod(
               methodName,
               obj,
