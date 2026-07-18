@@ -41,7 +41,7 @@ export async function evaluateAsync(
     g: guard,
     s: source,
   }
-  if (!guard.hasDeadline) return evalNodeAsync(node, env)
+  if (!guard.needsAccounting) return evalNodeAsync(node, env)
   guard.beginRun()
   try {
     const result = await evalNodeAsync(node, env)
@@ -263,7 +263,7 @@ async function evalCallExpressionAsync(
       if (Array.isArray(obj) && args.length === 1 && typeof args[0] === 'function') {
         const arr = obj
         const predicate = args[0] as (item: unknown) => unknown
-        const asyncResult = await evalAsyncArrayMethod(methodName, arr, predicate, g)
+        const asyncResult = await evalAsyncArrayMethod(methodName, arr, predicate)
         if (asyncResult !== undefined) {
           g.checkTimeout()
           checkResultArrayLength(asyncResult.value, g)
@@ -331,22 +331,26 @@ async function pushCallArgumentAsync(
 //
 // Predicates are awaited sequentially (one element fully resolves before the
 // next begins) so that this path matches the synchronous evaluator exactly:
-//   - depth/step accounting stays balanced per element (a concurrent fan-out
-//     would enter depth for every element before any exits, so maxDepth would
-//     scale with array length instead of nesting);
+//   - depth accounting stays balanced per element (a concurrent fan-out would
+//     enter depth for every element before any exits, so maxDepth would scale
+//     with array length instead of nesting);
 //   - some/every/find/findIndex short-circuit at the first decisive element,
 //     so side effects and evaluation counts match native (and sync) semantics.
+//
+// Step accounting is NOT charged here: the sync evaluator runs the native
+// method and cannot charge per element, so a step per element here would make
+// the same expression consume a different budget in async than in sync. A
+// bonsai-lambda predicate still charges via its own closure (as it does in
+// sync); an opaque host-function predicate is uncounted in both.
 async function evalAsyncArrayMethod(
   methodName: string,
   arr: unknown[],
   predicate: (item: unknown) => unknown,
-  guard: ExecutionContext,
 ): Promise<{ value: unknown } | undefined> {
   switch (methodName) {
     case 'filter': {
       const out: unknown[] = []
       for (const item of arr) {
-        guard.step()
         if (isTruthy(await predicate(item))) out.push(item)
       }
       return { value: out }
@@ -354,7 +358,6 @@ async function evalAsyncArrayMethod(
     case 'map': {
       const out: unknown[] = []
       for (const item of arr) {
-        guard.step()
         out.push(await predicate(item))
       }
       return { value: out }
@@ -362,35 +365,30 @@ async function evalAsyncArrayMethod(
     case 'flatMap': {
       const out: unknown[] = []
       for (const item of arr) {
-        guard.step()
         out.push(await predicate(item))
       }
       return { value: out.flat() }
     }
     case 'find': {
       for (const item of arr) {
-        guard.step()
         if (isTruthy(await predicate(item))) return { value: item }
       }
       return { value: undefined }
     }
     case 'findIndex': {
       for (let i = 0; i < arr.length; i++) {
-        guard.step()
         if (isTruthy(await predicate(arr[i]))) return { value: i }
       }
       return { value: -1 }
     }
     case 'some': {
       for (const item of arr) {
-        guard.step()
         if (isTruthy(await predicate(item))) return { value: true }
       }
       return { value: false }
     }
     case 'every': {
       for (const item of arr) {
-        guard.step()
         if (!isTruthy(await predicate(item))) return { value: false }
       }
       return { value: true }
@@ -537,7 +535,6 @@ async function evalLambdaBodyAsync(
               methodName,
               obj,
               args[0] as (item: unknown) => unknown,
-              g,
             )
             if (asyncResult !== undefined) {
               g.checkTimeout()

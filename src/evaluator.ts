@@ -61,9 +61,9 @@ export function evaluate(
     g: guard,
     s: source,
   }
-  // No timeout: the run-tracking, per-element accounting, and final deadline
-  // check are all inert, so skip them entirely and keep the pre-timeout hot path.
-  if (!guard.hasDeadline) return evalNode(node, env)
+  // No limits: run-tracking, per-element accounting, and the final deadline
+  // check are all inert, so skip them entirely and keep the unaccounted hot path.
+  if (!guard.needsAccounting) return evalNode(node, env)
   guard.beginRun()
   try {
     const result = evalNode(node, env)
@@ -81,7 +81,7 @@ export function evaluate(
  * lets repeated evaluateSync calls avoid allocating an EvalEnv per call.
  */
 export function evaluatePooled(node: ASTNode, env: EvalEnv): unknown {
-  if (!env.g.hasDeadline) return evalNode(node, env)
+  if (!env.g.needsAccounting) return evalNode(node, env)
   env.g.beginRun()
   try {
     const result = evalNode(node, env)

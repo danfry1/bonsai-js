@@ -20,6 +20,17 @@ const DURATION_MS = 250
 const LAST_SAMPLE_ITEM = 5
 const SAMPLE_ITEMS = [1, 2, 3, 4, LAST_SAMPLE_ITEM] as const
 
+// A larger array exercises per-element step accounting (default-on via maxSteps)
+// on the lambda-callback and spread paths, which the small SAMPLE_ITEMS case
+// above does not. Guards against a regression in the accounting hot path.
+const LAMBDA_ITEM_COUNT = 1000
+const lambdaContext = {
+  items: Array.from({ length: LAMBDA_ITEM_COUNT }, (_, i) => ({ x: i })),
+}
+const spreadContext = {
+  items: Array.from({ length: LAMBDA_ITEM_COUNT }, (_, i) => i),
+}
+
 const context = {
   user: { name: 'Dan', age: 30, verified: true },
   items: SAMPLE_ITEMS,
@@ -98,6 +109,22 @@ const cases: PerfCase[] = [
     minHz: 2_500_000,
     fn: () => {
       expr.evaluateSync('items |> sum', context)
+    },
+  },
+  {
+    // Per-element accounting path: a bonsai lambda charges one step per element.
+    name: 'lambda map (.x) x1000',
+    minHz: 12_000,
+    fn: () => {
+      expr.evaluateSync('items.map(.x)', lambdaContext)
+    },
+  },
+  {
+    // Per-element accounting path: spread materialization charges per element.
+    name: 'array spread x1000',
+    minHz: 15_000,
+    fn: () => {
+      expr.evaluateSync('[...items]', spreadContext)
     },
   },
 ]

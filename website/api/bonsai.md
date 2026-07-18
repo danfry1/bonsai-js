@@ -35,6 +35,8 @@ const safe = bonsai({
 | `timeout` | number | 0 | Evaluation timeout in milliseconds. `0` disables timeout checks. |
 | `maxDepth` | number | 100 | Maximum traversal depth before a `MAX_DEPTH` security error is thrown. |
 | `maxArrayLength` | number | 100000 | Maximum array literal or expanded spread size. |
+| `maxStringLength` | number | 100000 | Maximum string size produced by a string-returning method (`padStart`, `repeat`, `join`, ...) before a `MAX_STRING_LENGTH` security error. |
+| `maxSteps` | number | 1000000 | Maximum accounted evaluator steps per evaluation, a default-on deterministic bound enforced independently of `timeout`. Bounds evaluator-driven work (AST walk, bonsai-lambda iteration like `items.map(.x)`) but not opaque host/native work. Throws `MAX_STEPS`. `0` disables it. |
 | `cacheSize` | number | 256 | Per-instance cache size for compiled expressions and parsed AST reuse. |
 | `allowedProperties` | string[] | - | Allowlist checked against every accessed identifier and member name. |
 | `deniedProperties` | string[] | - | Denylist checked against every accessed identifier and member name. |

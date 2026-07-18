@@ -75,6 +75,7 @@ function assertValidOptions(options: BonsaiOptions): void {
   requireNonNegativeInt('cacheSize', options.cacheSize)
   requireNonNegativeInt('maxArrayLength', options.maxArrayLength)
   requireNonNegativeInt('maxStringLength', options.maxStringLength)
+  requireNonNegativeInt('maxSteps', options.maxSteps)
 
   if (
     options.maxDepth !== undefined &&

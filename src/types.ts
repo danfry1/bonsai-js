@@ -241,6 +241,21 @@ export interface BonsaiOptions {
   maxArrayLength?: number
   /** Maximum string size produced by a string-returning method (padStart, padEnd, repeat, join, concat, slice, ...). Default: 100,000. */
   maxStringLength?: number
+  /**
+   * Maximum number of evaluator steps a single evaluation may take, a
+   * deterministic bound on work that applies without a wall-clock timeout. A
+   * "step" is one accounted evaluator operation: a compound-node visit, a
+   * lambda-callback invocation (once per element in a higher-order method),
+   * a spread element, or a template/literal-loop element. Work inside an
+   * opaque host function or a native method is NOT counted, so this bounds a
+   * higher-order method over a large context array only when the callback is a
+   * bonsai lambda (e.g. `items.map(.x)`), not a host function passed as a
+   * callback. Sync and async consume identical budgets for dense arrays using
+   * built-in methods; async reimplements higher-order methods to await async
+   * callbacks, so a sparse array or an overridden method can charge differently.
+   * Default: 1,000,000. Set to 0 to disable.
+   */
+  maxSteps?: number
   /** Allowlist of property/method names expressions can access. */
   allowedProperties?: string[]
   /** Denylist of property/method names expressions cannot access. */

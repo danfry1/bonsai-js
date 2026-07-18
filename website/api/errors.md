@@ -53,6 +53,7 @@ try {
 | `MAX_DEPTH` | Expression nesting exceeded `maxDepth` |
 | `MAX_ARRAY_LENGTH` | Array size exceeded `maxArrayLength` |
 | `MAX_STRING_LENGTH` | String size exceeded `maxStringLength` |
+| `MAX_STEPS` | Evaluation exceeded the `maxSteps` budget |
 
 ## Type guards
 
