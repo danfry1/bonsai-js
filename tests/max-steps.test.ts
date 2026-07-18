@@ -107,7 +107,7 @@ describe('maxSteps through the public API', () => {
   })
 })
 
-describe('sync and async consume the same step budget (dense arrays, built-in methods)', () => {
+describe('sync and async consume the same step budget', () => {
   const noBindings = { transforms: {}, functions: {} }
   const stepsFor = async (expr: string, ctx: Record<string, unknown>) => {
     // A live budget (timeout, no cap) so accounting runs without tripping.
@@ -152,29 +152,27 @@ describe('sync and async consume the same step budget (dense arrays, built-in me
   })
 })
 
-describe('known async budget divergence: sparse holes and overridden methods', () => {
-  // Async must reimplement higher-order methods to await async callbacks, so it
-  // visits sparse holes and ignores an overridden method where the sync path
-  // (native method) does not — charging more steps. Full semantic parity is a
-  // deferred milestone; these characterize the boundary so it is not a silent
-  // regression and any future parity fix updates them deliberately.
-  it('a sparse array charges fewer steps synchronously than asynchronously', async () => {
+describe('sync/async budget parity holds for sparse arrays and overridden methods', () => {
+  // Async now visits the same elements as the native (sync) method: it skips
+  // sparse holes for map/filter/some/every and defers overridden methods to the
+  // native call, so identical expressions consume identical budgets in both
+  // modes. (Was a divergence before async higher-order parity landed.)
+  it('a sparse array charges the same in both modes', async () => {
     const sparse: number[] = []
-    sparse[99] = 1 // 1 real element, 99 holes
+    sparse[99] = 1 // 1 real element, 99 holes; map skips the holes
     const expr = bonsai({ maxSteps: 50 })
     expect(() => expr.evaluateSync('items.map(.x)', { items: sparse })).not.toThrow()
-    await expect(expr.evaluate('items.map(.x)', { items: sparse })).rejects.toMatchObject({
-      code: 'MAX_STEPS',
-    })
+    await expect(expr.evaluate('items.map(.x)', { items: sparse })).resolves.toBeDefined()
   })
 
-  it('an overridden method is honored synchronously but reimplemented asynchronously', async () => {
-    const arr = [1, 2, 3, 4, 5]
-    Object.defineProperty(arr, 'map', { value: () => 'overridden' })
+  it('an overridden method is deferred to natively in both modes', async () => {
+    const makeArr = () => {
+      const arr = [1, 2, 3, 4, 5]
+      Object.defineProperty(arr, 'map', { value: () => 'overridden' })
+      return arr
+    }
     const expr = bonsai({ maxSteps: 2 })
-    expect(expr.evaluateSync('items.map(.x)', { items: arr })).toBe('overridden')
-    await expect(expr.evaluate('items.map(.x)', { items: arr })).rejects.toMatchObject({
-      code: 'MAX_STEPS',
-    })
+    expect(expr.evaluateSync('items.map(.x)', { items: makeArr() })).toBe('overridden')
+    await expect(expr.evaluate('items.map(.x)', { items: makeArr() })).resolves.toBe('overridden')
   })
 })

@@ -250,10 +250,8 @@ export interface BonsaiOptions {
    * opaque host function or a native method is NOT counted, so this bounds a
    * higher-order method over a large context array only when the callback is a
    * bonsai lambda (e.g. `items.map(.x)`), not a host function passed as a
-   * callback. Sync and async consume identical budgets for dense arrays using
-   * built-in methods; async reimplements higher-order methods to await async
-   * callbacks, so a sparse array or an overridden method can charge differently.
-   * Default: 1,000,000. Set to 0 to disable.
+   * callback. Sync and async evaluation consume identical budgets. Default:
+   * 1,000,000. Set to 0 to disable.
    */
   maxSteps?: number
   /** Allowlist of property/method names expressions can access. */

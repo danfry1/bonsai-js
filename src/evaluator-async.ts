@@ -257,13 +257,17 @@ async function evalCallExpressionAsync(
       }
       validateMethodArgs(obj, methodName, args, g)
 
-      // Higher-order array methods need async-aware iteration
-      // because lambda callbacks may return Promises, which native
-      // Array methods can't handle (Promises are always truthy).
-      if (Array.isArray(obj) && args.length === 1 && typeof args[0] === 'function') {
-        const arr = obj
-        const predicate = args[0] as (item: unknown) => unknown
-        const asyncResult = await evalAsyncArrayMethod(methodName, arr, predicate)
+      // Standard higher-order array methods need async-aware iteration because
+      // lambda callbacks may return Promises, which native Array methods can't
+      // handle (a Promise is always truthy). An overridden method is left to run
+      // natively below, matching the sync path.
+      if (
+        Array.isArray(obj) &&
+        args.length === 1 &&
+        typeof args[0] === 'function' &&
+        isStandardArrayMethod(method, methodName)
+      ) {
+        const asyncResult = await evalAsyncArrayMethod(methodName, obj, args[0] as ArrayCallback)
         if (asyncResult !== undefined) {
           g.checkTimeout()
           checkResultArrayLength(asyncResult.value, g)
@@ -325,77 +329,97 @@ async function pushCallArgumentAsync(
   args.push(await evalArgAsync(node, env))
 }
 
-// Async-safe higher-order array method evaluation. Native JS array methods
-// call predicates synchronously, but our lambdas may return Promises.
-// Returns { value } if handled, undefined if the method isn't higher-order.
+type ArrayCallback = (item: unknown, index: number, array: unknown[]) => unknown
+
+// Async-safe evaluation of a standard higher-order array method. Native array
+// methods call the callback synchronously, but bonsai lambdas may return
+// Promises, so this reimplements the method while matching native semantics
+// exactly, so a given expression behaves and charges identically in sync
+// (which runs the native method) and async. Specifically:
+//   - the callback receives (item, index, array) as native methods do;
+//   - map/filter/flatMap/some/every skip sparse holes (they never invoke the
+//     callback for an empty slot), while find/findIndex visit holes as
+//     `undefined`, matching each method's native hole handling;
+//   - map preserves length and holes in its result;
+//   - some/every/find/findIndex short-circuit at the first decisive element;
+//   - callbacks are awaited sequentially so depth stays balanced per element
+//     (a concurrent fan-out would enter depth for every element before any
+//     exits, scaling maxDepth with array length instead of nesting).
 //
-// Predicates are awaited sequentially (one element fully resolves before the
-// next begins) so that this path matches the synchronous evaluator exactly:
-//   - depth accounting stays balanced per element (a concurrent fan-out would
-//     enter depth for every element before any exits, so maxDepth would scale
-//     with array length instead of nesting);
-//   - some/every/find/findIndex short-circuit at the first decisive element,
-//     so side effects and evaluation counts match native (and sync) semantics.
-//
-// Step accounting is NOT charged here: the sync evaluator runs the native
-// method and cannot charge per element, so a step per element here would make
-// the same expression consume a different budget in async than in sync. A
-// bonsai-lambda predicate still charges via its own closure (as it does in
-// sync); an opaque host-function predicate is uncounted in both.
+// This is only used for the *standard* method (the caller checks the receiver
+// has not overridden it); an override is run natively, as in sync. Step
+// accounting is not charged here — a bonsai-lambda callback charges via its own
+// closure (as in sync), and an opaque host callback is uncounted in both.
+// Returns { value } when handled, undefined for a method it does not implement.
 async function evalAsyncArrayMethod(
   methodName: string,
   arr: unknown[],
-  predicate: (item: unknown) => unknown,
+  callback: ArrayCallback,
 ): Promise<{ value: unknown } | undefined> {
+  const len = arr.length
   switch (methodName) {
     case 'filter': {
       const out: unknown[] = []
-      for (const item of arr) {
-        if (isTruthy(await predicate(item))) out.push(item)
+      for (let i = 0; i < len; i++) {
+        if (!(i in arr)) continue
+        const item = arr[i]
+        if (isTruthy(await callback(item, i, arr))) out.push(item)
       }
       return { value: out }
     }
     case 'map': {
-      const out: unknown[] = []
-      for (const item of arr) {
-        out.push(await predicate(item))
+      const out = new Array<unknown>(len) // preserves length; holes stay holes
+      for (let i = 0; i < len; i++) {
+        if (!(i in arr)) continue
+        out[i] = await callback(arr[i], i, arr)
       }
       return { value: out }
     }
     case 'flatMap': {
-      const out: unknown[] = []
-      for (const item of arr) {
-        out.push(await predicate(item))
+      const mapped: unknown[] = []
+      for (let i = 0; i < len; i++) {
+        if (!(i in arr)) continue
+        mapped.push(await callback(arr[i], i, arr))
       }
-      return { value: out.flat() }
+      return { value: mapped.flat() }
     }
     case 'find': {
-      for (const item of arr) {
-        if (isTruthy(await predicate(item))) return { value: item }
+      for (let i = 0; i < len; i++) {
+        if (isTruthy(await callback(arr[i], i, arr))) return { value: arr[i] }
       }
       return { value: undefined }
     }
     case 'findIndex': {
-      for (let i = 0; i < arr.length; i++) {
-        if (isTruthy(await predicate(arr[i]))) return { value: i }
+      for (let i = 0; i < len; i++) {
+        if (isTruthy(await callback(arr[i], i, arr))) return { value: i }
       }
       return { value: -1 }
     }
     case 'some': {
-      for (const item of arr) {
-        if (isTruthy(await predicate(item))) return { value: true }
+      for (let i = 0; i < len; i++) {
+        if (!(i in arr)) continue
+        if (isTruthy(await callback(arr[i], i, arr))) return { value: true }
       }
       return { value: false }
     }
     case 'every': {
-      for (const item of arr) {
-        if (!isTruthy(await predicate(item))) return { value: false }
+      for (let i = 0; i < len; i++) {
+        if (!(i in arr)) continue
+        if (!isTruthy(await callback(arr[i], i, arr))) return { value: false }
       }
       return { value: true }
     }
     default:
       return undefined
   }
+}
+
+// Whether `method` is the unmodified Array.prototype implementation of
+// `methodName`. When an array (or a subclass/proxy) overrides the method, async
+// must defer to that override natively — exactly as the sync path does — rather
+// than substituting the standard reimplementation above.
+function isStandardArrayMethod(method: unknown, methodName: string): boolean {
+  return method === (Array.prototype as unknown as Record<string, unknown>)[methodName]
 }
 
 async function evalArgAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown> {
@@ -530,11 +554,16 @@ async function evalLambdaBodyAsync(
           validateMethodArgs(obj, methodName, args, g)
 
           // Async-safe higher-order array method handling (same as top-level path)
-          if (Array.isArray(obj) && args.length === 1 && typeof args[0] === 'function') {
+          if (
+            Array.isArray(obj) &&
+            args.length === 1 &&
+            typeof args[0] === 'function' &&
+            isStandardArrayMethod(method, methodName)
+          ) {
             const asyncResult = await evalAsyncArrayMethod(
               methodName,
               obj,
-              args[0] as (item: unknown) => unknown,
+              args[0] as ArrayCallback,
             )
             if (asyncResult !== undefined) {
               g.checkTimeout()
