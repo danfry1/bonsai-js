@@ -301,11 +301,15 @@ describe('property-based higher-order parity', () => {
 // Structure-aware equality: `toEqual` treats a hole and an `undefined` element
 // as equal and ignores the constructor, so it cannot see the sparse-hole or
 // Symbol.species differences that async higher-order parity must preserve. This
-// compares length, exact present-index sets, element values, and constructor.
+// compares constructor, length, exact present-index sets, and element values,
+// over both ordinary/subclass arrays and typed arrays (a possible species).
+function isIndexed(v: unknown): v is { length: number; constructor: unknown } {
+  return Array.isArray(v) || (ArrayBuffer.isView(v) && !(v instanceof DataView))
+}
 function structurallyEqual(a: unknown, b: unknown): boolean {
-  if (Array.isArray(a) && Array.isArray(b)) {
-    if (a.length !== b.length) return false
+  if (isIndexed(a) && isIndexed(b)) {
     if (a.constructor !== b.constructor) return false // Symbol.species
+    if (a.length !== b.length) return false
     const ak = Object.keys(a)
     const bk = Object.keys(b)
     if (ak.length !== bk.length) return false
@@ -319,15 +323,32 @@ function structurallyEqual(a: unknown, b: unknown): boolean {
 // This fuzzes that dimension — which the generator above (dense arrays only)
 // does not — and compares with structural equality so hole/species drift fails.
 const HOLE = Symbol('hole')
+// Shapes include ordinary/sparse/subclass receivers plus hostile species
+// configurations whose native methods throw (invalid constructor or @@species,
+// or a typed-array species that rejects the write). Async parity must match the
+// throw, not silently return — so the test compares full outcomes, not values.
+const SHAPE_KINDS = [
+  'dense',
+  'sparse',
+  'subclass',
+  'null-ctor',
+  'invalid-species',
+  'typed-species',
+] as const
 const shapedArrayArbitrary = fc
   .array(fc.oneof(fc.integer({ min: -5, max: 5 }), fc.constant(HOLE)), { maxLength: 8 })
   .chain((cells) =>
-    fc.constantFrom('dense', 'sparse', 'subclass').map((kind) => {
+    fc.constantFrom(...SHAPE_KINDS).map((kind) => {
       const base = kind === 'sparse' ? cells : cells.filter((c) => c !== HOLE)
       const arr = kind === 'subclass' ? class Bag extends Array {}.of() : []
       base.forEach((c, i) => {
         if (c !== HOLE) arr[i] = c // a HOLE index is left unset -> a real hole
       })
+      if (kind === 'null-ctor') Object.defineProperty(arr, 'constructor', { value: null })
+      if (kind === 'invalid-species')
+        Object.defineProperty(arr, 'constructor', { value: { [Symbol.species]: 1 } })
+      if (kind === 'typed-species')
+        Object.defineProperty(arr, 'constructor', { value: { [Symbol.species]: Uint8Array } })
       return arr as number[]
     }),
   )

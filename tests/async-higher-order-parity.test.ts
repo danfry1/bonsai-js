@@ -207,6 +207,32 @@ describe('array subclasses preserve species', () => {
     expect((asyncResult as object).constructor.name).toBe('Species')
     expect(asyncResult).toEqual(sync)
   })
+
+  // ArraySpeciesCreate throws for an invalid constructor/species; async must
+  // throw too, not fall back to a plain Array.
+  it.each([
+    ['a null constructor', () => Object.defineProperty([1, 2], 'constructor', { value: null })],
+    [
+      'a non-constructor species',
+      () => Object.defineProperty([1, 2], 'constructor', { value: { [Symbol.species]: 1 } }),
+    ],
+  ])('throws in both modes for %s', async (_label, makeItems) => {
+    expect(() => expr.evaluateSync('items.map(. * 2)', { items: makeItems() })).toThrow(TypeError)
+    await expect(expr.evaluate('items.map(. * 2)', { items: makeItems() })).rejects.toBeInstanceOf(
+      TypeError,
+    )
+  })
+
+  it('throws in both modes when a typed-array species rejects the write (filter)', async () => {
+    const makeItems = () =>
+      Object.defineProperty([1, 2, 3], 'constructor', { value: { [Symbol.species]: Uint8Array } })
+    expect(() => expr.evaluateSync('items.filter(. > 0)', { items: makeItems() })).toThrow(
+      TypeError,
+    )
+    await expect(
+      expr.evaluate('items.filter(. > 0)', { items: makeItems() }),
+    ).rejects.toBeInstanceOf(TypeError)
+  })
 })
 
 describe('extra arguments after thisArg are ignored, not a bypass', () => {

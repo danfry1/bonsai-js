@@ -369,25 +369,29 @@ async function evalAsyncArrayMethod(
   const len = arr.length
   switch (methodName) {
     case 'filter': {
-      const out = speciesArray(arr, 0)
+      const out = arraySpeciesCreate(arr, 0)
+      const define = needsDefineProperty(out)
       let k = 0
       for (let i = 0; i < len; i++) {
         if (!(i in arr)) continue
         const item = arr[i]
-        if (isTruthy(await callback.call(thisArg, item, i, arr))) out[k++] = item
+        if (isTruthy(await callback.call(thisArg, item, i, arr)))
+          defineElement(out, k++, item, define)
       }
       return { value: out }
     }
     case 'map': {
-      const out = speciesArray(arr, len) // preserves length; holes stay holes
+      const out = arraySpeciesCreate(arr, len) // preserves length; holes stay holes
+      const define = needsDefineProperty(out)
       for (let i = 0; i < len; i++) {
         if (!(i in arr)) continue
-        out[i] = await callback.call(thisArg, arr[i], i, arr)
+        defineElement(out, i, await callback.call(thisArg, arr[i], i, arr), define)
       }
       return { value: out }
     }
     case 'flatMap': {
-      const out = speciesArray(arr, 0)
+      const out = arraySpeciesCreate(arr, 0)
+      const define = needsDefineProperty(out)
       let k = 0
       for (let i = 0; i < len; i++) {
         if (!(i in arr)) continue
@@ -400,10 +404,10 @@ async function evalAsyncArrayMethod(
           // read that appends to `result` does not extend what was flattened.
           const resultLength = result.length
           for (let j = 0; j < resultLength; j++) {
-            if (j in result) out[k++] = result[j]
+            if (j in result) defineElement(out, k++, result[j], define)
           }
         } else {
-          out[k++] = result
+          defineElement(out, k++, result, define)
         }
       }
       return { value: out }
@@ -466,22 +470,48 @@ function canReimplementAsync(method: unknown, methodName: string): boolean {
 }
 
 // The array in which a species-aware method (map/filter/flatMap) builds its
-// result, mirroring native ArraySpeciesCreate: read `@@species` from the
-// receiver's constructor (which may be an object or a function) and construct
-// the result from it, so an Array subclass — or a custom species — yields the
-// same type the native method would. An absent/null species, or a species that
-// is not a constructor, falls back to a plain Array.
-function speciesArray(receiver: unknown[], length: number): unknown[] {
-  const ctor = (receiver as { constructor?: unknown }).constructor
-  const species =
-    ctor !== null && (typeof ctor === 'object' || typeof ctor === 'function')
-      ? (ctor as Record<PropertyKey, unknown>)[Symbol.species]
-      : undefined
-  if (typeof species === 'function') {
-    const Species = species as new (n: number) => unknown[]
-    return new Species(length)
+// result, mirroring the ECMAScript ArraySpeciesCreate abstract operation so the
+// result type — and its error behavior — matches what the native method would
+// produce for the same receiver. Reads `@@species` from the receiver's
+// constructor (which may be an object or a function); an absent/null species
+// falls back to a plain Array, and a species that is not a constructor throws a
+// TypeError exactly as the native method does. `new Array` is same-realm, so an
+// intrinsic Array constructor short-circuits to a plain Array.
+function arraySpeciesCreate(receiver: unknown[], length: number): unknown[] {
+  let ctor: unknown = (receiver as { constructor?: unknown }).constructor
+  if (ctor === Array) return new Array<unknown>(length)
+  if (ctor !== null && (typeof ctor === 'object' || typeof ctor === 'function')) {
+    ctor = (ctor as Record<PropertyKey, unknown>)[Symbol.species]
+    if (ctor === null) ctor = undefined
   }
-  return new Array<unknown>(length)
+  if (ctor === undefined) return new Array<unknown>(length)
+  if (typeof ctor !== 'function') {
+    throw new TypeError('Array species is not a constructor')
+  }
+  return Reflect.construct(ctor as new (n: number) => unknown, [length]) as unknown[]
+}
+
+// A species result that is not an ordinary Array (a subclass, typed array, or a
+// host constructor's instance) needs CreateDataPropertyOrThrow semantics rather
+// than plain assignment: it defines an own data property, overriding any index
+// setter and throwing when the target refuses the write (e.g. an out-of-bounds
+// typed-array index), matching the native methods. Ordinary arrays take the
+// faster assignment path, for which the two are equivalent.
+function needsDefineProperty(result: unknown[]): boolean {
+  return Object.getPrototypeOf(result) !== Array.prototype
+}
+
+function defineElement(out: unknown[], index: number, value: unknown, define: boolean): void {
+  if (define) {
+    Object.defineProperty(out, index, {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    })
+  } else {
+    out[index] = value
+  }
 }
 
 async function evalArgAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown> {
