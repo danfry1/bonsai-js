@@ -260,12 +260,13 @@ async function evalCallExpressionAsync(
       // Standard higher-order array methods need async-aware iteration because
       // lambda callbacks may return Promises, which native Array methods can't
       // handle (a Promise is always truthy). An overridden method is left to run
-      // natively below, matching the sync path.
+      // natively below, matching the sync path. Arguments after the thisArg
+      // (index 1) are ignored, as the native methods do.
       if (
         Array.isArray(obj) &&
-        (args.length === 1 || args.length === 2) &&
+        args.length >= 1 &&
         typeof args[0] === 'function' &&
-        canReimplementAsync(obj, method, methodName)
+        canReimplementAsync(method, methodName)
       ) {
         const asyncResult = await evalAsyncArrayMethod(
           methodName,
@@ -351,8 +352,11 @@ type ArrayCallback = (item: unknown, index: number, array: unknown[]) => unknown
 //     (a concurrent fan-out would enter depth for every element before any
 //     exits, scaling maxDepth with array length instead of nesting).
 //
-// This is only used for the *standard* method (the caller checks the receiver
-// has not overridden it); an override is run natively, as in sync. Step
+// This is used for the unmodified prototype method (the caller checks it is not
+// an own override or a globally replaced method); those are run natively, as in
+// sync. Array subclasses ARE handled here — deferring them to the native method
+// would hand it Promise-returning lambdas it cannot await — with the result
+// constructed via Symbol.species so the subclass type is preserved. Step
 // accounting is not charged here — a bonsai-lambda callback charges via its own
 // closure (as in sync), and an opaque host callback is uncounted in both.
 // Returns { value } when handled, undefined for a method it does not implement.
@@ -365,16 +369,17 @@ async function evalAsyncArrayMethod(
   const len = arr.length
   switch (methodName) {
     case 'filter': {
-      const out: unknown[] = []
+      const out = speciesArray(arr, 0)
+      let k = 0
       for (let i = 0; i < len; i++) {
         if (!(i in arr)) continue
         const item = arr[i]
-        if (isTruthy(await callback.call(thisArg, item, i, arr))) out.push(item)
+        if (isTruthy(await callback.call(thisArg, item, i, arr))) out[k++] = item
       }
       return { value: out }
     }
     case 'map': {
-      const out = new Array<unknown>(len) // preserves length; holes stay holes
+      const out = speciesArray(arr, len) // preserves length; holes stay holes
       for (let i = 0; i < len; i++) {
         if (!(i in arr)) continue
         out[i] = await callback.call(thisArg, arr[i], i, arr)
@@ -382,7 +387,8 @@ async function evalAsyncArrayMethod(
       return { value: out }
     }
     case 'flatMap': {
-      const out: unknown[] = []
+      const out = speciesArray(arr, 0)
+      let k = 0
       for (let i = 0; i < len; i++) {
         if (!(i in arr)) continue
         // Flatten each result (depth 1, skipping holes) immediately, before the
@@ -390,11 +396,14 @@ async function evalAsyncArrayMethod(
         // mutates an array returned earlier must not affect what was flattened.
         const result = await callback.call(thisArg, arr[i], i, arr)
         if (Array.isArray(result)) {
-          for (let j = 0; j < result.length; j++) {
-            if (j in result) out.push(result[j])
+          // Snapshot the length: native flattening reads it once, so a later
+          // read that appends to `result` does not extend what was flattened.
+          const resultLength = result.length
+          for (let j = 0; j < resultLength; j++) {
+            if (j in result) out[k++] = result[j]
           }
         } else {
-          out.push(result)
+          out[k++] = result
         }
       }
       return { value: out }
@@ -447,14 +456,32 @@ const ORIGINAL_ARRAY_METHODS: Readonly<Record<string, unknown>> = {
 }
 
 // Whether the async evaluator may substitute its await-capable reimplementation
-// for this call. Only for a plain array (not a subclass — preserves Symbol.
-// species) whose method is the original, unmodified Array.prototype
-// implementation (not an own override or a globally replaced prototype method).
-// Anything else runs natively, exactly as the sync path does, so both agree.
-function canReimplementAsync(obj: unknown[], method: unknown, methodName: string): boolean {
-  return (
-    Object.getPrototypeOf(obj) === Array.prototype && method === ORIGINAL_ARRAY_METHODS[methodName]
-  )
+// for this call: only when `method` is the original, unmodified Array.prototype
+// implementation. An own override or a globally replaced prototype method is run
+// natively instead (as sync does), so both agree. Array subclasses that inherit
+// the standard method are reimplemented here (with Symbol.species) rather than
+// deferred, since the native method cannot await a Promise-returning lambda.
+function canReimplementAsync(method: unknown, methodName: string): boolean {
+  return method === ORIGINAL_ARRAY_METHODS[methodName]
+}
+
+// The array in which a species-aware method (map/filter/flatMap) builds its
+// result, mirroring native ArraySpeciesCreate: read `@@species` from the
+// receiver's constructor (which may be an object or a function) and construct
+// the result from it, so an Array subclass — or a custom species — yields the
+// same type the native method would. An absent/null species, or a species that
+// is not a constructor, falls back to a plain Array.
+function speciesArray(receiver: unknown[], length: number): unknown[] {
+  const ctor = (receiver as { constructor?: unknown }).constructor
+  const species =
+    ctor !== null && (typeof ctor === 'object' || typeof ctor === 'function')
+      ? (ctor as Record<PropertyKey, unknown>)[Symbol.species]
+      : undefined
+  if (typeof species === 'function') {
+    const Species = species as new (n: number) => unknown[]
+    return new Species(length)
+  }
+  return new Array<unknown>(length)
 }
 
 async function evalArgAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown> {
@@ -591,9 +618,9 @@ async function evalLambdaBodyAsync(
           // Async-safe higher-order array method handling (same as top-level path)
           if (
             Array.isArray(obj) &&
-            (args.length === 1 || args.length === 2) &&
+            args.length >= 1 &&
             typeof args[0] === 'function' &&
-            canReimplementAsync(obj, method, methodName)
+            canReimplementAsync(method, methodName)
           ) {
             const asyncResult = await evalAsyncArrayMethod(
               methodName,

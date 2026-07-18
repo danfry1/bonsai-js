@@ -15,6 +15,7 @@ import { arrays, strings, math } from '../src/stdlib/index.js'
 // expression instead of whatever large form the generator happened to emit.
 const SEED_EXPRESSION = 0xc0ffee
 const SEED_HOF = 0x5eed01
+const SEED_SHAPE = 0x5ea9e0
 const SEED_FUZZ = 0xbad5eed
 
 type Outcome = { ok: true; value: unknown } | { ok: false; name: string; message: string }
@@ -293,6 +294,74 @@ describe('property-based higher-order parity', () => {
       expect(asyncResult, source).toEqual(syncResult)
       expect(compiledSync, source).toEqual(syncResult)
       expect(compiledAsync, source).toEqual(syncResult)
+    },
+  )
+})
+
+// Structure-aware equality: `toEqual` treats a hole and an `undefined` element
+// as equal and ignores the constructor, so it cannot see the sparse-hole or
+// Symbol.species differences that async higher-order parity must preserve. This
+// compares length, exact present-index sets, element values, and constructor.
+function structurallyEqual(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false
+    if (a.constructor !== b.constructor) return false // Symbol.species
+    const ak = Object.keys(a)
+    const bk = Object.keys(b)
+    if (ak.length !== bk.length) return false
+    return ak.every((k, i) => k === bk[i] && structurallyEqual(a[k as never], b[k as never]))
+  }
+  return Object.is(a, b)
+}
+
+// The async evaluator hand-reimplements higher-order methods, so parity depends
+// on the receiver's shape (dense vs sparse vs subclass), not just the method.
+// This fuzzes that dimension — which the generator above (dense arrays only)
+// does not — and compares with structural equality so hole/species drift fails.
+const HOLE = Symbol('hole')
+const shapedArrayArbitrary = fc
+  .array(fc.oneof(fc.integer({ min: -5, max: 5 }), fc.constant(HOLE)), { maxLength: 8 })
+  .chain((cells) =>
+    fc.constantFrom('dense', 'sparse', 'subclass').map((kind) => {
+      const base = kind === 'sparse' ? cells : cells.filter((c) => c !== HOLE)
+      const arr = kind === 'subclass' ? class Bag extends Array {}.of() : []
+      base.forEach((c, i) => {
+        if (c !== HOLE) arr[i] = c // a HOLE index is left unset -> a real hole
+      })
+      return arr as number[]
+    }),
+  )
+
+const SHAPE_METHODS = [
+  'map(. * 2)',
+  'filter(. % 2 == 0)',
+  'find(. > 0)',
+  'findIndex(. > 0)',
+  'some(. > 0)',
+  'every(. > 0)',
+  'flatMap(. * 2)',
+] as const
+
+describe('property-based higher-order parity across array shapes', () => {
+  const expr = bonsai()
+
+  it.prop([shapedArrayArbitrary, fc.constantFrom(...SHAPE_METHODS)], {
+    seed: SEED_SHAPE,
+    numRuns: 400,
+  })(
+    'sync and async agree structurally for dense, sparse, and subclass receivers',
+    async (items, call) => {
+      const source = `items.${call}`
+      // These lambdas do not mutate, so a shared context is safe.
+      const sync = captureOutcome(() => expr.evaluateSync(source, { items }))
+      const asyncResult = await captureAsyncOutcome(() => expr.evaluate(source, { items }))
+
+      expect(asyncResult.ok, source).toBe(sync.ok)
+      if (sync.ok && asyncResult.ok) {
+        expect(structurallyEqual(asyncResult.value, sync.value), source).toBe(true)
+      } else if (!sync.ok && !asyncResult.ok) {
+        expect(asyncResult.name, source).toBe(sync.name)
+      }
     },
   )
 })

@@ -176,12 +176,69 @@ describe('callback-mutation timing matches native', () => {
 })
 
 describe('array subclasses preserve species', () => {
-  it('returns the subclass from map in both modes', async () => {
+  // Uses `. * 2` (a lambda expression), whose async closure returns a Promise —
+  // so a subclass wrongly deferred to the native method would map to Promises,
+  // not values. `.x` (a plain accessor) is synchronous and would miss that.
+  it('returns the subclass with awaited values from map in both modes', async () => {
     class Bag extends Array {}
     const make = () => ({ items: Bag.from([1, 2, 3]) as unknown[] })
-    const sync = expr.evaluateSync('items.map(.x)', make())
-    const asyncResult = await expr.evaluate('items.map(.x)', make())
+    const sync = expr.evaluateSync('items.map(. * 2)', make())
+    const asyncResult = await expr.evaluate('items.map(. * 2)', make())
     expect((sync as object).constructor.name).toBe('Bag')
+    expect(sync).toEqual([2, 4, 6])
     expect((asyncResult as object).constructor.name).toBe('Bag')
+    expect(asyncResult).toEqual(sync)
+  })
+
+  it('honors a custom constructor[Symbol.species] on a plain array', async () => {
+    const make = () => {
+      const items = [1, 2, 3]
+      // A plain array whose species is a subclass: native map builds the result
+      // via that species, so async must too rather than returning a plain Array.
+      class Species extends Array {}
+      Object.defineProperty(items, 'constructor', {
+        value: { [Symbol.species]: Species },
+      })
+      return { items }
+    }
+    const sync = expr.evaluateSync('items.map(. * 2)', make())
+    const asyncResult = await expr.evaluate('items.map(. * 2)', make())
+    expect((sync as object).constructor.name).toBe('Species')
+    expect((asyncResult as object).constructor.name).toBe('Species')
+    expect(asyncResult).toEqual(sync)
+  })
+})
+
+describe('extra arguments after thisArg are ignored, not a bypass', () => {
+  it('still awaits an async lambda when excess arguments are present', async () => {
+    const e = bonsai()
+    e.addFunction('asyncFalse', () => Promise.resolve(false))
+    // A third argument must not send this through the native method (which would
+    // not await the lambda). Native higher-order methods ignore args after 1.
+    await expect(
+      e.evaluate('items.some(. > 0 && asyncFalse(), null, "ignored")', { items: [1] }),
+    ).resolves.toBe(false)
+  })
+})
+
+describe('flatMap snapshots each result length', () => {
+  it('does not observe a later append to an array returned earlier', async () => {
+    // Reading index 0 of the first result appends to it; native flatMap captured
+    // the length before iterating, so the appended element is not flattened.
+    const make = () => {
+      const grow: number[] = [1]
+      return {
+        items: [0, 1],
+        f: (_v: unknown, i: number) => {
+          if (i === 0) return grow
+          grow.push(2)
+          return []
+        },
+      }
+    }
+    const sync = expr.evaluateSync('items.flatMap(f)', make())
+    const asyncResult = await expr.evaluate('items.flatMap(f)', make())
+    expect(sync).toEqual([1])
+    expect(asyncResult).toEqual(sync)
   })
 })
