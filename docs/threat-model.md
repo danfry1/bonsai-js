@@ -137,12 +137,11 @@ AST walk and bonsai-lambda-driven iteration (`items.map(.x)` over a large
 context array) but **not** work inside an opaque host function or a native
 method driven by a host-function callback — the receiver of a native array
 method is not size-capped either (`maxArrayLength` caps produced arrays, not a
-context-array receiver). Sync and async consume identical step budgets for dense
-arrays using built-in methods; async reimplements higher-order methods to await
-async callbacks, so a sparse array or an overridden method can charge
-differently (a deferred async higher-order semantics item). That is why the size
-caps above exist: they stop the amplifiers that a sampled bound could not
-interrupt mid-call.
+context-array receiver). Sync and async consume identical step budgets (the
+async evaluator reimplements higher-order methods to await async callbacks while
+matching native per-method semantics — argument passing, sparse-hole handling,
+and overridden-method deference). That is why the size caps above exist: they
+stop the amplifiers that a sampled bound could not interrupt mid-call.
 
 ### No asynchronous escape in synchronous mode
 
