@@ -263,11 +263,16 @@ async function evalCallExpressionAsync(
       // natively below, matching the sync path.
       if (
         Array.isArray(obj) &&
-        args.length === 1 &&
+        (args.length === 1 || args.length === 2) &&
         typeof args[0] === 'function' &&
-        isStandardArrayMethod(method, methodName)
+        canReimplementAsync(obj, method, methodName)
       ) {
-        const asyncResult = await evalAsyncArrayMethod(methodName, obj, args[0] as ArrayCallback)
+        const asyncResult = await evalAsyncArrayMethod(
+          methodName,
+          obj,
+          args[0] as ArrayCallback,
+          args[1],
+        )
         if (asyncResult !== undefined) {
           g.checkTimeout()
           checkResultArrayLength(asyncResult.value, g)
@@ -355,6 +360,7 @@ async function evalAsyncArrayMethod(
   methodName: string,
   arr: unknown[],
   callback: ArrayCallback,
+  thisArg: unknown,
 ): Promise<{ value: unknown } | undefined> {
   const len = arr.length
   switch (methodName) {
@@ -363,7 +369,7 @@ async function evalAsyncArrayMethod(
       for (let i = 0; i < len; i++) {
         if (!(i in arr)) continue
         const item = arr[i]
-        if (isTruthy(await callback(item, i, arr))) out.push(item)
+        if (isTruthy(await callback.call(thisArg, item, i, arr))) out.push(item)
       }
       return { value: out }
     }
@@ -371,41 +377,54 @@ async function evalAsyncArrayMethod(
       const out = new Array<unknown>(len) // preserves length; holes stay holes
       for (let i = 0; i < len; i++) {
         if (!(i in arr)) continue
-        out[i] = await callback(arr[i], i, arr)
+        out[i] = await callback.call(thisArg, arr[i], i, arr)
       }
       return { value: out }
     }
     case 'flatMap': {
-      const mapped: unknown[] = []
+      const out: unknown[] = []
       for (let i = 0; i < len; i++) {
         if (!(i in arr)) continue
-        mapped.push(await callback(arr[i], i, arr))
+        // Flatten each result (depth 1, skipping holes) immediately, before the
+        // next callback runs, matching native flatMap: a later callback that
+        // mutates an array returned earlier must not affect what was flattened.
+        const result = await callback.call(thisArg, arr[i], i, arr)
+        if (Array.isArray(result)) {
+          for (let j = 0; j < result.length; j++) {
+            if (j in result) out.push(result[j])
+          }
+        } else {
+          out.push(result)
+        }
       }
-      return { value: mapped.flat() }
+      return { value: out }
     }
     case 'find': {
       for (let i = 0; i < len; i++) {
-        if (isTruthy(await callback(arr[i], i, arr))) return { value: arr[i] }
+        // Capture before the callback: native find returns the value passed to
+        // the predicate, even if the callback mutates the slot.
+        const item = arr[i]
+        if (isTruthy(await callback.call(thisArg, item, i, arr))) return { value: item }
       }
       return { value: undefined }
     }
     case 'findIndex': {
       for (let i = 0; i < len; i++) {
-        if (isTruthy(await callback(arr[i], i, arr))) return { value: i }
+        if (isTruthy(await callback.call(thisArg, arr[i], i, arr))) return { value: i }
       }
       return { value: -1 }
     }
     case 'some': {
       for (let i = 0; i < len; i++) {
         if (!(i in arr)) continue
-        if (isTruthy(await callback(arr[i], i, arr))) return { value: true }
+        if (isTruthy(await callback.call(thisArg, arr[i], i, arr))) return { value: true }
       }
       return { value: false }
     }
     case 'every': {
       for (let i = 0; i < len; i++) {
         if (!(i in arr)) continue
-        if (!isTruthy(await callback(arr[i], i, arr))) return { value: false }
+        if (!isTruthy(await callback.call(thisArg, arr[i], i, arr))) return { value: false }
       }
       return { value: true }
     }
@@ -414,12 +433,28 @@ async function evalAsyncArrayMethod(
   }
 }
 
-// Whether `method` is the unmodified Array.prototype implementation of
-// `methodName`. When an array (or a subclass/proxy) overrides the method, async
-// must defer to that override natively — exactly as the sync path does — rather
-// than substituting the standard reimplementation above.
-function isStandardArrayMethod(method: unknown, methodName: string): boolean {
-  return method === (Array.prototype as unknown as Record<string, unknown>)[methodName]
+// Captured at module load: a later global replacement of, say,
+// Array.prototype.map is then treated as non-standard and deferred to natively,
+// keeping sync and async in agreement.
+const ORIGINAL_ARRAY_METHODS: Readonly<Record<string, unknown>> = {
+  filter: Array.prototype.filter,
+  map: Array.prototype.map,
+  flatMap: Array.prototype.flatMap,
+  find: Array.prototype.find,
+  findIndex: Array.prototype.findIndex,
+  some: Array.prototype.some,
+  every: Array.prototype.every,
+}
+
+// Whether the async evaluator may substitute its await-capable reimplementation
+// for this call. Only for a plain array (not a subclass — preserves Symbol.
+// species) whose method is the original, unmodified Array.prototype
+// implementation (not an own override or a globally replaced prototype method).
+// Anything else runs natively, exactly as the sync path does, so both agree.
+function canReimplementAsync(obj: unknown[], method: unknown, methodName: string): boolean {
+  return (
+    Object.getPrototypeOf(obj) === Array.prototype && method === ORIGINAL_ARRAY_METHODS[methodName]
+  )
 }
 
 async function evalArgAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown> {
@@ -556,14 +591,15 @@ async function evalLambdaBodyAsync(
           // Async-safe higher-order array method handling (same as top-level path)
           if (
             Array.isArray(obj) &&
-            args.length === 1 &&
+            (args.length === 1 || args.length === 2) &&
             typeof args[0] === 'function' &&
-            isStandardArrayMethod(method, methodName)
+            canReimplementAsync(obj, method, methodName)
           ) {
             const asyncResult = await evalAsyncArrayMethod(
               methodName,
               obj,
               args[0] as ArrayCallback,
+              args[1],
             )
             if (asyncResult !== undefined) {
               g.checkTimeout()

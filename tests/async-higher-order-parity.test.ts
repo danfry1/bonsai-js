@@ -108,3 +108,80 @@ describe('overridden methods are deferred to, not reimplemented', () => {
     expect(r.async).toBe(r.sync)
   })
 })
+
+describe('optional thisArg is honored', () => {
+  it('binds thisArg for a host callback (2-argument form) identically in both modes', async () => {
+    const make = () => ({
+      items: [1, 2, 3],
+      mult(this: { by: number }, v: number) {
+        return v * this.by
+      },
+      ctx: { by: 10 },
+    })
+    const r = await evalBoth('items.map(mult, ctx)', make())
+    expect(r.sync).toEqual([10, 20, 30])
+    expect(r.async).toEqual(r.sync)
+  })
+
+  it('still awaits an async bonsai lambda when a thisArg is supplied', async () => {
+    // The 2-argument form must not bypass async-aware iteration.
+    const e = bonsai()
+    e.addFunction('asyncFalse', () => Promise.resolve(false))
+    await expect(
+      e.evaluate('items.some(. > 0 && asyncFalse(), ignored)', { items: [1], ignored: null }),
+    ).resolves.toBe(false)
+    await expect(
+      e.evaluate('items.filter(. > 0 && asyncFalse(), ignored)', { items: [1], ignored: null }),
+    ).resolves.toEqual([])
+  })
+})
+
+describe('callback-mutation timing matches native', () => {
+  // These callbacks mutate their input, so each evaluation gets a fresh context
+  // (a shared one would let the first run's mutation leak into the second).
+  it('find returns the value passed to the predicate, not a later mutation', async () => {
+    const make = () => ({
+      items: [1, 2, 3],
+      f: (_v: unknown, i: number, arr: unknown[]) => {
+        arr[i] = 99 // mutate the slot after it was read
+        return true
+      },
+    })
+    const sync = expr.evaluateSync('items.find(f)', make())
+    const asyncResult = await expr.evaluate('items.find(f)', make())
+    expect(sync).toBe(1) // the original first value, not 99
+    expect(asyncResult).toBe(sync)
+  })
+
+  it('flatMap flattens each result before the next callback runs', async () => {
+    // The first callback returns an array that the second callback mutates.
+    // Native flatMap has already flattened the first result, so the mutation
+    // is not observed; a deferred flatten would observe it.
+    const make = () => {
+      const shared = [1]
+      return {
+        items: [0, 1],
+        f: (_v: unknown, i: number) => {
+          if (i === 0) return shared
+          shared[0] = 99
+          return []
+        },
+      }
+    }
+    const sync = expr.evaluateSync('items.flatMap(f)', make())
+    const asyncResult = await expr.evaluate('items.flatMap(f)', make())
+    expect(sync).toEqual([1])
+    expect(asyncResult).toEqual(sync)
+  })
+})
+
+describe('array subclasses preserve species', () => {
+  it('returns the subclass from map in both modes', async () => {
+    class Bag extends Array {}
+    const make = () => ({ items: Bag.from([1, 2, 3]) as unknown[] })
+    const sync = expr.evaluateSync('items.map(.x)', make())
+    const asyncResult = await expr.evaluate('items.map(.x)', make())
+    expect((sync as object).constructor.name).toBe('Bag')
+    expect((asyncResult as object).constructor.name).toBe('Bag')
+  })
+})
