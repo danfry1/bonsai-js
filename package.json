@@ -98,7 +98,7 @@
     "oxlint": "1.73.0",
     "oxlint-tsgolint": "0.24.0",
     "tsdown": "0.22.4",
-    "typescript": "6.0.3",
+    "typescript": "7.0.2",
     "vitepress": "1.6.4",
     "vitest": "4.1.10"
   },
