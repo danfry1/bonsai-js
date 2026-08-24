@@ -11,10 +11,12 @@ import { attachLocation, BonsaiTypeError } from './errors.js'
 import {
   accessMember,
   accessMemberByName,
+  readOwnProperty,
+  arrayMethodReceiver,
   applyBinaryOp,
   applyUnaryOp,
-  checkResultArrayLength,
-  checkResultStringLength,
+  chargeNativeMethod,
+  checkResultLimits,
   expandSpreadValue,
   getIdentifierName,
   getObjectLiteralKeyName,
@@ -23,13 +25,16 @@ import {
   validateMethodArgs,
   validateMethodCall,
 } from './eval-ops.js'
+import { isPromiseLike } from './promise-like.js'
+import { createBonsaiLambda } from './lambda.js'
+import { coerceToString } from './coerce.js'
 
 function rejectPromise(
   value: unknown,
   kind: 'function' | 'method' | 'transform',
   name: string,
 ): unknown {
-  if (value instanceof Promise) {
+  if (isPromiseLike(value)) {
     throw new BonsaiTypeError(
       name,
       `a synchronous ${kind} result — use evaluate() instead of evaluateSync() for async`,
@@ -63,6 +68,9 @@ export function evaluate(
   }
   // No limits: run-tracking, per-element accounting, and the final deadline
   // check are all inert, so skip them entirely and keep the unaccounted hot path.
+  // Result limits are enforced where values are *produced* (literals, spread,
+  // operators, method/function/transform results), never on the final value
+  // itself, so context data passed through unchanged is never rejected.
   if (!guard.needsAccounting) return evalNode(node, env)
   guard.beginRun()
   try {
@@ -105,7 +113,7 @@ function evalNode(node: ASTNode, env: EvalEnv): unknown {
       return undefined
     case 'Identifier':
       env.g.checkNameAccess(node.name, 'identifier')
-      return Object.hasOwn(env.ctx, node.name) ? env.ctx[node.name] : undefined
+      return readOwnProperty(env.ctx, node.name)
     case 'UnaryExpression':
     case 'BinaryExpression':
     case 'ConditionalExpression':
@@ -151,7 +159,9 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
           const left = evalNode(node.left, env)
           return left ?? evalNode(node.right, env)
         }
-        return applyBinaryOp(op, evalNode(node.left, env), evalNode(node.right, env))
+        const result = applyBinaryOp(op, evalNode(node.left, env), evalNode(node.right, env), g)
+        checkResultLimits(result, g)
+        return result
       }
 
       case 'ConditionalExpression':
@@ -201,6 +211,7 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
       }
 
       case 'ObjectLiteral': {
+        g.checkObjectProperties(node.properties.length)
         const obj = Object.create(null) as Record<string, unknown>
         for (const prop of node.properties) {
           g.step()
@@ -228,7 +239,11 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
         let result = ''
         for (const part of node.parts) {
           g.step()
-          result += part.type === 'StringLiteral' ? part.value : String(evalNode(part, env))
+          result +=
+            part.type === 'StringLiteral'
+              ? part.value
+              : coerceToString(evalNode(part, env), 'template interpolation')
+          g.checkStringLength(result.length)
         }
         return result
       }
@@ -240,16 +255,16 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
         return makeLambdaAccessor(node.property, g)
 
       case 'LambdaIdentity':
-        return (item: unknown) => {
+        return createBonsaiLambda((item: unknown) => {
           g.step()
           return item
-        }
+        })
 
       case 'LambdaExpression':
-        return (item: unknown) => {
+        return createBonsaiLambda((item: unknown) => {
           g.step()
           return evalLambdaBody(node.body, item, env)
-        }
+        })
 
       case 'NumberLiteral':
       case 'StringLiteral':
@@ -270,34 +285,33 @@ function evalCallExpression(
   env: EvalEnv,
 ): unknown {
   const { fn, g, s } = env
+  g.checkCallArguments(node.args.length)
 
   if (node.callee.type === 'MemberExpression' || node.callee.type === 'OptionalMemberExpression') {
     const obj = evalNode(node.callee.object, env)
     if (node.callee.type === 'OptionalMemberExpression' && obj == null) return undefined
     const computedValue = node.callee.computed ? evalNode(node.callee.property, env) : undefined
     const methodName = node.callee.computed
-      ? String(computedValue)
+      ? coerceToString(computedValue, 'computed method name')
       : getIdentifierName(node.callee.property, 'Expected method name')
 
     try {
-      const method = validateMethodCall(obj, methodName, g)
+      const receiver = Array.isArray(obj) ? arrayMethodReceiver(obj, methodName, g) : obj
+      const method = validateMethodCall(receiver, methodName, g)
       const args: unknown[] = []
       for (const arg of node.args) {
         pushCallArgument(args, arg, env)
       }
-      validateMethodArgs(obj, methodName, args, g)
+      validateMethodArgs(receiver, methodName, args, g)
+      if (g.needsAccounting) chargeNativeMethod(receiver, methodName, g)
 
-      // A native method is a single opaque call from the evaluator's view, so
-      // the deadline is enforced at return, not mid-iteration. A host-function
-      // callback over a large context array therefore runs to completion before
-      // the deadline is checked (maxArrayLength bounds arrays *produced* during
-      // evaluation, not a context-array receiver). A bonsai lambda callback does
-      // still charge step() per element via its own closure, so `items.map(.x)`
-      // over a large array is pre-empted mid-loop.
-      const result = rejectPromise(method.call(obj, ...args), 'method', methodName)
+      // A native method cannot be interrupted mid-call. Linear audited methods
+      // are pre-charged from receiver length above; Bonsai lambdas additionally
+      // charge their actual callback invocations. The deadline is checked again
+      // after the intrinsic returns.
+      const result = rejectPromise(method.call(receiver, ...args), 'method', methodName)
       g.checkTimeout()
-      checkResultArrayLength(result, g)
-      checkResultStringLength(result, g)
+      checkResultLimits(result, g)
       return result
     } catch (e) {
       if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
@@ -324,6 +338,7 @@ function evalCallExpression(
         node.callee.name,
       )
       g.checkTimeout()
+      checkResultLimits(result, g)
       return result
     } catch (e) {
       if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
@@ -336,13 +351,18 @@ function evalCallExpression(
 
 function pushCallArgument(args: unknown[], node: ASTNode, env: EvalEnv): void {
   if (node.type === 'SpreadElement') {
-    args.push(
-      ...expandSpreadValue(evalNode(node.argument, env), env.g.policy.maxArrayLength, env.g),
+    const expanded = expandSpreadValue(
+      evalNode(node.argument, env),
+      env.g.policy.maxArrayLength,
+      env.g,
     )
+    env.g.checkCallArguments(args.length + expanded.length)
+    args.push(...expanded)
     return
   }
 
   args.push(evalArg(node, env))
+  env.g.checkCallArguments(args.length)
 }
 
 function evalArg(node: ASTNode, env: EvalEnv): unknown {
@@ -350,10 +370,10 @@ function evalArg(node: ASTNode, env: EvalEnv): unknown {
     return makeLambdaAccessor(node.property, env.g)
   }
   if (node.type === 'LambdaIdentity') {
-    return (item: unknown) => {
+    return createBonsaiLambda((item: unknown) => {
       env.g.step()
       return item
-    }
+    })
   }
   return evalNode(node, env)
 }
@@ -362,6 +382,7 @@ function evalPipe(input: unknown, transformNode: ASTNode, env: EvalEnv): unknown
   const { tr, g } = env
 
   if (transformNode.type === 'CallExpression') {
+    g.checkCallArguments(transformNode.args.length)
     const calleeName = getIdentifierName(transformNode.callee, 'Transform must be an identifier')
     const func = resolveTransform(calleeName, tr)
     const args: unknown[] = []
@@ -370,6 +391,7 @@ function evalPipe(input: unknown, transformNode: ASTNode, env: EvalEnv): unknown
     }
     const result = rejectPromise(func(input, ...args), 'transform', calleeName)
     g.checkTimeout()
+    checkResultLimits(result, g)
     return result
   }
 
@@ -380,6 +402,7 @@ function evalPipe(input: unknown, transformNode: ASTNode, env: EvalEnv): unknown
       transformNode.name,
     )
     g.checkTimeout()
+    checkResultLimits(result, g)
     return result
   }
 
@@ -396,8 +419,7 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
     case 'LambdaIdentity':
       return item
     case 'LambdaAccessor':
-      g.checkNameAccess(node.property, 'member')
-      return (item as Record<string, unknown>)?.[node.property]
+      return item == null ? undefined : accessMemberByName(item, node.property, g)
     case 'NumberLiteral':
     case 'StringLiteral':
     case 'BooleanLiteral':
@@ -452,25 +474,32 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
             ? evalNode(node.callee.property, env)
             : undefined
           const methodName = node.callee.computed
-            ? String(computedValue)
+            ? coerceToString(computedValue, 'computed method name')
             : getIdentifierName(node.callee.property, 'Expected method name')
-          const method = validateMethodCall(obj, methodName, g)
+          const receiver = Array.isArray(obj) ? arrayMethodReceiver(obj, methodName, g) : obj
+          const method = validateMethodCall(receiver, methodName, g)
           const args: unknown[] = []
+          g.checkCallArguments(node.args.length)
           for (const arg of node.args) {
             if (arg.type === 'SpreadElement') {
-              args.push(
-                ...expandSpreadValue(evalNode(arg.argument, env), g.policy.maxArrayLength, g),
+              const expanded = expandSpreadValue(
+                evalNode(arg.argument, env),
+                g.policy.maxArrayLength,
+                g,
               )
+              g.checkCallArguments(args.length + expanded.length)
+              args.push(...expanded)
             } else {
               args.push(evalArg(arg, env))
+              g.checkCallArguments(args.length)
             }
           }
-          validateMethodArgs(obj, methodName, args, g)
+          validateMethodArgs(receiver, methodName, args, g)
+          if (g.needsAccounting) chargeNativeMethod(receiver, methodName, g)
 
-          const result = rejectPromise(method.call(obj, ...args), 'method', methodName)
+          const result = rejectPromise(method.call(receiver, ...args), 'method', methodName)
           g.checkTimeout()
-          checkResultArrayLength(result, g)
-          checkResultStringLength(result, g)
+          checkResultLimits(result, g)
           return result
         }
         // Delegate to evalNode for non-method calls (e.g. registered functions)
@@ -493,11 +522,14 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
           const left = evalLambdaBody(node.left, item, env)
           return left ?? evalLambdaBody(node.right, item, env)
         }
-        return applyBinaryOp(
+        const result = applyBinaryOp(
           op,
           evalLambdaBody(node.left, item, env),
           evalLambdaBody(node.right, item, env),
+          g,
         )
+        checkResultLimits(result, g)
+        return result
       }
 
       case 'UnaryExpression':
@@ -528,18 +560,19 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
 }
 
 function getObjectPropertyKey(prop: ObjectProperty, env: EvalEnv): string {
-  const key = prop.computed ? String(evalNode(prop.key, env)) : getObjectLiteralKeyName(prop.key)
+  const key = prop.computed
+    ? coerceToString(evalNode(prop.key, env), 'computed object key')
+    : getObjectLiteralKeyName(prop.key)
   env.g.checkNameAccess(key, 'object-key')
   return key
 }
 
-function makeLambdaAccessor(
-  property: string,
-  guard: ExecutionContext,
-): (item: Record<string, unknown>) => unknown {
-  return (item: Record<string, unknown>) => {
+function makeLambdaAccessor(property: string, guard: ExecutionContext): (item: unknown) => unknown {
+  // The property name is static, so the access policy is checked once when the
+  // lambda is created rather than once per element.
+  guard.checkNameAccess(property, 'member')
+  return createBonsaiLambda((item: unknown) => {
     guard.step()
-    guard.checkNameAccess(property, 'member')
-    return item?.[property]
-  }
+    return readOwnProperty(item, property)
+  })
 }

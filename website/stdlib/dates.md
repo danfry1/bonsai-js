@@ -7,6 +7,16 @@ import { dates } from 'bonsai-js/stdlib'
 expr.use(dates)
 ```
 
+The default plugin uses the host wall clock. Inject a clock when evaluation
+must be deterministic:
+
+```ts
+import { createDates } from 'bonsai-js/stdlib'
+
+expr.use(createDates({ now: () => 1_700_000_000_000 }))
+expr.evaluateSync('now()') // 1700000000000
+```
+
 | Type | Name | Example | Result |
 |---|---|---|---|
 | Function | `now()` | `now()` | Current Unix timestamp in milliseconds |

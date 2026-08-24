@@ -19,8 +19,13 @@ const ac = createAutocomplete(expr, {
 | Option | Type | Description |
 | --- | --- | --- |
 | `context` | `Record<string, unknown>` | The variable scope used for property lookups and type inference. Defaults to `{}`. |
-| `transformTypes` | `Record<string, InferredTypeName[]>` | Explicit map of transform names to accepted input types (e.g., `{ upper: ['string'] }`). When omitted, the engine auto-probes type compatibility by calling each transform with sample values. Use this to skip the cold-start probe cost in large transform registries. |
+| `schema` | `BonsaiObjectType` | Static root-context schema built with `t` (from `bonsai-js` or `bonsai-js/checker`). Supplies type-aware completions without live representative values. |
+| `transformSignatures` | `Record<string, { input?: InferredTypeName[]; output?: InferredTypeName }>` | Runtime-kind input/output metadata for transforms not registered with `defineTransform()` metadata; entries override registry metadata. Output types let inference continue through pipes. |
 | `onError` | `(error, phase) => void` | Called on unexpected internal errors during completion. Expected errors (syntax, security, type) are silently handled. Useful for debugging missing or incorrect suggestions. |
+
+Metadata supplied through `defineTransform()` is discovered automatically.
+Autocomplete never probes by calling a transform or function, and it never
+evaluates a partial expression.
 
 ## complete(expression, cursor)
 

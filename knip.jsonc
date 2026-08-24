@@ -8,15 +8,16 @@
   "entry": [
     "tests/**/*.test.ts",
     "benchmarks/**/*.bench.ts",
-    "scripts/*.ts",
-    "website/**/*.{ts,js}"
+    "scripts/*.ts"
+    // website/.vitepress lives under a dot-directory knip does not match, so a
+    // website entry pattern only produces a "no matches" hint.
   ],
   "project": ["src/**/*.ts"],
-  // npm is consumed by the release workflow (node_modules/.bin/npm), which knip
-  // does not trace. It is a devDependency so the release job installs it from
-  // the lockfile, hash-pinned, instead of `npm i -g` (OSSF Scorecard
+  // npm and ATTW are consumed by release/CI workflows, which knip does not
+  // trace. They remain devDependencies so CI executes lockfile-pinned,
+  // integrity-checked binaries instead of registry fallbacks (OSSF Scorecard
   // Pinned-Dependencies).
-  "ignoreDependencies": ["npm"],
+  "ignoreDependencies": ["npm", "@arethetypeswrong/cli"],
   "rules": {
     // Unused *value* exports are real dead code and fail the gate. Unused *type*
     // exports are not: for a parser library the exported AST/error interfaces are

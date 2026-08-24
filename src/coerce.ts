@@ -1,3 +1,5 @@
+import { BonsaiTypeError } from './errors.js'
+
 /**
  * Canonical string coercion for bonsai runtime values.
  *
@@ -12,6 +14,29 @@
  * coercion through one `unknown`-typed function means the rule stays enabled
  * everywhere else to catch real "[object Object]" mistakes.
  */
-export function coerceToString(value: unknown): string {
-  return String(value)
+export function coerceToString(value: unknown, operation = 'string conversion'): string {
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return String(value)
+  }
+  throw new BonsaiTypeError(operation, 'a string, number, boolean, null, or undefined', value)
+}
+
+/** Number coercion restricted to primitives, so Symbol.toPrimitive/valueOf cannot execute host code. */
+export function coerceToNumber(value: unknown, operation = 'number conversion'): number {
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return Number(value)
+  }
+  throw new BonsaiTypeError(operation, 'a string, number, boolean, null, or undefined', value)
 }

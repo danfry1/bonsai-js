@@ -4,6 +4,21 @@ export function compile(ast: ASTNode): ASTNode {
   return optimize(ast)
 }
 
+/**
+ * Build a separate, deeply frozen public view of a private compiled tree.
+ * Evaluators retain the private tree's fast object shapes; exposing that same
+ * object would let a caller mutate one artifact and poison later evaluations.
+ */
+export function frozenAstView(ast: ASTNode): ASTNode {
+  return deepFreeze(optimize(ast))
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value
+  for (const child of Object.values(value)) deepFreeze(child)
+  return Object.freeze(value)
+}
+
 function optimize(node: ASTNode): ASTNode {
   switch (node.type) {
     case 'BinaryExpression': {
@@ -58,15 +73,31 @@ function optimize(node: ASTNode): ASTNode {
     case 'ArrayLiteral':
       return { ...node, elements: node.elements.map((e) => optimize(e)) }
 
+    case 'ObjectLiteral':
+      return {
+        ...node,
+        properties: node.properties.map((property) => ({
+          ...property,
+          key: optimize(property.key),
+          value: optimize(property.value),
+        })),
+      }
+
+    case 'TemplateLiteral':
+      return { ...node, parts: node.parts.map((part) => optimize(part)) }
+
+    case 'SpreadElement':
+      return { ...node, argument: optimize(node.argument) }
+
     case 'CallExpression':
-      return { ...node, args: node.args.map((a) => optimize(a)) }
+      return { ...node, callee: optimize(node.callee), args: node.args.map((a) => optimize(a)) }
 
     case 'MemberExpression':
     case 'OptionalMemberExpression':
       return {
         ...node,
         object: optimize(node.object),
-        property: node.computed ? optimize(node.property) : node.property,
+        property: optimize(node.property),
       }
 
     case 'LambdaExpression':
@@ -78,12 +109,9 @@ function optimize(node: ASTNode): ASTNode {
     case 'NullLiteral':
     case 'UndefinedLiteral':
     case 'Identifier':
-    case 'ObjectLiteral':
-    case 'TemplateLiteral':
-    case 'SpreadElement':
     case 'LambdaAccessor':
     case 'LambdaIdentity':
-      return node
+      return { ...node }
 
     default:
       return node

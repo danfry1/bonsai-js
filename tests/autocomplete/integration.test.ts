@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { bonsai } from '../../src/index.js'
 import { strings, arrays, math } from '../../src/stdlib/index.js'
 import { createAutocomplete } from '../../src/autocomplete/index.js'
+import { t } from '../../src/checker/index.js'
 
 function setup(
   context: Record<string, unknown> = {},
@@ -218,9 +219,9 @@ describe('autocomplete integration', () => {
     expect(labels).not.toContain('leaked')
   })
 
-  // ── Eval-based type inference ──────────────────────────────
+  // ── Static type inference ──────────────────────────────────
 
-  it('method chain: user.name.trim(). shows string methods (eval-based)', () => {
+  it('method chain: user.name.trim(). shows string methods without evaluation', () => {
     const ac = setup({ user: { name: '  Alice  ' } })
     const result = ac.complete('user.name.trim().', 17)
     const labels = result.map((c) => c.label)
@@ -231,7 +232,7 @@ describe('autocomplete integration', () => {
 
   it('method chain: items.filter(.x > 0).map(. * 2). shows array methods', () => {
     const ac = setup({ items: [{ x: 1 }, { x: 2 }] })
-    // This is a complex chain — the evaluator will run it and return an array
+    // Literal/container types are inferred directly from tokens.
     const result = ac.complete('[1,2,3].', 8)
     const labels = result.map((c) => c.label)
     expect(labels).toContain('filter')
@@ -266,6 +267,20 @@ describe('autocomplete integration', () => {
     const result = ac.complete('name.', 5)
     const trimCompletion = result.find((c) => c.label === 'trim')
     expect(trimCompletion?.insertText).toBe('trim()')
+  })
+
+  it('function completions use declarative metadata', () => {
+    const instance = bonsai().defineFunction({
+      name: 'lookup',
+      evaluate: () => 'value',
+      returnType: t.string(),
+      description: 'Look up a value',
+    })
+    const ac = createAutocomplete(instance)
+
+    expect(ac.complete('look', 4).find((item) => item.label === 'lookup')?.detail).toBe(
+      'Look up a value → string',
+    )
   })
 
   it('higher-order method completions include lambda placeholder', () => {
@@ -598,7 +613,7 @@ describe('autocomplete integration', () => {
 
   // ── Top-level complete() error safety ─────────────────────────
 
-  it('complete() returns [] and calls onError for unexpected internal errors', () => {
+  it('complete() ignores accessors without invoking or reporting them', () => {
     const instance = bonsai()
     const errors: Array<{ error: unknown; phase: string }> = []
     const ac = createAutocomplete(instance, {
@@ -611,43 +626,88 @@ describe('autocomplete integration', () => {
         errors.push({ error, phase })
       },
     })
-    // Accessing a getter that throws — should be caught at top level
+    // Accessing a getter would throw, but completion only inspects data descriptors.
     const result = ac.complete('name.', 5)
     expect(result).toEqual([])
-    // The error should be reported via onError
-    expect(errors.length).toBeGreaterThan(0)
+    expect(errors).toEqual([])
   })
 
-  // ── transformTypes explicit type map ──────────────────────────
+  it('never invokes registered code or context accessors while completing', () => {
+    const instance = bonsai()
+    let calls = 0
+    instance.addTransform(
+      'dangerousTransform',
+      () => {
+        calls++
+        throw new Error('must not run')
+      },
+      { inputType: t.string(), returnType: t.string() },
+    )
+    instance.addFunction('dangerousFunction', () => {
+      calls++
+      throw new Error('must not run')
+    })
+    const completionContext = {
+      safe: 'value',
+      get dangerousProperty(): string {
+        calls++
+        throw new Error('must not run')
+      },
+    }
+    const ac = createAutocomplete(instance, { context: completionContext })
 
-  it('transformTypes filters pipe completions by declared type', () => {
+    expect(ac.complete('safe |> ', 8).map((item) => item.label)).toContain('dangerousTransform')
+    expect(ac.complete('danger', 6).map((item) => item.label)).toContain('dangerousFunction')
+    expect(ac.complete('dangerousProperty.', 18)).toEqual([])
+    expect(calls).toBe(0)
+  })
+
+  // ── transformSignatures explicit type map ─────────────────────
+
+  it('transformSignatures filters pipe completions by declared input type', () => {
+    const instance = bonsai()
+    instance.addTransform('slug', (value) => value)
+    instance.addTransform('flatten2', (value) => value)
+    const ac = createAutocomplete(instance, {
+      context: { name: 'Alice' },
+      transformSignatures: {
+        slug: { input: ['string'], output: 'string' },
+        flatten2: { input: ['array'], output: 'array' },
+      },
+    })
+    const result = ac.complete('name |> ', 8)
+    const labels = result.map((c) => c.label)
+    expect(labels).toContain('slug')
+    expect(labels).not.toContain('flatten2') // array-only
+  })
+
+  it('transformSignatures: transforms without a signature are still shown', () => {
+    const instance = bonsai()
+    instance.addTransform('slug', (value) => value)
+    instance.addTransform('mystery', (value) => value)
+    const ac = createAutocomplete(instance, {
+      context: { name: 'Alice' },
+      transformSignatures: { slug: { input: ['string'] } },
+    })
+    const labels = ac.complete('name |> ', 8).map((c) => c.label)
+    expect(labels).toContain('slug')
+    // mystery has no signature at all → passes through unfiltered
+    expect(labels).toContain('mystery')
+  })
+
+  it('registry metadata (BonsaiType) filters pipe completions by widened kind', () => {
     const instance = bonsai()
     instance.use(strings)
     instance.use(arrays)
-    const ac = createAutocomplete(instance, {
-      context: { name: 'Alice' },
-      transformTypes: { upper: ['string'], trim: ['string'], count: ['array'], sort: ['array'] },
-    })
-    const result = ac.complete('name |> ', 8)
-    const labels = result.map((c) => c.label)
-    expect(labels).toContain('upper')
-    expect(labels).toContain('trim')
-    expect(labels).not.toContain('count') // array-only
-    expect(labels).not.toContain('sort') // array-only
-  })
-
-  it('transformTypes: transforms not in the map are still shown', () => {
-    const instance = bonsai()
-    instance.use(strings)
-    const ac = createAutocomplete(instance, {
-      context: { name: 'Alice' },
-      transformTypes: { upper: ['string'] },
-    })
-    const result = ac.complete('name |> ', 8)
-    const labels = result.map((c) => c.label)
-    expect(labels).toContain('upper')
-    // trim is not in the map at all → passes through unfiltered
-    expect(labels).toContain('trim')
+    const ac = createAutocomplete(instance, { context: { name: 'Alice', items: [1] } })
+    const forString = ac.complete('name |> ', 8).map((c) => c.label)
+    expect(forString).toContain('upper')
+    expect(forString).toContain('trim')
+    expect(forString).not.toContain('count') // array-only
+    expect(forString).not.toContain('sort') // array-only
+    const forArray = ac.complete('items |> ', 9).map((c) => c.label)
+    expect(forArray).toContain('count')
+    expect(forArray).not.toContain('upper')
   })
 
   // ── Optional chaining ─────────────────────────────────────────
@@ -709,5 +769,69 @@ describe('autocomplete integration', () => {
     // `${{}}`  — inner {} should not break template depth tracking
     const result = ac.complete('`${{}}` + x', 11)
     expect(result.length).toBeGreaterThanOrEqual(0) // should not crash
+  })
+
+  it('completes from a static schema without live context values', () => {
+    const instance = bonsai().use(strings)
+    const ac = createAutocomplete(instance, {
+      schema: t.object({
+        user: t.object({ name: t.string(), age: t.number() }),
+        users: t.array(t.object({ name: t.string(), active: t.boolean() })),
+      }),
+    })
+
+    expect(ac.complete('user.', 5).map((item) => item.label)).toEqual(
+      expect.arrayContaining(['name', 'age']),
+    )
+    expect(ac.complete('user.name.', 10).map((item) => item.label)).toContain('trim')
+    expect(ac.complete('users.filter(.', 14).map((item) => item.label)).toEqual(
+      expect.arrayContaining(['name', 'active']),
+    )
+    expect(ac.complete('user.name |> ', 13).map((item) => item.label)).toContain('upper')
+  })
+})
+
+describe('indexed access completions', () => {
+  const indexed = {
+    items: [{ x: 1, sub: [{ y: 2 }] }],
+    tags: ['a'],
+    m: { a: { b: { c: 'z' } } },
+  }
+  const ac = createAutocomplete(bonsai().use(strings), { context: indexed })
+  const labels = (source: string): string[] =>
+    ac.complete(source, source.length).map((item) => item.label)
+
+  it('items[0]. resolves to the element, not the array', () => {
+    expect(labels('items[0].')).toEqual(['x', 'sub'])
+    expect(labels('items[0]?.')).toEqual(['x', 'sub'])
+    expect(labels('items[0].sub[0].')).toEqual(['y'])
+  })
+
+  it('tags[0]. and items[0].x. offer string and number methods', () => {
+    expect(labels('tags[0].')).toContain('trim')
+    expect(labels('tags[0].')).not.toContain('map')
+    expect(labels('items[0].x.')).toEqual(['toFixed', 'toString'])
+  })
+
+  it('string-literal indices resolve like dot access', () => {
+    expect(labels('m["a"].')).toEqual(['b'])
+    expect(labels("m['a'].b.")).toEqual(['c'])
+  })
+
+  it('method return types chain after an index segment', () => {
+    expect(labels('tags[0].trim().')).toContain('toUpperCase')
+    expect(labels('tags[0].trim().')).not.toContain('map')
+  })
+
+  it('does not list array index keys as properties', () => {
+    expect(labels('items.')).not.toContain('0')
+    expect(labels('items.')).toContain('map')
+  })
+
+  it('numeric indices bypass allowedProperties in chain resolution', () => {
+    const strict = createAutocomplete(bonsai({ allowedProperties: ['x', 'sub'] }), {
+      context: indexed,
+    })
+    expect(strict.complete('items[0].', 9).map((item) => item.label)).toEqual(['x', 'sub'])
   })
 })

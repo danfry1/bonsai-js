@@ -38,6 +38,9 @@ jobs:
       - name: Use repo-pinned npm
         run: echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
 
+      - name: Audit dependencies
+        run: bun audit --audit-level=high
+
       - name: Format
         run: bun run format:check
 
@@ -62,7 +65,7 @@ jobs:
       - name: Check package exports
         run: |
           npm pack --ignore-scripts --pack-destination /tmp
-          bunx attw /tmp/bonsai-js-*.tgz --ignore-rules no-resolution cjs-resolves-to-esm
+          bun run attw /tmp/bonsai-js-*.tgz --ignore-rules no-resolution cjs-resolves-to-esm
 
       - name: Stage publish to npm
         # Uploads the tarball to npm's stage queue. Provenance is auto-generated

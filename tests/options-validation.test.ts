@@ -14,11 +14,27 @@ describe('BonsaiOptions validation', () => {
     expect(() => bonsai({ maxDepth: 2.5 })).toThrow(RangeError)
   })
 
+  it('rejects negative or non-integer source, token, and AST limits', () => {
+    expect(() => bonsai({ maxSourceLength: -1 })).toThrow(RangeError)
+    expect(() => bonsai({ maxSourceLength: 1.5 })).toThrow(RangeError)
+    expect(() => bonsai({ maxTokens: -1 })).toThrow(RangeError)
+    expect(() => bonsai({ maxTokens: 1.5 })).toThrow(RangeError)
+    expect(() => bonsai({ maxAstNodes: -1 })).toThrow(RangeError)
+    expect(() => bonsai({ maxAstNodes: 1.5 })).toThrow(RangeError)
+  })
+
   it('rejects a negative or non-integer maxArrayLength / maxStringLength', () => {
     expect(() => bonsai({ maxArrayLength: -1 })).toThrow(RangeError)
     expect(() => bonsai({ maxArrayLength: 10.5 })).toThrow(RangeError)
     expect(() => bonsai({ maxStringLength: -1 })).toThrow(RangeError)
     expect(() => bonsai({ maxStringLength: 10.5 })).toThrow(RangeError)
+  })
+
+  it('rejects negative or non-integer object-property and call-argument limits', () => {
+    expect(() => bonsai({ maxObjectProperties: -1 })).toThrow(RangeError)
+    expect(() => bonsai({ maxObjectProperties: 1.5 })).toThrow(RangeError)
+    expect(() => bonsai({ maxCallArguments: -1 })).toThrow(RangeError)
+    expect(() => bonsai({ maxCallArguments: 1.5 })).toThrow(RangeError)
   })
 
   it('rejects a negative, NaN, or non-finite timeout', () => {
@@ -47,8 +63,13 @@ describe('BonsaiOptions validation', () => {
     expect(() => bonsai({})).not.toThrow()
     expect(() => bonsai({ cacheSize: 0 })).not.toThrow() // 0 = caching disabled
     expect(() => bonsai({ maxDepth: 1 })).not.toThrow()
+    expect(() => bonsai({ maxSourceLength: 0 })).not.toThrow()
+    expect(() => bonsai({ maxTokens: 0 })).not.toThrow()
+    expect(() => bonsai({ maxAstNodes: 0 })).not.toThrow()
     expect(() => bonsai({ maxArrayLength: 0 })).not.toThrow()
     expect(() => bonsai({ maxStringLength: 0 })).not.toThrow()
+    expect(() => bonsai({ maxObjectProperties: 0 })).not.toThrow()
+    expect(() => bonsai({ maxCallArguments: 0 })).not.toThrow()
     expect(() => bonsai({ timeout: 0 })).not.toThrow() // 0 = timeout disabled
     expect(() => bonsai({ allowedProperties: ['name'], deniedProperties: [] })).not.toThrow()
   })

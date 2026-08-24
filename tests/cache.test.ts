@@ -86,4 +86,20 @@ describe('AST cache eviction in bonsai', () => {
     // Previous expressions still evaluate correctly (re-parsed)
     expect(expr.evaluateSync('1 + 1')).toBe(2)
   })
+
+  it('does not let the public compiled AST poison cached evaluations', async () => {
+    const { bonsai } = await import('../src/index.js')
+    const expr = bonsai<{ value: number }>()
+    const compiled = expr.compile('value + 1')
+    expect(compiled.ast.type).toBe('BinaryExpression')
+    expect(Object.isFrozen(compiled.ast)).toBe(true)
+
+    if (compiled.ast.type !== 'BinaryExpression') throw new Error('expected binary expression')
+    expect(Object.isFrozen(compiled.ast.left)).toBe(true)
+    expect(Reflect.set(compiled.ast, 'operator', '*')).toBe(false)
+    expect(Reflect.set(compiled.ast.left, 'name', 'other')).toBe(false)
+
+    expect(compiled.evaluateSync({ value: 2 })).toBe(3)
+    expect(expr.evaluateSync('value + 1', { value: 2 })).toBe(3)
+  })
 })

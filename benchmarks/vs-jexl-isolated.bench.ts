@@ -13,9 +13,6 @@ expr.use(math)
 jexl.addTransform('upper', (val: string) => val.toUpperCase())
 jexl.addTransform('sum', (arr: number[]) => arr.reduce((a, b) => a + b, 0))
 
-// jexl.eval is a safe expression evaluator API, not JS eval
-const jexlRun = (expression: string, ctx?: Record<string, unknown>) => jexl.eval(expression, ctx) // eslint-disable-line
-
 // Pre-compiled only
 const exComp = expr.compile('user.age >= 18 && user.verified')
 const jxComp = jexl.compile('user.age >= 18 && user.verified')
@@ -57,7 +54,7 @@ describe('default usage: comparison', () => {
   bench('bonsai', () => {
     expr.evaluateSync('user.age >= 18 && user.verified', context)
   })
-  bench('jexl', async () => {
-    await jexlRun('user.age >= 18 && user.verified', context)
+  bench('jexl', () => {
+    jexl.evalSync('user.age >= 18 && user.verified', context)
   })
 })

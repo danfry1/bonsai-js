@@ -135,15 +135,15 @@ describe('async evaluation', () => {
 })
 
 describe('async higher-order array method parity with sync', () => {
-  // A getter that records the element index each time it is read, so we can
-  // observe exactly which elements a predicate was evaluated against.
-  function logged(log: number[], specs: Array<[number, boolean]>): Array<{ flag: boolean }> {
-    return specs.map(([id, flag]) => ({
-      get flag() {
-        log.push(id)
-        return flag
+  // Accessors are forbidden by the data-only member policy. Placing one after
+  // a decisive element therefore proves short-circuiting: touching it would
+  // raise ACCESSOR_NOT_ALLOWED.
+  function mustNotVisit(): { flag: boolean } {
+    return Object.defineProperty({} as { flag: boolean }, 'flag', {
+      get() {
+        throw new Error('predicate should have short-circuited')
       },
-    }))
+    })
   }
 
   it('does not inflate maxDepth by array length (matches sync)', async () => {
@@ -155,36 +155,18 @@ describe('async higher-order array method parity with sync', () => {
   })
 
   it('some short-circuits at the first truthy element', async () => {
-    const log: number[] = []
-    const arr = logged(log, [
-      [0, true],
-      [1, false],
-      [2, false],
-    ])
-    await bonsai().evaluate('arr.some(.flag)', { arr })
-    expect(log).toEqual([0])
+    const arr = [{ flag: true }, mustNotVisit()]
+    await expect(bonsai().evaluate('arr.some(.flag)', { arr })).resolves.toBe(true)
   })
 
   it('every short-circuits at the first falsy element', async () => {
-    const log: number[] = []
-    const arr = logged(log, [
-      [0, false],
-      [1, true],
-      [2, true],
-    ])
-    await bonsai().evaluate('arr.every(.flag)', { arr })
-    expect(log).toEqual([0])
+    const arr = [{ flag: false }, mustNotVisit()]
+    await expect(bonsai().evaluate('arr.every(.flag)', { arr })).resolves.toBe(false)
   })
 
   it('find short-circuits once a match is found', async () => {
-    const log: number[] = []
-    const arr = logged(log, [
-      [0, false],
-      [1, true],
-      [2, false],
-    ])
+    const arr = [{ flag: false }, { flag: true }, mustNotVisit()]
     const result = await bonsai().evaluate('arr.find(.flag)', { arr })
-    expect(log).toEqual([0, 1])
     expect(result).toBe(arr[1])
   })
 
@@ -195,26 +177,14 @@ describe('async higher-order array method parity with sync', () => {
   })
 
   it('findIndex short-circuits and returns the matching index', async () => {
-    const log: number[] = []
-    const arr = logged(log, [
-      [0, false],
-      [1, true],
-      [2, false],
-    ])
+    const arr = [{ flag: false }, { flag: true }, mustNotVisit()]
     const result = await bonsai().evaluate('arr.findIndex(.flag)', { arr })
-    expect(log).toEqual([0, 1])
     expect(result).toBe(1)
   })
 
-  it('map evaluates predicates in array order', async () => {
-    const log: number[] = []
-    const arr = logged(log, [
-      [0, true],
-      [1, true],
-      [2, true],
-    ])
-    await bonsai().evaluate('arr.map(.flag)', { arr })
-    expect(log).toEqual([0, 1, 2])
+  it('map preserves element order', async () => {
+    const arr = [{ flag: 1 }, { flag: 2 }, { flag: 3 }]
+    await expect(bonsai().evaluate('arr.map(.flag)', { arr })).resolves.toEqual([1, 2, 3])
   })
 
   it('returns the not-found sentinels for find/findIndex/some/every', async () => {

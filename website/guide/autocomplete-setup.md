@@ -30,6 +30,32 @@ const ac = createAutocomplete(expr, {
 })
 ```
 
+For authoring before real data exists, pass the same static schema used by the
+checker:
+
+```ts
+import { createChecker, t } from 'bonsai-js/checker'
+
+const schema = t.object({
+  user: t.object({ name: t.string(), age: t.number(), plan: t.string() }),
+  items: t.array(t.object({ title: t.string(), price: t.number() })),
+})
+
+const ac = createAutocomplete(expr, { schema })
+const checker = createChecker(expr, {
+  schema,
+  expectedType: t.boolean(),
+})
+
+const source = 'items.some(.price > 20)'
+checker.check(source) // valid, inferred boolean
+ac.complete('items.some(.', 12) // title and price, inferred from the same schema
+```
+
+This is the recommended authoring setup: the checker owns acceptance and exact
+diagnostics, while autocomplete uses the same schema and extension metadata for
+suggestions. Neither tool evaluates the expression or probes host values.
+
 ## Get completions
 
 Call `complete(expression, cursor)` with the expression string and the cursor position (zero-based character offset). It returns an array of `Completion` objects sorted by relevance.

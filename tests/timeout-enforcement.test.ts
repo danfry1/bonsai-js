@@ -3,7 +3,7 @@ import { evaluate } from '../src/evaluator.js'
 import { evaluateAsync } from '../src/evaluator-async.js'
 import { parse } from '../src/parser.js'
 import { SecurityPolicy, ExecutionContext } from '../src/execution-context.js'
-import { bonsai, BonsaiSecurityError } from '../src/index.js'
+import { bonsai, BonsaiSecurityError, BonsaiTypeError } from '../src/index.js'
 import type { RegisteredFunction, TransformFn } from '../src/types.js'
 
 // Characterization tests for the timeout bypasses confirmed in the 2026-07-17
@@ -56,14 +56,17 @@ describe('sync timeout enforcement after host calls', () => {
     )
   })
 
-  it('rejects after a native method driven by a host callback overruns', () => {
+  it('rejects a context-supplied callback before it can run host code', () => {
     let now = 0
     const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), () => now)
     const cb = (item: unknown): unknown => {
       now += 60
       return item
     }
-    expectTimeout(() => evaluate(parse('items.map(cb)'), { items: [1, 2, 3], cb }, noBindings, ec))
+    expect(() =>
+      evaluate(parse('items.map(cb)'), { items: [1, 2, 3], cb }, noBindings, ec),
+    ).toThrow(BonsaiTypeError)
+    expect(now).toBe(0)
   })
 
   it('rejects at sync completion even with a single compound node', () => {
@@ -105,14 +108,17 @@ describe('per-element accounting in flat loops', () => {
     ).rejects.toMatchObject({ code: 'TIMEOUT' })
   })
 
-  it('sync: rejects spread materialization of a slow iterable mid-loop', () => {
+  it('sync: rejects host iterables without invoking iterator code', () => {
     const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), advancingClock())
+    let calls = 0
     const gen = {
       *[Symbol.iterator]() {
+        calls++
         for (let i = 0; i < 60_000; i++) yield i
       },
     }
-    expectTimeout(() => evaluate(parse('[...gen]'), { gen }, noBindings, ec))
+    expect(() => evaluate(parse('[...gen]'), { gen }, noBindings, ec)).toThrow(BonsaiTypeError)
+    expect(calls).toBe(0)
   })
 
   // Spreading a materialized array is a single bulk charge, not a per-element
@@ -122,7 +128,8 @@ describe('per-element accounting in flat loops', () => {
   // sub-millisecond operation. A never-firing deadline keeps accounting live.
   const LEN = 60_000
   const bigArray = Array.from({ length: LEN }, (_, i) => i)
-  const liveGuard = () => new ExecutionContext(new SecurityPolicy({ timeout: 100_000 }))
+  const liveGuard = () =>
+    new ExecutionContext(new SecurityPolicy({ timeout: 100_000, maxCallArguments: LEN }))
 
   it('sync: charges an array-literal spread of a plain array against the budget', () => {
     const ec = liveGuard()
@@ -180,18 +187,17 @@ describe('array-method callbacks and the deadline', () => {
     expectTimeout(() => evaluate(parse('items.map(.x)'), { items: bigItems }, noBindings, ec))
   })
 
-  it('a native method with a host-function callback is checked at return', () => {
-    // The evaluator does not interpose on the native method, so enforcement is
-    // at method return, not mid-iteration: a host callback over a large context
-    // array runs to completion first (the receiver size is not capped). Here the
-    // callback elapses the deadline, so the post-call check rejects.
+  it('a native method never receives a context-supplied host callback', () => {
     let now = 0
     const ec = new ExecutionContext(new SecurityPolicy({ timeout: 100 }), () => now)
     const cb = (item: unknown): unknown => {
       now += 60
       return item
     }
-    expectTimeout(() => evaluate(parse('items.map(cb)'), { items: [1, 2, 3], cb }, noBindings, ec))
+    expect(() =>
+      evaluate(parse('items.map(cb)'), { items: [1, 2, 3], cb }, noBindings, ec),
+    ).toThrow(BonsaiTypeError)
+    expect(now).toBe(0)
   })
 })
 
@@ -211,43 +217,36 @@ describe('the timeout option must not change successful evaluation semantics', (
     return a
   }
 
-  it('forwards the element index to the callback', () => {
-    const r = bothAgree('items.map(f)', { items: [10, 20, 30], f: (_v: number, i: number) => i })
-    expect(r).toEqual([0, 1, 2])
+  it('rejects context callbacks consistently with and without a timeout', () => {
+    const ctx = { items: [10, 20, 30], f: (_v: number, i: number) => i }
+    expect(() => noTimeout.evaluateSync('items.map(f)', ctx)).toThrow(BonsaiTypeError)
+    expect(() => withTimeout.evaluateSync('items.map(f)', ctx)).toThrow(BonsaiTypeError)
   })
 
-  it('skips sparse-array holes instead of invoking the callback for them', () => {
-    let calls = 0
-    const f = (v: number) => {
-      calls++
-      return v
-    }
+  it('preserves sparse-array holes in the synchronous intrinsic path', () => {
     // eslint-disable-next-line no-sparse-arrays
     const sparse = [1, , 3] as number[]
-    noTimeout.evaluateSync('items.map(f)', { items: sparse, f })
-    const withoutTimeout = calls
-    calls = 0
-    withTimeout.evaluateSync('items.map(f)', { items: sparse, f })
-    expect(calls).toBe(withoutTimeout)
-    expect(calls).toBe(2) // the hole at index 1 is skipped
+    const result = bothAgree('items.map(. + 0)', { items: sparse }) as unknown[]
+    expect(Object.hasOwn(result, 1)).toBe(false)
   })
 
-  it('honors an explicit thisArg', () => {
-    const r = bothAgree('items.map(f, t)', {
+  it('rejects host callbacks even when an explicit thisArg is supplied', () => {
+    const context = {
       items: [1, 2, 3],
       f(this: { mult: number }, v: number) {
         return v * this.mult
       },
       t: { mult: 10 },
-    })
-    expect(r).toEqual([10, 20, 30])
+    }
+    expect(() => noTimeout.evaluateSync('items.map(f, t)', context)).toThrow(BonsaiTypeError)
+    expect(() => withTimeout.evaluateSync('items.map(f, t)', context)).toThrow(BonsaiTypeError)
   })
 
-  it('uses an overridden array method rather than a reimplementation', () => {
+  it('ignores an overridden array method and uses the audited intrinsic', () => {
     const arr = [1, 2, 3]
     Object.defineProperty(arr, 'map', { value: () => 'OVERRIDDEN' })
-    const r = bothAgree('items.map(f)', { items: arr, f: (v: number) => v })
-    expect(r).toBe('OVERRIDDEN')
+    const r = bothAgree('items.map(. + 0)', { items: arr })
+    expect(r).toEqual([1, 2, 3])
   })
 
   // A function passed as data, not a callback: its identity must be preserved.
@@ -256,10 +255,14 @@ describe('the timeout option must not change successful evaluation semantics', (
     expect(bothAgree('items.includes(fn)', { items: [fn, 2, 3], fn })).toBe(true)
   })
 
-  it('preserves a function-valued argument to concat', () => {
+  it('rejects a function-valued concat argument because concat reads spread hooks', () => {
     const fn = (): number => 1
-    const r = bothAgree('items.concat(fn)', { items: [1, 2], fn }) as unknown[]
-    expect(r[2]).toBe(fn) // same identity, not a wrapper
+    expect(() => noTimeout.evaluateSync('items.concat(fn)', { items: [1, 2], fn })).toThrow(
+      BonsaiTypeError,
+    )
+    expect(() => withTimeout.evaluateSync('items.concat(fn)', { items: [1, 2], fn })).toThrow(
+      BonsaiTypeError,
+    )
   })
 
   it('preserves a function-valued argument to with', () => {
@@ -268,12 +271,17 @@ describe('the timeout option must not change successful evaluation semantics', (
     expect(r[0]).toBe(fn)
   })
 
-  it('preserves callback identity for an override that inspects it', () => {
-    const fn = (v: number): number => v
+  it('never invokes an override when given a Bonsai lambda', () => {
     const arr = [1, 2, 3]
-    // An override that returns whether it received the exact function it was given.
-    Object.defineProperty(arr, 'map', { value: (cb: unknown) => cb === fn })
-    expect(bothAgree('items.map(fn)', { items: arr, fn })).toBe(true)
+    let overrideCalls = 0
+    Object.defineProperty(arr, 'map', {
+      value: () => {
+        overrideCalls++
+        return false
+      },
+    })
+    expect(bothAgree('items.map(. + 0)', { items: arr })).toEqual([1, 2, 3])
+    expect(overrideCalls).toBe(0)
   })
 })
 

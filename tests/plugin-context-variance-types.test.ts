@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { bonsai, type BonsaiPlugin, type PluginRegistrar } from '../src/index.js'
-import { arrays, strings, all } from '../src/stdlib/index.js'
+import { arrays, all } from '../src/stdlib/index.js'
 
 /**
  * Compile-time assertions for plugin/context variance. Validated by `tsc` during
@@ -38,7 +38,7 @@ describe('plugin/context variance', () => {
   }
 
   it('applies context-agnostic and stdlib plugins to any context shape without a cast', () => {
-    const iface = bonsai<IFaceCtx>().use(agnostic).use(arrays).use(strings).use(all)
+    const iface = bonsai<IFaceCtx>().use(agnostic).use(all)
     expect(iface.evaluateSync('items |> count', { items: [1, 2, 3] })).toBe(3)
     expect(iface.evaluateSync('two()', { items: [] })).toBe(2)
 

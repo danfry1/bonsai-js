@@ -2,6 +2,15 @@ import { describe, it, expect } from 'vitest'
 import { bonsai, BonsaiTypeError } from '../../src/index.js'
 import { arrays } from '../../src/stdlib/index.js'
 
+const unreadableTail = (firstFlag: boolean): { flag: boolean }[] => {
+  const tail = Object.defineProperty({}, 'flag', {
+    get() {
+      throw new Error('predicate should have short-circuited')
+    },
+  }) as { flag: boolean }
+  return [{ flag: firstFlag }, tail]
+}
+
 describe('stdlib - arrays', () => {
   const expr = bonsai()
   expr.use(arrays)
@@ -60,6 +69,18 @@ describe('stdlib - arrays type guards', () => {
 })
 
 describe('higher-order array transforms', () => {
+  it('defines the no-callback behavior for every higher-order transform', () => {
+    const expr = bonsai().use(arrays)
+    const items = [0, 1, false, 2]
+    expect(expr.evaluateSync('items |> filter', { items })).toEqual([1, 2])
+    expect(expr.evaluateSync('items |> map', { items })).toBe(items)
+    expect(expr.evaluateSync('items |> find', { items })).toBeUndefined()
+    expect(expr.evaluateSync('items |> some', { items })).toBe(true)
+    expect(expr.evaluateSync('items |> every', { items })).toBe(false)
+    expect(expr.evaluateSync('items |> some', { items: [0, false] })).toBe(false)
+    expect(expr.evaluateSync('items |> every', { items: [1, true] })).toBe(true)
+  })
+
   it('filter with lambda predicate', () => {
     const expr = bonsai()
     expr.use(arrays)
@@ -148,34 +169,42 @@ describe('higher-order array transforms', () => {
 })
 
 describe('predicate call count', () => {
-  it('find calls predicate exactly once per element', () => {
-    const expr = bonsai()
-    expr.use(arrays)
-    let callCount = 0
-    expr.addFunction('track', (v: unknown) => {
-      callCount++
-      return v
-    })
-    expr.evaluateSync('items |> find(.val == 2)', {
-      items: [{ val: 1 }, { val: 2 }, { val: 3 }, { val: 4 }],
-    })
-    expect(callCount).toBe(0) // lambda predicates don't use track
+  it('visits every dense element exactly once when no short-circuit occurs', () => {
+    const expr = bonsai().use(arrays)
+    let calls = 0
+    const observed = (values: readonly unknown[]) =>
+      values.map((value) =>
+        Object.defineProperty({}, 'value', {
+          enumerable: true,
+          get() {
+            calls++
+            return value
+          },
+        }),
+      )
+
+    for (const [source, values] of [
+      ['items |> map(.value)', [1, 2, 3]],
+      ['items |> filter(.value)', [1, 2, 3]],
+      ['items |> find(.value)', [0, 0, 0]],
+      ['items |> some(.value)', [0, 0, 0]],
+      ['items |> every(.value)', [1, 1, 1]],
+    ] as const) {
+      calls = 0
+      const items = observed(values)
+      expr.evaluateSync(source, { items })
+      expect(calls, source).toBe(items.length)
+    }
   })
 
-  it('find does not double-call predicates', () => {
-    const expr = bonsai()
-    expr.use(arrays)
-    expr.addTransform('myFind', (val: unknown, predicate: unknown) => {
-      const arr = val as unknown[]
-      if (typeof predicate !== 'function') return undefined
-      const fn = predicate as (item: unknown) => unknown
-      const results = arr.map(fn)
-      return results
-    })
-    const result = expr.evaluateSync('items |> find(.val == 2)', {
-      items: [{ val: 1 }, { val: 2 }, { val: 3 }],
-    })
-    expect(result).toEqual({ val: 2 })
+  it('find and some stop at the first match; every stops at the first failure', () => {
+    const expr = bonsai().use(arrays)
+    const truthy = unreadableTail(true)
+    const falsy = unreadableTail(false)
+
+    expect(expr.evaluateSync('items |> find(.flag)', { items: truthy })).toBe(truthy[0])
+    expect(expr.evaluateSync('items |> some(.flag)', { items: truthy })).toBe(true)
+    expect(expr.evaluateSync('items |> every(.flag)', { items: falsy })).toBe(false)
   })
 
   it('some uses computed results without re-calling predicate', () => {
@@ -205,14 +234,6 @@ describe('predicate call count', () => {
 })
 
 describe('async array transforms with mixed sync/async lambdas', () => {
-  it('hasPromises detects Promises beyond index 0', () => {
-    // Direct unit test: array where only later elements are Promises
-    const mixed = [1, 2, Promise.resolve(3)]
-    expect(mixed.some((r) => r instanceof Promise)).toBe(true)
-    // Old buggy check only looked at index 0
-    expect(mixed[0] instanceof Promise).toBe(false)
-  })
-
   it('stdlib map correctly resolves async lambdas via evaluate()', async () => {
     const expr = bonsai()
     expr.use(arrays)
@@ -234,5 +255,82 @@ describe('async array transforms with mixed sync/async lambdas', () => {
       ],
     })
     expect(result).toEqual(['Alice', 'Charlie'])
+  })
+
+  it('short-circuits async find/some/every predicates before later elements', async () => {
+    const expr = bonsai().use(arrays)
+    expr.addFunction('asyncFalse', () => Promise.resolve(false))
+    expr.addFunction('asyncTrue', () => Promise.resolve(true))
+    const truthy = unreadableTail(true)
+    const falsy = unreadableTail(false)
+
+    await expect(
+      expr.evaluate('items |> find(.flag || asyncFalse())', { items: truthy }),
+    ).resolves.toBe(truthy[0])
+    await expect(
+      expr.evaluate('items |> some(.flag || asyncFalse())', { items: truthy }),
+    ).resolves.toBe(true)
+    await expect(
+      expr.evaluate('items |> every(.flag && asyncTrue())', { items: falsy }),
+    ).resolves.toBe(false)
+  })
+
+  it('awaits async map callbacks sequentially by default', async () => {
+    const expr = bonsai().use(arrays)
+    let active = 0
+    let maximumActive = 0
+    expr.addFunction('pause', async () => {
+      active++
+      maximumActive = Math.max(maximumActive, active)
+      await new Promise((resolve) => {
+        setTimeout(resolve, 0)
+      })
+      active--
+      return 0
+    })
+
+    await expect(expr.evaluate('items |> map(. + pause())', { items: [1, 2, 3] })).resolves.toEqual(
+      [1, 2, 3],
+    )
+    expect(maximumActive).toBe(1)
+  })
+
+  it('continues async transforms across sparse arrays without materializing holes', async () => {
+    const expr = bonsai().use(arrays)
+    expr.addFunction('asyncValue', (value) => Promise.resolve(value))
+
+    const sparse: unknown[] = new Array(4)
+    sparse[1] = { value: false }
+    sparse[3] = { value: true }
+
+    const mapped = await expr.evaluate<unknown[]>('items |> map(asyncValue(.value))', {
+      items: sparse,
+    })
+    expect(mapped).toHaveLength(4)
+    expect(Object.hasOwn(mapped, 0)).toBe(false)
+    expect(Object.hasOwn(mapped, 1)).toBe(true)
+    expect(mapped[1]).toBe(false)
+    expect(Object.hasOwn(mapped, 2)).toBe(false)
+    expect(mapped[3]).toBe(true)
+
+    await expect(
+      expr.evaluate('items |> filter(asyncValue(.value))', { items: sparse }),
+    ).resolves.toEqual([sparse[3]])
+    await expect(
+      expr.evaluate('items |> find(asyncValue(.value))', { items: sparse }),
+    ).resolves.toBe(sparse[3])
+    await expect(
+      expr.evaluate('items |> some(asyncValue(.value))', { items: sparse }),
+    ).resolves.toBe(true)
+
+    sparse[1] = { value: true }
+    sparse[3] = { value: false }
+    await expect(
+      expr.evaluate('items |> every(asyncValue(.value))', { items: sparse }),
+    ).resolves.toBe(false)
+    sparse[3] = { value: true }
+    await expect(
+      expr.evaluate('items |> every(asyncValue(.value))', { items: sparse }),
+    ).resolves.toBe(true)
   })
 })

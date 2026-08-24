@@ -6,8 +6,11 @@ import { fileURLToPath } from 'node:url'
 
 const rootDir = fileURLToPath(new URL('..', import.meta.url))
 const tmpDir = join(rootDir, '.tmp-treeshake')
+const sizeCache = new Map<string, number>()
 
 function bundleSize(code: string): number {
+  const cached = sizeCache.get(code)
+  if (cached !== undefined) return cached
   mkdirSync(tmpDir, { recursive: true })
   const entry = join(tmpDir, 'entry.ts')
   writeFileSync(entry, code)
@@ -17,6 +20,7 @@ function bundleSize(code: string): number {
   })
   const size = readFileSync(out).byteLength
   rmSync(tmpDir, { recursive: true, force: true })
+  sizeCache.set(code, size)
   return size
 }
 
@@ -64,7 +68,9 @@ describe('bundle size budgets', () => {
   // deterministic for a given bun version, so these are stable across machines
   // and CI (unlike the perf gate). They are generous ceilings sized to catch a
   // significant regression (for example the core entry accidentally importing
-  // the whole stdlib or the autocomplete engine), not tight microbudgets;
+  // the whole stdlib or an optional tooling engine), not tight microbudgets.
+  // The v1 metadata/checker tranche deliberately raised these ceilings to pay
+  // for validated, frozen extension signatures and schema-backed completion;
   // update them deliberately when an intentional change moves a number.
   const KB = 1024
 
@@ -83,20 +89,41 @@ describe('bundle size budgets', () => {
     import { bonsai } from '../src/index.js'
     console.log(createAutocomplete(bonsai(), {}))
   `
+  const CHECKER = `
+    import { bonsai } from '../src/index.js'
+    import { createChecker, t } from '../src/checker/index.js'
+    console.log(createChecker(bonsai(), { schema: t.object({ value: t.number() }) }))
+  `
 
   it('core entry (evaluateExpression only) stays within budget', () => {
-    expect(bundleSize(CORE)).toBeLessThan(56 * KB)
+    // Raised from 63 KiB for runtime-enforced built-in signatures and
+    // receiver/species hardening (~65 KiB measured).
+    expect(bundleSize(CORE)).toBeLessThan(66 * KB)
   })
 
   it('full entry (bonsai + all stdlib) stays within budget', () => {
-    expect(bundleSize(FULL)).toBeLessThan(62 * KB)
+    // Captured array operations, generic array type metadata, an injectable
+    // clock, and frozen compiled trees keep the complete entry at ~75 KiB.
+    expect(bundleSize(FULL)).toBeLessThan(76 * KB)
   })
 
   it('autocomplete subpath stays within budget', () => {
-    expect(bundleSize(AUTOCOMPLETE)).toBeLessThan(76 * KB)
+    // Raised from 80 KiB when autocomplete started deriving pipe filters and
+    // function detail text from BonsaiType metadata (~82 KiB measured).
+    expect(bundleSize(AUTOCOMPLETE)).toBeLessThan(87 * KB)
+  })
+
+  it('checker subpath stays within budget', () => {
+    // Raised from 80 KiB when built-in method signatures and literal/enum
+    // types were added to the checker (~82 KiB measured).
+    expect(bundleSize(CHECKER)).toBeLessThan(86 * KB)
   })
 
   it('core entry does not pull in the autocomplete engine', () => {
     expect(bundleSize(CORE)).toBeLessThan(bundleSize(AUTOCOMPLETE))
+  })
+
+  it('core entry does not pull in the checker', () => {
+    expect(bundleSize(CORE)).toBeLessThan(bundleSize(CHECKER))
   })
 })

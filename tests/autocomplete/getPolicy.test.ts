@@ -2,10 +2,21 @@ import { describe, it, expect } from 'vitest'
 import { bonsai } from '../../src/index.js'
 
 describe('getPolicy', () => {
-  it('returns empty policy for default instance', () => {
+  it('returns the complete immutable default policy', () => {
     const expr = bonsai()
     const policy = expr.getPolicy()
-    expect(policy).toEqual({})
+    expect(policy).toEqual({
+      maxSourceLength: 100_000,
+      maxTokens: 25_000,
+      maxAstNodes: 10_000,
+      maxObjectProperties: 10_000,
+      maxCallArguments: 1_000,
+      maxDepth: 100,
+      maxArrayLength: 100_000,
+      maxStringLength: 100_000,
+      maxSteps: 1_000_000,
+      timeout: 0,
+    })
   })
 
   it('returns allowedProperties as readonly array', () => {

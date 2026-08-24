@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "coverageAnalysis": "all",
+  "tsconfigFile": "tsconfig.json",
+  "reporters": ["html", "clear-text", "progress"],
+  "htmlReporter": { "fileName": "reports/mutation-async/index.html" },
+  "clearTextReporter": { "maxTestsToLog": 3 },
+  "_comment": "The async evaluator is isolated because promise continuations require full-suite coverage analysis and must not borrow the synchronous core score. The 24 August 2026 v1 baseline instrumented 448 mutants, with 4 documented equivalent/performance-only exclusions and 444 scored mutants: 381 killed, 6 timed out, 49 survived, 8 uncovered. That is 87.16% overall / 88.76% covered and 85.81% with every timeout counted as a failure. The 85% floor is therefore timeout-independent and should be ratcheted upward, never lowered.",
+  "mutate": ["src/evaluator-async.ts"],
+  "thresholds": { "high": 95, "low": 85, "break": 85 }
+}

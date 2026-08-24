@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "cases": [
+    { "id": "precedence", "expression": "1 + 2 * 3", "context": {}, "value": 7 },
+    { "id": "right-associative-power", "expression": "2 ** 3 ** 2", "context": {}, "value": 512 },
+    { "id": "string-concatenation", "expression": "\"a\" + \"b\"", "context": {}, "value": "ab" },
+    { "id": "strict-equality", "expression": "1 == \"1\"", "context": {}, "value": false },
+    { "id": "strict-inequality", "expression": "1 != \"1\"", "context": {}, "value": true },
+    { "id": "string-ordering", "expression": "\"a\" < \"b\"", "context": {}, "value": true },
+    {
+      "id": "nullish-preserves-empty",
+      "expression": "\"\" ?? \"fallback\"",
+      "context": {},
+      "value": ""
+    },
+    {
+      "id": "or-replaces-empty",
+      "expression": "\"\" || \"fallback\"",
+      "context": {},
+      "value": "fallback"
+    },
+    { "id": "and-returns-operand", "expression": "\"yes\" && 3", "context": {}, "value": 3 },
+    { "id": "ternary", "expression": "2 > 1 ? \"yes\" : \"no\"", "context": {}, "value": "yes" },
+    { "id": "array-membership", "expression": "2 in [1, 2, 3]", "context": {}, "value": true },
+    {
+      "id": "string-membership",
+      "expression": "\"ell\" in \"hello\"",
+      "context": {},
+      "value": true
+    },
+    { "id": "missing-root", "expression": "missing", "context": {}, "undefined": true },
+    {
+      "id": "missing-own-member",
+      "expression": "user.missing",
+      "context": { "user": {} },
+      "undefined": true
+    },
+    {
+      "id": "optional-null",
+      "expression": "user?.name",
+      "context": { "user": null },
+      "undefined": true
+    },
+    {
+      "id": "computed-member",
+      "expression": "record[key]",
+      "context": { "record": { "x": 1 }, "key": "x" },
+      "value": 1
+    },
+    {
+      "id": "array-spread",
+      "expression": "[0, ...items, 3]",
+      "context": { "items": [1, 2] },
+      "value": [0, 1, 2, 3]
+    },
+    {
+      "id": "template-primitives",
+      "expression": "`x=${x}, ok=${ok}`",
+      "context": { "x": 2, "ok": true },
+      "value": "x=2, ok=true"
+    },
+    {
+      "id": "array-lambda",
+      "expression": "items.filter(.active).map(.name)",
+      "context": {
+        "items": [
+          { "name": "A", "active": true },
+          { "name": "B", "active": false }
+        ]
+      },
+      "value": ["A"]
+    },
+    {
+      "id": "mixed-addition-error",
+      "expression": "1 + \"2\"",
+      "context": {},
+      "error": { "name": "BonsaiTypeError" }
+    },
+    {
+      "id": "mixed-order-error",
+      "expression": "1 < \"2\"",
+      "context": {},
+      "error": { "name": "BonsaiTypeError" }
+    },
+    {
+      "id": "null-member-read",
+      "expression": "user.name",
+      "context": { "user": null },
+      "undefined": true
+    },
+    {
+      "id": "null-member-chain-read",
+      "expression": "user.address.city",
+      "context": { "user": { "address": null } },
+      "undefined": true
+    },
+    {
+      "id": "null-receiver-method-error",
+      "expression": "user.name.trim()",
+      "context": { "user": { "name": null } },
+      "error": { "name": "BonsaiTypeError" }
+    },
+    {
+      "id": "optional-receiver-method",
+      "expression": "user.name?.trim()",
+      "context": { "user": { "name": null } },
+      "undefined": true
+    },
+    {
+      "id": "inherited-member-invisible",
+      "expression": "value.toString",
+      "context": { "value": {} },
+      "undefined": true
+    },
+    {
+      "id": "object-template-error",
+      "expression": "`${value}`",
+      "context": { "value": { "x": 1 } },
+      "error": { "name": "BonsaiTypeError" }
+    },
+    {
+      "id": "non-array-spread-error",
+      "expression": "[...value]",
+      "context": { "value": "abc" },
+      "error": { "name": "BonsaiTypeError" }
+    },
+    {
+      "id": "blocked-prototype",
+      "expression": "value.constructor",
+      "context": { "value": {} },
+      "error": { "name": "BonsaiSecurityError", "code": "BLOCKED_PROPERTY" }
+    },
+    {
+      "id": "blocked-mutator",
+      "expression": "items.push(3)",
+      "context": { "items": [1, 2] },
+      "error": { "name": "BonsaiSecurityError", "code": "METHOD_NOT_ALLOWED" }
+    }
+  ]
+}

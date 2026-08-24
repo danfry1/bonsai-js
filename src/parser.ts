@@ -3,10 +3,11 @@ import type {
   BinaryExpressionOperator,
   ObjectProperty,
   OperatorValue,
+  SyntaxLimits,
   Token,
 } from './types.js'
 import { tokenize } from './lexer.js'
-import { ExpressionError } from './errors.js'
+import { BonsaiSecurityError, ExpressionError } from './errors.js'
 
 // Precedence levels (binding power) for Pratt parsing
 const PIPE_PRECEDENCE = 5
@@ -34,6 +35,9 @@ const PRECEDENCE: Readonly<Record<OperatorValue | '??', number | undefined>> = {
 }
 
 const MAX_PARSE_DEPTH = 32
+const DEFAULT_MAX_AST_NODES = 10_000
+const DEFAULT_MAX_OBJECT_PROPERTIES = 10_000
+const DEFAULT_MAX_CALL_ARGUMENTS = 1_000
 
 // Upper bound on recursive-descent grammar nesting (parentheses, unary chains,
 // bracket indexing, etc.). This is a safety backstop that fails closed with a
@@ -43,7 +47,7 @@ const MAX_PARSE_DEPTH = 32
 // produces no AST node is bounded here rather than by the evaluator.
 const MAX_GRAMMAR_DEPTH = 1000
 
-export function parse(source: string, _depth = 0): ASTNode {
+export function parse(source: string, limits: SyntaxLimits = {}, _depth = 0): ASTNode {
   if (_depth > MAX_PARSE_DEPTH) {
     throw new ExpressionError('Maximum template nesting depth exceeded', {
       source,
@@ -51,7 +55,9 @@ export function parse(source: string, _depth = 0): ASTNode {
       end: source.length,
     })
   }
-  const tokens = tokenize(source)
+  const tokens = tokenize(source, limits)
+  const maxObjectProperties = limits.maxObjectProperties ?? DEFAULT_MAX_OBJECT_PROPERTIES
+  const maxCallArguments = limits.maxCallArguments ?? DEFAULT_MAX_CALL_ARGUMENTS
   let pos = 0
   let grammarDepth = 0
 
@@ -218,6 +224,7 @@ export function parse(source: string, _depth = 0): ASTNode {
       while (!(current().type === 'Punctuation' && current().value === ')')) {
         if (args.length > 0) expect('Punctuation', ',')
         if (current().type === 'Punctuation' && current().value === ')') break
+        checkCallArgumentCount(args.length + 1)
         args.push(parseExpression(0))
       }
       const end = expect('Punctuation', ')').end
@@ -335,6 +342,7 @@ export function parse(source: string, _depth = 0): ASTNode {
         while (!(current().type === 'Punctuation' && current().value === ')')) {
           if (args.length > 0) expect('Punctuation', ',')
           if (current().type === 'Punctuation' && current().value === ')') break
+          checkCallArgumentCount(args.length + 1)
           args.push(parseExpression(0))
         }
         const end = expect('Punctuation', ')').end
@@ -485,6 +493,20 @@ export function parse(source: string, _depth = 0): ASTNode {
       }
       if (tok.type === 'OptionalChain') {
         advance()
+        if (current().type === 'Punctuation' && current().value === '[') {
+          advance()
+          const property = parseExpression(0)
+          const end = expect('Punctuation', ']').end
+          node = {
+            type: 'OptionalMemberExpression',
+            object: node,
+            property,
+            computed: true,
+            start: node.start,
+            end,
+          }
+          continue
+        }
         const nextProp = expect('Identifier')
         node = {
           type: 'OptionalMemberExpression',
@@ -653,6 +675,12 @@ export function parse(source: string, _depth = 0): ASTNode {
     while (!(current().type === 'Punctuation' && current().value === '}')) {
       if (properties.length > 0) expect('Punctuation', ',')
       if (current().type === 'Punctuation' && current().value === '}') break
+      if (properties.length >= maxObjectProperties) {
+        throw new BonsaiSecurityError(
+          'MAX_OBJECT_PROPERTIES',
+          `Object property count exceeds maximum (${maxObjectProperties})`,
+        )
+      }
 
       let key: ASTNode
       let computed = false
@@ -757,7 +785,7 @@ export function parse(source: string, _depth = 0): ASTNode {
         i++ // skip closing }
         textStart = i
         // Parse the interpolated expression
-        const exprAst = parse(exprSource, _depth + 1)
+        const exprAst = parse(exprSource, limits, _depth + 1)
         parts.push(exprAst)
       } else {
         i++
@@ -773,6 +801,15 @@ export function parse(source: string, _depth = 0): ASTNode {
     return { type: 'TemplateLiteral', parts, start: tok.start, end: tok.end }
   }
 
+  function checkCallArgumentCount(count: number): void {
+    if (count > maxCallArguments) {
+      throw new BonsaiSecurityError(
+        'MAX_CALL_ARGUMENTS',
+        `Call argument count exceeds maximum (${maxCallArguments})`,
+      )
+    }
+  }
+
   const result = parseExpression(0)
 
   if (current().type !== 'EOF') {
@@ -784,5 +821,76 @@ export function parse(source: string, _depth = 0): ASTNode {
     })
   }
 
+  enforceAstNodeLimit(result, limits.maxAstNodes ?? DEFAULT_MAX_AST_NODES)
   return result
+}
+
+function enforceAstNodeLimit(root: ASTNode, maxAstNodes: number): void {
+  const stack: ASTNode[] = [root]
+  let count = 0
+
+  while (stack.length > 0) {
+    const node = stack.pop()
+    if (node === undefined) break
+    if (++count > maxAstNodes) {
+      throw new BonsaiSecurityError(
+        'MAX_AST_NODES',
+        `Expression AST node count exceeds maximum (${maxAstNodes})`,
+      )
+    }
+
+    switch (node.type) {
+      case 'BinaryExpression':
+        stack.push(node.left, node.right)
+        break
+      case 'UnaryExpression':
+        stack.push(node.operand)
+        break
+      case 'ConditionalExpression':
+        stack.push(node.test, node.consequent, node.alternate)
+        break
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        stack.push(node.object, node.property)
+        break
+      case 'ArrayLiteral':
+        stack.push(...node.elements)
+        break
+      case 'ObjectLiteral':
+        for (const property of node.properties) {
+          if (++count > maxAstNodes) {
+            throw new BonsaiSecurityError(
+              'MAX_AST_NODES',
+              `Expression AST node count exceeds maximum (${maxAstNodes})`,
+            )
+          }
+          stack.push(property.key, property.value)
+        }
+        break
+      case 'CallExpression':
+        stack.push(node.callee, ...node.args)
+        break
+      case 'PipeExpression':
+        stack.push(node.input, node.transform)
+        break
+      case 'TemplateLiteral':
+        stack.push(...node.parts)
+        break
+      case 'SpreadElement':
+        stack.push(node.argument)
+        break
+      case 'LambdaExpression':
+        stack.push(node.body)
+        break
+      case 'NumberLiteral':
+      case 'StringLiteral':
+      case 'BooleanLiteral':
+      case 'NullLiteral':
+      case 'UndefinedLiteral':
+      case 'Identifier':
+      case 'LambdaAccessor':
+      case 'LambdaIdentity':
+        break
+    }
+  }
 }

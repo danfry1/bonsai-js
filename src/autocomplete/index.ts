@@ -1,10 +1,10 @@
-import type { BonsaiInstance, Token, InferredTypeName } from '../types.js'
-import {
-  ExpressionError,
-  BonsaiSecurityError,
-  BonsaiTypeError,
-  BonsaiReferenceError,
-} from '../errors.js'
+import type {
+  BonsaiInstance,
+  Token,
+  InferredTypeName,
+  BonsaiObjectType,
+  BonsaiType,
+} from '../types.js'
 import { tolerantTokenize, isCursorInsideString, type ErrorHandler } from './tokenizer.js'
 import { classifyCursor } from './context.js'
 import { generateCompletions, type Completion, type CompletionEnv } from './completions.js'
@@ -13,21 +13,35 @@ import {
   resolvePropertyChain,
   inferElementType,
   inferMethodReturnType,
+  resolveContextChain,
+  snapshotDataProperties,
   type ResolveOptions,
 } from './inference.js'
 import { isMethodReceiverType } from './catalog.js'
+import { inferredTypeNames, toInferredTypeName } from '../static-types.js'
 
 export type { Completion }
 
+/** Static type metadata used to filter and continue pipe completions safely. */
+export interface AutocompleteTransformSignature {
+  /** Input types accepted by the transform. Omit when it accepts any type. */
+  input?: readonly InferredTypeName[]
+  /** Output type, when it is stable regardless of arguments. */
+  output?: InferredTypeName
+}
+
 export interface AutocompleteOptions {
   context?: Record<string, unknown>
-  /** Map of transform name → accepted input types (e.g., { upper: ['string'], filter: ['array'] }).
-   *  When set, pipe-transform completions are filtered by the inferred input type.
-   *  When omitted, auto-probing discovers type compatibility by calling each transform
-   *  with a sample value — this runs once per type and is cached per instance.
-   *  For performance-sensitive contexts (e.g., large transform registries), pass this
-   *  explicitly to avoid the cold-start probe cost. */
-  transformTypes?: Record<string, InferredTypeName[]>
+  /** Static context schema. Supplies completions without requiring live values. */
+  schema?: BonsaiObjectType
+  /**
+   * Static transform metadata for transforms registered without
+   * `defineTransform()` metadata (registry metadata is used automatically and
+   * entries here override it). Completion never calls transforms, functions,
+   * or property accessors to infer a type. An output type lets inference
+   * continue through a pipeline such as `name |> trim |> `.
+   */
+  transformSignatures?: Record<string, AutocompleteTransformSignature>
   /** Called when an unexpected internal error occurs during completion.
    *  Expected errors (e.g., syntax errors, security blocks, type mismatches) are not reported.
    *  Useful for debugging missing or incorrect completions. */
@@ -39,25 +53,12 @@ export interface AutocompleteInstance {
   setContext: (context: Record<string, unknown>) => void
 }
 
-// Valid identifier pattern for transform name validation
-const VALID_IDENTIFIER = /^[a-zA-Z_$][\w$]*$/u
-
-/** Check if an error is an expected Bonsai error (syntax, security, type, or reference). */
-function isExpectedError(err: unknown): boolean {
-  return (
-    err instanceof ExpressionError ||
-    err instanceof BonsaiSecurityError ||
-    err instanceof BonsaiTypeError ||
-    err instanceof BonsaiReferenceError
-  )
-}
-
 export function createAutocomplete(
   instance: BonsaiInstance,
   options: AutocompleteOptions = {},
 ): AutocompleteInstance {
   let context: Record<string, unknown> = options.context ?? {}
-  const probeCache = new Map<string, Set<string>>()
+  const schemaContext = sampleContextFromSchema(options.schema)
   const onError = options.onError
 
   // Cache policy at construction — it's immutable per-instance
@@ -97,6 +98,11 @@ export function createAutocomplete(
     if (isCursorInsideString(expression, cursor)) return []
 
     const { tokens } = tolerantTokenize(expression, cursor, onError)
+    const dataContext = Object.assign(
+      Object.create(null) as Record<string, unknown>,
+      schemaContext,
+      snapshotDataProperties(context),
+    )
 
     const cursorCtx = classifyCursor(tokens, cursor)
     if (cursorCtx.kind === 'none') return []
@@ -111,52 +117,55 @@ export function createAutocomplete(
     if (cursorCtx.kind === 'pipe-transform') {
       const transforms = instance.listTransforms()
       env.transforms = transforms
-      const inputType = inferPipeInputType(expression, cursor, instance, context, onError)
-      env.pipe = { inputType, transformTypes: options.transformTypes }
-      if (inputType && !options.transformTypes) {
-        const accepted = probeAcceptedTransforms(
-          instance,
-          inputType,
-          probeCache,
-          transforms,
-          onError,
-        )
-        env.transforms = transforms.filter((name) => accepted.has(name))
+      // Registry metadata (BonsaiType) is widened to runtime kinds for
+      // filtering; explicit `transformSignatures` override per name.
+      const registrySignatures: Record<string, AutocompleteTransformSignature> = {}
+      for (const name of transforms) {
+        const metadata = instance.getTransformMetadata(name)
+        if (metadata === undefined) continue
+        const input =
+          metadata.inputType === undefined ? undefined : inferredTypeNames(metadata.inputType)
+        const output =
+          metadata.returnType === undefined ? undefined : toInferredTypeName(metadata.returnType)
+        registrySignatures[name] = {
+          // An input type that widens to no concrete kind (unknown) accepts anything.
+          ...(input !== undefined && input.length > 0 ? { input } : {}),
+          ...(output === undefined ? {} : { output }),
+        }
       }
+      const signatures = { ...registrySignatures, ...options.transformSignatures }
+      const inputType = inferPipeInputType(tokens, cursor, dataContext, resolvePolicy, signatures)
+      const transformTypes: Record<string, InferredTypeName[]> = {}
+      for (const [name, signature] of Object.entries(signatures)) {
+        if (signature.input !== undefined) transformTypes[name] = [...signature.input]
+      }
+      env.pipe = { inputType, transformTypes }
     } else if (cursorCtx.kind === 'top-level-member') {
-      // Fast path: try static chain resolution first (avoids evaluateSync for simple chains)
+      // Resolve simple data chains first, then use the method return-type catalog.
       const chain = extractChainFromTokens(cursorCtx.precedingTokens)
       if (chain.length > 0) {
-        const result = resolvePropertyChain(context, chain, resolvePolicy)
+        const result = resolveContextChain(dataContext, chain, resolvePolicy)
         if (result.found) {
           env.member = { resolvedValue: result.value, resolvedType: inferType(result.value) }
-        } else if (cursorCtx.prefix === '') {
-          // Static resolution failed (method chain like trim().) — try eval
-          const evalResult = tryEvalPrefix(expression, cursor, instance, context, tokens, onError)
-          if (evalResult !== undefined) {
-            env.member = { resolvedValue: evalResult, resolvedType: inferType(evalResult) }
-          }
         } else {
-          // Static failed with prefix — try type inference from token chain
-          const inferred = inferTypeFromTokenChain(
+          const inferred = inferStaticExpressionType(
             cursorCtx.precedingTokens,
-            context,
+            dataContext,
             resolvePolicy,
           )
-          if (inferred) {
-            env.member = { resolvedType: inferred }
-          }
+          if (inferred) env.member = { resolvedType: inferred }
         }
-      } else if (cursorCtx.prefix === '') {
-        // No simple chain (e.g., after `)` or complex expression) — try eval
-        const evalResult = tryEvalPrefix(expression, cursor, instance, context, tokens, onError)
-        if (evalResult !== undefined) {
-          env.member = { resolvedValue: evalResult, resolvedType: inferType(evalResult) }
-        }
+      } else {
+        const inferred = inferStaticExpressionType(
+          cursorCtx.precedingTokens,
+          dataContext,
+          resolvePolicy,
+        )
+        if (inferred) env.member = { resolvedType: inferred }
       }
     } else if (cursorCtx.kind === 'lambda-member') {
       const arrTokens = extractChainBeforeCall(tokens, cursor)
-      const arrResult = resolvePropertyChain(context, arrTokens, resolvePolicy)
+      const arrResult = resolveContextChain(dataContext, arrTokens, resolvePolicy)
       if (arrResult.found && Array.isArray(arrResult.value)) {
         const elemInfo = inferElementType(arrResult.value)
         if (elemInfo.type === 'object') {
@@ -174,7 +183,7 @@ export function createAutocomplete(
 
       // First try: static chain resolution from context
       if (arrTokens.length > 0) {
-        const arrResult = resolvePropertyChain(context, arrTokens, resolvePolicy)
+        const arrResult = resolveContextChain(dataContext, arrTokens, resolvePolicy)
         if (arrResult.found && Array.isArray(arrResult.value)) {
           const elemInfo = inferElementType(arrResult.value)
           env.lambda = {
@@ -185,10 +194,9 @@ export function createAutocomplete(
         }
       }
 
-      // Second try: for nested lambdas, try eval-based inference
-      // e.g., groups.map(.users.filter(. → evaluate groups[0].users to get the array
+      // Second try: statically walk representative own data properties for nested lambdas.
       if (!resolved) {
-        const nestedArr = tryResolveNestedLambdaArray(tokens, cursor, context, resolvePolicy)
+        const nestedArr = tryResolveNestedLambdaArray(tokens, cursor, dataContext, resolvePolicy)
         if (nestedArr) {
           const elemInfo = inferElementType(nestedArr)
           env.lambda = {
@@ -199,55 +207,62 @@ export function createAutocomplete(
       }
     } else if (cursorCtx.kind === 'identifier') {
       env.functions = instance.listFunctions()
-      env.identifier = { contextKeys: Object.keys(context), contextValues: context }
+      env.functionMetadata = Object.fromEntries(
+        env.functions.flatMap((name) => {
+          const metadata = instance.getFunctionMetadata(name)
+          return metadata ? [[name, metadata]] : []
+        }),
+      )
+      env.identifier = { contextKeys: Object.keys(dataContext), contextValues: dataContext }
     }
 
     return generateCompletions(cursorCtx, env)
   }
 }
 
-// ── Evaluation-based type inference ────────────────────────────
+function sampleContextFromSchema(schema: BonsaiObjectType | undefined): Record<string, unknown> {
+  if (schema?.kind !== 'object') return Object.create(null) as Record<string, unknown>
+  return sampleForType(schema, new WeakSet()) as Record<string, unknown>
+}
 
-/**
- * Try to evaluate the expression up to the cursor to get the actual runtime type.
- * This handles method chains like `user.name.trim().` where static resolution can't
- * know that trim() returns a string.
- */
-function tryEvalPrefix(
-  expression: string,
-  cursor: number,
-  instance: BonsaiInstance,
-  context: Record<string, unknown>,
-  tokens: Token[],
-  onError?: ErrorHandler,
-): unknown {
-  // Find the expression prefix before the final dot
-  const before = tokens.filter((t) => t.end <= cursor)
-  if (before.length === 0) return undefined
-
-  // Walk backward to find where the expression starts (skip the trailing dot)
-  let endIdx = before.length - 1
-  if (
-    (before[endIdx].type === 'Punctuation' && before[endIdx].value === '.') ||
-    before[endIdx].type === 'OptionalChain'
-  ) {
-    endIdx--
-  }
-  if (endIdx < 0) return undefined
-
-  // Extract the expression text up to (but not including) the final dot
-  const exprEnd = before[endIdx].end
-  const exprText = expression.slice(0, exprEnd)
-  if (!exprText.trim()) return undefined
-
+function sampleForType(type: BonsaiType, ancestors: WeakSet<object>): unknown {
+  if (ancestors.has(type)) return undefined
+  ancestors.add(type)
   try {
-    return instance.evaluateSync(exprText, context)
-  } catch (err: unknown) {
-    if (!isExpectedError(err)) {
-      onError?.(err, 'tryEvalPrefix')
+    switch (type.kind) {
+      case 'string':
+        return ''
+      case 'number':
+        return 0
+      case 'boolean':
+        return false
+      case 'null':
+        return null
+      case 'undefined':
+      case 'unknown':
+        return undefined
+      case 'literal':
+        return type.value
+      case 'array':
+        return [sampleForType(type.element, ancestors)]
+      case 'object': {
+        const value: Record<string, unknown> = Object.create(null)
+        for (const [name, property] of Object.entries(type.properties)) {
+          value[name] = sampleForType(property, ancestors)
+        }
+        return value
+      }
+      case 'union': {
+        const representative = type.members.find(
+          (member) => member.kind !== 'null' && member.kind !== 'undefined',
+        )
+        return representative === undefined ? undefined : sampleForType(representative, ancestors)
+      }
     }
-    return undefined
+  } finally {
+    ancestors.delete(type)
   }
+  throw new TypeError('Unknown static type')
 }
 
 /**
@@ -273,6 +288,18 @@ function inferTypeFromTokenChain(
       tokens[i].type === 'OptionalChain'
     ) {
       continue
+    } else if (
+      tokens[i].type === 'Punctuation' &&
+      tokens[i].value === '[' &&
+      i + 2 < tokens.length &&
+      tokens[i + 2].type === 'Punctuation' &&
+      tokens[i + 2].value === ']' &&
+      (tokens[i + 1].type === 'Number' || tokens[i + 1].type === 'String')
+    ) {
+      // `[0]` / `["key"]` index segment on a context chain (not after a method call).
+      if (currentType !== undefined) return undefined
+      chain.push(tokens[i + 1].value)
+      i += 2
     } else if (tokens[i].type === 'Punctuation' && tokens[i].value === '(') {
       // Method call — use the last identifier as method name
       const methodName = chain.pop()
@@ -280,7 +307,7 @@ function inferTypeFromTokenChain(
 
       // Resolve what we have so far to get the receiver type
       if (currentType === undefined && chain.length > 0) {
-        const result = resolvePropertyChain(context, chain, resolveOpts)
+        const result = resolveContextChain(context, chain, resolveOpts)
         currentType = result.found ? inferType(result.value) : undefined
       } else if (currentType !== undefined && chain.length > 0) {
         // Property access on a method return type — can't resolve statically
@@ -320,11 +347,33 @@ function inferTypeFromTokenChain(
 
   // Resolve remaining chain from context if we haven't resolved type yet
   if (currentType === undefined && chain.length > 0) {
-    const result = resolvePropertyChain(context, chain, resolveOpts)
+    const result = resolveContextChain(context, chain, resolveOpts)
     currentType = result.found ? inferType(result.value) : undefined
   }
 
   return currentType
+}
+
+/** Infer a useful type without evaluating the expression. */
+function inferStaticExpressionType(
+  tokens: Token[],
+  context: Record<string, unknown>,
+  resolveOpts?: ResolveOptions,
+): InferredTypeName | undefined {
+  const relevant = tokens.filter(
+    (token) =>
+      !((token.type === 'Punctuation' && token.value === '.') || token.type === 'OptionalChain'),
+  )
+  if (relevant.length === 0) return undefined
+  const first = relevant[0]
+  if (first.type === 'String' || first.type === 'TemplateLiteral') return 'string'
+  if (first.type === 'Number') return 'number'
+  if (first.type === 'Boolean') return 'boolean'
+  if (first.type === 'Null') return 'null'
+  if (first.type === 'Undefined') return 'undefined'
+  if (first.type === 'Punctuation' && first.value === '[') return 'array'
+  if (first.type === 'Punctuation' && first.value === '{') return 'object'
+  return inferTypeFromTokenChain(tokens, context, resolveOpts)
 }
 
 // ── Nested lambda resolution ───────────────────────────────────
@@ -409,7 +458,7 @@ function tryResolveNestedLambdaArray(
   if (chain.length === 0) return undefined
 
   // Resolve the outermost array from context
-  const outerResult = resolvePropertyChain(context, chain, resolveOpts)
+  const outerResult = resolveContextChain(context, chain, resolveOpts)
   if (!outerResult.found || !Array.isArray(outerResult.value)) return undefined
   let currentValue: unknown = outerResult.value
 
@@ -434,85 +483,39 @@ function tryResolveNestedLambdaArray(
   return Array.isArray(currentValue) ? (currentValue as unknown[]) : undefined
 }
 
-// ── Transform probing ──────────────────────────────────────────
-
-const PROBE_CACHE_MAX = 32
-
-const TYPE_SAMPLES: Partial<Record<InferredTypeName, unknown>> = {
-  string: 'sample',
-  number: 42,
-  boolean: true,
-  array: [0],
-  object: {},
-}
-
-function probeAcceptedTransforms(
-  instance: BonsaiInstance,
-  inputType: string,
-  cache: Map<string, Set<string>>,
-  currentTransforms: string[],
-  onError?: ErrorHandler,
-): Set<string> {
-  // Key includes the current transform set to auto-invalidate when transforms change
-  const cacheKey = `${inputType}:${[...currentTransforms].sort().join(',')}`
-  const cached = cache.get(cacheKey)
-  if (cached) return cached
-
-  const sample = TYPE_SAMPLES[inputType as InferredTypeName]
-  if (sample === undefined) return new Set(currentTransforms)
-
-  const accepted = new Set<string>()
-  for (const name of currentTransforms) {
-    // Validate transform name is a safe identifier before interpolating
-    if (!VALID_IDENTIFIER.test(name)) continue
-    try {
-      instance.evaluateSync(`x |> ${name}`, { x: sample })
-      accepted.add(name)
-    } catch (err: unknown) {
-      if (!isExpectedError(err)) {
-        onError?.(err, `probeTransform:${name}`)
-      }
-    }
-  }
-
-  // Evict oldest entry if cache exceeds max size
-  if (cache.size >= PROBE_CACHE_MAX) {
-    const first = cache.keys().next()
-    if (first.done !== true) cache.delete(first.value)
-  }
-  cache.set(cacheKey, accepted)
-  return accepted
-}
-
 function inferPipeInputType(
-  expression: string,
+  tokens: Token[],
   cursor: number,
-  instance: BonsaiInstance,
   context: Record<string, unknown>,
-  onError?: ErrorHandler,
+  resolveOpts: ResolveOptions,
+  signatures?: Record<string, AutocompleteTransformSignature>,
 ): InferredTypeName | undefined {
-  const before = expression.slice(0, cursor)
-  const pipeMatch = /^(?<input>.*)\|>\s*\w*\s*$/su.exec(before)
-  if (!pipeMatch) return undefined
+  const before = tokens.filter((token) => token.start < cursor)
+  const pipeIndexes = before.flatMap((token, index) => (token.type === 'Pipe' ? [index] : []))
+  if (pipeIndexes.length === 0) return undefined
 
-  const exprBefore = (pipeMatch.groups?.input ?? '').trim()
-  if (!exprBefore) return undefined
+  let currentType = inferStaticExpressionType(before.slice(0, pipeIndexes[0]), context, resolveOpts)
+  if (currentType === 'null' || currentType === 'undefined') return undefined
 
-  try {
-    const result = instance.evaluateSync(exprBefore, context)
-    if (result === null || result === undefined) return undefined
-    return inferType(result)
-  } catch (err: unknown) {
-    if (!isExpectedError(err)) {
-      onError?.(err, 'inferPipeInputType')
-    }
-    return undefined
+  for (let i = 0; i < pipeIndexes.length - 1; i++) {
+    const stage = before.slice(pipeIndexes[i] + 1, pipeIndexes[i + 1])
+    const name = stage.find((token) => token.type === 'Identifier')?.value
+    if (name === undefined || name === '') return undefined
+    const output = signatures?.[name]?.output
+    if (output === undefined) return undefined
+    currentType = output
   }
+  return currentType
 }
 
 // ── Token chain extraction ─────────────────────────────────────
 
 /** Extract trailing identifier.dot chain from a token array (walking backward). */
+/**
+ * Walk backwards over a `a.b[0]["c"]?.d` chain and return its segments
+ * (`['a', 'b', '0', 'c', 'd']`). Numeric and string-literal index segments are
+ * folded in so `items[0].` resolves to the element rather than the array.
+ */
 function extractChainFromTokens(tokens: Token[]): string[] {
   const chain: string[] = []
   for (let i = tokens.length - 1; i >= 0; i--) {
@@ -521,6 +524,14 @@ function extractChainFromTokens(tokens: Token[]): string[] {
       chain.unshift(t.value)
     } else if ((t.type === 'Punctuation' && t.value === '.') || t.type === 'OptionalChain') {
       continue
+    } else if (t.type === 'Punctuation' && t.value === ']' && i >= 2) {
+      const key = tokens[i - 1]
+      const open = tokens[i - 2]
+      if (!(open.type === 'Punctuation' && open.value === '[')) break
+      // String token values are already unquoted by the tokenizer.
+      if (key.type === 'Number' || key.type === 'String') chain.unshift(key.value)
+      else break
+      i -= 2
     } else {
       break
     }

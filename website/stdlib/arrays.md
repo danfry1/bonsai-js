@@ -26,6 +26,11 @@ expr.use(arrays)
 
 These accept [lambda predicates](/language/lambdas) as arguments for filtering, mapping, and searching.
 
+`find`, `some`, and `every` stop as soon as the result is known. During async
+evaluation, higher-order transforms await callbacks sequentially by default, so
+side effects stay ordered and a large collection does not create unbounded
+concurrent work.
+
 | Transform | Example | Result |
 |---|---|---|
 | `filter(pred)` | `users \|> filter(.age >= 18)` | Array of matching items |

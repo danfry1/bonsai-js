@@ -106,12 +106,18 @@ function explainCode(code: BonsaiSecurityCode): string {
     case 'PROPERTY_DENIED':
     case 'METHOD_NOT_ALLOWED':
       return 'access'
+    case 'MAX_SOURCE_LENGTH':
+    case 'MAX_TOKENS':
+    case 'MAX_AST_NODES':
     case 'MAX_DEPTH':
     case 'MAX_ARRAY_LENGTH':
     case 'MAX_STRING_LENGTH':
+    case 'MAX_OBJECT_PROPERTIES':
+    case 'MAX_CALL_ARGUMENTS':
     case 'MAX_STEPS':
       return 'limit'
     case 'TIMEOUT':
+    case 'ABORTED':
       return 'timeout'
     default:
       return assertNever(code)

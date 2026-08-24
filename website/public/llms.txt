@@ -57,6 +57,7 @@ expr.evaluateSync('`Hello ${name}!`', { name: 'world' }) // "Hello world!"
 - **Safe sandbox**: Blocks prototype access, enforces depth/array/string/step limits and an optional timeout, own-property-only context lookup, null-prototype object literals, receiver-aware method validation, sync Promise guards
 - **Plugin system**: Extend with custom transforms, pure functions, and context-aware functions
 - **End-to-end typed context**: `bonsai<AppContext>()` propagates the context type through evaluation, compilation, and context-aware function registration
+- **Static authoring tools**: `bonsai-js/checker` and `bonsai-js/autocomplete` share JSON-serializable schemas and extension signatures without executing host code
 - **Standard library**: Modular stdlib for strings, arrays, math, types, dates
 
 ## Documentation

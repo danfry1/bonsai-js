@@ -11,10 +11,13 @@ const expr = bonsai()
 // Restricted instance for user-authored expressions
 const safe = bonsai({
   timeout: 50,
+  maxSourceLength: 10000,
+  maxTokens: 2500,
   maxDepth: 50,
   maxArrayLength: 10000,
-  allowedProperties: ['user', 'age', 'country', 'plan']
-})
+  maxSteps: 100000,
+  allowedProperties: ['age', 'country', 'plan']
+}).seal()
 ```
 
 ## Choose the right API
@@ -25,6 +28,7 @@ const safe = bonsai({
 | A quick one-off evaluation with default behavior | `evaluateExpression()` |
 | A reusable hot-path rule object | `compile()` |
 | Syntax checks and reference extraction before execution | `validate()` |
+| Schema and extension type checking | `bonsai-js/checker` |
 | Async transforms or async functions | `evaluate()` |
 | Lowest-overhead sync execution | `evaluateSync()` |
 
@@ -32,25 +36,34 @@ const safe = bonsai({
 
 | Option | Type | Default | Description |
 |---|---|---|---|
+| `maxSourceLength` | number | 100000 | Maximum UTF-16 source length before tokenization. |
+| `maxTokens` | number | 25000 | Maximum lexical token count, excluding EOF. |
+| `maxAstNodes` | number | 10000 | Maximum parser/compiler node count. |
+| `maxObjectProperties` | number | 10000 | Maximum properties in one object literal. |
+| `maxCallArguments` | number | 1000 | Maximum arguments in one call, checked syntactically and again after spread expansion. |
 | `timeout` | number | 0 | Evaluation timeout in milliseconds. `0` disables timeout checks. |
 | `maxDepth` | number | 100 | Maximum traversal depth before a `MAX_DEPTH` security error is thrown. |
-| `maxArrayLength` | number | 100000 | Maximum array literal or expanded spread size. |
-| `maxStringLength` | number | 100000 | Maximum string size produced by a string-returning method (`padStart`, `repeat`, `join`, ...) before a `MAX_STRING_LENGTH` security error. |
-| `maxSteps` | number | 1000000 | Maximum accounted evaluator steps per evaluation, a default-on deterministic bound enforced independently of `timeout`. Bounds evaluator-driven work (AST walk, bonsai-lambda iteration like `items.map(.x)`) but not opaque host/native work. Throws `MAX_STEPS`. `0` disables it. |
+| `maxArrayLength` | number | 100000 | Maximum array produced by the language, a method, transform, or function. |
+| `maxStringLength` | number | 100000 | Maximum string produced by the language, a method, transform, or function. |
+| `maxSteps` | number | 1000000 | Deterministic evaluator-work budget covering AST work, lambdas, spread/literal loops, and receiver-length estimates before linear native methods. Opaque extension work is excluded. `0` disables it. |
 | `cacheSize` | number | 256 | Per-instance cache size for compiled expressions and parsed AST reuse. |
-| `allowedProperties` | string[] | - | Allowlist checked against every accessed identifier and member name. |
-| `deniedProperties` | string[] | - | Denylist checked against every accessed identifier and member name. |
+| `allowedProperties` | string[] | - | Allowlist for member and method names. Root identifiers and object keys are not filtered. |
+| `deniedProperties` | string[] | - | Denylist for member and method names. Root identifiers and object keys are not filtered. |
 
-Blocked names like `__proto__`, `constructor`, and `prototype` are always denied. If you want to allow `user.name`, you must allow both `user` and `name`.
+Blocked names like `__proto__`, `constructor`, and `prototype` are always denied. For `user.name`, only `name` is a member name; `user` is a root identifier.
 
 ## Common setups
 
 | Scenario | Suggested approach |
 |---|---|
 | App-owned expressions in trusted code | Use `bonsai()` with defaults and load only the stdlib/plugins you need. |
-| User-authored rules in an admin UI | Set `timeout`, `maxDepth`, `maxArrayLength`, and an `allowedProperties` allowlist. |
+| User-authored rules in an admin UI | Tighten structural/runtime limits, pass an `AbortSignal`, use an `allowedProperties` allowlist, and seal the instance after setup. |
 | Large catalog of repeated expressions | Reuse one instance and consider increasing `cacheSize` if you have many distinct expression strings. |
 
 ::: tip Create the instance once at startup and reuse it
 Recreating instances on every request throws away the cache and defeats most of the performance work.
+:::
+
+::: tip Seal production instances after setup
+`seal()` permanently prevents extension registration, replacement, and removal. This keeps a shared production instance deterministic after its plugins are loaded.
 :::

@@ -18,14 +18,28 @@ describe('public API stability', () => {
       'isBonsaiError',
       'isBonsaiRuntimeError',
       'parse',
+      't',
       'tokenize',
     ])
+  })
+
+  it('exports one static type builder shared with the checker', async () => {
+    const checker = await import('../src/checker/index.js')
+    expect(checker.t).toBe(api.t)
+    expect(api.t.enum('a', 'b')).toEqual({
+      kind: 'union',
+      members: [
+        { kind: 'literal', value: 'a' },
+        { kind: 'literal', value: 'b' },
+      ],
+    })
   })
 
   it('exposes only the documented stdlib exports', () => {
     expect(Object.keys(stdlib).sort()).toEqual([
       'all',
       'arrays',
+      'createDates',
       'dates',
       'math',
       'strings',
@@ -41,6 +55,12 @@ describe('public API stability', () => {
       const ast: ASTNode = result.ast
       expect(ast.type).toBe('BinaryExpression')
     }
+  })
+
+  it('validate() is syntax-only; binding checks belong to the optional checker', () => {
+    const expr = api.bonsai()
+    expect(expr.validate('missing()')).toMatchObject({ valid: true })
+    expect('inspect' in expr).toBe(false)
   })
 })
 
@@ -63,6 +83,19 @@ describe('autocomplete API stability', () => {
     const ac = createAutocomplete(expr, {})
     expect(typeof ac.complete).toBe('function')
     expect(typeof ac.setContext).toBe('function')
+  })
+})
+
+describe('checker API stability', () => {
+  it('exports only the documented checker runtime surface', async () => {
+    const checker = await import('../src/checker/index.js')
+    expect(Object.keys(checker).sort()).toEqual([
+      'checkExpression',
+      'createChecker',
+      'formatType',
+      'isAssignable',
+      't',
+    ])
   })
 })
 

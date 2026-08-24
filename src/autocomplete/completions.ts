@@ -1,4 +1,5 @@
-import type { InferredTypeName } from '../types.js'
+import type { FunctionMetadata, InferredTypeName } from '../types.js'
+import { formatType } from '../static-types.js'
 import {
   METHODS_BY_TYPE,
   BLOCKED_NAMES,
@@ -8,7 +9,12 @@ import {
   type MethodReceiverType,
 } from './catalog.js'
 import { getPrefix, type CursorContext } from './context.js'
-import { inferType, type PropertyPolicy } from './inference.js'
+import {
+  enumerateProperties,
+  inferType,
+  resolvePropertyChain,
+  type PropertyPolicy,
+} from './inference.js'
 
 // ── Completion type ────────────────────────────────────────────
 
@@ -55,6 +61,7 @@ export interface PipeInfo {
 export interface CompletionEnv {
   transforms: string[]
   functions: string[]
+  functionMetadata?: Record<string, FunctionMetadata>
   policy: PropertyPolicy
   member?: MemberInfo
   lambda?: LambdaInfo
@@ -121,11 +128,13 @@ export function generateCompletions(ctx: CursorContext, env: CompletionEnv): Com
 function addPropertyCompletions(results: Completion[], env: CompletionEnv): void {
   const value = env.member?.resolvedValue
   if (value == null || typeof value !== 'object') return
-  const obj = value as Record<string, unknown>
-  const keys = Object.keys(obj)
-  for (const key of keys) {
+  // Array index keys are not useful after `items.`; methods and `length` cover arrays.
+  if (Array.isArray(value)) return
+  for (const key of enumerateProperties(value)) {
     if (isBlocked(key, env.policy)) continue
-    const propValue = obj[key]
+    const resolved = resolvePropertyChain(value as Record<string, unknown>, [key], env.policy)
+    if (!resolved.found) continue
+    const propValue = resolved.value
     const valueType = inferType(propValue)
     results.push({
       label: key,
@@ -157,7 +166,10 @@ function addLambdaPropertyCompletions(results: Completion[], env: CompletionEnv)
   if (!env.lambda?.elementProperties) return
   for (const prop of env.lambda.elementProperties) {
     if (isBlocked(prop, env.policy)) continue
-    const valueType = env.lambda.elementValue ? inferType(env.lambda.elementValue[prop]) : undefined
+    const resolved = env.lambda.elementValue
+      ? resolvePropertyChain(env.lambda.elementValue, [prop], env.policy)
+      : undefined
+    const valueType = resolved?.found === true ? inferType(resolved.value) : undefined
     results.push({
       label: prop,
       kind: 'property',
@@ -194,9 +206,16 @@ function addIdentifierCompletions(results: Completion[], env: CompletionEnv): vo
   }
   for (const name of env.functions) {
     const insert = `${name}()`
+    const metadata = env.functionMetadata?.[name]
+    let detail: string | undefined = metadata?.description
+    if (metadata?.returnType !== undefined) {
+      const returns = formatType(metadata.returnType)
+      detail = detail === undefined || detail === '' ? returns : `${detail} → ${returns}`
+    }
     results.push({
       label: name,
       kind: 'function',
+      detail,
       insertText: insert,
       cursorOffset: insert.length - 1,
       sortPriority: 1,

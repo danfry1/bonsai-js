@@ -21,7 +21,7 @@ hero:
       link: https://github.com/danfry1/bonsai-js
 features:
   - title: Zero runtime dependencies
-    details: Ships nothing into your dependency tree. Runs in Node 22+, Bun, and the browser.
+    details: Ships nothing into your dependency tree. Runs in Node 24+, Bun, and the browser.
   - title: Typed API and rich errors
     details: Structured, discriminated error types with security codes and type guards — not thrown strings.
   - title: Safe by construction

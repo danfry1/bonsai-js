@@ -1,6 +1,8 @@
 # Operators
 
-Operators cover math, comparison, branching, and membership tests. The rules are close to JavaScript, but `==` is strict in Bonsai - there is no loose equality.
+Operators cover math, comparison, branching, and membership tests. The syntax
+is familiar, but Bonsai deliberately avoids JavaScript's implicit object and
+mixed-type coercion.
 
 | If you want to... | Use | Example |
 |---|---|---|
@@ -11,12 +13,21 @@ Operators cover math, comparison, branching, and membership tests. The rules are
 
 ## Arithmetic
 
+`+` accepts either two numbers or two strings. The other arithmetic operators
+accept two numbers. Mixed operands such as `"5" + 1` are typed errors rather
+than surprising concatenation, and objects are never coerced through
+`valueOf()` or `Symbol.toPrimitive`.
+
 | Expression | Result | Context / Note |
 |---|---|---|
 | `basePrice + addOnPrice * seats` | `85` | `{ basePrice: 49, addOnPrice: 12, seats: 3 }` (`*` runs before `+`) |
 | `2 ** 10` | `1024` | exponentiation |
 
 ## Comparison & equality
+
+`==` and `!=` are strict identity comparisons (equivalent to JavaScript `===`
+and `!==`). Ordered comparisons accept two numbers or two strings of the same
+type.
 
 | Expression | Result | Context / Note |
 |---|---|---|
@@ -35,7 +46,8 @@ Use `??` for nullish defaults, `||` for falsy defaults, and the ternary operator
 
 ## Membership
 
-`in` and `not in` work with arrays and strings. They are a good fit for tags, roles, lists, and substring checks.
+`in` and `not in` use strict membership for arrays. For substring checks, both
+operands must be strings.
 
 | Expression | Result | Context / Note |
 |---|---|---|

@@ -23,8 +23,8 @@ const jexlEvaluate = (expression: string, ctx?: Record<string, unknown>) =>
   jexl.eval(expression, ctx) // eslint-disable-line
 
 describe('simple literal: 42', () => {
-  bench('bonsai', () => {
-    expr.evaluateSync('42')
+  bench('bonsai', async () => {
+    await expr.evaluate('42')
   })
   bench('jexl', async () => {
     await jexlEvaluate('42')
@@ -32,8 +32,8 @@ describe('simple literal: 42', () => {
 })
 
 describe('arithmetic: 1 + 2 * 3', () => {
-  bench('bonsai', () => {
-    expr.evaluateSync('1 + 2 * 3')
+  bench('bonsai', async () => {
+    await expr.evaluate('1 + 2 * 3')
   })
   bench('jexl', async () => {
     await jexlEvaluate('1 + 2 * 3')
@@ -41,8 +41,8 @@ describe('arithmetic: 1 + 2 * 3', () => {
 })
 
 describe('property access: user.name', () => {
-  bench('bonsai', () => {
-    expr.evaluateSync('user.name', context)
+  bench('bonsai', async () => {
+    await expr.evaluate('user.name', context)
   })
   bench('jexl', async () => {
     await jexlEvaluate('user.name', context)
@@ -50,8 +50,8 @@ describe('property access: user.name', () => {
 })
 
 describe('comparison + logic: user.age >= 18 && user.verified', () => {
-  bench('bonsai', () => {
-    expr.evaluateSync('user.age >= 18 && user.verified', context)
+  bench('bonsai', async () => {
+    await expr.evaluate('user.age >= 18 && user.verified', context)
   })
   bench('jexl', async () => {
     await jexlEvaluate('user.age >= 18 && user.verified', context)
@@ -59,8 +59,8 @@ describe('comparison + logic: user.age >= 18 && user.verified', () => {
 })
 
 describe('ternary: age >= 18 ? "adult" : "minor"', () => {
-  bench('bonsai', () => {
-    expr.evaluateSync('user.age >= 18 ? "adult" : "minor"', context)
+  bench('bonsai', async () => {
+    await expr.evaluate('user.age >= 18 ? "adult" : "minor"', context)
   })
   bench('jexl', async () => {
     await jexlEvaluate('user.age >= 18 ? "adult" : "minor"', context)
@@ -68,8 +68,8 @@ describe('ternary: age >= 18 ? "adult" : "minor"', () => {
 })
 
 describe('transform pipeline: user.name |> upper', () => {
-  bench('bonsai', () => {
-    expr.evaluateSync('user.name |> upper', context)
+  bench('bonsai', async () => {
+    await expr.evaluate('user.name |> upper', context)
   })
   bench('jexl', async () => {
     await jexlEvaluate('user.name|upper', context)
@@ -77,8 +77,8 @@ describe('transform pipeline: user.name |> upper', () => {
 })
 
 describe('array transform: items |> sum', () => {
-  bench('bonsai', () => {
-    expr.evaluateSync('items |> sum', context)
+  bench('bonsai', async () => {
+    await expr.evaluate('items |> sum', context)
   })
   bench('jexl', async () => {
     await jexlEvaluate('items|sum', context)

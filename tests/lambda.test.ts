@@ -6,9 +6,6 @@ describe('lambda predicates', () => {
   it('simple property accessor still works', () => {
     const expr = bonsai()
     expr.use(arrays)
-    expr.addTransform('map', (val: unknown, fn: unknown) =>
-      (val as unknown[]).map(fn as (item: unknown) => unknown),
-    )
     const result = expr.evaluateSync('items |> map(.name)', {
       items: [{ name: 'a' }, { name: 'b' }],
     })

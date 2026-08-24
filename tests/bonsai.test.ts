@@ -111,6 +111,13 @@ describe('bonsai()', () => {
     expect(result.references.transforms).toEqual(['join'])
   })
 
+  it('does not report static object keys as context references', () => {
+    const result = bonsai().validate('{ foo: value, "bar": other, [key]: third }')
+    if (!result.valid) throw new Error('expected valid')
+
+    expect(result.references.identifiers).toEqual(['value', 'other', 'key', 'third'])
+  })
+
   it('should cache compiled expressions', () => {
     const expr = bonsai()
     const a = expr.compile('1 + 2')

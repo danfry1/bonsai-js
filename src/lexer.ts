@@ -1,5 +1,8 @@
-import type { Token, PunctuationValue } from './types.js'
-import { ExpressionError } from './errors.js'
+import type { Token, PunctuationValue, SyntaxLimits } from './types.js'
+import { BonsaiSecurityError, ExpressionError } from './errors.js'
+
+const DEFAULT_MAX_SOURCE_LENGTH = 100_000
+const DEFAULT_MAX_TOKENS = 25_000
 
 const KEYWORDS = new Map<string, { type: Token['type']; value: string }>([
   ['true', { type: 'Boolean', value: 'true' }],
@@ -53,7 +56,16 @@ function checkNumericSeparators(
   }
 }
 
-export function tokenize(source: string): Token[] {
+export function tokenize(source: string, limits: SyntaxLimits = {}): Token[] {
+  const maxSourceLength = limits.maxSourceLength ?? DEFAULT_MAX_SOURCE_LENGTH
+  const maxTokens = limits.maxTokens ?? DEFAULT_MAX_TOKENS
+  if (source.length > maxSourceLength) {
+    throw new BonsaiSecurityError(
+      'MAX_SOURCE_LENGTH',
+      `Expression source length (${source.length}) exceeds maximum (${maxSourceLength})`,
+    )
+  }
+
   const tokens: Token[] = []
   let i = 0
 
@@ -64,6 +76,13 @@ export function tokenize(source: string): Token[] {
     if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
       i++
       continue
+    }
+
+    if (tokens.length >= maxTokens) {
+      throw new BonsaiSecurityError(
+        'MAX_TOKENS',
+        `Expression token count exceeds maximum (${maxTokens})`,
+      )
     }
 
     // Numbers: decimal, hex, binary, octal, scientific, underscores
@@ -482,6 +501,12 @@ export function tokenize(source: string): Token[] {
     throw new ExpressionError(`Unexpected character "${ch}"`, { source, start, end: i + 1 })
   }
 
+  if (tokens.length > maxTokens) {
+    throw new BonsaiSecurityError(
+      'MAX_TOKENS',
+      `Expression token count (${tokens.length}) exceeds maximum (${maxTokens})`,
+    )
+  }
   tokens.push({ type: 'EOF', value: '', start: i, end: i })
   return tokens
 }

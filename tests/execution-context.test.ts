@@ -246,6 +246,20 @@ describe('ExecutionContext security-guard invariants', () => {
       }),
     ).toBe('MAX_STRING_LENGTH')
 
+    const objectEc = new ExecutionContext(new SecurityPolicy({ maxObjectProperties: 1 }))
+    expect(
+      codeOf(() => {
+        objectEc.checkObjectProperties(2)
+      }),
+    ).toBe('MAX_OBJECT_PROPERTIES')
+
+    const callEc = new ExecutionContext(new SecurityPolicy({ maxCallArguments: 1 }))
+    expect(
+      codeOf(() => {
+        callEc.checkCallArguments(2)
+      }),
+    ).toBe('MAX_CALL_ARGUMENTS')
+
     let now = 0
     const timeoutEc = new ExecutionContext(new SecurityPolicy({ timeout: 10 }), () => now)
     now = 100
@@ -265,6 +279,33 @@ describe('ExecutionContext security-guard invariants', () => {
     expect(() => {
       arr.checkArrayLength(9)
     }).toThrow(/Array length.*9.*maximum.*3/u)
+
+    const object = new ExecutionContext(new SecurityPolicy({ maxObjectProperties: 5 }))
+    expect(() => {
+      object.checkObjectProperties(6)
+    }).toThrow(/Object property count.*6.*maximum.*5/u)
+
+    const call = new ExecutionContext(new SecurityPolicy({ maxCallArguments: 4 }))
+    expect(() => {
+      call.checkCallArguments(5)
+    }).toThrow(/Call argument count.*5.*maximum.*4/u)
+  })
+
+  it('allows every structural count exactly at its configured limit', () => {
+    const ec = new ExecutionContext(
+      new SecurityPolicy({
+        maxArrayLength: 2,
+        maxStringLength: 2,
+        maxObjectProperties: 2,
+        maxCallArguments: 2,
+      }),
+    )
+    expect(() => {
+      ec.checkArrayLength(2)
+      ec.checkStringLength(2)
+      ec.checkObjectProperties(2)
+      ec.checkCallArguments(2)
+    }).not.toThrow()
   })
 
   describe('canonical-index detection (which keys may bypass allow/deny lists)', () => {
@@ -345,5 +386,163 @@ describe('ExecutionContext security-guard invariants', () => {
     expect(() => {
       ec.checkTimeout()
     }).toThrow(BonsaiSecurityError)
+  })
+})
+
+describe('ExecutionContext per-run state and cancellation invariants', () => {
+  const signalLike = (overrides: Partial<AbortSignal> = {}): AbortSignal =>
+    ({
+      aborted: false,
+      addEventListener() {},
+      removeEventListener() {},
+      ...overrides,
+    }) as AbortSignal
+
+  it('validates each independent field of an AbortSignal-like object', () => {
+    const policy = new SecurityPolicy()
+    const invalid = [
+      null,
+      {},
+      { aborted: false, addEventListener() {} },
+      { aborted: false, removeEventListener() {} },
+      { aborted: 'false', addEventListener() {}, removeEventListener() {} },
+      { aborted: false, addEventListener: true, removeEventListener() {} },
+      { aborted: false, addEventListener() {}, removeEventListener: true },
+    ]
+
+    for (const signal of invalid) {
+      expect(
+        () => new ExecutionContext(policy, undefined, { signal: signal as unknown as AbortSignal }),
+      ).toThrow('bonsai: "signal" must be an AbortSignal')
+    }
+    expect(() => new ExecutionContext(policy, undefined, { signal: signalLike() })).not.toThrow()
+  })
+
+  it('validates per-run maxSteps and timeout boundaries with stable diagnostics', () => {
+    const policy = new SecurityPolicy()
+    for (const maxSteps of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => new ExecutionContext(policy, undefined, { maxSteps })).toThrow(
+        /"maxSteps" must be a non-negative integer/u,
+      )
+    }
+    for (const timeout of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => new ExecutionContext(policy, undefined, { timeout })).toThrow(
+        /"timeout" must be a non-negative, finite number/u,
+      )
+    }
+    expect(() => new ExecutionContext(policy, undefined, { maxSteps: 0, timeout: 0 })).not.toThrow()
+  })
+
+  it('derives accounting and deadline state independently from every control', () => {
+    const none = new ExecutionContext(new SecurityPolicy({ maxSteps: 0, timeout: 0 }))
+    expect(none.needsAccounting).toBe(false)
+    expect(none.hasDeadline).toBe(false)
+
+    const steps = new ExecutionContext(new SecurityPolicy({ maxSteps: 1, timeout: 0 }))
+    expect(steps.needsAccounting).toBe(true)
+    expect(steps.hasDeadline).toBe(false)
+
+    const timeout = new ExecutionContext(new SecurityPolicy({ maxSteps: 0, timeout: 1_000 }))
+    expect(timeout.needsAccounting).toBe(true)
+    expect(timeout.hasDeadline).toBe(true)
+
+    const signal = new ExecutionContext(
+      new SecurityPolicy({ maxSteps: 0, timeout: 0 }),
+      undefined,
+      {
+        signal: signalLike(),
+      },
+    )
+    expect(signal.needsAccounting).toBe(true)
+    expect(signal.hasDeadline).toBe(false)
+
+    const explicitNone = new ExecutionContext(
+      new SecurityPolicy({ maxSteps: 10, timeout: 10 }),
+      undefined,
+      { maxSteps: 0, timeout: 0 },
+    )
+    explicitNone.beginRun()
+    explicitNone.step()
+    explicitNone.addSteps(10)
+    expect(explicitNone.needsAccounting).toBe(false)
+    expect(explicitNone.stepsTaken).toBe(0)
+  })
+
+  it('computes a per-run timeout deadline by adding the override to the current clock', () => {
+    let now = 100
+    const ec = new ExecutionContext(new SecurityPolicy(), () => now, { timeout: 50 })
+    now = 149
+    expect(() => {
+      ec.checkTimeout()
+    }).not.toThrow()
+    now = 150
+    expect(() => {
+      ec.checkTimeout()
+    }).toThrow(BonsaiSecurityError)
+  })
+
+  it('endRun disarms both single and bulk step accounting', () => {
+    const ec = new ExecutionContext(new SecurityPolicy({ maxSteps: 1 }))
+    ec.beginRun()
+    ec.step()
+    ec.endRun()
+    ec.step()
+    ec.addSteps(1_000)
+    expect(ec.stepsTaken).toBe(1)
+  })
+
+  it('bulk accounting requires both an active limit and an active run', () => {
+    const inactiveRun = new ExecutionContext(new SecurityPolicy({ maxSteps: 1 }))
+    inactiveRun.addSteps(10)
+    expect(inactiveRun.stepsTaken).toBe(0)
+
+    const noAccounting = new ExecutionContext(new SecurityPolicy({ maxSteps: 0, timeout: 0 }))
+    noAccounting.beginRun()
+    noAccounting.addSteps(10)
+    expect(noAccounting.stepsTaken).toBe(0)
+  })
+
+  it('waitFor removes its abort listener after fulfillment and rejection', async () => {
+    let listener: (() => void) | undefined
+    let adds = 0
+    let removes = 0
+    const signal = signalLike({
+      addEventListener(_type: string, callback: EventListenerOrEventListenerObject) {
+        adds++
+        listener = callback as () => void
+      },
+      removeEventListener(_type: string, callback: EventListenerOrEventListenerObject) {
+        if (callback === listener) removes++
+      },
+    })
+    const ec = new ExecutionContext(new SecurityPolicy({ maxSteps: 0 }), undefined, { signal })
+
+    await expect(ec.waitFor(Promise.resolve('ok'))).resolves.toBe('ok')
+    expect(adds).toBe(1)
+    expect(removes).toBe(1)
+
+    const reason = new Error('host rejection')
+    await expect(ec.waitFor(Promise.reject(reason))).rejects.toBe(reason)
+    expect(adds).toBe(2)
+    expect(removes).toBe(2)
+  })
+
+  it('waitFor closes the add-listener race for a signal aborted during subscription', async () => {
+    const state = { aborted: false }
+    const signal = {
+      get aborted() {
+        return state.aborted
+      },
+      addEventListener() {
+        state.aborted = true
+      },
+      removeEventListener() {},
+    } as unknown as AbortSignal
+    const ec = new ExecutionContext(new SecurityPolicy({ maxSteps: 0 }), undefined, { signal })
+
+    await expect(ec.waitFor(new Promise<never>(() => {}))).rejects.toMatchObject({
+      code: 'ABORTED',
+      message: 'Evaluation aborted',
+    })
   })
 })

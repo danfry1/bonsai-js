@@ -5,7 +5,7 @@ Collections let you build structured results directly inside an expression. Use 
 | Pattern | Use it for |
 |---|---|
 | `[1, 2, 3]` | Create a new array value |
-| `[...items, extra]` | Combine iterable values |
+| `[...items, extra]` | Copy and combine array values |
 | `{ name, age }` | Build an object from context values |
 | `{ [key]: value }` | Create an object with a computed key |
 | `value.slice(0, 3)` | Call one of the safe built-in methods |
@@ -15,7 +15,11 @@ Collections let you build structured results directly inside an expression. Use 
 | Expression | Result | Note |
 |---|---|---|
 | `["starter", "analytics", "priority-support"]` | `["starter", "analytics", "priority-support"]` | |
-| `[plan, ...addons, "priority-support"]` | `["starter", "analytics", "exports", "priority-support"]` | spread accepts iterable values |
+| `[plan, ...addons, "priority-support"]` | `["starter", "analytics", "exports", "priority-support"]` | spread accepts arrays only |
+
+Spread copies array elements by index, ignores a custom iterator, and
+materializes sparse holes as `undefined`. Sets, generators, and other iterables
+are intentionally rejected; convert them to arrays at the boundary.
 
 ## Object literals
 
@@ -28,6 +32,14 @@ Collections let you build structured results directly inside an expression. Use 
 ## Method calls
 
 Core method-call support is intentionally small. Bonsai allows a safe subset of built-in string, array, and number methods such as `slice`, `includes`, `startsWith`, `repeat`, `trimStart`, `at`, and `toFixed`.
+
+The receiver's method property is never called. Bonsai dispatches to an audited
+intrinsic captured at module load, so receiver overrides and prototype
+method monkey-patches cannot replace the operation. Subclassed arrays and arrays
+with own constructor/spreadability hooks are copied to a neutral receiver, so
+receiver-provided species code does not run. Method arity and parameter types
+are Bonsai language rules checked before native invocation; implicit JavaScript
+argument coercion is not supported.
 
 | Expression | Result | Context |
 |---|---|---|

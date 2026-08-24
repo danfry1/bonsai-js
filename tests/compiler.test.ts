@@ -86,6 +86,24 @@ describe('compiler - passthrough', () => {
     const optimized = compile(ast)
     expect(optimized.type).toBe('PipeExpression')
   })
+
+  it('returns an independent artifact without freezing the caller-owned input AST', () => {
+    const ast = parse('user.name + 1')
+    const optimized = compile(ast)
+    expect(optimized).not.toBe(ast)
+    expect(Object.isFrozen(optimized)).toBe(false)
+    expect(Object.isFrozen(ast)).toBe(false)
+    if (ast.type !== 'BinaryExpression') throw new Error('expected binary expression')
+    expect(Object.isFrozen(ast.left)).toBe(false)
+
+    const callAst = parse('user.name.trim()')
+    const optimizedCall = compile(callAst)
+    if (callAst.type !== 'CallExpression' || optimizedCall.type !== 'CallExpression') {
+      throw new Error('expected call expression')
+    }
+    expect(optimizedCall.callee).not.toBe(callAst.callee)
+    expect(Object.isFrozen(callAst.callee)).toBe(false)
+  })
 })
 
 // These tests pin the compiler's exact output, not just that "something folds".
@@ -132,6 +150,33 @@ describe('compiler - folding recurses through every active node type', () => {
     }
     expect(optimized.elements[0]).toMatchObject({ type: 'NumberLiteral', value: 2 })
     expect(optimized.elements[1]).toMatchObject({ type: 'NumberLiteral', value: 6 })
+  })
+
+  it('folds object values and computed keys', () => {
+    const optimized = compile(parse('{ total: 1 + 2, [3 + 4]: 5 + 6 }')) as unknown as {
+      properties: {
+        key: { type: string; value: unknown }
+        value: { type: string; value: unknown }
+      }[]
+    }
+    expect(optimized.properties[0].value).toMatchObject({ type: 'NumberLiteral', value: 3 })
+    expect(optimized.properties[1].key).toMatchObject({ type: 'NumberLiteral', value: 7 })
+    expect(optimized.properties[1].value).toMatchObject({ type: 'NumberLiteral', value: 11 })
+  })
+
+  it('folds inside template interpolations and spread arguments', () => {
+    const template = compile(parse('`total ${1 + 2}`')) as unknown as {
+      parts: { type: string; value: unknown }[]
+    }
+    expect(template.parts[1]).toMatchObject({ type: 'NumberLiteral', value: 3 })
+
+    const spread = compile(parse('[...[1 + 2]]')) as unknown as {
+      elements: { argument: { elements: { type: string; value: unknown }[] } }[]
+    }
+    expect(spread.elements[0].argument.elements[0]).toMatchObject({
+      type: 'NumberLiteral',
+      value: 3,
+    })
   })
 
   it('folds inside call arguments', () => {

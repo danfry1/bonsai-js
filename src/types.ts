@@ -10,10 +10,52 @@ export type InferredTypeName =
   | 'null'
   | 'undefined'
 
+// === Static Type Metadata ===
+
+/** JSON-serializable type vocabulary used by the optional static checker. */
+export type BonsaiType =
+  | { readonly kind: 'unknown' }
+  | { readonly kind: 'string' }
+  | { readonly kind: 'number' }
+  | { readonly kind: 'boolean' }
+  | { readonly kind: 'null' }
+  | { readonly kind: 'undefined' }
+  /** A single string, number, or boolean value; unions of literals model enums. */
+  | { readonly kind: 'literal'; readonly value: string | number | boolean }
+  | { readonly kind: 'array'; readonly element: BonsaiType }
+  | {
+      readonly kind: 'object'
+      readonly properties: Readonly<Record<string, BonsaiType>>
+      readonly additionalProperties?: BonsaiType | false
+    }
+  | { readonly kind: 'union'; readonly members: readonly BonsaiType[] }
+
+/** Object-shaped static type accepted as a root context schema. */
+export type BonsaiObjectType = Extract<BonsaiType, { readonly kind: 'object' }>
+
+/** One declared extension parameter. Rest parameters must be last. */
+export interface ParameterMetadata {
+  readonly name: string
+  readonly type: BonsaiType
+  readonly optional?: boolean
+  readonly rest?: boolean
+  readonly description?: string
+}
+
 // === Policy Snapshot ===
 
 /** Read-only snapshot of the security policy, returned by {@link BonsaiInstance.getPolicy}. */
 export interface PolicySnapshot {
+  readonly maxSourceLength: number
+  readonly maxTokens: number
+  readonly maxAstNodes: number
+  readonly maxObjectProperties: number
+  readonly maxCallArguments: number
+  readonly maxDepth: number
+  readonly maxArrayLength: number
+  readonly maxStringLength: number
+  readonly maxSteps: number
+  readonly timeout: number
   readonly allowedProperties?: readonly string[]
   readonly deniedProperties?: readonly string[]
 }
@@ -86,125 +128,125 @@ export type TokenType = Token['type']
 // === AST Nodes ===
 
 interface BaseNode {
-  start: number
-  end: number
+  readonly start: number
+  readonly end: number
 }
 
 export interface NumberLiteral extends BaseNode {
-  type: 'NumberLiteral'
-  value: number
+  readonly type: 'NumberLiteral'
+  readonly value: number
 }
 
 export interface StringLiteral extends BaseNode {
-  type: 'StringLiteral'
-  value: string
+  readonly type: 'StringLiteral'
+  readonly value: string
 }
 
 export interface BooleanLiteral extends BaseNode {
-  type: 'BooleanLiteral'
-  value: boolean
+  readonly type: 'BooleanLiteral'
+  readonly value: boolean
 }
 
 export interface NullLiteral extends BaseNode {
-  type: 'NullLiteral'
-  value: null
+  readonly type: 'NullLiteral'
+  readonly value: null
 }
 
 export interface UndefinedLiteral extends BaseNode {
-  type: 'UndefinedLiteral'
-  value: undefined
+  readonly type: 'UndefinedLiteral'
+  readonly value: undefined
 }
 
 export interface Identifier extends BaseNode {
-  type: 'Identifier'
-  name: string
+  readonly type: 'Identifier'
+  readonly name: string
 }
 
 export interface BinaryExpression extends BaseNode {
-  type: 'BinaryExpression'
-  operator: BinaryExpressionOperator
-  left: ASTNode
-  right: ASTNode
+  readonly type: 'BinaryExpression'
+  readonly operator: BinaryExpressionOperator
+  readonly left: ASTNode
+  readonly right: ASTNode
 }
 
 export interface UnaryExpression extends BaseNode {
-  type: 'UnaryExpression'
-  operator: UnaryOperator
-  operand: ASTNode
+  readonly type: 'UnaryExpression'
+  readonly operator: UnaryOperator
+  readonly operand: ASTNode
 }
 
 export interface ConditionalExpression extends BaseNode {
-  type: 'ConditionalExpression'
-  test: ASTNode
-  consequent: ASTNode
-  alternate: ASTNode
+  readonly type: 'ConditionalExpression'
+  readonly test: ASTNode
+  readonly consequent: ASTNode
+  readonly alternate: ASTNode
 }
 
 export interface MemberExpression extends BaseNode {
-  type: 'MemberExpression'
-  object: ASTNode
-  property: ASTNode
-  computed: boolean
+  readonly type: 'MemberExpression'
+  readonly object: ASTNode
+  readonly property: ASTNode
+  readonly computed: boolean
 }
 
 export interface OptionalMemberExpression extends BaseNode {
-  type: 'OptionalMemberExpression'
-  object: ASTNode
-  property: ASTNode
-  computed: boolean
+  readonly type: 'OptionalMemberExpression'
+  readonly object: ASTNode
+  readonly property: ASTNode
+  readonly computed: boolean
 }
 
 export interface ArrayLiteral extends BaseNode {
-  type: 'ArrayLiteral'
+  readonly type: 'ArrayLiteral'
   readonly elements: readonly (ASTNode | SpreadElement)[]
 }
 
 export interface ObjectLiteral extends BaseNode {
-  type: 'ObjectLiteral'
+  readonly type: 'ObjectLiteral'
   readonly properties: readonly ObjectProperty[]
 }
 
 export interface ObjectProperty extends BaseNode {
-  type: 'ObjectProperty'
-  key: ASTNode
-  value: ASTNode
-  computed: boolean
+  readonly type: 'ObjectProperty'
+  readonly key: ASTNode
+  readonly value: ASTNode
+  readonly computed: boolean
 }
 
 export interface CallExpression extends BaseNode {
-  type: 'CallExpression'
-  callee: ASTNode
+  readonly type: 'CallExpression'
+  readonly callee: ASTNode
   readonly args: readonly ASTNode[]
 }
 
 export interface PipeExpression extends BaseNode {
-  type: 'PipeExpression'
-  input: ASTNode
-  transform: ASTNode
+  readonly type: 'PipeExpression'
+  readonly input: ASTNode
+  readonly transform: ASTNode
 }
 
 export interface TemplateLiteral extends BaseNode {
-  type: 'TemplateLiteral'
+  readonly type: 'TemplateLiteral'
   readonly parts: readonly (StringLiteral | ASTNode)[]
 }
 
 export interface SpreadElement extends BaseNode {
-  type: 'SpreadElement'
-  argument: ASTNode
+  readonly type: 'SpreadElement'
+  readonly argument: ASTNode
 }
 
 export interface LambdaAccessor extends BaseNode {
-  type: 'LambdaAccessor'
-  property: string
+  readonly type: 'LambdaAccessor'
+  readonly property: string
 }
 
 export interface LambdaExpression extends BaseNode {
-  type: 'LambdaExpression'
-  body: ASTNode
+  readonly type: 'LambdaExpression'
+  readonly body: ASTNode
 }
 
 export interface LambdaIdentity extends BaseNode {
-  type: 'LambdaIdentity'
+  readonly type: 'LambdaIdentity'
 }
 
 export type ASTNode =
@@ -231,8 +273,22 @@ export type ASTNode =
 
 // === Configuration ===
 
+/** Structural limits applied before an expression can reach evaluation. */
+export interface SyntaxLimits {
+  /** Maximum UTF-16 source length. Default: 100,000. */
+  maxSourceLength?: number
+  /** Maximum number of lexical tokens, excluding EOF. Default: 25,000. */
+  maxTokens?: number
+  /** Maximum number of AST and object-property nodes. Default: 10,000. */
+  maxAstNodes?: number
+  /** Maximum number of properties in an object literal. Default: 10,000. */
+  maxObjectProperties?: number
+  /** Maximum number of arguments in one call, checked both syntactically and after spread expansion. Default: 1,000. */
+  maxCallArguments?: number
+}
+
 /** Options for creating a Bonsai instance via {@link BonsaiInstance}. */
-export interface BonsaiOptions {
+export interface BonsaiOptions extends SyntaxLimits {
   /** Cooperative timeout in milliseconds. 0 (default) disables timeout checks. */
   timeout?: number
   /** Maximum expression nesting depth. Default: 100. */
@@ -245,14 +301,11 @@ export interface BonsaiOptions {
    * Maximum number of evaluator steps a single evaluation may take, a
    * deterministic bound on work that applies without a wall-clock timeout. A
    * "step" is one accounted evaluator operation: a compound-node visit, a
-   * lambda-callback invocation (once per element in a higher-order method),
-   * a spread element, or a template/literal-loop element. Work inside an
-   * opaque host function or a native method is NOT counted, so this bounds a
-   * higher-order method over a large context array only when the callback is a
-   * bonsai lambda (e.g. `items.map(.x)`), not a host function passed as a
-   * callback. Sync and async consume identical budgets for dense arrays using
-   * built-in methods; async reimplements higher-order methods to await async
-   * callbacks, so a sparse array or an overridden method can charge differently.
+   * lambda-callback invocation (once per visited element in a higher-order
+   * method), spread element, template/literal-loop element, or pre-charged unit
+   * of linear native work based on receiver length. Work inside an opaque
+   * registered extension is NOT counted. A native call cannot be interrupted
+   * once started, so charging occurs before the intrinsic is invoked.
    * Default: 1,000,000. Set to 0 to disable.
    */
   maxSteps?: number
@@ -264,11 +317,76 @@ export interface BonsaiOptions {
   cacheSize?: number
 }
 
+/** Controls for one evaluation. Values override the instance defaults for that run only. */
+export interface EvaluationOptions {
+  /** Cooperative wall-clock timeout in milliseconds. */
+  timeout?: number
+  /** Deterministic evaluator step budget. Set to 0 to disable for this run. */
+  maxSteps?: number
+  /** Cancels async waits and is sampled during synchronous evaluator work. */
+  signal?: AbortSignal
+}
+
 /** A transform receives the piped value as its first argument: `value |> myTransform(arg)`. */
 export type TransformFn = (value: unknown, ...args: unknown[]) => unknown
 
+/**
+ * Relational array typing that cannot be expressed by a fixed return type.
+ * Callback rules consume an optional Bonsai lambda in the first transform
+ * argument and infer it against the input array's element type.
+ */
+export type ArrayTransformTypeRule =
+  | 'preserve'
+  | 'optional-element'
+  | 'flatten'
+  | 'map'
+  | 'filter'
+  | 'find'
+  | 'some'
+  | 'every'
+
+/** Declarative transform information consumed by tooling without calling the transform. */
+export interface TransformMetadata {
+  /**
+   * Type accepted as the piped input. Omit when every type is accepted. Used
+   * by the checker for exact matching and by autocomplete (widened to its
+   * runtime kind) to filter `|>` suggestions.
+   */
+  readonly inputType?: BonsaiType
+  /** Types of arguments after the piped input value. */
+  readonly parameters?: readonly ParameterMetadata[]
+  /** Return type. Lets autocomplete continue inference through `a |> t |> ` chains. */
+  readonly returnType?: BonsaiType
+  /** Generic array input/result relationship used by the checker. */
+  readonly arrayTypeRule?: ArrayTransformTypeRule
+  /** Short human-readable description for editors and generated documentation. */
+  readonly description?: string
+}
+
+/** Preferred declarative form for registering a transform. */
+export interface TransformDefinition extends TransformMetadata {
+  readonly name: string
+  readonly evaluate: TransformFn
+}
+
 /** A function is called directly by name: `myFunction(arg1, arg2)`. */
 export type FunctionFn = (...args: unknown[]) => unknown
+
+/** Declarative function information consumed by tooling without calling the function. */
+export interface FunctionMetadata {
+  /** Declared call parameters for static checking and signature help. */
+  readonly parameters?: readonly ParameterMetadata[]
+  /** Return type, consumed by the checker and shown by autocomplete. */
+  readonly returnType?: BonsaiType
+  /** Short human-readable description for editors and generated documentation. */
+  readonly description?: string
+}
+
+/** Preferred declarative form for registering a pure function. */
+export interface FunctionDefinition extends FunctionMetadata {
+  readonly name: string
+  readonly evaluate: FunctionFn
+}
 
 /** The shape of an evaluation context object. */
 export type BonsaiContext = object
@@ -280,7 +398,9 @@ type EmptyContext = Record<never, never>
  * ergonomic `evaluateSync(expr)` / `compiled.evaluateSync()` behavior.
  */
 export type EvaluationContextArgs<TCtx extends BonsaiContext = Record<string, unknown>> =
-  EmptyContext extends TCtx ? [context?: TCtx] : [context: TCtx]
+  EmptyContext extends TCtx
+    ? [context?: TCtx, options?: EvaluationOptions]
+    : [context: TCtx, options?: EvaluationOptions]
 
 /**
  * A context-aware function. Receives the live evaluation context as its first
@@ -294,12 +414,20 @@ export type ContextFunctionFn<TCtx extends BonsaiContext = Record<string, unknow
   ...args: unknown[]
 ) => unknown
 
+/** Preferred declarative form for registering a context-aware function. */
+export interface ContextFunctionDefinition<
+  TCtx extends BonsaiContext = Record<string, unknown>,
+> extends FunctionMetadata {
+  readonly name: string
+  readonly evaluate: ContextFunctionFn<TCtx>
+}
+
 /**
  * A registry entry for a callable invoked as `name(args)` in expressions,
  * tagged with its kind so the evaluator knows how to call it. Pure functions
  * receive only the call arguments; context functions receive the evaluation
  * context as their first parameter. Pure and context functions share one
- * namespace, so a name resolves to exactly one entry (last registration wins).
+ * namespace, so a name resolves to exactly one entry.
  */
 export type RegisteredFunction =
   | { kind: 'pure'; fn: FunctionFn }
@@ -333,21 +461,41 @@ export interface PluginRegistrar<TCtx extends BonsaiContext = Record<string, unk
    */
   use: (plugin: BonsaiPlugin<TCtx>) => this
   /** Register a named transform for use with the pipe operator (`|>`). */
-  addTransform: (name: string, fn: TransformFn) => this
+  addTransform: (name: string, fn: TransformFn, metadata?: TransformMetadata) => this
+  /** Explicitly replace an existing transform. Throws when the name is not registered. */
+  replaceTransform: (name: string, fn: TransformFn, metadata?: TransformMetadata) => this
+  /** Register a transform using the preferred self-describing definition form. */
+  defineTransform: (definition: TransformDefinition) => this
   /** Register a named function callable as `name(args)` in expressions. */
-  addFunction: (name: string, fn: FunctionFn) => this
+  addFunction: (name: string, fn: FunctionFn, metadata?: FunctionMetadata) => this
+  /** Explicitly replace an existing pure or context-aware function with a pure function. */
+  replaceFunction: (name: string, fn: FunctionFn, metadata?: FunctionMetadata) => this
+  /** Register a pure function using the preferred self-describing definition form. */
+  defineFunction: (definition: FunctionDefinition) => this
   /**
    * Register a context-aware function callable as `name(args)` in expressions.
    * The function receives the live evaluation context as its first parameter
    * (typed `Readonly<TCtx>` for read-only intent; passed by reference, not
-   * copied or frozen). Shares a namespace with {@link addFunction}: registering
-   * the same name with either overwrites the previous registration.
+   * copied or frozen). Shares a namespace with {@link addFunction}; duplicate
+   * names are rejected so plugins cannot silently replace each other.
    *
    * The callback may read any subset of `TCtx`; reading a field `TCtx` does not
    * declare is a type error, so a function can never observe context the
    * evaluator is not guaranteed to supply.
    */
-  addContextFunction: (name: string, fn: ContextFunctionFn<TCtx>) => this
+  addContextFunction: (
+    name: string,
+    fn: ContextFunctionFn<TCtx>,
+    metadata?: FunctionMetadata,
+  ) => this
+  /** Explicitly replace an existing pure or context-aware function with a context function. */
+  replaceContextFunction: (
+    name: string,
+    fn: ContextFunctionFn<TCtx>,
+    metadata?: FunctionMetadata,
+  ) => this
+  /** Register a context-aware function using the preferred self-describing definition form. */
+  defineContextFunction: (definition: ContextFunctionDefinition<TCtx>) => this
   /** Remove a previously registered transform. Returns true if it existed. */
   removeTransform: (name: string) => boolean
   /** Remove a previously registered function (pure or context-aware). Returns true if it existed. */
@@ -360,8 +508,12 @@ export interface PluginRegistrar<TCtx extends BonsaiContext = Record<string, unk
   isContextFunction: (name: string) => boolean
   /** List all registered transform names. */
   listTransforms: () => string[]
+  /** Read declarative metadata for a registered transform. */
+  getTransformMetadata: (name: string) => TransformMetadata | undefined
   /** List all registered function names (both pure and context-aware). */
   listFunctions: () => string[]
+  /** Read declarative metadata for a registered function. */
+  getFunctionMetadata: (name: string) => FunctionMetadata | undefined
 }
 
 /**
@@ -387,6 +539,13 @@ export type BonsaiPlugin<TCtx extends BonsaiContext = object> = (
 export interface BonsaiInstance<
   TCtx extends BonsaiContext = Record<string, unknown>,
 > extends PluginRegistrar<TCtx> {
+  /**
+   * Permanently lock the extension registry. Sealing is idempotent; every
+   * later registration/removal attempt throws.
+   */
+  seal: () => this
+  /** Whether the extension registry has been sealed. */
+  isSealed: () => boolean
   /** Returns a read-only snapshot of the security policy for autocomplete filtering. */
   getPolicy: () => PolicySnapshot
   /** Clear the compiled expression and AST caches. */
@@ -397,7 +556,11 @@ export interface BonsaiInstance<
   evaluate: <T = unknown>(expression: string, ...args: EvaluationContextArgs<TCtx>) => Promise<T>
   /** Evaluate an expression synchronously. Throws if a transform/function returns a Promise. */
   evaluateSync: <T = unknown>(expression: string, ...args: EvaluationContextArgs<TCtx>) => T
-  /** Check if an expression is syntactically valid without evaluating it. */
+  /**
+   * Parse an expression and extract its references without evaluating it.
+   * Syntax only: it does not verify that referenced bindings exist or check
+   * types; use `bonsai-js/checker` for that.
+   */
   validate: (expression: string) => ValidationResult
 }
 
@@ -407,7 +570,7 @@ export interface CompiledExpression<TCtx extends BonsaiContext = Record<string, 
   evaluate: <T = unknown>(...args: EvaluationContextArgs<TCtx>) => Promise<T>
   /** Evaluate synchronously. Throws if a transform/function returns a Promise. */
   evaluateSync: <T = unknown>(...args: EvaluationContextArgs<TCtx>) => T
-  /** The optimized AST after constant folding and dead branch elimination. */
+  /** The deeply frozen optimized AST after constant folding and dead branch elimination. */
   readonly ast: ASTNode
   /** The original expression string. */
   readonly source: string

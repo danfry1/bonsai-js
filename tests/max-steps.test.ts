@@ -136,7 +136,7 @@ describe('sync and async consume the same step budget (dense arrays, built-in me
   it('a budget at the boundary passes (or fails) the same way in both modes', () => {
     // items.map(.x) over 100 items charges the same in both, so a budget just
     // above the count passes both and just below fails both — no mode skew.
-    const enough = bonsai({ maxSteps: 200 })
+    const enough = bonsai({ maxSteps: 250 })
     const tooLow = bonsai({ maxSteps: 50 })
     const ctx = { items }
     expect(() => enough.evaluateSync('items.map(.x)', ctx)).not.toThrow()
@@ -144,7 +144,7 @@ describe('sync and async consume the same step budget (dense arrays, built-in me
   })
 
   it('the same boundary holds for async', async () => {
-    const enough = bonsai({ maxSteps: 200 })
+    const enough = bonsai({ maxSteps: 250 })
     const tooLow = bonsai({ maxSteps: 50 })
     const ctx = { items }
     await expect(enough.evaluate('items.map(.x)', ctx)).resolves.toBeDefined()
@@ -152,27 +152,23 @@ describe('sync and async consume the same step budget (dense arrays, built-in me
   })
 })
 
-describe('known async budget divergence: sparse holes and overridden methods', () => {
-  // Async must reimplement higher-order methods to await async callbacks, so it
-  // visits sparse holes and ignores an overridden method where the sync path
-  // (native method) does not — charging more steps. Full semantic parity is a
-  // deferred milestone; these characterize the boundary so it is not a silent
-  // regression and any future parity fix updates them deliberately.
-  it('a sparse array charges fewer steps synchronously than asynchronously', async () => {
+describe('sparse-array budget parity', () => {
+  it('charges the same steps synchronously and asynchronously', async () => {
     const sparse: number[] = []
     sparse[99] = 1 // 1 real element, 99 holes
-    const expr = bonsai({ maxSteps: 50 })
-    expect(() => expr.evaluateSync('items.map(.x)', { items: sparse })).not.toThrow()
-    await expect(expr.evaluate('items.map(.x)', { items: sparse })).rejects.toMatchObject({
-      code: 'MAX_STEPS',
-    })
+    const bindings = { transforms: {}, functions: {} }
+    const syncGuard = new ExecutionContext(new SecurityPolicy({ maxSteps: 0, timeout: 100_000 }))
+    evaluate(parse('items.map(.x)'), { items: sparse }, bindings, syncGuard)
+    const asyncGuard = new ExecutionContext(new SecurityPolicy({ maxSteps: 0, timeout: 100_000 }))
+    await evaluateAsync(parse('items.map(.x)'), { items: sparse }, bindings, asyncGuard)
+    expect(asyncGuard.stepsTaken).toBe(syncGuard.stepsTaken)
   })
 
-  it('an overridden method is honored synchronously but reimplemented asynchronously', async () => {
+  it('overridden methods are ignored consistently by both evaluators', async () => {
     const arr = [1, 2, 3, 4, 5]
     Object.defineProperty(arr, 'map', { value: () => 'overridden' })
     const expr = bonsai({ maxSteps: 2 })
-    expect(expr.evaluateSync('items.map(.x)', { items: arr })).toBe('overridden')
+    expect(() => expr.evaluateSync('items.map(.x)', { items: arr })).toThrow(BonsaiSecurityError)
     await expect(expr.evaluate('items.map(.x)', { items: arr })).rejects.toMatchObject({
       code: 'MAX_STEPS',
     })

@@ -251,6 +251,48 @@ describe('sandbox hardening', () => {
   it('own-property only: prototype chain does not leak', () => {
     const expr = bonsai()
     expect(expr.evaluateSync('toString', {})).toBeUndefined()
+    expect(
+      expr.evaluateSync('obj.inherited', { obj: Object.create({ inherited: 'leak' }) }),
+    ).toBeUndefined()
+  })
+
+  it("reads own getters as ordinary own properties (the context is the host's container)", () => {
+    // An own accessor is host-authored data: the expression author cannot
+    // introduce one, so invoking it is not an escalation. Inherited accessors,
+    // like every inherited member, stay invisible.
+    let calls = 0
+    const obj = Object.defineProperty({}, 'secret', {
+      get() {
+        calls++
+        return 'own'
+      },
+    })
+    expect(bonsai().evaluateSync('obj.secret', { obj })).toBe('own')
+    expect(calls).toBe(1)
+    let inheritedCalls = 0
+    class WithGetter {
+      get inherited(): number {
+        inheritedCalls++
+        return inheritedCalls
+      }
+    }
+    expect(bonsai().evaluateSync('obj.inherited', { obj: new WithGetter() })).toBeUndefined()
+    expect(inheritedCalls).toBe(0)
+  })
+
+  it('uses audited built-ins instead of receiver method overrides', async () => {
+    let calls = 0
+    const items = [1, 2, 3]
+    Object.defineProperty(items, 'map', {
+      value: () => {
+        calls++
+        return ['overridden']
+      },
+    })
+
+    expect(bonsai().evaluateSync('items.map(. + 1)', { items })).toEqual([2, 3, 4])
+    await expect(bonsai().evaluate('items.map(. + 1)', { items })).resolves.toEqual([2, 3, 4])
+    expect(calls).toBe(0)
   })
 })
 
@@ -258,17 +300,17 @@ describe('resource-exhaustion limits', () => {
   // Parser nesting depth guard: deep nesting must fail closed with a typed
   // ExpressionError, never a raw native RangeError (stack overflow).
   it('throws a typed ExpressionError on pathologically deep parenthesis nesting', () => {
-    const deep = `${'('.repeat(50_000)}1${')'.repeat(50_000)}`
+    const deep = `${'('.repeat(2_000)}1${')'.repeat(2_000)}`
     expect(() => parse(deep)).toThrow(ExpressionError)
   })
 
   it('throws a typed ExpressionError on pathologically deep unary nesting', () => {
-    const deep = `${'!'.repeat(50_000)}x`
+    const deep = `${'!'.repeat(2_000)}x`
     expect(() => parse(deep)).toThrow(ExpressionError)
   })
 
   it('surfaces deep nesting through evaluateSync and validate without a raw RangeError', () => {
-    const deep = `${'('.repeat(50_000)}1${')'.repeat(50_000)}`
+    const deep = `${'('.repeat(2_000)}1${')'.repeat(2_000)}`
     expect(() => bonsai().evaluateSync(deep)).toThrow(ExpressionError)
     const result = bonsai().validate(deep)
     expect(result.valid).toBe(false)
@@ -337,22 +379,22 @@ describe('resource-exhaustion limits', () => {
   // --- Parser depth guard: all recursion paths, boundaries, messages ---
 
   it('bounds deep array-literal nesting with a typed ExpressionError', () => {
-    const deep = `${'['.repeat(50_000)}1${']'.repeat(50_000)}`
+    const deep = `${'['.repeat(2_000)}1${']'.repeat(2_000)}`
     expect(() => parse(deep)).toThrow(ExpressionError)
   })
 
   it('bounds deep nesting reached through computed member access', () => {
-    const deep = `a${'[a'.repeat(50_000)}${']'.repeat(50_000)}`
+    const deep = `a${'[a'.repeat(2_000)}${']'.repeat(2_000)}`
     expect(() => parse(deep)).toThrow(ExpressionError)
   })
 
   it('bounds deep nesting inside a template interpolation', () => {
-    const deep = `\`\${${'('.repeat(50_000)}1${')'.repeat(50_000)}}\``
+    const deep = `\`\${${'('.repeat(2_000)}1${')'.repeat(2_000)}}\``
     expect(() => bonsai().evaluateSync(deep)).toThrow(ExpressionError)
   })
 
   it('reports a clear nesting-depth message rather than a stack-overflow', () => {
-    const deep = `${'('.repeat(50_000)}1${')'.repeat(50_000)}`
+    const deep = `${'('.repeat(2_000)}1${')'.repeat(2_000)}`
     expect(() => parse(deep)).toThrow(/nesting depth/iu)
   })
 

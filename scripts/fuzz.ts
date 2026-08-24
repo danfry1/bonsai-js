@@ -13,7 +13,10 @@
  *   3. No result escapes the sandbox (never a function or a host prototype).
  *   4. Synchronous and asynchronous evaluation agree (differential parity).
  *   5. Compiling first preserves semantics (constant folding changes nothing).
- * A separate property feeds random junk to `parse` to fuzz lexer/parser crashes.
+ *   6. Static checking accepts arbitrary source/schema pairs without executing
+ *      registered host functions or leaking a raw error.
+ * A separate property feeds random junk to `parse` and the checker to fuzz
+ * lexer/parser crashes and diagnostic recovery.
  *
  * Usage: `bun run scripts/fuzz.ts [budgetMs]` (default 20000). On a violation it
  * prints the shrunk counterexample and seed and exits non-zero.
@@ -31,18 +34,41 @@ import {
 } from '../src/errors.js'
 import { bonsai } from '../src/index.js'
 import { strings, arrays, math } from '../src/stdlib/index.js'
+import { checkExpression, t, type BonsaiObjectType, type BonsaiType } from '../src/checker/index.js'
 
 const DEFAULT_BUDGET_MS = 20_000
 const RUNS_PER_BATCH = 150
 const MAX_SEED = 0x7fff_ffff
 const DIFFERENTIAL_SEED_SALT = 0x55
 const PARSER_SEED_SALT = 0xaa
+const CHECKER_SEED_SALT = 0x5a5a
 const MS_PER_SECOND = 1000
 
 const expr = bonsai()
 expr.use(strings)
 expr.use(arrays)
 expr.use(math)
+
+let checkerHostCalls = 0
+const checkerExpr = bonsai()
+  .defineTransform({
+    name: 'neverRun',
+    inputType: t.string(),
+    returnType: t.string(),
+    evaluate: () => {
+      checkerHostCalls++
+      throw new Error('the static checker executed a transform')
+    },
+  })
+  .defineFunction({
+    name: 'neverRunFn',
+    parameters: [{ name: 'value', type: t.number() }],
+    returnType: t.boolean(),
+    evaluate: () => {
+      checkerHostCalls++
+      throw new Error('the static checker executed a function')
+    },
+  })
 
 const CONTEXT = {
   num: 3,
@@ -301,11 +327,106 @@ const junkArbitrary = fc.oneof(
     .map((parts) => parts.join('')),
 )
 
-function reportAndExit(label: string, details: fc.RunDetails<[string]>): never {
+const SCHEMA_KEYS = [
+  'num',
+  'other',
+  'text',
+  'flag',
+  'maybe',
+  'items',
+  'nums',
+  'obj',
+  'user',
+  'safe',
+  'name',
+  'age',
+  'profile',
+  'code',
+  '__proto__',
+  'constructor',
+  'toString',
+] as const
+
+const { schema: schemaArbitrary } = fc.letrec<{ schema: BonsaiType }>((tie) => ({
+  schema: fc.oneof(
+    { maxDepth: 4, depthSize: 'small' },
+    {
+      weight: 7,
+      arbitrary: fc.constantFrom(
+        t.unknown(),
+        t.string(),
+        t.number(),
+        t.boolean(),
+        t.null(),
+        t.undefined(),
+      ),
+    },
+    { weight: 2, arbitrary: tie('schema').map((element) => t.array(element)) },
+    {
+      weight: 4,
+      arbitrary: fc
+        .tuple(
+          fc.dictionary(fc.constantFrom(...SCHEMA_KEYS), tie('schema'), { maxKeys: 8 }),
+          fc.boolean(),
+        )
+        .map(([properties, open]) =>
+          t.object(properties, open ? { additionalProperties: t.unknown() } : {}),
+        ),
+    },
+    {
+      weight: 2,
+      arbitrary: fc
+        .array(tie('schema'), { minLength: 1, maxLength: 4 })
+        .map((members) => t.union(...members)),
+    },
+  ),
+}))
+
+const contextSchemaArbitrary = fc
+  .tuple(
+    fc.dictionary(fc.constantFrom(...SCHEMA_KEYS), schemaArbitrary, { maxKeys: 8 }),
+    fc.boolean(),
+  )
+  .map(([properties, open]) =>
+    t.object(properties, open ? { additionalProperties: t.unknown() } : {}),
+  )
+
+const checkerSourceArbitrary = fc.oneof(
+  expressionArbitrary,
+  junkArbitrary,
+  fc.constant('text |> neverRun'),
+  fc.constant('neverRunFn(num)'),
+)
+
+function checkerHolds(source: string, schema: BonsaiObjectType): boolean {
+  const callsBefore = checkerHostCalls
+  const result = checkExpression(checkerExpr, source, { schema })
+  if (checkerHostCalls !== callsBefore) {
+    throw new FuzzViolation('static checking executed a registered host function')
+  }
+  if (!result.valid && result.diagnostics.length === 0) {
+    throw new FuzzViolation('invalid checker result had no diagnostics')
+  }
+  if (
+    result.diagnostics.some(
+      (diagnostic) =>
+        !Number.isInteger(diagnostic.start) ||
+        !Number.isInteger(diagnostic.end) ||
+        diagnostic.start < 0 ||
+        diagnostic.end < diagnostic.start,
+    )
+  ) {
+    throw new FuzzViolation('checker returned an invalid diagnostic range')
+  }
+  JSON.stringify(result.type)
+  return true
+}
+
+function reportAndExit<Ts extends unknown[]>(label: string, details: fc.RunDetails<Ts>): never {
   process.stdout.write(`✗ fuzz violation in ${label}\n`)
   const counterexample = details.counterexample
   if (counterexample) {
-    process.stdout.write(`  counterexample: ${JSON.stringify(counterexample[0])}\n`)
+    process.stdout.write(`  counterexample: ${JSON.stringify(counterexample)}\n`)
   }
   process.stdout.write(`  seed: ${details.seed}  path: ${details.counterexamplePath ?? ''}\n`)
   const detail = details as unknown as { errorInstance?: unknown }
@@ -341,7 +462,16 @@ async function main(): Promise<void> {
     })
     if (parser.failed) reportAndExit('parser robustness', parser)
 
-    totalCases += escape.numRuns + differential.numRuns + parser.numRuns
+    const checker = fc.check(
+      fc.property(checkerSourceArbitrary, contextSchemaArbitrary, checkerHolds),
+      {
+        numRuns: RUNS_PER_BATCH,
+        seed: seed ^ CHECKER_SEED_SALT,
+      },
+    )
+    if (checker.failed) reportAndExit('checker/schema robustness', checker)
+
+    totalCases += escape.numRuns + differential.numRuns + parser.numRuns + checker.numRuns
     batches += 1
   }
 

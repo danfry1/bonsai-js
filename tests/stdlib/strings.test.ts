@@ -111,6 +111,14 @@ describe('stdlib - strings input validation', () => {
 
   it('padStart defaults fill to space when omitted', () => {
     expect(expr.evaluateSync('"hi" |> padStart(5)')).toBe('   hi')
+    expect(expr.evaluateSync('"hi" |> padEnd(5)')).toBe('hi   ')
+  })
+
+  it('padStart and padEnd accept both allocation boundaries', () => {
+    expect(expr.evaluateSync('"hi" |> padStart(0)')).toBe('hi')
+    expect(expr.evaluateSync('"hi" |> padEnd(0)')).toBe('hi')
+    expect(expr.evaluateSync('"" |> padStart(100000, "x")')).toHaveLength(100_000)
+    expect(expr.evaluateSync('"" |> padEnd(100000, "x")')).toHaveLength(100_000)
   })
 
   it('padStart throws on excessively large length', () => {
@@ -119,5 +127,9 @@ describe('stdlib - strings input validation', () => {
 
   it('padEnd throws on excessively large length', () => {
     expect(() => expr.evaluateSync('"x" |> padEnd(200000000)')).toThrow('length')
+  })
+
+  it('padEnd throws on negative length', () => {
+    expect(() => expr.evaluateSync('"hi" |> padEnd(-1)')).toThrow('non-negative number')
   })
 })

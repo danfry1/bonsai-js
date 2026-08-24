@@ -209,7 +209,7 @@ describe('evaluator - arrays and objects', () => {
 
   it('throws a typed error for non-iterable array spread', () => {
     expect(() => run('[...value]', { value: 42 })).toThrow(BonsaiTypeError)
-    expect(() => run('[...value]', { value: 42 })).toThrow('iterable value')
+    expect(() => run('[...value]', { value: 42 })).toThrow('an array')
   })
 
   it('blocks unsafe object literal keys', () => {
@@ -223,13 +223,16 @@ describe('evaluator - arrays and objects', () => {
     expect(() => expr.evaluateSync('[...items]', { items: bigArray })).toThrow('maximum')
   })
 
-  it('spread limits iterable materialization', () => {
+  it('spread rejects arbitrary iterables without running them', () => {
     const expr = bonsai({ maxArrayLength: 5 })
+    let calls = 0
     function* gen() {
+      calls++
       let i = 0
       while (true) yield i++
     }
-    expect(() => expr.evaluateSync('[...items]', { items: gen() })).toThrow('maximum')
+    expect(() => expr.evaluateSync('[...items]', { items: gen() })).toThrow('an array')
+    expect(calls).toBe(0)
   })
 })
 
