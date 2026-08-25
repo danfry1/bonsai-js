@@ -15,7 +15,7 @@ Evaluation-time errors carry a `location` when the runtime can attach one, plus 
 
 | Stage | Recommended handling |
 |---|---|
-| Authoring time | Run `validate()` and show the formatted parse error inline. |
+| Authoring time | Run `validate()` for syntax feedback, then the static checker for semantic diagnostics. |
 | Execution time | Catch exported error classes and branch on the class or security `code`. |
 | Logging/monitoring | Record the original source string and structured fields, not just the message text. |
 
@@ -46,13 +46,19 @@ try {
 | Code | Description |
 |---|---|
 | `TIMEOUT` | Expression exceeded the configured timeout |
+| `ABORTED` | The per-evaluation `AbortSignal` was aborted |
 | `BLOCKED_PROPERTY` | Access to `__proto__`, `constructor`, or `prototype` |
 | `PROPERTY_NOT_ALLOWED` | Property not in `allowedProperties` allowlist |
 | `PROPERTY_DENIED` | Property is in `deniedProperties` denylist |
 | `METHOD_NOT_ALLOWED` | Method call not permitted by the security policy |
+| `MAX_SOURCE_LENGTH` | Source exceeded `maxSourceLength` before tokenization |
+| `MAX_TOKENS` | Token count exceeded `maxTokens` |
+| `MAX_AST_NODES` | Syntax tree exceeded `maxAstNodes` |
 | `MAX_DEPTH` | Expression nesting exceeded `maxDepth` |
 | `MAX_ARRAY_LENGTH` | Array size exceeded `maxArrayLength` |
 | `MAX_STRING_LENGTH` | String size exceeded `maxStringLength` |
+| `MAX_OBJECT_PROPERTIES` | One object literal exceeded `maxObjectProperties` |
+| `MAX_CALL_ARGUMENTS` | One call exceeded `maxCallArguments` (syntactically or after spread expansion) |
 | `MAX_STEPS` | Evaluation exceeded the `maxSteps` budget |
 
 ## Type guards

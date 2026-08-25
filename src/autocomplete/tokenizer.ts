@@ -12,12 +12,7 @@ export interface TolerantTokenResult {
 }
 
 /** Known phases where errors can occur during completion. */
-export type CompletionPhase =
-  | 'tokenize'
-  | 'tryEvalPrefix'
-  | 'inferPipeInputType'
-  | `probeTransform:${string}`
-  | 'complete'
+export type CompletionPhase = 'tokenize' | 'complete'
 
 export type ErrorHandler = (error: unknown, phase: CompletionPhase) => void
 

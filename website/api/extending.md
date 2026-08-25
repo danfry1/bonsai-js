@@ -4,8 +4,8 @@ Extend Bonsai with your own transforms, functions, and plugins when you need dom
 
 | If you need... | Use... | Example |
 |---|---|---|
-| A value flowing through a pipeline | `addTransform()` | `price \|> usd` |
-| A named operation with peer arguments | `addFunction()` | `discount(price, 20)` |
+| A value flowing through a pipeline | `defineTransform()` | `price \|> usd` |
+| A named operation with peer arguments | `defineFunction()` | `discount(price, 20)` |
 | A reusable package of related behavior | `use(plugin)` | `expr.use(currency)` |
 
 ## Transforms
@@ -17,12 +17,22 @@ type TransformFn = (value: unknown, ...args: unknown[]) => unknown | Promise<unk
 ```
 
 ```ts
-expr.addTransform('cents', (value) =>
-  Math.round(Number(value) * 100)
-)
-expr.addTransform('capAt', (value, max) =>
-  Math.min(Number(value), Number(max))
-)
+import { bonsai, t } from 'bonsai-js'
+
+expr.defineTransform({
+  name: 'cents',
+  inputType: t.number(),
+  returnType: t.number(),
+  description: 'Convert currency units to integer cents',
+  evaluate: (value) => Math.round(Number(value) * 100)
+})
+expr.defineTransform({
+  name: 'capAt',
+  inputType: t.number(),
+  parameters: [{ name: 'max', type: t.number() }],
+  returnType: t.number(),
+  evaluate: (value, max) => Math.min(Number(value), Number(max))
+})
 
 expr.evaluateSync('price |> cents', { price: 19.99 })              // 1999
 expr.evaluateSync('requestedDiscount |> capAt(25)', {
@@ -39,12 +49,26 @@ type FunctionFn = (...args: unknown[]) => unknown | Promise<unknown>
 ```
 
 ```ts
-expr.addFunction('discount', (price, pct) =>
-  Number(price) * (1 - Number(pct) / 100)
-)
-expr.addFunction('between', (value, min, max) =>
-  Number(value) >= Number(min) && Number(value) <= Number(max)
-)
+expr.defineFunction({
+  name: 'discount',
+  parameters: [
+    { name: 'price', type: t.number() },
+    { name: 'percent', type: t.number() },
+  ],
+  returnType: t.number(),
+  evaluate: (price, pct) => Number(price) * (1 - Number(pct) / 100)
+})
+expr.defineFunction({
+  name: 'between',
+  parameters: [
+    { name: 'value', type: t.number() },
+    { name: 'min', type: t.number() },
+    { name: 'max', type: t.number() },
+  ],
+  returnType: t.boolean(),
+  evaluate: (value, min, max) =>
+    Number(value) >= Number(min) && Number(value) <= Number(max)
+})
 
 expr.evaluateSync('discount(listPrice, 20)', {
   listPrice: 100
@@ -87,7 +111,9 @@ await app.evaluate(
 )
 ```
 
-Pure functions (`addFunction`) and context-aware functions share a single namespace. Registering the same name with either method overwrites the prior registration. Use `isContextFunction(name)` for introspection.
+Pure functions and context-aware functions share a single namespace. Duplicate
+registration throws. Use `replaceFunction()` or `replaceContextFunction()` when
+replacement is deliberate, and `isContextFunction(name)` for introspection.
 
 ::: warning Context is passed by reference, not deep-frozen
 The `Readonly<TCtx>` parameter type flags top-level reassignment, but Bonsai does not deep-freeze the context. Nested mutation and writes from untyped JavaScript reach the object you passed in. Pass a fresh context per evaluation if you need isolation.
@@ -100,20 +126,42 @@ The `Readonly<TCtx>` parameter type flags top-level reassignment, but Bonsai doe
 ## Plugins
 
 ```ts
-import type { BonsaiPlugin } from 'bonsai-js'
+import { t, type BonsaiPlugin } from 'bonsai-js'
 
-const currency: BonsaiPlugin = (expr) => {
-  expr.addTransform('usd', (value) => `$${Number(value).toFixed(2)}`)
-  expr.addFunction('discount', (price, pct) => Number(price) * (1 - Number(pct) / 100))
+const currency: BonsaiPlugin = (registrar) => {
+  registrar.defineTransform({
+    name: 'usd',
+    inputType: t.number(),
+    returnType: t.string(),
+    evaluate: (value) => `$${Number(value).toFixed(2)}`
+  })
+  registrar.defineFunction({
+    name: 'discount',
+    parameters: [
+      { name: 'price', type: t.number() },
+      { name: 'percent', type: t.number() },
+    ],
+    returnType: t.number(),
+    evaluate: (price, pct) => Number(price) * (1 - Number(pct) / 100)
+  })
 }
 
-bonsai().use(currency)
+bonsai().use(currency).seal()
 ```
 
-Registering the same name again replaces the previous implementation. Transforms live in a separate namespace; pure and context-aware functions share one namespace and overwrite each other.
+Plugin application is transactional: if any registration fails or the plugin
+throws, the registry returns to its prior revision. Transforms have their own
+namespace; pure and context-aware functions share one. Duplicate names are
+rejected unless you call an explicit `replace*()` method.
 
 Plugins can also be typed against a minimal context they require: `BonsaiPlugin<{ tenantId: string }>` applies cleanly to any instance whose context extends `{ tenantId: string }`.
 
 ::: warning Custom extensions run as trusted host code
 Keep transforms small and predictable, validate their inputs, and reserve async behavior for cases where you genuinely need I/O. Bonsai does not sandbox registered transforms or functions.
+:::
+
+::: tip Prefer declarative definitions and seal after setup
+`defineTransform()`, `defineFunction()`, and `defineContextFunction()` attach
+static output/input metadata for autocomplete and other tools without executing
+your code. Once startup registration is complete, `seal()` prevents later drift.
 :::

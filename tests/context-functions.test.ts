@@ -163,18 +163,18 @@ describe('addContextFunction', () => {
   })
 
   describe('namespace and introspection', () => {
-    it('addContextFunction(name) overwrites a prior addFunction(name)', () => {
+    it('replaceContextFunction(name) explicitly replaces a prior pure function', () => {
       const expr = bonsai<{ value: string }>()
       expr.addFunction('x', () => 'pure')
-      expr.addContextFunction('x', (ctx) => `ctx:${ctx.value}`)
+      expr.replaceContextFunction('x', (ctx) => `ctx:${ctx.value}`)
       expect(expr.evaluateSync('x()', { value: 'hi' })).toBe('ctx:hi')
       expect(expr.isContextFunction('x')).toBe(true)
     })
 
-    it('addFunction(name) overwrites a prior addContextFunction(name)', () => {
+    it('replaceFunction(name) explicitly replaces a prior context function', () => {
       const expr = bonsai<{ value: string }>()
       expr.addContextFunction('x', (ctx) => `ctx:${ctx.value}`)
-      expr.addFunction('x', () => 'pure')
+      expr.replaceFunction('x', () => 'pure')
       expect(expr.evaluateSync('x()', { value: 'hi' })).toBe('pure')
       expect(expr.isContextFunction('x')).toBe(false)
     })
@@ -197,7 +197,7 @@ describe('addContextFunction', () => {
       const expr = bonsai<{ x: number }>()
       expr.addFunction('a', () => 1)
       expr.addContextFunction('b', (ctx) => ctx.x)
-      expr.addContextFunction('a', (ctx) => ctx.x)
+      expr.replaceContextFunction('a', (ctx) => ctx.x)
       const names = expr.listFunctions().sort()
       expect(names).toEqual(['a', 'b'])
     })

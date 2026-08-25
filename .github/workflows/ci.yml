@@ -31,8 +31,7 @@ jobs:
       - run: bun install --frozen-lockfile
 
       - name: Audit dependencies
-        run: bun audit
-        continue-on-error: true
+        run: bun audit --audit-level=high
 
       # bun run resolves the lockfile-pinned binary and fails if it is absent;
       # bunx would fall back to fetching the latest version from the registry.
@@ -60,20 +59,25 @@ jobs:
       - name: Performance gate
         run: bun run bench:gate
 
+      # Absolute floors only catch catastrophic slowdowns; this runs the same
+      # cases against the PR's base commit on the same runner and fails on a
+      # relative drop, which is what actually catches a regression.
+      - name: Performance regression vs base
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: bun run bench:compare "origin/$BASE_REF"
+
       - name: Check package exports
         run: |
           npm pack --ignore-scripts --pack-destination /tmp
-          bunx attw /tmp/bonsai-js-*.tgz --ignore-rules no-resolution cjs-resolves-to-esm
+          bun run attw /tmp/bonsai-js-*.tgz --ignore-rules no-resolution cjs-resolves-to-esm
 
   node-compat:
-    name: Node ${{ matrix.node-version }} smoke
+    name: Node 24 smoke
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: quality
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: [22, 24]
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -84,7 +88,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 24
 
       - run: bun install --frozen-lockfile
 

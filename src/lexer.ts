@@ -1,5 +1,8 @@
-import type { Token, PunctuationValue } from './types.js'
-import { ExpressionError } from './errors.js'
+import type { Token, PunctuationValue, SyntaxLimits } from './types.js'
+import { BonsaiSecurityError, ExpressionError } from './errors.js'
+
+const DEFAULT_MAX_SOURCE_LENGTH = 100_000
+const DEFAULT_MAX_TOKENS = 25_000
 
 const KEYWORDS = new Map<string, { type: Token['type']; value: string }>([
   ['true', { type: 'Boolean', value: 'true' }],
@@ -53,7 +56,16 @@ function checkNumericSeparators(
   }
 }
 
-export function tokenize(source: string): Token[] {
+export function tokenize(source: string, limits: SyntaxLimits = {}): Token[] {
+  const maxSourceLength = limits.maxSourceLength ?? DEFAULT_MAX_SOURCE_LENGTH
+  const maxTokens = limits.maxTokens ?? DEFAULT_MAX_TOKENS
+  if (source.length > maxSourceLength) {
+    throw new BonsaiSecurityError(
+      'MAX_SOURCE_LENGTH',
+      `Expression source length (${source.length}) exceeds maximum (${maxSourceLength})`,
+    )
+  }
+
   const tokens: Token[] = []
   let i = 0
 
@@ -64,6 +76,13 @@ export function tokenize(source: string): Token[] {
     if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
       i++
       continue
+    }
+
+    if (tokens.length >= maxTokens) {
+      throw new BonsaiSecurityError(
+        'MAX_TOKENS',
+        `Expression token count exceeds maximum (${maxTokens})`,
+      )
     }
 
     // Numbers: decimal, hex, binary, octal, scientific, underscores
@@ -310,6 +329,9 @@ export function tokenize(source: string): Token[] {
             // Skip nested template literals so their raw braces (and the braces
             // of their own interpolations) do not throw off this brace count.
             // The nested template is preserved verbatim and re-parsed later.
+            // Quoted strings inside the nested template are skipped whole, so a
+            // backtick INSIDE such a string is not mistaken for the closing
+            // backtick (mirrors the parser's interpolation rescanner).
             if (ic === '`') {
               raw += ic
               i++
@@ -317,6 +339,25 @@ export function tokenize(source: string): Token[] {
                 if (source[i] === '\\' && i + 1 < source.length) {
                   raw += source[i] + source[i + 1]
                   i += 2
+                  continue
+                }
+                if (source[i] === '"' || source[i] === "'") {
+                  const quote = source[i]
+                  raw += source[i]
+                  i++
+                  while (i < source.length && source[i] !== quote) {
+                    if (source[i] === '\\' && i + 1 < source.length) {
+                      raw += source[i] + source[i + 1]
+                      i += 2
+                      continue
+                    }
+                    raw += source[i]
+                    i++
+                  }
+                  if (i < source.length) {
+                    raw += source[i] // closing quote
+                    i++
+                  }
                   continue
                 }
                 raw += source[i]
@@ -482,6 +523,12 @@ export function tokenize(source: string): Token[] {
     throw new ExpressionError(`Unexpected character "${ch}"`, { source, start, end: i + 1 })
   }
 
+  if (tokens.length > maxTokens) {
+    throw new BonsaiSecurityError(
+      'MAX_TOKENS',
+      `Expression token count (${tokens.length}) exceeds maximum (${maxTokens})`,
+    )
+  }
   tokens.push({ type: 'EOF', value: '', start: i, end: i })
   return tokens
 }

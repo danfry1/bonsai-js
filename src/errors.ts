@@ -39,9 +39,10 @@ export class BonsaiTypeError extends Error {
   location?: ErrorLocation
   formatted?: string
 
-  constructor(transform: string, expected: string, value: unknown) {
+  constructor(transform: string, expected: string, value: unknown, receivedText?: string) {
     let received: string
-    if (value === null) received = 'null'
+    if (receivedText !== undefined) received = receivedText
+    else if (value === null) received = 'null'
     else if (value instanceof Promise) received = 'Promise'
     else if (Array.isArray(value)) received = 'array'
     else received = typeof value
@@ -62,11 +63,17 @@ export type BonsaiSecurityCode =
   | 'PROPERTY_NOT_ALLOWED'
   | 'PROPERTY_DENIED'
   | 'METHOD_NOT_ALLOWED'
+  | 'MAX_SOURCE_LENGTH'
+  | 'MAX_TOKENS'
+  | 'MAX_AST_NODES'
   | 'MAX_DEPTH'
   | 'MAX_ARRAY_LENGTH'
   | 'MAX_STRING_LENGTH'
+  | 'MAX_OBJECT_PROPERTIES'
+  | 'MAX_CALL_ARGUMENTS'
   | 'MAX_STEPS'
   | 'TIMEOUT'
+  | 'ABORTED'
 
 /** Security violation: blocked property access, timeout, depth limit, or array size limit. */
 export class BonsaiSecurityError extends Error {

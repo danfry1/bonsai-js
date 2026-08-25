@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { bonsai, BonsaiTypeError } from '../../src/index.js'
-import { dates } from '../../src/stdlib/index.js'
+import { createDates, dates } from '../../src/stdlib/index.js'
 
 describe('stdlib - dates', () => {
   const expr = bonsai()
@@ -10,6 +10,18 @@ describe('stdlib - dates', () => {
     const result = expr.evaluateSync('now()')
     expect(typeof result).toBe('number')
     expect(result as number).toBeGreaterThan(0)
+  })
+
+  it('supports an injected deterministic clock', () => {
+    const fixed = bonsai().use(createDates({ now: () => 1_700_000_000_000 }))
+    expect(fixed.evaluateSync('now()')).toBe(1_700_000_000_000)
+  })
+
+  it('rejects an invalid clock at plugin creation', () => {
+    expect(() => createDates({ now: 1 as unknown as () => number })).toThrow(TypeError)
+    expect(() => createDates({ now: 1 as unknown as () => number })).toThrow(
+      'bonsai: dates now option must be a function',
+    )
   })
 })
 

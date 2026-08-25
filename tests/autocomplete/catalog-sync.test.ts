@@ -2,6 +2,11 @@ import { describe, it, expect } from 'vitest'
 import { METHODS_BY_TYPE } from '../../src/autocomplete/catalog.js'
 import {
   isMethodAllowedOn,
+  methodSignatureArgument,
+  methodSignatureCode,
+  methodSignatureHasRest,
+  methodSignatureParamCount,
+  methodSignatureRequired,
   methodsForReceiverType,
   type MethodReceiverType,
 } from '../../src/safe-methods.js'
@@ -34,6 +39,22 @@ describe('autocomplete catalog matches runtime enforcement', () => {
   it('the catalog and the runtime allowlist derive from a single source (no drift either direction)', () => {
     for (const type of ['string', 'array', 'number'] as const) {
       expect([...METHODS_BY_TYPE[type]].sort()).toEqual(methodsForReceiverType(type).sort())
+    }
+  })
+
+  it('every allowed receiver/method pair has a well-formed shared signature', () => {
+    for (const type of ['string', 'array', 'number'] as const) {
+      for (const method of methodsForReceiverType(type)) {
+        const code = methodSignatureCode(type, method)
+        expect(code, `${type}.${method}`).toBeDefined()
+        if (code === undefined) continue
+        const parameterCount = methodSignatureParamCount(code)
+        expect(methodSignatureRequired(code)).toBeLessThanOrEqual(parameterCount)
+        if (methodSignatureHasRest(code)) expect(parameterCount).toBeGreaterThan(0)
+        for (let index = 0; index < parameterCount; index++) {
+          expect(methodSignatureArgument(code, index)).toMatch(/^[snpual]$/u)
+        }
+      }
     }
   })
 

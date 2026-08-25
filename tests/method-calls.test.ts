@@ -1,9 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import { bonsai } from '../src/index.js'
+import { bonsai, BonsaiSecurityError, BonsaiTypeError } from '../src/index.js'
 
 describe('method calls on values', () => {
   describe('string methods', () => {
     const expr = bonsai()
+
+    it('enforces declared arity and argument types at runtime', () => {
+      expect(() => expr.evaluateSync('"abc".at()')).toThrow(BonsaiTypeError)
+      expect(() => expr.evaluateSync('"123".includes(2)')).toThrow(BonsaiTypeError)
+      expect(() => expr.evaluateSync('"x".trim(1)')).toThrow(BonsaiTypeError)
+      expect(() => expr.evaluateSync('"x".padStart(3, 0)')).toThrow(BonsaiTypeError)
+      expect(() => expr.evaluateSync('[1].with(0)')).toThrow(BonsaiTypeError)
+    })
 
     it('str.includes(substr)', () => {
       expect(expr.evaluateSync('"hello world".includes("world")')).toBe(true)
@@ -65,10 +73,34 @@ describe('method calls on values', () => {
 
     it('arr.slice(start, end)', () => {
       expect(expr.evaluateSync('[1,2,3,4].slice(1, 3)')).toEqual([2, 3])
+      expect(expr.evaluateSync('[1,2,3,4].slice(-2, 99)')).toEqual([3, 4])
+      const sparse = new Array<unknown>(3)
+      sparse[1] = 'middle'
+      const result = expr.evaluateSync<unknown[]>('items.slice()', { items: sparse })
+      expect(result).toHaveLength(3)
+      expect(Object.hasOwn(result, 0)).toBe(false)
+      expect(result[1]).toBe('middle')
+      expect(Object.hasOwn(result, 2)).toBe(false)
     })
 
     it('arr.at(i)', () => {
       expect(expr.evaluateSync('[1,2,3].at(-1)')).toBe(3)
+    })
+
+    it('normalizes invalid with indices instead of leaking native RangeError', () => {
+      expect(() => expr.evaluateSync('[1].with(1, 2)')).toThrow(BonsaiTypeError)
+      expect(() => expr.evaluateSync('[1].with(-2, 2)')).toThrow(BonsaiTypeError)
+      expect(expr.evaluateSync('[1, 2].with(-2, 9)')).toEqual([9, 2])
+      expect(expr.evaluateSync('[1, 2].with(1, 9)')).toEqual([1, 9])
+    })
+
+    it('bounds native flat recursion with the evaluation depth policy', () => {
+      const recursive: unknown[] = []
+      recursive.push(recursive)
+      expect(() =>
+        expr.evaluateSync('items.flat(depth)', { items: recursive, depth: 100_000 }),
+      ).toThrow(BonsaiSecurityError)
+      expect(expr.evaluateSync('[[1]].flat(100)')).toEqual([1])
     })
   })
 
@@ -77,10 +109,25 @@ describe('method calls on values', () => {
 
     it('num.toFixed(digits)', () => {
       expect(expr.evaluateSync('(3.14159).toFixed(2)')).toBe('3.14')
+      expect(expr.evaluateSync('(1).toFixed()')).toBe('1')
+      expect(expr.evaluateSync('(1.5).toFixed(0)')).toBe('2')
+      expect(expr.evaluateSync('(1).toFixed(100)')).toHaveLength(102)
     })
 
     it('num.toString()', () => {
       expect(expr.evaluateSync('(42).toString()')).toBe('42')
+      expect(expr.evaluateSync('(3).toString(2)')).toBe('11')
+      expect(expr.evaluateSync('(35).toString(36)')).toBe('z')
+    })
+
+    it('normalizes native numeric range failures as BonsaiTypeError', () => {
+      expect(() => expr.evaluateSync('(1).toFixed(-1)')).toThrow(BonsaiTypeError)
+      expect(() => expr.evaluateSync('(1).toFixed(101)')).toThrow(BonsaiTypeError)
+      expect(() => expr.evaluateSync('(1).toString(radix)', { radix: Number.NaN })).toThrow(
+        BonsaiTypeError,
+      )
+      expect(() => expr.evaluateSync('(1).toString(1)')).toThrow(BonsaiTypeError)
+      expect(() => expr.evaluateSync('(1).toString(37)')).toThrow(BonsaiTypeError)
     })
   })
 
@@ -138,21 +185,15 @@ describe('method calls on values', () => {
     expr.addFunction('makeRegex', () => /x/u)
 
     it('blocks function args to replace', () => {
-      expect(() => expr.evaluateSync('"abc".replace("a", makeFn())')).toThrow(
-        'callbacks are not allowed',
-      )
+      expect(() => expr.evaluateSync('"abc".replace("a", makeFn())')).toThrow('string argument')
     })
 
     it('blocks function args to replaceAll', () => {
-      expect(() => expr.evaluateSync('"abc".replaceAll("a", makeFn())')).toThrow(
-        'callbacks are not allowed',
-      )
+      expect(() => expr.evaluateSync('"abc".replaceAll("a", makeFn())')).toThrow('string argument')
     })
 
     it('blocks RegExp args to replace', () => {
-      expect(() => expr.evaluateSync('"abc".replace(makeRegex(), "x")')).toThrow(
-        'RegExp is not allowed',
-      )
+      expect(() => expr.evaluateSync('"abc".replace(makeRegex(), "x")')).toThrow('string argument')
     })
 
     it('allows string args to replace', () => {
@@ -166,9 +207,7 @@ describe('method calls on values', () => {
     it('blocks object args to replace (Symbol.replace hole)', () => {
       const expr2 = bonsai()
       expr2.addFunction('makeObj', () => ({ toString: () => 'a' }))
-      expect(() => expr2.evaluateSync('"abc".replace(makeObj(), "x")')).toThrow(
-        'objects are not allowed',
-      )
+      expect(() => expr2.evaluateSync('"abc".replace(makeObj(), "x")')).toThrow('string argument')
     })
 
     it('caps repeat count to prevent DoS', () => {

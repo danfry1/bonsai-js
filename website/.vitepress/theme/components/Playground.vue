@@ -157,7 +157,7 @@ import './playground/playground.css'
 
 const root = ref<HTMLElement>()
 
-interface TransformInfo {
+interface BindingInfo {
   desc: string
   module: string
   accepts: string[] | null
@@ -203,8 +203,8 @@ onMounted(() => {
   expr.use(types)
   expr.use(dates)
 
-  // ── Stdlib transform catalog ────────────────────────────────
-  const transforms: Record<string, TransformInfo> = {
+  // ── Stdlib binding catalog ──────────────────────────────────
+  const bindings: Record<string, BindingInfo> = {
     // strings
     upper: { desc: 'Convert string to UPPERCASE', module: 'strings', accepts: ['string'] },
     lower: { desc: 'Convert string to lowercase', module: 'strings', accepts: ['string'] },
@@ -239,8 +239,8 @@ onMounted(() => {
     sum: { desc: 'Sum all numbers in array', module: 'math', accepts: ['array'] },
     avg: { desc: 'Average of numbers in array', module: 'math', accepts: ['array'] },
     clamp: { desc: 'Clamp value between min and max', module: 'math', accepts: ['number'] },
-    min: { desc: 'Minimum value', module: 'math', accepts: ['array'] },
-    max: { desc: 'Maximum value', module: 'math', accepts: ['array'] },
+    min: { desc: 'Minimum of the supplied arguments', module: 'math', accepts: null },
+    max: { desc: 'Maximum of the supplied arguments', module: 'math', accepts: null },
     // types (work on any value)
     isString: { desc: 'Check if value is a string', module: 'types', accepts: null },
     isNumber: { desc: 'Check if value is a number', module: 'types', accepts: null },
@@ -250,12 +250,22 @@ onMounted(() => {
     toNumber: { desc: 'Convert to number', module: 'types', accepts: null },
     toString: { desc: 'Convert to string', module: 'types', accepts: null },
     // dates
-    now: { desc: 'Current timestamp (ms)', module: 'dates', accepts: null },
+    now: { desc: 'Current timestamp function (ms)', module: 'dates', accepts: null },
     formatDate: { desc: 'Format date to string', module: 'dates', accepts: ['number', 'string'] },
     diffDays: { desc: 'Difference in days between dates', module: 'dates', accepts: ['number', 'string'] },
   }
 
-  // Autocomplete auto-discovers transform type compatibility via probing — no config needed
+  const registeredNames = new Set([...expr.listTransforms(), ...expr.listFunctions()])
+  const catalogNames = new Set(Object.keys(bindings))
+  if (
+    [...registeredNames].some((name) => !catalogNames.has(name)) ||
+    [...catalogNames].some((name) => !registeredNames.has(name))
+  ) {
+    throw new Error('Playground binding catalog is out of sync with the configured standard library')
+  }
+
+  // Autocomplete reads static signatures from the configured registry and never
+  // calls a transform or function to infer its type.
   const ac = createAutocomplete(expr, {})
 
   // ── Examples ─────────────────────────────────────────────────
@@ -503,14 +513,14 @@ onMounted(() => {
     const text = exprInput.value
     const varNames = ctxVars.map((v) => v.name.trim()).filter(Boolean)
 
-    // Build combined regex for context vars and transforms
+    // Build combined regex for context variables and registered bindings.
     const parts: string[] = []
     const escapedVars = varNames.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     if (escapedVars.length > 0) parts.push(...escapedVars)
 
-    const transformNames = Object.keys(transforms)
-    const escapedTransforms = transformNames.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    parts.push(...escapedTransforms)
+    const bindingNames = Object.keys(bindings)
+    const escapedBindings = bindingNames.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    parts.push(...escapedBindings)
 
     if (parts.length === 0) {
       exprHighlight.textContent = text
@@ -531,7 +541,7 @@ onMounted(() => {
       const word = match[0]
       const span = document.createElement('span')
 
-      // Skip transform highlighting if preceded by `.` (property access, not a transform)
+      // Skip binding highlighting if preceded by `.` (property access, not a binding).
       const charBefore = index > 0 ? text[index - 1] : ''
       const isPropertyAccess = charBefore === '.'
 
@@ -539,12 +549,12 @@ onMounted(() => {
         span.className = 'hl-var'
         span.textContent = word
         frag.appendChild(span)
-      } else if (transforms[word] && !isPropertyAccess) {
-        const t = transforms[word]
+      } else if (bindings[word] && !isPropertyAccess) {
+        const binding = bindings[word]
         span.className = 'hl-transform'
         span.textContent = word
-        span.dataset.desc = t.desc
-        span.dataset.module = t.module
+        span.dataset.desc = binding.desc
+        span.dataset.module = binding.module
         frag.appendChild(span)
       } else {
         frag.appendChild(document.createTextNode(word))
@@ -641,8 +651,8 @@ onMounted(() => {
       return best
     }
 
-    // Check if it's a transform
-    if (transforms[word]) {
+    // Check if it is a registered transform or function.
+    if (bindings[word]) {
       if (word === activeTransform) return
       activeTransform = word
       clearTimeout(tooltipTimer)
@@ -674,8 +684,8 @@ onMounted(() => {
   })
 
   function showTransformTooltip(word: string, el: HTMLElement) {
-    const t = transforms[word]
-    if (!t) return
+    const binding = bindings[word]
+    if (!binding) return
     tooltip.textContent = ''
     tooltip.className = 'pg-transform-tooltip'
 
@@ -685,11 +695,11 @@ onMounted(() => {
 
     const mod = document.createElement('span')
     mod.className = 'pg-tt-module'
-    mod.textContent = t.module
+    mod.textContent = `${binding.module} · ${expr.hasFunction(word) ? 'function' : 'transform'}`
 
     const desc = document.createElement('span')
     desc.className = 'pg-tt-desc'
-    desc.textContent = t.desc
+    desc.textContent = binding.desc
 
     tooltip.append(name, mod, desc)
     positionTooltip(el)
@@ -767,12 +777,14 @@ onMounted(() => {
     acStart = pos - acPrefix.length
 
     acItems = completions.slice(0, 12).map((c) => {
-      // Enrich with module info from the playground's transform catalog
-      const catalogEntry = transforms[c.label]
+      // Enrich with module and binding-kind info from the playground catalog.
+      const catalogEntry = bindings[c.label]
       return {
         name: c.label,
         desc: catalogEntry ? catalogEntry.desc : (c.detail || c.kind),
-        module: catalogEntry ? catalogEntry.module : c.kind,
+        module: catalogEntry
+          ? `${catalogEntry.module} · ${expr.hasFunction(c.label) ? 'function' : 'transform'}`
+          : c.kind,
         accepts: null,
       }
     })

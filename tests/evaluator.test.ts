@@ -209,7 +209,7 @@ describe('evaluator - arrays and objects', () => {
 
   it('throws a typed error for non-iterable array spread', () => {
     expect(() => run('[...value]', { value: 42 })).toThrow(BonsaiTypeError)
-    expect(() => run('[...value]', { value: 42 })).toThrow('iterable value')
+    expect(() => run('[...value]', { value: 42 })).toThrow('an array')
   })
 
   it('blocks unsafe object literal keys', () => {
@@ -223,13 +223,16 @@ describe('evaluator - arrays and objects', () => {
     expect(() => expr.evaluateSync('[...items]', { items: bigArray })).toThrow('maximum')
   })
 
-  it('spread limits iterable materialization', () => {
+  it('spread rejects arbitrary iterables without running them', () => {
     const expr = bonsai({ maxArrayLength: 5 })
+    let calls = 0
     function* gen() {
+      calls++
       let i = 0
       while (true) yield i++
     }
-    expect(() => expr.evaluateSync('[...items]', { items: gen() })).toThrow('maximum')
+    expect(() => expr.evaluateSync('[...items]', { items: gen() })).toThrow('an array')
+    expect(calls).toBe(0)
   })
 })
 
@@ -452,8 +455,23 @@ describe('evaluator - non-callable and invalid-transform guards', () => {
     expect(() => run('(1 + 2)()')).toThrow('Cannot call non-identifier')
   })
 
-  it('throws "Invalid transform expression" when a pipe target is not a call or identifier', () => {
-    expect(() => run('5 |> 42')).toThrow('Invalid transform expression')
+  it('rejects a non-named pipe target at parse time with a typed error', () => {
+    expect(() => run('5 |> 42')).toThrow('Pipe transform must be a named transform')
+  })
+
+  it('keeps the runtime invalid-transform guard as defense in depth for hand-built ASTs', () => {
+    // The parser now rejects this shape, so reach the runtime guard directly.
+    const ast = {
+      type: 'PipeExpression',
+      input: { type: 'NumberLiteral', value: 5, start: 0, end: 1 },
+      transform: { type: 'NumberLiteral', value: 42, start: 5, end: 7 },
+      start: 0,
+      end: 7,
+    } as const
+    const ec = new ExecutionContext(new SecurityPolicy())
+    expect(() => evaluate(ast, {}, { transforms: {}, functions: {} }, ec)).toThrow(
+      'Invalid transform expression',
+    )
   })
 })
 

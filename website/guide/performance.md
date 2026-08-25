@@ -38,9 +38,19 @@ Measured with the `vs-jexl-fair` benchmark (both libraries used the way each is 
 
 | Scenario | Speedup |
 | --- | --- |
-| Default usage (parse + evaluate) | ~55x faster |
-| Pre-compiled literal | ~2.9x faster |
-| Pre-compiled comparison | ~4.9x faster |
+| Default sync usage (Bonsai cached, Jexl uncached) | 38.7x faster |
+| Pre-compiled comparison + logic | 3.7x faster |
+| Pre-compiled literal | 3.0x faster |
+| Pre-compiled arithmetic | 13.3x faster |
+| Pre-compiled property access | 2.2x faster |
+| Pre-compiled ternary | 3.8x faster |
+| Pre-compiled transform | 2.3x faster |
+
+These figures are from the 20 August 2026 local run. The benchmark compares
+`evaluateSync` with `evalSync` for default synchronous usage and keeps both
+libraries on their documented execution APIs. It reports each scenario
+separately; it is evidence for regression and architectural choices, not a
+universal speed claim.
 
 Run benchmarks yourself: `bunx vitest bench`
 

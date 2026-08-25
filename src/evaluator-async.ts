@@ -1,15 +1,21 @@
 import type { ASTNode, Identifier, ObjectProperty } from './types.js'
 import type { Bindings } from './plugins.js'
 import type { ExecutionContext } from './execution-context.js'
-import { attachLocation } from './errors.js'
+import { attachLocation, BonsaiTypeError } from './errors.js'
 import type { EvalEnv } from './evaluator.js'
+import { createBonsaiLambda } from './lambda.js'
+import { coerceToString } from './coerce.js'
+import { isPromiseLike } from './promise-like.js'
 import {
   accessMember,
   accessMemberByName,
+  readOwnProperty,
+  arrayMethodReceiver,
   applyBinaryOp,
   applyUnaryOp,
-  checkResultArrayLength,
-  checkResultStringLength,
+  chargeNativeMethod,
+  checkResultLimits,
+  checkTransformArity,
   expandSpreadValue,
   getIdentifierName,
   getObjectLiteralKeyName,
@@ -20,6 +26,31 @@ import {
 } from './eval-ops.js'
 
 type AsyncEvalEnv = EvalEnv
+
+/**
+ * Reject Promise-like context values at the read boundary of the async walk.
+ *
+ * `evaluateSync` treats a thenable in context as inert data, but the async
+ * walk awaits every intermediate value, and JavaScript assimilation would
+ * invoke the thenable's host `.then` (executing an ORM query, or hanging
+ * forever on a never-settling thenable). Neither silently running host code
+ * nor a silent sync/async divergence is acceptable, so reading such a value
+ * in async mode fails loud. Extensions returning Promises are unaffected:
+ * awaiting an extension result is the documented purpose of `evaluate()`.
+ */
+function rejectThenableRead(value: unknown, name: string): unknown {
+  if (isPromiseLike(value)) {
+    throw new BonsaiTypeError(
+      name,
+      'a plain data value — Promise-like context values would be awaited by async evaluation; resolve them before building the context (evaluateSync treats them as data)',
+      value,
+    )
+  }
+  return value
+}
+type CallExpressionNode = Extract<ASTNode, { type: 'CallExpression' }>
+type MemberCalleeNode = Extract<ASTNode, { type: 'MemberExpression' | 'OptionalMemberExpression' }>
+type MemberCallExpressionNode = CallExpressionNode & { callee: MemberCalleeNode }
 
 // This is the async mirror of src/evaluator.ts. The two walks are kept separate
 // to preserve the synchronous fast path (see ARCHITECTURE.md). Any change to
@@ -41,10 +72,13 @@ export async function evaluateAsync(
     g: guard,
     s: source,
   }
-  if (!guard.needsAccounting) return evalNodeAsync(node, env)
+  // Result limits apply where values are produced, not to the final value, so
+  // context data passed through unchanged is never rejected (mirrors evaluator.ts).
+  // Stryker disable next-line ConditionalExpression: forcing inert run accounting on only changes performance
+  if (!guard.needsAccounting) return guard.waitFor(evalNodeAsync(node, env))
   guard.beginRun()
   try {
-    const result = await evalNodeAsync(node, env)
+    const result = await guard.waitFor(evalNodeAsync(node, env))
     guard.checkTimeout()
     return result
   } finally {
@@ -54,33 +88,18 @@ export async function evaluateAsync(
 
 async function evalNodeAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown> {
   // Fast path for leaf nodes — no depth tracking or step counting needed
-  switch (node.type) {
-    case 'NumberLiteral':
-    case 'StringLiteral':
-    case 'BooleanLiteral':
-      return node.value
-    case 'NullLiteral':
-      return null
-    case 'UndefinedLiteral':
-      return undefined
-    case 'Identifier':
-      env.g.checkNameAccess(node.name, 'identifier')
-      return Object.hasOwn(env.ctx, node.name) ? env.ctx[node.name] : undefined
-    case 'UnaryExpression':
-    case 'BinaryExpression':
-    case 'ConditionalExpression':
-    case 'MemberExpression':
-    case 'OptionalMemberExpression':
-    case 'ArrayLiteral':
-    case 'ObjectLiteral':
-    case 'CallExpression':
-    case 'PipeExpression':
-    case 'TemplateLiteral':
-    case 'SpreadElement':
-    case 'LambdaAccessor':
-    case 'LambdaIdentity':
-    case 'LambdaExpression':
-      break
+  if (
+    node.type === 'NumberLiteral' ||
+    node.type === 'StringLiteral' ||
+    node.type === 'BooleanLiteral'
+  ) {
+    return node.value
+  }
+  if (node.type === 'NullLiteral') return null
+  if (node.type === 'UndefinedLiteral') return undefined
+  if (node.type === 'Identifier') {
+    env.g.checkNameAccess(node.name, 'identifier')
+    return rejectThenableRead(readOwnProperty(env.ctx, node.name), node.name)
   }
 
   return evalCompoundAsync(node, env)
@@ -92,6 +111,8 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
   g.step()
 
   try {
+    // Leaf-only/internal nodes are rejected by the default branch.
+    // oxlint-disable-next-line typescript/switch-exhaustiveness-check
     switch (node.type) {
       case 'UnaryExpression':
         return applyUnaryOp(node.operator, await evalNodeAsync(node.operand, env))
@@ -110,11 +131,14 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
           const left = await evalNodeAsync(node.left, env)
           return left ?? (await evalNodeAsync(node.right, env))
         }
-        return applyBinaryOp(
+        const result = applyBinaryOp(
           op,
           await evalNodeAsync(node.left, env),
           await evalNodeAsync(node.right, env),
+          g,
         )
+        checkResultLimits(result, g)
+        return result
       }
 
       case 'ConditionalExpression':
@@ -125,9 +149,18 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
       case 'MemberExpression': {
         const object = await evalNodeAsync(node.object, env)
         try {
-          return node.computed
-            ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
-            : accessMemberByName(object, (node.property as Identifier).name, g)
+          return rejectThenableRead(
+            node.computed
+              ? accessMember(
+                  object,
+                  node.property,
+                  true,
+                  await evalNodeAsync(node.property, env),
+                  g,
+                )
+              : accessMemberByName(object, (node.property as Identifier).name, g),
+            'member access',
+          )
         } catch (e) {
           if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
           throw e
@@ -138,9 +171,18 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
         const object = await evalNodeAsync(node.object, env)
         if (object == null) return undefined
         try {
-          return node.computed
-            ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
-            : accessMemberByName(object, (node.property as Identifier).name, g)
+          return rejectThenableRead(
+            node.computed
+              ? accessMember(
+                  object,
+                  node.property,
+                  true,
+                  await evalNodeAsync(node.property, env),
+                  g,
+                )
+              : accessMemberByName(object, (node.property as Identifier).name, g),
+            'member access',
+          )
         } catch (e) {
           if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
           throw e
@@ -152,13 +194,17 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
         for (const el of node.elements) {
           g.step()
           if (el.type === 'SpreadElement') {
-            elements.push(
-              ...expandSpreadValue(
-                await evalNodeAsync(el.argument, env),
-                g.policy.maxArrayLength,
-                g,
-              ),
+            // Bulk append via length-extension and indexed writes (mirrors the
+            // sync walk): avoids the engine argument-count limit of
+            // `push(...expanded)` and the per-element push cost.
+            const expanded = expandSpreadValue(
+              await evalNodeAsync(el.argument, env),
+              g.policy.maxArrayLength,
+              g,
             )
+            const offset = elements.length
+            elements.length = offset + expanded.length
+            for (let i = 0; i < expanded.length; i++) elements[offset + i] = expanded[i]
           } else {
             elements.push(await evalNodeAsync(el, env))
           }
@@ -168,6 +214,7 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
       }
 
       case 'ObjectLiteral': {
+        g.checkObjectProperties(node.properties.length)
         const obj = Object.create(null) as Record<string, unknown>
         for (const prop of node.properties) {
           g.step()
@@ -195,8 +242,13 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
         let result = ''
         for (const part of node.parts) {
           g.step()
+          // A static string and the same string passed through coerceToString are identical.
+          // Stryker disable next-line StringLiteral
           result +=
-            part.type === 'StringLiteral' ? part.value : String(await evalNodeAsync(part, env))
+            part.type === 'StringLiteral'
+              ? part.value
+              : coerceToString(await evalNodeAsync(part, env), 'template interpolation')
+          g.checkStringLength(result.length)
         }
         return result
       }
@@ -208,23 +260,17 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
         return makeLambdaAccessor(node.property, g)
 
       case 'LambdaIdentity':
-        return (item: unknown) => {
+        return createBonsaiLambda((item: unknown) => {
           g.step()
           return item
-        }
+        })
 
       case 'LambdaExpression':
-        return (item: unknown) => {
+        return createBonsaiLambda((item: unknown) => {
           g.step()
           return evalLambdaBodyAsync(node.body, item, env)
-        }
+        })
 
-      case 'NumberLiteral':
-      case 'StringLiteral':
-      case 'BooleanLiteral':
-      case 'NullLiteral':
-      case 'UndefinedLiteral':
-      case 'Identifier':
       default:
         throw new Error(`Unknown node type: ${(node as ASTNode).type}`)
     }
@@ -234,48 +280,15 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
 }
 
 async function evalCallExpressionAsync(
-  node: Extract<ASTNode, { type: 'CallExpression' }>,
+  node: CallExpressionNode,
   env: AsyncEvalEnv,
 ): Promise<unknown> {
   const { fn, g, s } = env
+  g.checkCallArguments(node.args.length)
 
-  if (node.callee.type === 'MemberExpression' || node.callee.type === 'OptionalMemberExpression') {
-    const obj = await evalNodeAsync(node.callee.object, env)
-    if (node.callee.type === 'OptionalMemberExpression' && obj == null) return undefined
-    const computedValue = node.callee.computed
-      ? await evalNodeAsync(node.callee.property, env)
-      : undefined
-    const methodName = node.callee.computed
-      ? String(computedValue)
-      : getIdentifierName(node.callee.property, 'Expected method name')
-
+  if (isMemberCall(node)) {
     try {
-      const method = validateMethodCall(obj, methodName, g)
-      const args: unknown[] = []
-      for (const arg of node.args) {
-        await pushCallArgumentAsync(args, arg, env)
-      }
-      validateMethodArgs(obj, methodName, args, g)
-
-      // Higher-order array methods need async-aware iteration
-      // because lambda callbacks may return Promises, which native
-      // Array methods can't handle (Promises are always truthy).
-      if (Array.isArray(obj) && args.length === 1 && typeof args[0] === 'function') {
-        const arr = obj
-        const predicate = args[0] as (item: unknown) => unknown
-        const asyncResult = await evalAsyncArrayMethod(methodName, arr, predicate)
-        if (asyncResult !== undefined) {
-          g.checkTimeout()
-          checkResultArrayLength(asyncResult.value, g)
-          return asyncResult.value
-        }
-      }
-
-      const result = await method.call(obj, ...args)
-      g.checkTimeout()
-      checkResultArrayLength(result, g)
-      checkResultStringLength(result, g)
-      return result
+      return await evalMethodCallAsync(node, env, (object) => evalNodeAsync(object, env))
     } catch (e) {
       if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
       throw e
@@ -296,6 +309,7 @@ async function evalCallExpressionAsync(
           ? await resolved.fn(env.ctx, ...args)
           : await resolved.fn(...args)
       g.checkTimeout()
+      checkResultLimits(result, g)
       return result
     } catch (e) {
       if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
@@ -306,23 +320,84 @@ async function evalCallExpressionAsync(
   throw new Error('Cannot call non-identifier')
 }
 
+function isMemberCall(node: CallExpressionNode): node is MemberCallExpressionNode {
+  return node.callee.type === 'MemberExpression' || node.callee.type === 'OptionalMemberExpression'
+}
+
+/**
+ * One async method-call path shared by top-level and lambda-body evaluation.
+ * Only evaluation of the receiver differs: a lambda receiver may start from
+ * the current item, while computed properties and arguments use the ordinary
+ * expression environment in both cases.
+ */
+async function evalMethodCallAsync(
+  node: MemberCallExpressionNode,
+  env: AsyncEvalEnv,
+  evaluateObject: (node: ASTNode) => Promise<unknown>,
+): Promise<unknown> {
+  const { g } = env
+  const { callee } = node
+  g.checkCallArguments(node.args.length)
+  const obj = await evaluateObject(callee.object)
+  if (callee.type === 'OptionalMemberExpression' && obj == null) return undefined
+  const computedValue = callee.computed ? await evalNodeAsync(callee.property, env) : undefined
+  const methodName = callee.computed
+    ? coerceToString(computedValue, 'computed method name')
+    : (callee.property as Identifier).name
+  const receiver = Array.isArray(obj) ? arrayMethodReceiver(obj, methodName, g) : obj
+  const method = validateMethodCall(receiver, methodName, g)
+  const args: unknown[] = []
+  for (const arg of node.args) {
+    await pushCallArgumentAsync(args, arg, env)
+  }
+  validateMethodArgs(receiver, methodName, args, g)
+  if (g.needsAccounting) chargeNativeMethod(receiver, methodName, args, g)
+
+  // Native array callbacks cannot await Bonsai lambdas: handle the audited
+  // higher-order catalog sequentially so order and short-circuiting match sync.
+  if (Array.isArray(receiver)) {
+    const asyncResult = await evalAsyncArrayMethod(
+      methodName,
+      receiver,
+      args[0] as (item: unknown) => unknown,
+    )
+    if (asyncResult !== undefined) {
+      g.checkTimeout()
+      checkResultLimits(asyncResult.value, g)
+      return asyncResult.value
+    }
+  }
+
+  const result = await method.call(receiver, ...args)
+  g.checkTimeout()
+  checkResultLimits(result, g)
+  return result
+}
+
 async function pushCallArgumentAsync(
   args: unknown[],
   node: ASTNode,
   env: AsyncEvalEnv,
 ): Promise<void> {
   if (node.type === 'SpreadElement') {
-    args.push(
-      ...expandSpreadValue(
-        await evalNodeAsync(node.argument, env),
-        env.g.policy.maxArrayLength,
-        env.g,
-      ),
+    const expanded = expandSpreadValue(
+      await evalNodeAsync(node.argument, env),
+      env.g.policy.maxArrayLength,
+      env.g,
     )
+    env.g.checkCallArguments(args.length + expanded.length)
+    // Append by index: `push(...expanded)` hits the engine's argument-count
+    // limit (~125k on V8) when a host raises maxCallArguments past it.
+    {
+      const offset = args.length
+      args.length = offset + expanded.length
+      for (let i = 0; i < expanded.length; i++) args[offset + i] = expanded[i]
+    }
     return
   }
 
   args.push(await evalArgAsync(node, env))
+  env.g.checkCallArguments(args.length)
 }
 
 // Async-safe higher-order array method evaluation. Native JS array methods
@@ -350,29 +425,49 @@ async function evalAsyncArrayMethod(
   switch (methodName) {
     case 'filter': {
       const out: unknown[] = []
-      for (const item of arr) {
+      for (let index = 0; index < arr.length; index++) {
+        if (!Object.hasOwn(arr, index)) continue
+        const item = arr[index]
         if (isTruthy(await predicate(item))) out.push(item)
       }
       return { value: out }
     }
     case 'map': {
-      const out: unknown[] = []
-      for (const item of arr) {
-        out.push(await predicate(item))
+      const out: unknown[] = new Array<unknown>(arr.length)
+      for (let index = 0; index < arr.length; index++) {
+        if (!Object.hasOwn(arr, index)) continue
+        out[index] = await predicate(arr[index])
       }
       return { value: out }
     }
     case 'flatMap': {
       const out: unknown[] = []
-      for (const item of arr) {
-        out.push(await predicate(item))
+      for (let index = 0; index < arr.length; index++) {
+        if (!Object.hasOwn(arr, index)) continue
+        const value = await predicate(arr[index])
+        if (Array.isArray(value)) {
+          // Append by index, not `push(...expanded)`: spreading into a call
+          // hits the engine's argument-count limit (~125k on V8) with a raw
+          // RangeError before the caller's checkResultLimits can produce the
+          // typed MAX_ARRAY_LENGTH error that the sync walk raises.
+          const expanded = expandSpreadValue(value)
+          const offset = out.length
+          out.length = offset + expanded.length
+          for (let i = 0; i < expanded.length; i++) out[offset + i] = expanded[i]
+        } else {
+          out.push(value)
+        }
       }
-      return { value: out.flat() }
+      return { value: out }
     }
     case 'find': {
-      for (const item of arr) {
+      for (let index = 0; index < arr.length; index++) {
+        // Array.prototype.find visits sparse holes as undefined. Keep the
+        // index loop (rather than for...of) so no mutable iterator is consulted.
+        const item = Object.hasOwn(arr, index) ? arr[index] : undefined
         if (isTruthy(await predicate(item))) return { value: item }
       }
+      // Stryker disable next-line ObjectLiteral: an empty wrapper has the same `.value`
       return { value: undefined }
     }
     case 'findIndex': {
@@ -382,14 +477,16 @@ async function evalAsyncArrayMethod(
       return { value: -1 }
     }
     case 'some': {
-      for (const item of arr) {
-        if (isTruthy(await predicate(item))) return { value: true }
+      for (let index = 0; index < arr.length; index++) {
+        if (!Object.hasOwn(arr, index)) continue
+        if (isTruthy(await predicate(arr[index]))) return { value: true }
       }
       return { value: false }
     }
     case 'every': {
-      for (const item of arr) {
-        if (!isTruthy(await predicate(item))) return { value: false }
+      for (let index = 0; index < arr.length; index++) {
+        if (!Object.hasOwn(arr, index)) continue
+        if (!isTruthy(await predicate(arr[index]))) return { value: false }
       }
       return { value: true }
     }
@@ -403,10 +500,10 @@ async function evalArgAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown> 
     return makeLambdaAccessor(node.property, env.g)
   }
   if (node.type === 'LambdaIdentity') {
-    return (item: unknown) => {
+    return createBonsaiLambda((item: unknown) => {
       env.g.step()
       return item
-    }
+    })
   }
   return evalNodeAsync(node, env)
 }
@@ -419,20 +516,24 @@ async function evalPipeAsync(
   const { tr, g } = env
 
   if (transformNode.type === 'CallExpression') {
+    g.checkCallArguments(transformNode.args.length)
     const calleeName = getIdentifierName(transformNode.callee, 'Transform must be an identifier')
     const func = resolveTransform(calleeName, tr)
     const args: unknown[] = []
     for (const arg of transformNode.args) {
       await pushCallArgumentAsync(args, arg, env)
     }
+    checkTransformArity(func, calleeName, args.length)
     const result = await func(input, ...args)
     g.checkTimeout()
+    checkResultLimits(result, g)
     return result
   }
 
   if (transformNode.type === 'Identifier') {
     const result = await resolveTransform(transformNode.name, tr)(input)
     g.checkTimeout()
+    checkResultLimits(result, g)
     return result
   }
 
@@ -450,32 +551,21 @@ async function evalLambdaBodyAsync(
   // independent leaves and the single accessor need no depth tracking or step
   // counting. Keeps depth accounting identical to the main walk and the sync
   // lambda walk (parity).
-  switch (node.type) {
-    case 'LambdaIdentity':
-      return item
-    case 'LambdaAccessor':
-      g.checkNameAccess(node.property, 'member')
-      return (item as Record<string, unknown>)?.[node.property]
-    case 'NumberLiteral':
-    case 'StringLiteral':
-    case 'BooleanLiteral':
-    case 'NullLiteral':
-    case 'UndefinedLiteral':
-    case 'Identifier':
-      return evalNodeAsync(node, env)
-    case 'MemberExpression':
-    case 'OptionalMemberExpression':
-    case 'CallExpression':
-    case 'BinaryExpression':
-    case 'UnaryExpression':
-    case 'ConditionalExpression':
-    case 'LambdaExpression':
-    case 'ArrayLiteral':
-    case 'ObjectLiteral':
-    case 'PipeExpression':
-    case 'SpreadElement':
-    case 'TemplateLiteral':
-      break
+  if (node.type === 'LambdaIdentity') return item
+  if (node.type === 'LambdaAccessor') {
+    return item == null
+      ? undefined
+      : rejectThenableRead(accessMemberByName(item, node.property, g), node.property)
+  }
+  if (
+    node.type === 'NumberLiteral' ||
+    node.type === 'StringLiteral' ||
+    node.type === 'BooleanLiteral' ||
+    node.type === 'NullLiteral' ||
+    node.type === 'UndefinedLiteral' ||
+    node.type === 'Identifier'
+  ) {
+    return evalNodeAsync(node, env)
   }
 
   g.enterDepth()
@@ -483,71 +573,35 @@ async function evalLambdaBodyAsync(
 
   let ownDepth = true
   try {
+    // Item-independent compound nodes deliberately delegate through default.
+    // oxlint-disable-next-line typescript/switch-exhaustiveness-check
     switch (node.type) {
       case 'MemberExpression': {
         const object = await evalLambdaBodyAsync(node.object, item, env)
-        return node.computed
-          ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
-          : accessMemberByName(object, (node.property as Identifier).name, g)
+        return rejectThenableRead(
+          node.computed
+            ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
+            : accessMemberByName(object, (node.property as Identifier).name, g),
+          'member access',
+        )
       }
 
       case 'OptionalMemberExpression': {
         const object = await evalLambdaBodyAsync(node.object, item, env)
         if (object == null) return undefined
-        return node.computed
-          ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
-          : accessMemberByName(object, (node.property as Identifier).name, g)
+        return rejectThenableRead(
+          node.computed
+            ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
+            : accessMemberByName(object, (node.property as Identifier).name, g),
+          'member access',
+        )
       }
 
       case 'CallExpression': {
-        if (
-          node.callee.type === 'MemberExpression' ||
-          node.callee.type === 'OptionalMemberExpression'
-        ) {
-          const obj = await evalLambdaBodyAsync(node.callee.object, item, env)
-          if (node.callee.type === 'OptionalMemberExpression' && obj == null) return undefined
-          const computedValue = node.callee.computed
-            ? await evalNodeAsync(node.callee.property, env)
-            : undefined
-          const methodName = node.callee.computed
-            ? String(computedValue)
-            : getIdentifierName(node.callee.property, 'Expected method name')
-          const method = validateMethodCall(obj, methodName, g)
-          const args: unknown[] = []
-          for (const arg of node.args) {
-            if (arg.type === 'SpreadElement') {
-              args.push(
-                ...expandSpreadValue(
-                  await evalNodeAsync(arg.argument, env),
-                  g.policy.maxArrayLength,
-                  g,
-                ),
-              )
-            } else {
-              args.push(await evalArgAsync(arg, env))
-            }
-          }
-          validateMethodArgs(obj, methodName, args, g)
-
-          // Async-safe higher-order array method handling (same as top-level path)
-          if (Array.isArray(obj) && args.length === 1 && typeof args[0] === 'function') {
-            const asyncResult = await evalAsyncArrayMethod(
-              methodName,
-              obj,
-              args[0] as (item: unknown) => unknown,
-            )
-            if (asyncResult !== undefined) {
-              g.checkTimeout()
-              checkResultArrayLength(asyncResult.value, g)
-              return asyncResult.value
-            }
-          }
-
-          const result = await method.call(obj, ...args)
-          g.checkTimeout()
-          checkResultArrayLength(result, g)
-          checkResultStringLength(result, g)
-          return result
+        if (isMemberCall(node)) {
+          return await evalMethodCallAsync(node, env, (object) =>
+            evalLambdaBodyAsync(object, item, env),
+          )
         }
         ownDepth = false
         g.exitDepth()
@@ -568,11 +622,14 @@ async function evalLambdaBodyAsync(
           const left = await evalLambdaBodyAsync(node.left, item, env)
           return left ?? (await evalLambdaBodyAsync(node.right, item, env))
         }
-        return applyBinaryOp(
+        const result = applyBinaryOp(
           op,
           await evalLambdaBodyAsync(node.left, item, env),
           await evalLambdaBodyAsync(node.right, item, env),
+          g,
         )
+        checkResultLimits(result, g)
+        return result
       }
 
       case 'UnaryExpression':
@@ -586,11 +643,6 @@ async function evalLambdaBodyAsync(
       case 'LambdaExpression':
         return await evalLambdaBodyAsync(node.body, item, env)
 
-      case 'ArrayLiteral':
-      case 'ObjectLiteral':
-      case 'PipeExpression':
-      case 'TemplateLiteral':
-      case 'SpreadElement':
       default:
         ownDepth = false
         g.exitDepth()
@@ -603,7 +655,7 @@ async function evalLambdaBodyAsync(
 
 async function getObjectPropertyKey(prop: ObjectProperty, env: AsyncEvalEnv): Promise<string> {
   const key = prop.computed
-    ? String(await evalNodeAsync(prop.key, env))
+    ? coerceToString(await evalNodeAsync(prop.key, env), 'computed object key')
     : getObjectLiteralKeyName(prop.key)
   env.g.checkNameAccess(key, 'object-key')
   return key
@@ -616,13 +668,14 @@ function isTruthy(value: unknown): boolean {
   return Boolean(value)
 }
 
-function makeLambdaAccessor(
-  property: string,
-  guard: ExecutionContext,
-): (item: Record<string, unknown>) => unknown {
-  return (item: Record<string, unknown>) => {
+function makeLambdaAccessor(property: string, guard: ExecutionContext): (item: unknown) => unknown {
+  // The property name is static, so the access policy is checked once when the
+  // lambda is created rather than once per element (mirrors evaluator.ts).
+  // Every non-identifier/non-object-key access kind follows the same policy branch.
+  // Stryker disable next-line StringLiteral
+  guard.checkNameAccess(property, 'member')
+  return createBonsaiLambda((item: unknown) => {
     guard.step()
-    guard.checkNameAccess(property, 'member')
-    return item?.[property]
-  }
+    return rejectThenableRead(readOwnProperty(item, property), property)
+  })
 }

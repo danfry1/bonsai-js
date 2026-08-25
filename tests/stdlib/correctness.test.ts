@@ -62,6 +62,7 @@ describe('stdlib correctness', () => {
       expect(expr.evaluateSync('15 |> clamp(0, 10)')).toBe(10)
       expect(expr.evaluateSync('-5 |> clamp(0, 10)')).toBe(0)
       expect(expr.evaluateSync('5 |> clamp(0, 10)')).toBe(5)
+      expect(expr.evaluateSync('5 |> clamp(5, 5)')).toBe(5)
     })
   })
 
@@ -87,10 +88,47 @@ describe('stdlib correctness', () => {
         'ﬀ',
         '\u{1F600}',
       ])
+      expect(expr.evaluateSync('items |> sort', { items: ['😀b', '😀a'] })).toEqual(['😀a', '😀b'])
+    })
+
+    it('orders prefixes and empty strings without reading past either input', () => {
+      expect(expr.evaluateSync('items |> sort', { items: ['aa', 'a', ''] })).toEqual([
+        '',
+        'a',
+        'aa',
+      ])
+      expect(expr.evaluateSync('items |> sort', { items: ['\uFFFFb', '\uFFFFa'] })).toEqual([
+        '\uFFFFa',
+        '\uFFFFb',
+      ])
+    })
+
+    it('uses numeric comparison only when both values are numbers', () => {
+      expect(expr.evaluateSync('items |> sort', { items: [2, '10', 1] })).toEqual([1, '10', 2])
+      expect(expr.evaluateSync('items |> sort', { items: [2, '10'] })).toEqual(['10', 2])
     })
 
     it('still sorts numbers numerically', () => {
       expect(expr.evaluateSync('items |> sort', { items: [3, 1, 2, 10] })).toEqual([1, 2, 3, 10])
+    })
+  })
+
+  describe('sparse array normalization', () => {
+    const expr = bonsai().use(arrays)
+    const sparse = new Array<unknown>(3)
+    sparse[1] = 'x'
+
+    it('materializes holes for transforms backed by mutating native operations', () => {
+      const reversed = expr.evaluateSync<unknown[]>('items |> reverse', { items: sparse })
+      expect(reversed).toEqual([undefined, 'x', undefined])
+      expect([0, 1, 2].map((index) => Object.hasOwn(reversed, index))).toEqual([true, true, true])
+
+      expect(expr.evaluateSync('items |> unique', { items: sparse })).toEqual([undefined, 'x'])
+
+      const sorted = expr.evaluateSync<unknown[]>('items |> sort', { items: sparse })
+      expect(sorted).toEqual(['x', undefined, undefined])
+      expect([0, 1, 2].map((index) => Object.hasOwn(sorted, index))).toEqual([true, true, true])
+      expect(Object.hasOwn(sparse, 0)).toBe(false)
     })
   })
 })

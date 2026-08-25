@@ -18,19 +18,16 @@ expr.use(math)
 jexl.addTransform('upper', (val: string) => val.toUpperCase())
 jexl.addTransform('sum', (arr: number[]) => arr.reduce((a, b) => a + b, 0))
 
-// Jexl's .eval is a safe expression evaluator API, not JS eval
-const jexlRun = (expression: string, ctx?: Record<string, unknown>) => jexl.eval(expression, ctx) // eslint-disable-line
-
 // ============================================================
-// Round 1: Default usage (how most people use each library)
+// Round 1: Default synchronous usage
 // Bonsai auto-caches, Jexl does not
 // ============================================================
 describe('default usage (bonsai cached vs jexl uncached)', () => {
   bench('bonsai: evaluateSync (auto-cached)', () => {
     expr.evaluateSync('user.age >= 18 && user.verified', context)
   })
-  bench('jexl: async eval (no cache)', async () => {
-    await jexlRun('user.age >= 18 && user.verified', context)
+  bench('jexl: evalSync (no cache)', () => {
+    jexl.evalSync('user.age >= 18 && user.verified', context)
   })
 })
 

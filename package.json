@@ -1,6 +1,6 @@
 {
   "name": "bonsai-js",
-  "version": "0.5.0",
+  "version": "1.0.0",
   "description": "A safe, zero-dependency expression language for rules, filters, and templates",
   "type": "module",
   "sideEffects": false,
@@ -18,10 +18,15 @@
     "./autocomplete": {
       "types": "./dist/autocomplete/index.d.mts",
       "import": "./dist/autocomplete/index.mjs"
+    },
+    "./checker": {
+      "types": "./dist/checker/index.d.mts",
+      "import": "./dist/checker/index.mjs"
     }
   },
   "files": [
     "dist",
+    "README.md",
     "LICENSE",
     "CHANGELOG.md"
   ],
@@ -42,7 +47,9 @@
     "test:watch": "vitest",
     "bench": "vitest bench",
     "bench:gate": "bun run scripts/perf-gate.ts",
+    "bench:compare": "bun run scripts/perf-compare.ts",
     "check:package": "bun run build && bun run scripts/check-package.ts",
+    "check:release": "bun run format:check && bun run lint && bun run knip && bun run typecheck && bun run test:coverage && bun run bench:gate && bun run check:package",
     "lint": "oxlint --type-aware --deny-warnings src tests scripts",
     "format": "oxfmt src tests scripts benchmarks tsdown.config.ts vitest.config.ts",
     "format:check": "oxfmt --check src tests scripts benchmarks tsdown.config.ts vitest.config.ts",
@@ -52,9 +59,13 @@
     "build:website": "vitepress build website",
     "preview:website": "vitepress preview website",
     "prepare": "test -n \"$CI\" || lefthook install",
-    "prepublishOnly": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run bench:gate && bun run check:package",
+    "prepublishOnly": "bun run check:release",
     "test:coverage": "vitest run --coverage",
-    "test:mutation": "stryker run",
+    "test:mutation": "bun run test:mutation:core",
+    "test:mutation:core": "stryker run stryker.config.json",
+    "test:mutation:stdlib": "stryker run stryker.stdlib.config.json",
+    "test:mutation:async": "stryker run stryker.async.config.json",
+    "test:mutation:v1": "bun run test:mutation:core && bun run test:mutation:stdlib && bun run test:mutation:async",
     "fuzz": "bun run scripts/fuzz.ts",
     "check:bump": "bumpy check",
     "bump": "bumpy add",
@@ -79,21 +90,21 @@
   "author": "Daniel Fry",
   "license": "MIT",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
     "@fast-check/vitest": "0.4.1",
     "@stryker-mutator/core": "9.6.1",
     "@stryker-mutator/vitest-runner": "9.6.1",
-    "@types/node": "22.20.1",
+    "@types/node": "24.13.3",
     "@varlock/bumpy": "1.18.1",
     "@vitest/coverage-v8": "4.1.10",
     "fast-check": "4.9.0",
     "jexl": "2.3.0",
     "knip": "6.26.0",
     "lefthook": "2.1.10",
-    "npm": "11.15.0",
+    "npm": "11.19.0",
     "oxfmt": "0.58.0",
     "oxlint": "1.73.0",
     "oxlint-tsgolint": "0.24.0",
@@ -103,8 +114,6 @@
     "vitest": "4.1.10"
   },
   "overrides": {
-    "vite": "7.3.3",
-    "postcss": "8.5.11",
-    "picomatch": "4.0.4"
+    "vite": "7.3.6"
   }
 }

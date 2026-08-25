@@ -7,7 +7,7 @@ export { math } from './math.js'
 /** Type-checking transforms: isString, isNumber, isArray, isNull, toBool, toNumber, toString. */
 export { types } from './types.js'
 /** Date transforms and functions: now, formatDate, diffDays. */
-export { dates } from './dates.js'
+export { dates, createDates, type DatesOptions } from './dates.js'
 
 import type { BonsaiPlugin } from '../types.js'
 import { strings } from './strings.js'

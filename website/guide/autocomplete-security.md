@@ -2,6 +2,10 @@
 
 Autocomplete respects your Bonsai instance's security policy. Properties that are blocked at evaluation time are also blocked from appearing in suggestions.
 
+Inference is static and data-only. Completion snapshots own data properties and
+reads declarative extension metadata; it does not evaluate expressions, call
+transforms/functions, or invoke getter properties. Accessors are omitted.
+
 ## allowedProperties
 
 When your instance uses `allowedProperties`, only those properties appear in completions. Everything else is excluded.
@@ -54,4 +58,10 @@ ac.complete('users.filter(.', 15)
 
 ::: tip Security policy is fixed at construction time
 The security policy is read once when `createAutocomplete()` is called and cached for the lifetime of the autocomplete instance. If you need different policies for different users or roles, create separate autocomplete instances.
+:::
+
+::: warning Do not use Proxies as autocomplete context
+JavaScript reflection can execute Proxy traps even when no property getter is
+called. Use plain data objects and arrays if that host behavior is outside your
+trust boundary.
 :::

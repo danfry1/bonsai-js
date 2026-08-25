@@ -2,9 +2,10 @@ name: Fuzz
 
 # Continuous fuzzing of the sandbox is a drift detector, like mutation testing:
 # it generates expressions with random seeds and checks the threat-model
-# invariants (no escape, parse robustness, sync/async/compile parity). Run it
-# weekly and on demand rather than per PR. A found violation fails the run and
-# prints the shrunk counterexample and seed in the log for reproduction.
+# invariants (no escape, parse robustness, sync/async/compile parity, and static
+# checker/schema safety without extension execution). Run it weekly and on
+# demand rather than per PR. A found violation fails the run and prints the
+# shrunk counterexample and seed in the log for reproduction.
 on:
   schedule:
     - cron: '0 6 * * 4' # Thursdays 06:00 UTC

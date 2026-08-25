@@ -1,5 +1,9 @@
 # Performance Optimization: From 900K to 30M ops/sec
 
+> Historical optimization case study. These measurements explain the registry
+> snapshot design; use the benchmark suite and website performance guide for the
+> current hardened runtime numbers.
+
 ## Summary
 
 A single getter that called `Object.fromEntries()` on every evaluation was responsible for a **33x slowdown**. Combined with guard overhead reduction, Bonsai went from ~900K ops/sec to 30M ops/sec — and from losing to Jexl in pre-compiled benchmarks to beating it in every scenario.

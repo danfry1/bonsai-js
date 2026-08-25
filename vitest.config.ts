@@ -14,10 +14,10 @@ export default defineConfig({
       // coverage backsliding without failing on minor per-PR dips. Raise
       // deliberately as coverage improves.
       thresholds: {
-        statements: 87,
-        branches: 80,
-        functions: 93,
-        lines: 88,
+        statements: 90,
+        branches: 84,
+        functions: 95,
+        lines: 91,
       },
     },
   },

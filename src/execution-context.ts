@@ -1,4 +1,4 @@
-import type { BonsaiOptions } from './types.js'
+import type { BonsaiOptions, EvaluationOptions } from './types.js'
 import { BonsaiSecurityError } from './errors.js'
 
 /**
@@ -15,31 +15,61 @@ export const BLOCKED_PROPERTIES: ReadonlySet<string> = new Set([
 
 const MAX_INDEX_DIGITS = 10
 
-function isCanonicalIndex(key: string): boolean {
+/** Whether `key` is a canonical non-negative integer index (`"0"`, `"12"`, not `"01"`). */
+export function isCanonicalIndex(key: string): boolean {
   if (key.length === 0 || key.length > MAX_INDEX_DIGITS) return false
   const n = Number(key)
   return Number.isInteger(n) && n >= 0 && String(n) === key
 }
 
+function isAbortSignal(value: unknown): value is AbortSignal {
+  if (value === null || typeof value !== 'object') return false
+  const candidate = value as Partial<AbortSignal>
+  return (
+    typeof candidate.aborted === 'boolean' &&
+    typeof candidate.addEventListener === 'function' &&
+    typeof candidate.removeEventListener === 'function'
+  )
+}
+
 const TIMEOUT_CHECK_INTERVAL = 1000
+
+/**
+ * Shared sentinel for "no per-run overrides". Callers pass it instead of a
+ * fresh `{}` so the synchronous hot path neither allocates nor re-validates
+ * options on every evaluation.
+ */
+export const NO_EVALUATION_OPTIONS: EvaluationOptions = Object.freeze({})
 
 // Deadlines use a monotonic clock where the host provides one: Date.now can
 // jump backwards or forwards under NTP adjustment, which would silently widen
 // or shrink the timeout window.
+// Stryker disable all: host feature detection is selected once at module load and both branches implement the same clock contract
 const monotonicNow: () => number =
   typeof performance === 'object' && typeof performance.now === 'function'
     ? () => performance.now()
     : Date.now
+// Stryker restore all
 const DEFAULT_MAX_DEPTH = 100
+const DEFAULT_MAX_SOURCE_LENGTH = 100_000
+const DEFAULT_MAX_TOKENS = 25_000
+const DEFAULT_MAX_AST_NODES = 10_000
 const DEFAULT_MAX_ARRAY_LENGTH = 100_000
 const DEFAULT_MAX_STRING_LENGTH = 100_000
+const DEFAULT_MAX_OBJECT_PROPERTIES = 10_000
+const DEFAULT_MAX_CALL_ARGUMENTS = 1_000
 const DEFAULT_MAX_STEPS = 1_000_000
 
 /** Immutable per-instance security configuration derived from BonsaiOptions. */
 export class SecurityPolicy {
+  readonly maxSourceLength: number
+  readonly maxTokens: number
+  readonly maxAstNodes: number
   readonly maxDepth: number
   readonly maxArrayLength: number
   readonly maxStringLength: number
+  readonly maxObjectProperties: number
+  readonly maxCallArguments: number
   /** Maximum accounted evaluator steps per evaluation; 0 disables the bound. */
   readonly maxSteps: number
   readonly timeout: number
@@ -47,9 +77,14 @@ export class SecurityPolicy {
   readonly deniedProperties?: ReadonlySet<string>
 
   constructor(options: BonsaiOptions = {}) {
+    this.maxSourceLength = options.maxSourceLength ?? DEFAULT_MAX_SOURCE_LENGTH
+    this.maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS
+    this.maxAstNodes = options.maxAstNodes ?? DEFAULT_MAX_AST_NODES
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH
     this.maxArrayLength = options.maxArrayLength ?? DEFAULT_MAX_ARRAY_LENGTH
     this.maxStringLength = options.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH
+    this.maxObjectProperties = options.maxObjectProperties ?? DEFAULT_MAX_OBJECT_PROPERTIES
+    this.maxCallArguments = options.maxCallArguments ?? DEFAULT_MAX_CALL_ARGUMENTS
     this.maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS
     this.timeout = options.timeout ?? 0
     this.allowedProperties = options.allowedProperties
@@ -65,6 +100,12 @@ export class ExecutionContext {
   private nextCheck = TIMEOUT_CHECK_INTERVAL
   private depth = 0
   private deadline: number
+  private maxSteps: number
+  private timeout: number
+  private signal?: AbortSignal
+  // Set when waitFor delivers TIMEOUT/ABORTED to the caller, so the abandoned
+  // walk deterministically observes the same verdict at its next checkpoint.
+  private cancellation?: BonsaiSecurityError
   // True only while an evaluation is walking this context. Step accounting is
   // gated on it so that closures created during evaluation (lambda accessors,
   // identity/expression lambdas) that a host retains and invokes *after* the
@@ -75,33 +116,77 @@ export class ExecutionContext {
   // Accounting runs when either a step budget or a wall-clock timeout is
   // configured. Constant per instance since both come from the (immutable)
   // policy, so the hot no-limits path can skip step tracking entirely.
-  private readonly accounting: boolean
+  private accounting!: boolean
   readonly policy: SecurityPolicy
   private readonly now: () => number
 
-  constructor(policy: SecurityPolicy, now: () => number = monotonicNow) {
+  constructor(
+    policy: SecurityPolicy,
+    now: () => number = monotonicNow,
+    options: EvaluationOptions = NO_EVALUATION_OPTIONS,
+  ) {
     this.policy = policy
     this.now = now
-    this.accounting = policy.maxSteps !== 0 || policy.timeout !== 0
-    this.deadline = policy.timeout ? now() + policy.timeout : 0
+    this.maxSteps = policy.maxSteps
+    this.timeout = policy.timeout
+    this.deadline = 0
+    this.applyOptions(options)
     this.nextCheck = this.computeNextCheck(0)
   }
 
   /** Reset mutable state for reuse. Avoids allocating a new instance per evaluation. */
-  reset(): void {
+  reset(options: EvaluationOptions = NO_EVALUATION_OPTIONS): void {
     this.stepCount = 0
     this.depth = 0
-    this.deadline = this.policy.timeout ? this.now() + this.policy.timeout : 0
+    this.cancellation = undefined
+    this.applyOptions(options)
     this.nextCheck = this.computeNextCheck(0)
+  }
+
+  private applyOptions(options: EvaluationOptions): void {
+    // Stryker disable all: this allocation-free fast path is intentionally semantically identical to resolving the empty override object below
+    if (options === NO_EVALUATION_OPTIONS) {
+      // Hot path: no per-run overrides, so skip validation and take the
+      // instance defaults directly.
+      this.maxSteps = this.policy.maxSteps
+      this.timeout = this.policy.timeout
+      this.signal = undefined
+      this.accounting = this.maxSteps !== 0 || this.timeout !== 0
+      this.deadline = this.timeout ? this.now() + this.timeout : 0
+      return
+    }
+    // Stryker restore all
+    const maxSteps = options.maxSteps ?? this.policy.maxSteps
+    const timeout = options.timeout ?? this.policy.timeout
+    if (!Number.isInteger(maxSteps) || maxSteps < 0) {
+      throw new RangeError(
+        `bonsai: "maxSteps" must be a non-negative integer, received ${String(maxSteps)}`,
+      )
+    }
+    if (!Number.isFinite(timeout) || timeout < 0) {
+      throw new RangeError(
+        `bonsai: "timeout" must be a non-negative, finite number of milliseconds, received ${String(timeout)}`,
+      )
+    }
+    if (options.signal !== undefined && !isAbortSignal(options.signal)) {
+      throw new TypeError('bonsai: "signal" must be an AbortSignal')
+    }
+    this.maxSteps = maxSteps
+    this.timeout = timeout
+    this.signal = options.signal
+    this.accounting = maxSteps !== 0 || timeout !== 0 || this.signal !== undefined
+    this.deadline = timeout ? this.now() + timeout : 0
   }
 
   // The next stepCount at which checkpoint() must run: the maxSteps hard cap
   // (checked exactly once, at cap + 1) and, when a timeout is armed, the next
   // periodic clock sample. Whichever comes first.
   private computeNextCheck(from: number): number {
-    const stepsBound = this.policy.maxSteps ? this.policy.maxSteps + 1 : Infinity
-    const timeoutBound = this.deadline ? from + TIMEOUT_CHECK_INTERVAL : Infinity
-    return Math.min(stepsBound, timeoutBound)
+    // Stryker disable next-line all: changing the early checkpoint only changes sampling overhead; checkpoint enforces the exact bound
+    const stepsBound = this.maxSteps ? this.maxSteps + 1 : Infinity
+    // Stryker disable next-line all: an unarmed interrupt checkpoint is result-equivalent and only slower
+    const interruptBound = this.deadline || this.signal ? from + TIMEOUT_CHECK_INTERVAL : Infinity
+    return Math.min(stepsBound, interruptBound)
   }
 
   /** Mark the start of an evaluation walk. Paired with a `finally { endRun() }`. */
@@ -139,23 +224,79 @@ export class ExecutionContext {
   // Runs when stepCount crosses nextCheck: enforce the step budget, sample the
   // timeout clock, and schedule the next checkpoint.
   private checkpoint(): void {
-    if (this.policy.maxSteps && this.stepCount > this.policy.maxSteps) {
+    if (this.maxSteps && this.stepCount > this.maxSteps) {
       throw new BonsaiSecurityError(
         'MAX_STEPS',
-        `Expression exceeded the maximum step budget (${this.policy.maxSteps})`,
+        `Expression exceeded the maximum step budget (${this.maxSteps})`,
       )
     }
-    if (this.deadline) this.checkTimeout()
+    if (this.deadline || this.signal) this.checkTimeout()
     this.nextCheck = this.computeNextCheck(this.stepCount)
   }
 
   checkTimeout(): void {
-    if (this.deadline && this.now() >= this.deadline) {
-      throw new BonsaiSecurityError(
-        'TIMEOUT',
-        `Expression timeout: exceeded ${this.policy.timeout}ms`,
-      )
+    // Once waitFor has delivered a cancellation to the caller, the abandoned
+    // walk must observe the SAME verdict at its next checkpoint. Without this
+    // flag the walk re-samples the clock, and a setTimeout that fired sub-ms
+    // before the monotonic deadline would let one more extension call slip
+    // through after the caller already received TIMEOUT.
+    if (this.cancellation !== undefined) throw this.cancellation
+    if (this.signal?.aborted === true) {
+      throw new BonsaiSecurityError('ABORTED', 'Evaluation aborted')
     }
+    if (this.deadline && this.now() >= this.deadline) {
+      throw new BonsaiSecurityError('TIMEOUT', `Expression timeout: exceeded ${this.timeout}ms`)
+    }
+  }
+
+  /** Enforce cancellation while awaiting an evaluator walk or opaque host Promise. */
+  async waitFor<T>(value: PromiseLike<T> | T): Promise<T> {
+    if (!this.deadline && this.signal === undefined) return value
+    this.checkTimeout()
+
+    return new Promise<T>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const signal = this.signal
+      const cleanup = (): void => {
+        if (timer !== undefined) clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      const rejectWith = (error: BonsaiSecurityError): void => {
+        this.cancellation = error
+        cleanup()
+        reject(error)
+      }
+      const onAbort = (): void => {
+        rejectWith(new BonsaiSecurityError('ABORTED', 'Evaluation aborted'))
+      }
+
+      signal?.addEventListener('abort', onAbort, { once: true })
+      if (signal?.aborted === true) {
+        onAbort()
+        return
+      }
+      if (this.deadline) {
+        const remaining = Math.max(0, this.deadline - this.now())
+        timer = setTimeout(() => {
+          rejectWith(
+            new BonsaiSecurityError('TIMEOUT', `Expression timeout: exceeded ${this.timeout}ms`),
+          )
+        }, remaining)
+      }
+
+      Promise.resolve(value).then(
+        (result) => {
+          cleanup()
+          resolve(result)
+        },
+        (error: unknown) => {
+          cleanup()
+          // Promise rejection values are host API behavior and must propagate unchanged.
+          // oxlint-disable-next-line typescript/prefer-promise-reject-errors
+          reject(error)
+        },
+      )
+    })
   }
 
   /**
@@ -249,6 +390,24 @@ export class ExecutionContext {
       throw new BonsaiSecurityError(
         'MAX_STRING_LENGTH',
         `String length (${length}) exceeds maximum (${this.policy.maxStringLength})`,
+      )
+    }
+  }
+
+  checkObjectProperties(count: number): void {
+    if (count > this.policy.maxObjectProperties) {
+      throw new BonsaiSecurityError(
+        'MAX_OBJECT_PROPERTIES',
+        `Object property count (${count}) exceeds maximum (${this.policy.maxObjectProperties})`,
+      )
+    }
+  }
+
+  checkCallArguments(count: number): void {
+    if (count > this.policy.maxCallArguments) {
+      throw new BonsaiSecurityError(
+        'MAX_CALL_ARGUMENTS',
+        `Call argument count (${count}) exceeds maximum (${this.policy.maxCallArguments})`,
       )
     }
   }

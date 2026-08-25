@@ -4,7 +4,7 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   title: 'Bonsai',
   description:
-    'A safe expression language for rules, filters, templates, and user-authored logic. Runs in any JavaScript runtime.',
+    'A safe expression language for rules, filters, templates, and user-authored logic. Runs in Node.js, Bun, and modern browsers.',
   lang: 'en-US',
   base: '/bonsai-js/',
   cleanUrls: true,
@@ -70,6 +70,7 @@ export default defineConfig({
           { text: 'bonsai(options)', link: '/api/bonsai' },
           { text: 'evaluateSync & evaluate', link: '/api/evaluate' },
           { text: 'compile & validate', link: '/api/compile' },
+          { text: 'Static Checker', link: '/api/checker' },
           { text: 'Extending', link: '/api/extending' },
           { text: 'Instance Methods', link: '/api/instance-methods' },
           { text: 'evaluateExpression', link: '/api/evaluate-expression' },
@@ -93,6 +94,7 @@ export default defineConfig({
           { text: 'Writing Plugins', link: '/guide/plugins' },
           { text: 'Safety & Sandboxing', link: '/guide/safety' },
           { text: 'Performance', link: '/guide/performance' },
+          { text: 'Migrate to Bonsai', link: '/guide/migrating' },
           { text: 'Autocomplete: Setup', link: '/guide/autocomplete-setup' },
           { text: 'Autocomplete: API', link: '/guide/autocomplete-api' },
           { text: 'Autocomplete: Editor', link: '/guide/autocomplete-editor' },

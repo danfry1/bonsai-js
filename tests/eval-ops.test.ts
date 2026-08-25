@@ -9,11 +9,13 @@ import {
   getIdentifierName,
   getObjectLiteralKeyName,
   expandSpreadValue,
-  checkResultArrayLength,
-  checkResultStringLength,
+  arrayMethodReceiver,
+  chargeNativeMethod,
+  checkResultLimits,
   accessMember,
 } from '../src/eval-ops.js'
 import { parse } from '../src/parser.js'
+import { createBonsaiLambda } from '../src/lambda.js'
 import { SecurityPolicy, ExecutionContext } from '../src/execution-context.js'
 import { BonsaiTypeError, BonsaiSecurityError, BonsaiReferenceError } from '../src/errors.js'
 import type { BonsaiOptions } from '../src/types.js'
@@ -53,6 +55,42 @@ describe('applyBinaryOp - arithmetic', () => {
   ] as const)('%s', (op, l, r, expected) => {
     expect(applyBinaryOp(op, l, r)).toBe(expected)
   })
+
+  it('concatenates strings but rejects every mixed or unsupported pair', () => {
+    expect(applyBinaryOp('+', 'bon', 'sai')).toBe('bonsai')
+
+    for (const [left, right, received] of [
+      [1, '2', 'string'],
+      ['1', 2, 'number'],
+      [true, 2, 'boolean'],
+      [2, false, 'boolean'],
+    ] as const) {
+      const error = errorOf(() => applyBinaryOp('+', left, right)) as BonsaiTypeError
+      expect(error).toBeInstanceOf(BonsaiTypeError)
+      expect(error.transform).toBe('+')
+      expect(error.expected).toMatch(/^two numbers or two strings \(use a template literal/u)
+      expect(error.received).toBe(received)
+    }
+  })
+
+  it.each(['-', '*', '/', '%', '**'] as const)(
+    '%s rejects a bad left or right operand and reports the offending side',
+    (operator) => {
+      const badLeft = errorOf(() => applyBinaryOp(operator, '7', 2)) as BonsaiTypeError
+      expect(badLeft).toMatchObject({
+        transform: operator,
+        expected: 'two numbers',
+        received: 'string',
+      })
+
+      const badRight = errorOf(() => applyBinaryOp(operator, 7, true)) as BonsaiTypeError
+      expect(badRight).toMatchObject({
+        transform: operator,
+        expected: 'two numbers',
+        received: 'boolean',
+      })
+    },
+  )
 })
 
 describe('applyBinaryOp - equality (strict)', () => {
@@ -81,6 +119,36 @@ describe('applyBinaryOp - relational with equal-operand boundaries', () => {
       expect(applyBinaryOp(op, l, r)).toBe(expected)
     }
   })
+
+  it.each([
+    ['<', ['a', 'b', true], ['b', 'b', false], ['c', 'b', false]],
+    ['>', ['a', 'b', false], ['b', 'b', false], ['c', 'b', true]],
+    ['<=', ['a', 'b', true], ['b', 'b', true], ['c', 'b', false]],
+    ['>=', ['a', 'b', false], ['b', 'b', true], ['c', 'b', true]],
+  ] as const)('%s orders strings without number coercion', (op, lt, eq, gt) => {
+    for (const [left, right, expected] of [lt, eq, gt]) {
+      expect(applyBinaryOp(op, left, right)).toBe(expected)
+    }
+  })
+
+  it.each(['<', '>', '<=', '>='] as const)(
+    '%s rejects mixed and unsupported operands with a stable type error',
+    (operator) => {
+      for (const [left, right, received] of [
+        [false, 1, 'boolean'],
+        [1, false, 'boolean'],
+        ['1', 2, 'number'],
+        [1, '2', 'string'],
+      ] as const) {
+        const error = errorOf(() => applyBinaryOp(operator, left, right)) as BonsaiTypeError
+        expect(error).toMatchObject({
+          transform: operator,
+          expected: 'two numbers or two strings of the same type',
+          received,
+        })
+      }
+    },
+  )
 })
 
 describe('applyBinaryOp - in / not in', () => {
@@ -103,8 +171,19 @@ describe('applyBinaryOp - in / not in', () => {
     expect((notInErr as BonsaiTypeError).expected).toBe('a string or array')
   })
 
+  it('requires a string search value when the right side is a string', () => {
+    for (const operator of ['in', 'not in'] as const) {
+      const error = errorOf(() => applyBinaryOp(operator, 1, '123')) as BonsaiTypeError
+      expect(error).toMatchObject({
+        transform: operator,
+        expected: 'a string search value',
+        received: 'number',
+      })
+    }
+  })
+
   it('rejects an unknown binary operator', () => {
-    expect(() => applyBinaryOp('&&', true, false)).toThrow('Unknown binary operator')
+    expect(() => applyBinaryOp('&&', true, false)).toThrow('Unknown binary operator: &&')
   })
 })
 
@@ -116,8 +195,20 @@ describe('applyUnaryOp', () => {
     expect(applyUnaryOp('+', '42')).toBe(42)
   })
 
+  it('rejects non-numeric negation and unsafe positive coercion', () => {
+    const negative = errorOf(() => applyUnaryOp('-', '5')) as BonsaiTypeError
+    expect(negative).toMatchObject({ transform: '-', expected: 'a number', received: 'string' })
+
+    const positive = errorOf(() => applyUnaryOp('+', {})) as BonsaiTypeError
+    expect(positive).toMatchObject({
+      transform: '+',
+      expected: 'a string, number, boolean, null, or undefined',
+      received: 'object',
+    })
+  })
+
   it('rejects an unknown unary operator', () => {
-    expect(() => applyUnaryOp('~' as never, 1)).toThrow('Unknown unary operator')
+    expect(() => applyUnaryOp('~' as never, 1)).toThrow('Unknown unary operator: ~')
   })
 })
 
@@ -197,35 +288,227 @@ describe('expandSpreadValue', () => {
     expect((err as BonsaiSecurityError).code).toBe('MAX_ARRAY_LENGTH')
   })
 
-  it('materializes a non-array iterable into a fresh array', () => {
-    expect(expandSpreadValue(new Set([1, 2, 3]))).toEqual([1, 2, 3])
-  })
-
-  it('allows an iterable exactly at the limit but rejects one past it', () => {
-    expect(expandSpreadValue(new Set([1, 2]), 2)).toEqual([1, 2])
-    const err = errorOf(() => expandSpreadValue(new Set([1, 2, 3]), 2))
-    expect((err as BonsaiSecurityError).code).toBe('MAX_ARRAY_LENGTH')
+  it('rejects non-array iterables instead of invoking host iterator code', () => {
+    expect(() => expandSpreadValue(new Set([1, 2, 3]))).toThrow(BonsaiTypeError)
   })
 
   it('throws a typed iterable error for a non-iterable value', () => {
     const err = errorOf(() => expandSpreadValue(42))
     expect(err).toBeInstanceOf(BonsaiTypeError)
     expect((err as BonsaiTypeError).transform).toBe('spread')
-    expect((err as BonsaiTypeError).expected).toBe('an iterable value')
+    expect((err as BonsaiTypeError).expected).toBe('an array')
   })
 
   it('throws the typed iterable error (not a raw TypeError) for null', () => {
     expect(errorOf(() => expandSpreadValue(null))).toBeInstanceOf(BonsaiTypeError)
   })
+
+  it('materializes holes, including trailing holes, without consulting an iterator', () => {
+    const sparse = new Array<unknown>(3)
+    sparse[0] = 'first'
+    let iteratorCalls = 0
+    Object.defineProperty(sparse, Symbol.iterator, {
+      value() {
+        iteratorCalls++
+        return [][Symbol.iterator]()
+      },
+    })
+
+    const spread = expandSpreadValue(sparse)
+    expect(spread).toHaveLength(3)
+    expect(spread).toEqual(['first', undefined, undefined])
+    expect(Object.hasOwn(spread, 1)).toBe(true)
+    expect(Object.hasOwn(spread, 2)).toBe(true)
+    expect(iteratorCalls).toBe(0)
+  })
+})
+
+describe('arrayMethodReceiver', () => {
+  it('returns ordinary arrays as-is (no per-call copy)', () => {
+    const items = [1, 2, 3]
+    expect(arrayMethodReceiver(items, 'map', guard())).toBe(items)
+  })
+
+  it('copies arrays with a foreign prototype into a plain Array, preserving holes', () => {
+    class Sub extends Array<unknown> {}
+    const sub = new Sub(3)
+    sub[0] = 'a'
+    const g = guard({ maxSteps: 100 })
+    const copy = arrayMethodReceiver(sub, 'map', g)
+    expect(copy).not.toBe(sub)
+    expect(Object.getPrototypeOf(copy)).toBe(Array.prototype)
+    expect(copy).toHaveLength(3)
+    expect(copy[0]).toBe('a')
+    expect(Object.hasOwn(copy, 1)).toBe(false)
+  })
+})
+
+describe('validateMethodArgs - host-code conversion boundaries', () => {
+  it.each([
+    ['text', 'includes', 'a string argument', 'function'],
+    [42, 'toString', 'a number argument', 'function'],
+    [[], 'toSorted', '0 arguments', '1'],
+    [[], 'concat', 'an array or primitive value', 'function'],
+  ] as const)('rejects a host function passed to %s.%s', (receiver, method, expected, received) => {
+    const error = errorOf(argsThunk(receiver, method, [() => 1])) as BonsaiTypeError
+    expect(error).toMatchObject({
+      transform: method,
+      expected,
+      received,
+    })
+  })
+
+  it.each(['object', 'symbol', 'bigint'] as const)(
+    'rejects a %s argument before a primitive receiver can coerce it',
+    (kind) => {
+      let value: unknown = {}
+      if (kind === 'symbol') value = Symbol('x')
+      if (kind === 'bigint') value = 1n
+      const error = errorOf(argsThunk('text', 'includes', [value])) as BonsaiTypeError
+      expect(error).toMatchObject({
+        transform: 'includes',
+        expected: 'a string argument',
+        received: kind,
+      })
+    },
+  )
+
+  it('enforces the shared signature while only checking coercing array positions', () => {
+    expect(argsThunk('text', 'includes', ['x'])).not.toThrow()
+    expect(argsThunk('text', 'includes', ['x', 1])).not.toThrow()
+    for (const value of [null, undefined, true, 1]) {
+      expect(argsThunk('text', 'includes', [value])).toThrow('string argument')
+    }
+    expect(argsThunk([], 'includes', [{}])).not.toThrow()
+    expect(argsThunk([], 'includes', ['x', {}])).toThrow('number argument')
+    expect(argsThunk([], 'slice', [{}])).toThrow('number argument')
+    expect(argsThunk([], 'join', [{}])).toThrow('string argument')
+  })
+
+  it('reports exact arity contracts for fixed and optional signatures', () => {
+    // Arity errors report the received COUNT, not the type of the count.
+    expect(errorOf(argsThunk('text', 'at', []))).toMatchObject({
+      transform: 'at',
+      expected: '1 argument',
+      received: '0',
+    })
+    expect(errorOf(argsThunk('text', 'trim', [1]))).toMatchObject({
+      transform: 'trim',
+      expected: '0 arguments',
+      received: '1',
+    })
+    expect(errorOf(argsThunk('text', 'substring', [0, 1, 2]))).toMatchObject({
+      transform: 'substring',
+      expected: '0 to 2 arguments',
+      received: '3',
+    })
+    expect(errorOf(argsThunk([], 'with', [0]))).toMatchObject({
+      transform: 'with',
+      expected: '2 arguments',
+      received: '1',
+    })
+  })
+
+  it('reports exact argument-kind contracts and accepts every data primitive', () => {
+    expect(errorOf(argsThunk('text', 'includes', [1]))).toMatchObject({
+      transform: 'includes',
+      expected: 'a string argument',
+      received: 'number',
+    })
+    expect(errorOf(argsThunk([], 'slice', ['0']))).toMatchObject({
+      transform: 'slice',
+      expected: 'a number argument',
+      received: 'string',
+    })
+    expect(errorOf(argsThunk([], 'concat', [1n]))).toMatchObject({
+      transform: 'concat',
+      expected: 'an array or primitive value',
+      received: 'bigint',
+    })
+    for (const value of [null, undefined, 'x', 1, true, [2]]) {
+      expect(argsThunk([], 'concat', [value])).not.toThrow()
+    }
+  })
+})
+
+describe('chargeNativeMethod', () => {
+  const stepsFor = (receiver: unknown, method: string, args: unknown[] = []): number => {
+    const g = guard({ maxSteps: 100 })
+    g.beginRun()
+    chargeNativeMethod(receiver, method, args, g)
+    g.endRun()
+    return g.stepsTaken
+  }
+
+  it.each([
+    'startsWith',
+    'endsWith',
+    'includes',
+    'indexOf',
+    'lastIndexOf',
+    'slice',
+    'substring',
+    'repeat',
+    'trim',
+    'trimStart',
+    'trimEnd',
+    'toLowerCase',
+    'toUpperCase',
+    'replace',
+    'replaceAll',
+    'padStart',
+    'padEnd',
+    'split',
+    'concat',
+  ])('charges the linear string method %s by receiver length', (method) => {
+    expect(stepsFor('abcd', method)).toBe(4)
+  })
+
+  it.each([
+    'includes',
+    'indexOf',
+    'lastIndexOf',
+    'slice',
+    'concat',
+    'join',
+    'flat',
+    'toReversed',
+    'toSorted',
+    'toSpliced',
+    'with',
+  ])('charges the linear array method %s by receiver length', (method) => {
+    expect(stepsFor([1, 2, 3], method)).toBe(3)
+  })
+
+  it('does not charge constant-time or wrong-family calls', () => {
+    expect(stepsFor('abcd', 'at')).toBe(0)
+    expect(stepsFor([1, 2, 3], 'map')).toBe(0)
+    expect(stepsFor(123, 'slice')).toBe(0)
+    expect(stepsFor({}, 'slice')).toBe(0)
+  })
+
+  it('charges slice by its normalized span, not the receiver length', () => {
+    // slice copies O(span); charging the whole receiver would reject cheap
+    // slices of big arrays under tight budgets and re-sample the clock on
+    // every call.
+    expect(stepsFor([1, 2, 3, 4], 'slice', [0, 2])).toBe(2)
+    expect(stepsFor('abcdefgh', 'slice', [1, 4])).toBe(3)
+    expect(stepsFor([1, 2, 3, 4], 'slice', [-2])).toBe(2)
+    expect(stepsFor([1, 2, 3, 4], 'slice', [0, -1])).toBe(3)
+    expect(stepsFor([1, 2, 3, 4], 'slice', [2, 1])).toBe(0)
+    expect(stepsFor([1, 2, 3, 4], 'slice', [0, 99])).toBe(4)
+    // No arguments still copies everything.
+    expect(stepsFor([1, 2, 3, 4], 'slice')).toBe(4)
+  })
 })
 
 describe('validateMethodArgs - replace family', () => {
-  it('rejects function, RegExp, and object arguments but allows null/strings', () => {
-    expect(argsThunk('s', 'replace', [() => 1])).toThrow('callbacks are not allowed')
-    expect(argsThunk('s', 'replace', [/x/u])).toThrow('RegExp is not allowed')
-    expect(argsThunk('s', 'replace', [{}])).toThrow('objects are not allowed')
-    // null is typeof 'object' but the `arg != null` guard must let it through.
-    expect(argsThunk('s', 'replace', [null])).not.toThrow()
+  it('rejects function, RegExp, object, and non-string arguments', () => {
+    expect(argsThunk('s', 'replace', [() => 1, 'x'])).toThrow('string argument')
+    expect(argsThunk('s', 'replace', [/x/u, 'x'])).toThrow('string argument')
+    expect(argsThunk('s', 'replace', [{}, 'x'])).toThrow('string argument')
+    expect(argsThunk('s', 'replace', [null, 'x'])).toThrow('string argument')
+    expect(argsThunk('s', 'replace', ['s', 'x'])).not.toThrow()
   })
 })
 
@@ -273,38 +556,62 @@ describe('validateMethodArgs - higher-order callback', () => {
   it('requires a function callback for higher-order methods', () => {
     const err = errorOf(argsThunk([], 'map', ['not a function']))
     expect(err).toBeInstanceOf(BonsaiTypeError)
-    expect((err as BonsaiTypeError).expected).toContain('lambda or function callback')
+    expect((err as BonsaiTypeError).expected).toContain('Bonsai lambda callback')
   })
 
-  it('accepts a function callback', () => {
-    expect(argsThunk([], 'map', [() => 1])).not.toThrow()
+  it('rejects a host callback and accepts a callback created by Bonsai', () => {
+    expect(argsThunk([], 'map', [() => 1])).toThrow(BonsaiTypeError)
+    expect(argsThunk([], 'map', [createBonsaiLambda(() => 1)])).not.toThrow()
   })
 })
 
-describe('checkResultArrayLength / checkResultStringLength', () => {
+describe('validateMethodArgs - array stringification methods', () => {
+  it.each(['join', 'toSorted'] as const)(
+    '%s accepts primitive elements and sparse holes but rejects host-code values',
+    (method) => {
+      const sparse: unknown[] = [null, undefined, 'x', 1, true]
+      sparse.length = 7
+      expect(argsThunk(sparse, method, [])).not.toThrow()
+
+      for (const value of [{}, Symbol('x'), 1n, () => 1]) {
+        const error = errorOf(argsThunk([value], method, [])) as BonsaiTypeError
+        expect(error).toMatchObject({
+          transform: method,
+          expected: 'array elements with primitive string representations',
+        })
+      }
+    },
+  )
+
+  it('does not inspect array elements for unrelated methods', () => {
+    expect(argsThunk([{}], 'slice', [])).not.toThrow()
+  })
+})
+
+describe('checkResultLimits', () => {
   it('enforces the array ceiling only on arrays', () => {
     const g = guard({ maxArrayLength: 3 })
     expect(() => {
-      checkResultArrayLength([1, 2, 3], g)
+      checkResultLimits([1, 2, 3], g)
     }).not.toThrow()
     expect(() => {
-      checkResultArrayLength([1, 2, 3, 4], g)
+      checkResultLimits([1, 2, 3, 4], g)
     }).toThrow('Array length')
     expect(() => {
-      checkResultArrayLength('not an array', g)
+      checkResultLimits('not an array', g)
     }).not.toThrow()
   })
 
   it('enforces the string ceiling only on strings', () => {
     const g = guard({ maxStringLength: 3 })
     expect(() => {
-      checkResultStringLength('abc', g)
+      checkResultLimits('abc', g)
     }).not.toThrow()
     expect(() => {
-      checkResultStringLength('abcd', g)
+      checkResultLimits('abcd', g)
     }).toThrow('String length')
     expect(() => {
-      checkResultStringLength(['not', 'a', 'string'], g)
+      checkResultLimits(['not', 'a', 'string'], g)
     }).not.toThrow()
   })
 })
@@ -318,8 +625,24 @@ describe('accessMember', () => {
     expect(accessMember({ x: 5 }, parse('x'), true, 'x', guard())).toBe(5)
   })
 
-  it('yields undefined for a null object rather than throwing', () => {
+  it('yields undefined for a nullish object rather than throwing', () => {
     expect(accessMember(null, parse('x'), false, undefined, guard())).toBeUndefined()
+    expect(accessMember(undefined, parse('x'), false, undefined, guard())).toBeUndefined()
+  })
+
+  it('reads own properties only and never traverses the prototype chain', () => {
+    const inherited = Object.create({ x: 5 }) as Record<string, unknown>
+    let getterCalls = 0
+    const ownAccessor = Object.defineProperty({}, 'x', {
+      get() {
+        getterCalls++
+        return 5
+      },
+    })
+
+    expect(accessMember(inherited, parse('x'), false, undefined, guard())).toBeUndefined()
+    expect(accessMember(ownAccessor, parse('x'), false, undefined, guard())).toBe(5)
+    expect(getterCalls).toBe(1)
   })
 
   it('routes the key through the access guard', () => {

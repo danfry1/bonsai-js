@@ -5,8 +5,8 @@ Use the sync path by default. Switch to the async path only when a registered tr
 ## Signatures
 
 ```ts
-expr.evaluateSync<T = unknown>(expression, context?)
-expr.evaluate<T = unknown>(expression, context?)
+expr.evaluateSync<T = unknown>(expression, context?, options?)
+expr.evaluate<T = unknown>(expression, context?, options?)
 ```
 
 Both methods treat the `context` object as the variable scope for the expression. There is no global scope and no hidden runtime state.
@@ -16,7 +16,7 @@ Both methods treat the `context` object as the variable scope for the expression
 | `evaluateSync()` | `T` | All registered transforms/functions are synchronous. |
 | `evaluate()` | `Promise<T>` | Any transform/function may await I/O or return a promise. |
 
-## evaluateSync(expression, context?)
+## evaluateSync(expression, context?, options?)
 
 Evaluate immediately and return the result. The context is a plain object whose properties become identifiers in the expression.
 
@@ -40,7 +40,7 @@ expr.evaluateSync('customer?.email ?? "missing@example.com"', {
 }) // "missing@example.com"
 ```
 
-## evaluate(expression, context?)
+## evaluate(expression, context?, options?)
 
 Return a promise and await async extensions during evaluation.
 
@@ -52,9 +52,25 @@ expr.addFunction('lookupTier', async (userId) => {
 
 const isPro = await expr.evaluate(
   'lookupTier(userId) == "pro"',
-  { userId: 'u_123' }
+  { userId: 'u_123' },
+  { timeout: 100, signal: request.signal }
 )
 ```
+
+## Per-evaluation controls
+
+Both APIs, including their compiled equivalents, accept a final
+`EvaluationOptions` argument:
+
+| Option | Meaning |
+|---|---|
+| `timeout` | Override the instance timeout for this run. |
+| `maxSteps` | Override the deterministic step budget for this run. |
+| `signal` | Cancel with an `AbortSignal`. Sync work samples it cooperatively; async waits race it. |
+
+Per-run options never mutate the instance defaults. A timeout or abort returns
+control from async evaluation, but cannot cancel underlying host I/O unless the
+registered extension also uses the same signal.
 
 ## Typed generics
 
@@ -84,4 +100,4 @@ await app.evaluate('userId == "u_1"', { foo: 'bar' })                // ✗ TS e
 
 When `AppContext` has required fields, the `context` argument becomes required at every call site; when fields are optional (or the default `Record<string, unknown>`), it stays optional, preserving the untyped ergonomics.
 
-> **Tip:** If any registered transform, function, or method returns a `Promise`, `evaluateSync()` will throw a `BonsaiTypeError` identifying the offending call and suggesting `evaluate()` instead. Use `evaluate()` or compiled `.evaluate()` for async extensions.
+> **Tip:** If any registered transform, function, or method returns a Promise-like value, `evaluateSync()` throws a `BonsaiTypeError` identifying the offending call and suggesting `evaluate()` instead. Use `evaluate()` or compiled `.evaluate()` for async extensions.

@@ -15,8 +15,11 @@ interface PerfResult {
 }
 
 const OPS_PER_SECOND = 1000
+const PERCENT = 100
 const WARMUP_ITERATIONS = 20_000
 const DURATION_MS = 250
+const MIN_CACHE_EFFECTIVENESS = 5
+const MIN_COMPILED_RATIO = 0.85
 const LAST_SAMPLE_ITEM = 5
 const SAMPLE_ITEMS = [1, 2, 3, 4, LAST_SAMPLE_ITEM] as const
 
@@ -31,8 +34,21 @@ const spreadContext = {
   items: Array.from({ length: LAMBDA_ITEM_COUNT }, (_, i) => i),
 }
 
+const collectionContext = {
+  items: Array.from({ length: LAMBDA_ITEM_COUNT }, (_, i) => ({
+    x: i,
+    active: i % 2 === 0,
+  })),
+  nums: spreadContext.items,
+}
+
 const context = {
-  user: { name: 'Dan', age: 30, verified: true },
+  user: {
+    name: 'Dan',
+    age: 30,
+    verified: true,
+    profile: { address: { city: 'London' } },
+  },
   items: SAMPLE_ITEMS,
 }
 
@@ -127,6 +143,46 @@ const cases: PerfCase[] = [
       expr.evaluateSync('[...items]', spreadContext)
     },
   },
+  // The cases below have no absolute floor of their own (their throughput is
+  // dominated by native work); they exist for the relative base-vs-head
+  // comparison in scripts/perf-compare.ts, which is what actually catches a
+  // regression. Member reads, array method dispatch, and membership were all
+  // hot paths that regressed silently before that comparison existed.
+  {
+    name: 'deep member access',
+    minHz: 1_000_000,
+    fn: () => {
+      expr.evaluateSync('user.profile.address.city', context)
+    },
+  },
+  {
+    name: 'filter(.active).map(.x) x1000',
+    minHz: 8_000,
+    fn: () => {
+      expr.evaluateSync('items.filter(.active).map(.x)', collectionContext)
+    },
+  },
+  {
+    name: 'includes on x1000',
+    minHz: 50_000,
+    fn: () => {
+      expr.evaluateSync('nums.includes(999)', collectionContext)
+    },
+  },
+  {
+    name: 'in on x1000',
+    minHz: 50_000,
+    fn: () => {
+      expr.evaluateSync('999 in nums', collectionContext)
+    },
+  },
+  {
+    name: 'slice on x1000',
+    minHz: 500_000,
+    fn: () => {
+      expr.evaluateSync('nums.slice(0, 3)', collectionContext)
+    },
+  },
 ]
 
 const results: PerfResult[] = cases.map((entry) => ({
@@ -134,6 +190,16 @@ const results: PerfResult[] = cases.map((entry) => ({
   hz: measure(entry.fn),
   minHz: entry.minHz,
 }))
+
+// Machine-readable output for scripts/perf-compare.ts.
+const jsonPath = process.env.PERF_GATE_JSON
+if (jsonPath !== undefined && jsonPath !== '') {
+  const { writeFileSync } = await import('node:fs')
+  writeFileSync(
+    jsonPath,
+    JSON.stringify(Object.fromEntries(results.map((result) => [result.name, result.hz]))),
+  )
+}
 
 const uncachedHz = measure(() => {
   uncached.clearCache()
@@ -143,6 +209,10 @@ const uncachedHz = measure(() => {
 const cachedComparison = results.find((entry) => entry.name === 'cached comparison')
 if (!cachedComparison) {
   throw new Error('Missing cached comparison benchmark result')
+}
+const compiledComparison = results.find((entry) => entry.name === 'compiled comparison')
+if (!compiledComparison) {
+  throw new Error('Missing compiled comparison benchmark result')
 }
 
 writeLine('Performance gate results:')
@@ -155,14 +225,22 @@ for (const result of results) {
 
 const ratio = cachedComparison.hz / uncachedHz
 writeLine(`- cache effectiveness: ${ratio.toFixed(2)}x faster than uncached parsing`)
+const compiledRatio = compiledComparison.hz / cachedComparison.hz
+writeLine(`- compiled/cached parity: ${compiledRatio.toFixed(2)}x`)
 
 const failures = results
   .filter((result) => result.hz < result.minHz)
   .map((result) => `${result.name} dropped below ${result.minHz.toLocaleString()} ops/sec`)
 
-if (ratio < 2) {
+if (ratio < MIN_CACHE_EFFECTIVENESS) {
   failures.push(
-    `cached comparison should be at least 2x faster than uncached parsing, got ${ratio.toFixed(2)}x`,
+    `cached comparison should be at least ${String(MIN_CACHE_EFFECTIVENESS)}x faster than uncached parsing, got ${ratio.toFixed(2)}x`,
+  )
+}
+
+if (compiledRatio < MIN_COMPILED_RATIO) {
+  failures.push(
+    `compiled comparison should retain at least ${String(MIN_COMPILED_RATIO * PERCENT)}% of cached throughput, got ${(compiledRatio * PERCENT).toFixed(1)}%`,
   )
 }
 

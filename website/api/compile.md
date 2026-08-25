@@ -1,6 +1,8 @@
 # compile & validate
 
-Use `compile()` for repeated execution and `validate()` before you store or accept user-authored expressions.
+Use `compile()` for repeated execution and `validate()` for syntax/reference
+checks. Use the [static checker](/api/checker) when you need binding and
+type validation.
 
 ## compile(expression)
 
@@ -24,11 +26,17 @@ await rule.evaluate({
   freeShippingThreshold: 150
 }) // true
 
-rule.ast    // optimized AST
+rule.ast    // deeply frozen optimized AST
 rule.source // original source string
 ```
 
-Compiled expressions stay associated with the instance that created them, so they continue to use that instance's safety settings and currently registered transforms/functions.
+Compiled expressions stay associated with the instance that created them and
+capture the immutable extension-registry revision present at compile time.
+Later explicit replacements affect one-shot evaluation and newly compiled
+rules, not an existing compiled rule. Safety policy remains instance-owned, and
+`rule.evaluate*()` accepts the same per-run timeout, step, and signal options as
+one-shot evaluation. The exposed AST is deeply frozen so tooling can inspect it
+without being able to mutate the compiled artifact or the instance's cache.
 
 ## validate(expression)
 
@@ -58,7 +66,9 @@ expr.validate('1 +')
 // }
 ```
 
-`references` lists the identifiers, transforms, and functions mentioned in the expression. `validate()` does not execute the expression and does not verify that those transforms/functions are currently registered.
+`references` lists the identifiers, transforms, and functions mentioned in the
+expression. `validate()` does not execute the expression and does not verify
+that those transforms/functions are registered.
 
 | Field | What it tells you |
 |---|---|
@@ -67,4 +77,4 @@ expr.validate('1 +')
 | `ast` | The parsed syntax tree when validation succeeds |
 | `references` | Identifiers, transforms, and functions mentioned by the expression |
 
-> **Tip:** A common production flow is: `validate()` when the user edits the expression, then `compile()` once when you accept it.
+> **Tip:** A production flow is: `validate()` for immediate syntax feedback, `check()` against your schema, then `compile()` once you accept the expression.

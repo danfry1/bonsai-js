@@ -49,6 +49,11 @@ try {
     'package/dist/index.d.mts',
     'package/dist/stdlib/index.mjs',
     'package/dist/stdlib/index.d.mts',
+    'package/dist/autocomplete/index.mjs',
+    'package/dist/autocomplete/index.d.mts',
+    'package/dist/checker/index.mjs',
+    'package/dist/checker/index.d.mts',
+    'package/README.md',
     'package/LICENSE',
     'package/CHANGELOG.md',
   ]
@@ -72,11 +77,23 @@ try {
   if (packedPkg.sideEffects !== false) {
     throw new Error('Packed package.json must preserve sideEffects: false')
   }
+  if (packedPkg.engines?.node !== '>=24') {
+    throw new Error('Packed package.json must require Node.js 24 or newer')
+  }
+  if (packedPkg.dependencies !== undefined && Object.keys(packedPkg.dependencies).length > 0) {
+    throw new Error('Packed package.json must not have runtime dependencies')
+  }
   if (packedPkg.exports?.['.']?.import !== './dist/index.mjs') {
     throw new Error('Packed package root export does not point to ./dist/index.mjs')
   }
   if (packedPkg.exports?.['./stdlib']?.import !== './dist/stdlib/index.mjs') {
     throw new Error('Packed stdlib export does not point to ./dist/stdlib/index.mjs')
+  }
+  if (packedPkg.exports?.['./autocomplete']?.import !== './dist/autocomplete/index.mjs') {
+    throw new Error('Packed autocomplete export does not point to ./dist/autocomplete/index.mjs')
+  }
+  if (packedPkg.exports?.['./checker']?.import !== './dist/checker/index.mjs') {
+    throw new Error('Packed checker export does not point to ./dist/checker/index.mjs')
   }
 
   mkdirSync(join(smokeDir, 'node_modules', 'bonsai-js'), { recursive: true })
@@ -90,6 +107,8 @@ try {
     [
       "import { bonsai, evaluateExpression, ExpressionError } from 'bonsai-js'",
       "import { all, strings } from 'bonsai-js/stdlib'",
+      "import { createAutocomplete } from 'bonsai-js/autocomplete'",
+      "import { createChecker, t } from 'bonsai-js/checker'",
       '',
       "if (evaluateExpression('1 + 2') !== 3) throw new Error('Root export smoke test failed')",
       "if (typeof ExpressionError !== 'function') throw new Error('Error export missing from package root')",
@@ -101,6 +120,22 @@ try {
       'const full = bonsai()',
       'full.use(all)',
       "if (full.evaluateSync('items |> sum', { items: [1, 2, 3] }) !== 6) throw new Error('Combined stdlib import failed')",
+      '',
+      'const versioned = bonsai()',
+      "versioned.addFunction('answer', () => 1)",
+      "const compiled = versioned.compile('answer()')",
+      "versioned.replaceFunction('answer', () => 2)",
+      "if (compiled.evaluateSync() !== 1 || versioned.evaluateSync('answer()') !== 2) throw new Error('Compiled registry snapshot failed')",
+      '',
+      'const authoring = bonsai()',
+      "authoring.defineTransform({ name: 'length', inputType: t.string(), returnType: t.number(), evaluate: (value) => String(value).length })",
+      'authoring.seal()',
+      "if (!authoring.isSealed()) throw new Error('Registry seal failed')",
+      "const completions = createAutocomplete(authoring, { context: { name: 'Ada' } }).complete('name |> ', 8)",
+      "if (!completions.some((item) => item.label === 'length')) throw new Error('Autocomplete subpath or metadata integration failed')",
+      '',
+      "const checked = createChecker(authoring, { schema: t.object({ name: t.string() }) }).check('name |> length', { expectedType: t.number() })",
+      "if (!checked.valid || checked.type.kind !== 'number') throw new Error('Checker subpath failed')",
       '',
       "console.log('packed package smoke test passed')",
       '',

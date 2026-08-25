@@ -3,10 +3,11 @@ import type {
   BinaryExpressionOperator,
   ObjectProperty,
   OperatorValue,
+  SyntaxLimits,
   Token,
 } from './types.js'
 import { tokenize } from './lexer.js'
-import { ExpressionError } from './errors.js'
+import { BonsaiSecurityError, ExpressionError } from './errors.js'
 
 // Precedence levels (binding power) for Pratt parsing
 const PIPE_PRECEDENCE = 5
@@ -34,16 +35,28 @@ const PRECEDENCE: Readonly<Record<OperatorValue | '??', number | undefined>> = {
 }
 
 const MAX_PARSE_DEPTH = 32
+const DEFAULT_MAX_AST_NODES = 10_000
+const DEFAULT_MAX_STRING_LENGTH = 100_000
+const DEFAULT_MAX_OBJECT_PROPERTIES = 10_000
+const DEFAULT_MAX_CALL_ARGUMENTS = 1_000
 
 // Upper bound on recursive-descent grammar nesting (parentheses, unary chains,
 // bracket indexing, etc.). This is a safety backstop that fails closed with a
-// typed ExpressionError before the native call stack can overflow. It is far
-// above any realistic expression and well above the evaluator's default
-// maxDepth (100), so legitimate input is unaffected; parenthesis nesting that
-// produces no AST node is bounded here rather than by the evaluator.
+// typed ExpressionError before the native call stack can overflow. The budget
+// is global per top-level parse: template interpolations thread the running
+// depth into their nested parse() calls. Each syntactic level charges twice
+// (expression + unary), so the effective nesting bound is about half this
+// constant — still far above any realistic expression and well above the
+// evaluator's default maxDepth (100); parenthesis nesting that produces no AST
+// node is bounded here rather than by the evaluator.
 const MAX_GRAMMAR_DEPTH = 1000
 
-export function parse(source: string, _depth = 0): ASTNode {
+export function parse(
+  source: string,
+  limits: SyntaxLimits & { maxStringLength?: number } = {},
+  _depth = 0,
+  _grammarDepth = 0,
+): ASTNode {
   if (_depth > MAX_PARSE_DEPTH) {
     throw new ExpressionError('Maximum template nesting depth exceeded', {
       source,
@@ -51,9 +64,20 @@ export function parse(source: string, _depth = 0): ASTNode {
       end: source.length,
     })
   }
-  const tokens = tokenize(source)
+  const tokens = tokenize(source, limits)
+  const maxObjectProperties = limits.maxObjectProperties ?? DEFAULT_MAX_OBJECT_PROPERTIES
+  const maxCallArguments = limits.maxCallArguments ?? DEFAULT_MAX_CALL_ARGUMENTS
+  const maxStringLength = limits.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH
   let pos = 0
-  let grammarDepth = 0
+  // Template interpolations re-enter parse(); the grammar budget is threaded
+  // through so nesting cannot multiply across template levels and overflow the
+  // native stack (each level would otherwise restart from zero).
+  let grammarDepth = _grammarDepth
+  // Nodes that were explicitly parenthesized in the source. Parentheses leave
+  // no AST trace, but the ambiguity rules below (unary base of `**`, mixing
+  // `??` with `&&`/`||`) must not fire for expressions the author already
+  // disambiguated.
+  const parenthesized = new WeakSet<ASTNode>()
 
   function current(): Token {
     return tokens[pos]
@@ -72,6 +96,12 @@ export function parse(source: string, _depth = 0): ASTNode {
       )
     }
     return advance()
+  }
+
+  function isBareBinary(node: ASTNode, operator: string): boolean {
+    return (
+      node.type === 'BinaryExpression' && node.operator === operator && !parenthesized.has(node)
+    )
   }
 
   function enterNesting(): void {
@@ -162,9 +192,39 @@ export function parse(source: string, _depth = 0): ASTNode {
         opValue = op.value as Exclude<BinaryExpressionOperator, '??' | 'not in'>
       }
 
+      // `-x ** y` reads as -(x ** y) in mathematics but as (-x) ** y under
+      // unary-first parsing; JavaScript refuses the form as ambiguous and so
+      // does Bonsai. Requiring parentheses now is SemVer-safe to relax later;
+      // committing to either reading is not.
+      if (opValue === '**' && left.type === 'UnaryExpression' && !parenthesized.has(left)) {
+        throw new ExpressionError(
+          'Parenthesize the unary expression on the left of "**" (write (-x) ** y or -(x ** y))',
+          { source, start: left.start, end: op.end },
+        )
+      }
+
       // Right-associative for **
       const nextMinPrec = opValue === '**' ? prec : prec + 1
       const right = parseExpression(nextMinPrec)
+
+      // Mixing `??` with `&&`/`||` without parentheses is refused, as in
+      // JavaScript: reasonable readers disagree on the grouping, and an
+      // error today can become a defined precedence in a minor release.
+      const mixesNullish =
+        (opValue === '&&' || opValue === '||') &&
+        (isBareBinary(right, '??') || isBareBinary(left, '??'))
+      const mixesLogical =
+        opValue === '??' &&
+        (isBareBinary(right, '&&') ||
+          isBareBinary(right, '||') ||
+          isBareBinary(left, '&&') ||
+          isBareBinary(left, '||'))
+      if (mixesNullish || mixesLogical) {
+        throw new ExpressionError(
+          'Parenthesize "??" when mixing it with "&&" or "||" (write (a ?? b) || c or a ?? (b || c))',
+          { source, start: left.start, end: right.end },
+        )
+      }
 
       left = {
         type: 'BinaryExpression',
@@ -218,6 +278,7 @@ export function parse(source: string, _depth = 0): ASTNode {
       while (!(current().type === 'Punctuation' && current().value === ')')) {
         if (args.length > 0) expect('Punctuation', ',')
         if (current().type === 'Punctuation' && current().value === ')') break
+        checkCallArgumentCount(args.length + 1)
         args.push(parseExpression(0))
       }
       const end = expect('Punctuation', ')').end
@@ -228,6 +289,17 @@ export function parse(source: string, _depth = 0): ASTNode {
         start: node.start,
         end,
       }
+    }
+
+    // A pipe stage must name a registered transform. Anything else parsed a
+    // value; failing here with a typed error beats an untyped one at runtime.
+    const callee = node.type === 'CallExpression' ? node.callee : node
+    if (callee.type !== 'Identifier') {
+      throw new ExpressionError('Pipe transform must be a named transform (e.g. value |> trim)', {
+        source,
+        start: node.start,
+        end: node.end,
+      })
     }
 
     return node
@@ -335,6 +407,7 @@ export function parse(source: string, _depth = 0): ASTNode {
         while (!(current().type === 'Punctuation' && current().value === ')')) {
           if (args.length > 0) expect('Punctuation', ',')
           if (current().type === 'Punctuation' && current().value === ')') break
+          checkCallArgumentCount(args.length + 1)
           args.push(parseExpression(0))
         }
         const end = expect('Punctuation', ')').end
@@ -367,6 +440,15 @@ export function parse(source: string, _depth = 0): ASTNode {
     // String
     if (tok.type === 'String') {
       advance()
+      // A literal is a produced string like any other; without this check a
+      // lowered maxStringLength would bound every operator result while the
+      // literal beside it slipped through.
+      if (tok.value.length > maxStringLength) {
+        throw new BonsaiSecurityError(
+          'MAX_STRING_LENGTH',
+          `String literal length (${tok.value.length}) exceeds maximum (${maxStringLength})`,
+        )
+      }
       return { type: 'StringLiteral', value: tok.value, start: tok.start, end: tok.end }
     }
 
@@ -404,6 +486,7 @@ export function parse(source: string, _depth = 0): ASTNode {
       advance()
       const expr = parseExpression(0)
       expect('Punctuation', ')')
+      parenthesized.add(expr)
       return expr
     }
 
@@ -485,6 +568,20 @@ export function parse(source: string, _depth = 0): ASTNode {
       }
       if (tok.type === 'OptionalChain') {
         advance()
+        if (current().type === 'Punctuation' && current().value === '[') {
+          advance()
+          const property = parseExpression(0)
+          const end = expect('Punctuation', ']').end
+          node = {
+            type: 'OptionalMemberExpression',
+            object: node,
+            property,
+            computed: true,
+            start: node.start,
+            end,
+          }
+          continue
+        }
         const nextProp = expect('Identifier')
         node = {
           type: 'OptionalMemberExpression',
@@ -521,6 +618,7 @@ export function parse(source: string, _depth = 0): ASTNode {
         while (!(current().type === 'Punctuation' && current().value === ')')) {
           if (args.length > 0) expect('Punctuation', ',')
           if (current().type === 'Punctuation' && current().value === ')') break
+          checkCallArgumentCount(args.length + 1)
           args.push(parseExpression(0))
         }
         const end = expect('Punctuation', ')').end
@@ -653,6 +751,12 @@ export function parse(source: string, _depth = 0): ASTNode {
     while (!(current().type === 'Punctuation' && current().value === '}')) {
       if (properties.length > 0) expect('Punctuation', ',')
       if (current().type === 'Punctuation' && current().value === '}') break
+      if (properties.length >= maxObjectProperties) {
+        throw new BonsaiSecurityError(
+          'MAX_OBJECT_PROPERTIES',
+          `Object property count exceeds maximum (${maxObjectProperties})`,
+        )
+      }
 
       let key: ASTNode
       let computed = false
@@ -740,13 +844,36 @@ export function parse(source: string, _depth = 0): ASTNode {
         const exprStart = i
         while (i < raw.length && depth > 0) {
           const c = raw[i]
-          if (c === '"' || c === "'" || c === '`') {
-            i++ // opening quote / backtick
+          if (c === '"' || c === "'") {
+            i++ // opening quote
             while (i < raw.length && raw[i] !== c) {
               if (raw[i] === '\\') i++ // skip the escaped character
               i++
             }
-            i++ // closing quote / backtick
+            i++ // closing quote
+            continue
+          }
+          if (c === '`') {
+            // Nested template: skip it whole, and skip quoted strings inside
+            // it so a backtick INSIDE such a string is not mistaken for the
+            // nested template's closing backtick (mirrors the lexer's scan).
+            i++ // opening backtick
+            while (i < raw.length && raw[i] !== '`') {
+              if (raw[i] === '\\') {
+                i += 2
+                continue
+              }
+              if (raw[i] === '"' || raw[i] === "'") {
+                const quote = raw[i]
+                i++
+                while (i < raw.length && raw[i] !== quote) {
+                  if (raw[i] === '\\') i++
+                  i++
+                }
+              }
+              i++
+            }
+            i++ // closing backtick
             continue
           }
           if (c === '{') depth++
@@ -757,7 +884,7 @@ export function parse(source: string, _depth = 0): ASTNode {
         i++ // skip closing }
         textStart = i
         // Parse the interpolated expression
-        const exprAst = parse(exprSource, _depth + 1)
+        const exprAst = parse(exprSource, limits, _depth + 1, grammarDepth)
         parts.push(exprAst)
       } else {
         i++
@@ -773,6 +900,15 @@ export function parse(source: string, _depth = 0): ASTNode {
     return { type: 'TemplateLiteral', parts, start: tok.start, end: tok.end }
   }
 
+  function checkCallArgumentCount(count: number): void {
+    if (count > maxCallArguments) {
+      throw new BonsaiSecurityError(
+        'MAX_CALL_ARGUMENTS',
+        `Call argument count exceeds maximum (${maxCallArguments})`,
+      )
+    }
+  }
+
   const result = parseExpression(0)
 
   if (current().type !== 'EOF') {
@@ -784,5 +920,79 @@ export function parse(source: string, _depth = 0): ASTNode {
     })
   }
 
+  enforceAstNodeLimit(result, limits.maxAstNodes ?? DEFAULT_MAX_AST_NODES)
   return result
+}
+
+function enforceAstNodeLimit(root: ASTNode, maxAstNodes: number): void {
+  const stack: ASTNode[] = [root]
+  let count = 0
+
+  while (stack.length > 0) {
+    const node = stack.pop()
+    if (node === undefined) break
+    if (++count > maxAstNodes) {
+      throw new BonsaiSecurityError(
+        'MAX_AST_NODES',
+        `Expression AST node count exceeds maximum (${maxAstNodes})`,
+      )
+    }
+
+    switch (node.type) {
+      case 'BinaryExpression':
+        stack.push(node.left, node.right)
+        break
+      case 'UnaryExpression':
+        stack.push(node.operand)
+        break
+      case 'ConditionalExpression':
+        stack.push(node.test, node.consequent, node.alternate)
+        break
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        stack.push(node.object, node.property)
+        break
+      case 'ArrayLiteral':
+        // Index-append: spreading into push() hits the engine argument-count
+        // limit (~125k) for enormous literals under raised structural limits.
+        for (const element of node.elements) stack.push(element)
+        break
+      case 'ObjectLiteral':
+        for (const property of node.properties) {
+          if (++count > maxAstNodes) {
+            throw new BonsaiSecurityError(
+              'MAX_AST_NODES',
+              `Expression AST node count exceeds maximum (${maxAstNodes})`,
+            )
+          }
+          stack.push(property.key, property.value)
+        }
+        break
+      case 'CallExpression':
+        stack.push(node.callee)
+        for (const argument of node.args) stack.push(argument)
+        break
+      case 'PipeExpression':
+        stack.push(node.input, node.transform)
+        break
+      case 'TemplateLiteral':
+        for (const part of node.parts) stack.push(part)
+        break
+      case 'SpreadElement':
+        stack.push(node.argument)
+        break
+      case 'LambdaExpression':
+        stack.push(node.body)
+        break
+      case 'NumberLiteral':
+      case 'StringLiteral':
+      case 'BooleanLiteral':
+      case 'NullLiteral':
+      case 'UndefinedLiteral':
+      case 'Identifier':
+      case 'LambdaAccessor':
+      case 'LambdaIdentity':
+        break
+    }
+  }
 }

@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "coverageAnalysis": "all",
+  "tsconfigFile": "tsconfig.json",
+  "reporters": ["html", "clear-text", "progress"],
+  "htmlReporter": { "fileName": "reports/mutation-stdlib/index.html" },
+  "clearTextReporter": { "maxTestsToLog": 3 },
+  "_comment": "The bundled stdlib is a separate regression cohort so a strong runtime-core score cannot conceal transform regressions. The 24 August 2026 v1 baseline scored 88.78% overall / 93.98% covered across 633 mutants: 553 killed, 9 timed out, 36 survived, 35 uncovered. Killed mutants alone score 87.36%, so the 87% floor does not depend on timeouts. Dates, math, strings, and types each scored 100%; arrays are the remaining hardening surface.",
+  "mutate": [
+    "src/stdlib/arrays.ts",
+    "src/stdlib/dates.ts",
+    "src/stdlib/math.ts",
+    "src/stdlib/strings.ts",
+    "src/stdlib/types.ts"
+  ],
+  "thresholds": { "high": 95, "low": 87, "break": 87 }
+}

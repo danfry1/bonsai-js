@@ -336,9 +336,16 @@ const expr = bonsai()
 // Restricted instance
 const safe = bonsai({
   timeout: 50,
+  maxSourceLength: 10000,
+  maxTokens: 2500,
+  maxAstNodes: 2000,
   maxDepth: 50,
+  maxObjectProperties: 500,
+  maxCallArguments: 100,
   maxArrayLength: 10000,
-  allowedProperties: ['user', 'age', 'country', 'plan']
+  maxStringLength: 10000,
+  maxSteps: 500000,
+  allowedProperties: ['age', 'country', 'plan']
 })
 ```
 
@@ -347,13 +354,18 @@ const safe = bonsai({
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `timeout` | number | 0 | Evaluation timeout in milliseconds. `0` disables timeout checks |
-| `maxDepth` | number | 100 | Max expression nesting depth |
-| `maxArrayLength` | number | 100000 | Max array literal or expanded spread size |
-| `maxStringLength` | number | 100000 | Max string size produced by a string-returning method (throws `MAX_STRING_LENGTH`) |
-| `maxSteps` | number | 1000000 | Max accounted evaluator steps per evaluation, a default-on bound independent of `timeout`; bounds evaluator-driven work (AST walk, bonsai-lambda iteration) but not opaque host/native work (throws `MAX_STEPS`). `0` disables |
+| `maxSourceLength` | number | 100000 | Max source characters before tokenization |
+| `maxTokens` | number | 25000 | Max lexical tokens |
+| `maxAstNodes` | number | 10000 | Max syntax-tree nodes |
+| `maxObjectProperties` | number | 10000 | Max properties in one object literal |
+| `maxCallArguments` | number | 1000 | Max arguments in one call, before and after spread expansion |
+| `maxDepth` | number | 100 | Max parser/evaluator nesting depth |
+| `maxArrayLength` | number | 100000 | Max size of every produced array |
+| `maxStringLength` | number | 100000 | Max size of every produced string |
+| `maxSteps` | number | 1000000 | Max accounted evaluator steps per evaluation, a default-on bound independent of `timeout`; covers AST/lambda work and native-work estimates for linear built-in methods (receiver length; copied span for `slice`), but not opaque host-extension work (throws `MAX_STEPS`). `0` disables |
 | `cacheSize` | number | 256 | Per-instance cache size for compiled expressions and parsed AST reuse |
-| `allowedProperties` | string[] | - | Allowlist checked against every accessed identifier and member name |
-| `deniedProperties` | string[] | - | Denylist checked against every accessed identifier and member name |
+| `allowedProperties` | string[] | - | Allowlist checked against member and method names, not root identifiers |
+| `deniedProperties` | string[] | - | Denylist checked against member and method names, not root identifiers |
 
 ### evaluateSync(expression, context?)
 
@@ -379,11 +391,11 @@ expr.addTransform('fetchPrice', async (id) => {
 const price = await expr.evaluate('productId |> fetchPrice', { productId: 42 })
 ```
 
-Tip: Use `evaluateSync` only when all registered transforms/functions are synchronous. It does not await promises from your extensions.
+Tip: Use `evaluateSync` only when all registered transforms/functions are synchronous. It rejects Promise-like results with a typed error instead of exposing them to the expression.
 
 ### compile(expression)
 
-Returns a `CompiledExpression` object with its own `evaluateSync` and `evaluate` methods, plus the optimized `ast` and original `source`.
+Returns a `CompiledExpression` object with its own `evaluateSync` and `evaluate` methods, plus the deeply frozen optimized `ast` and original `source`.
 
 ```js
 const check = expr.compile('user.age >= minAge')
@@ -392,33 +404,73 @@ check.evaluateSync({ user: { age: 25 }, minAge: 18 }) // true
 check.evaluateSync({ user: { age: 15 }, minAge: 18 }) // false
 check.evaluateSync({ user: { age: 21 }, minAge: 21 }) // true
 
-check.ast    // optimized AST object
+check.ast    // deeply frozen optimized AST object
 check.source // "user.age >= minAge"
 ```
 
 ### validate(expression)
 
-Check if an expression is syntactically valid without evaluating it.
+Check syntax and extract referenced identifiers/functions/transforms without evaluating. Use the checker below for semantic validation.
 
 ```js
-expr.validate('1 + 2')
-// { valid: true, errors: [], ast: {...} }
+expr.validate('user.age >= 18')
+// { valid: true, errors: [], ast: {...}, references: {...} }
 
 expr.validate('1 +')
 // { valid: false, errors: [{message: "...", position: {...}}] }
 ```
 
-### addTransform(name, fn)
+### Static checker
 
-Register a transform that receives the piped value as its first argument.
+`bonsai-js/checker` checks context properties, strict operators, nullability,
+safe methods, extension signatures, and expected result types without executing
+the expression or host extensions.
 
-```js
-expr.addTransform('double', (val) => val * 2)
-expr.addTransform('repeat', (str, n) => str.repeat(n))
+```ts
+import { createChecker, t } from 'bonsai-js/checker'
+
+const schema = t.object({
+  user: t.object({
+    name: t.string(),
+    age: t.number(),
+    nickname: t.optional(t.string()),
+  }),
+})
+
+const checker = createChecker(expr, {
+  schema,
+  expectedType: t.boolean(),
+})
+
+checker.check('user.age >= 18') // valid; inferred boolean
+checker.check('user.agge >= 18') // UNKNOWN_PROPERTY with an exact range
+```
+
+Pass the same `schema` to `createAutocomplete(expr, { schema })` for static
+property, method, pipe, and lambda completions.
+
+### defineTransform(definition)
+
+Prefer declarative definitions so the checker and autocomplete engine can use
+the same input, parameter, return, and description metadata as the runtime.
+Generic array transforms can also declare `arrayTypeRule` so the checker infers
+element-preserving and lambda-dependent results from metadata rather than names.
+
+```ts
+expr.defineTransform({
+  name: 'double',
+  inputType: t.number(),
+  returnType: t.number(),
+  evaluate: (value) => Number(value) * 2,
+})
 
 expr.evaluateSync('5 |> double')        // 10
-expr.evaluateSync('"ha" |> repeat(3)')  // "hahaha"
 ```
+
+`addTransform()` remains available. Duplicate registration is rejected; use
+`replaceTransform()` for an intentional override. `defineFunction()`,
+`defineContextFunction()`, and their `add*`/`replace*` variants follow the same
+rule. Call `seal()` after configuration to make the registry immutable.
 
 ### addFunction(name, fn)
 
@@ -502,6 +554,10 @@ expr.use(strings)
 | `padStart(len, fill)` | `"42" \|> padStart(5, "0")` | `"00042"` |
 | `padEnd(len, fill)` | `"hi" \|> padEnd(5, ".")` | `"hi..."` |
 
+`find`, `some`, and `every` short-circuit. Async higher-order transforms await
+callbacks sequentially by default, preserving order without unbounded I/O
+fan-out.
+
 Pipeline examples:
 
 ```
@@ -581,7 +637,7 @@ Pipeline examples:
 
 ```
 products |> map(.price) |> avg |> round   → 25    (average price, rounded)
-orders |> map(.total) |> sum              → 347.50 (sum all order totals)
+orders |> map(.total) |> sum              → 347.5 (sum all order totals)
 ```
 
 ### Types
@@ -616,6 +672,9 @@ expr.use(dates)
 |------|------|---------|--------|
 | Function | `now()` | `now()` | Current timestamp (ms) |
 | Transform | `formatDate(fmt)` | `now() \|> formatDate("YYYY-MM-DD")` | `"2026-03-07"` |
+
+The default `dates` plugin uses the host wall clock. Use
+`createDates({ now: () => fixedTimestamp })` for deterministic evaluation.
 | Transform | `diffDays(other)` | `ts1 \|> diffDays(ts2)` | Absolute day difference |
 
 Format patterns: `YYYY` (year), `MM` (month), `DD` (day), `HH` (hours), `mm` (minutes), `ss` (seconds).
@@ -698,41 +757,52 @@ expr.evaluateSync('user.secret', { user: { secret: "xyz" } })
 
 Beyond configurable property restrictions, Bonsai applies several automatic protections:
 
-- **Own-property-only lookup**: Root identifiers are resolved via `Object.hasOwn()`, so context prototype chains cannot leak inherited properties into expressions.
+- **Own-property lookup**: Root identifiers and members read own properties only. Prototype chains are never walked, so inherited members and a polluted `Object.prototype` cannot surface as values. Property reads on a nullish receiver yield `undefined`; method calls on one throw.
 - **Null-prototype object literals**: Objects created inside expressions use `Object.create(null)`, preventing prototype pollution through expression-constructed objects.
-- **Receiver-aware method validation**: Method calls validate that the receiver is a safe type (string, number, array, or plain object). Unexpected receiver types throw `BonsaiTypeError`.
+- **Captured safe intrinsics**: Only audited string, number, and array methods are callable. Captured built-ins prevent receiver overrides and later prototype monkey-patches from changing evaluation.
+- **Data-only arrays and callbacks**: Spread copies by index and never consults a custom iterator; subclasses and own constructor/spreadability hooks are neutralized before species-producing methods; bundled transforms use captured operations; higher-order methods accept only Bonsai-created lambdas.
+- **Primitive-only conversion**: Operators, templates, computed keys, and method arguments cannot invoke object conversion hooks.
 - **Numeric index bypass**: Canonical numeric array indices automatically bypass allow/deny lists.
-- **Sync Promise guard**: `evaluateSync()` detects `Promise` return values from transforms, functions, and methods, and throws an actionable `BonsaiTypeError` naming the offending call and suggesting `evaluate()`.
+- **Sync Promise-like guard**: `evaluateSync()` detects native, cross-realm, and custom Promise-like results and throws an actionable `BonsaiTypeError`.
 
 ### Resource limits
 
 ```js
 const expr = bonsai({
-  timeout: 50,           // cooperative timeout in ms (opt-in)
-  maxDepth: 50,          // max nesting depth
-  maxArrayLength: 10000, // max produced array size
-  maxSteps: 500000       // max accounted evaluator steps (default 1,000,000)
+  timeout: 50,
+  maxSourceLength: 10000,
+  maxTokens: 2500,
+  maxAstNodes: 2000,
+  maxObjectProperties: 500,
+  maxCallArguments: 100,
+  maxDepth: 50,
+  maxArrayLength: 10000,
+  maxStringLength: 10000,
+  maxSteps: 500000
 })
 ```
 
-`maxSteps` is on by default and bounds evaluator-driven work (the AST walk and bonsai-lambda iteration such as `items.map(.x)`) even with no `timeout`; it does not count opaque host/native work.
+`maxSteps` is on by default and bounds evaluator-driven work even with no
+`timeout`; it does not count opaque host-extension work. Per-run `timeout`,
+`maxSteps`, and `AbortSignal` options can tighten one-shot or compiled
+evaluation without mutating instance defaults.
 
-Tip: For user-facing applications where users write their own expressions, start with a minimal context object, use `allowedProperties`, and set the resource limits: `timeout`, `maxDepth`, `maxArrayLength`, `maxStringLength`, and `maxSteps`.
+Tip: For user-facing applications, start with minimal plain data, use an
+allowlist, set structural/work/output limits, check before save, pass request
+cancellation, seal the registry, and use a worker/process when hard isolation
+is required. Trusted extensions and Proxy traps remain outside the interpreter's
+sandbox guarantees.
 
 ---
 
 ## Performance Tips
 
-Bonsai is designed for high throughput. On Apple Silicon (M-series), with LRU cache enabled:
-
-| Expression | ops/sec |
-|------------|---------|
-| Simple literal (`42`) | ~1,089,000 |
-| Arithmetic (`1 + 2 * 3`) | ~1,057,000 |
-| Property access (`user.name`) | ~996,000 |
-| Comparison with context | ~994,000 |
-| Transform pipeline | ~1,005,000 |
-| Compiled (evaluate only) | ~981,000 |
+Bonsai is designed for high throughput. A local Apple Silicon regression-gate
+run on 20 August 2026 measured 33.3M cached literals/s, 14.4M cached
+comparisons/s, 16.6M transform pipelines/s, 14.1M compiled comparisons/s, and
+229K `map(.x)` evaluations/s over 1,000 items. Cached comparison evaluation was
+16.2x faster than uncached parsing. These are point-in-time regression signals,
+not cross-machine API promises; run `bun run bench:gate` in your environment.
 
 ### Tips
 
