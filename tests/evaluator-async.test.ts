@@ -232,3 +232,88 @@ describe('async higher-order array method parity with sync', () => {
     )
   })
 })
+
+describe('sync/async node-kind parity', () => {
+  // Every AST node kind, exercised in compound (non-argument) position. Bare
+  // lambdas evaluate to callable values in both walks; everything else must
+  // produce an identical value or an identical typed error. Guards the async
+  // walk against missing a node case the sync walk handles (a real v1-rc bug:
+  // `evaluate('.x')` threw a plain Error while evaluateSync returned a lambda).
+  const context = { user: { name: 'Ada', age: 30 }, nums: [1, 2, 3], flag: true }
+  const cases: string[] = [
+    '42',
+    '"text"',
+    'true',
+    'null',
+    'undefined',
+    'user',
+    '-user.age',
+    'user.age + 1',
+    'flag ? 1 : 2',
+    'user.name',
+    'user?.name',
+    'nums[1]',
+    '[1, ...nums]',
+    '{ a: user.age, ["k"]: 1 }',
+    '`${user.name}!`',
+    'nums.map(. * 2)',
+    '`a` in user.name',
+  ]
+
+  it.each(cases)('%s evaluates identically sync and async', async (source) => {
+    const expr = bonsai()
+    let syncResult: { value?: unknown; error?: unknown }
+    try {
+      syncResult = { value: expr.evaluateSync(source, context) }
+    } catch (error) {
+      syncResult = { error }
+    }
+    let asyncResult: { value?: unknown; error?: unknown }
+    try {
+      asyncResult = { value: await expr.evaluate(source, context) }
+    } catch (error) {
+      asyncResult = { error }
+    }
+    expect(asyncResult.error === undefined).toBe(syncResult.error === undefined)
+    if (syncResult.error === undefined) {
+      expect(asyncResult.value).toEqual(syncResult.value)
+    } else {
+      expect((asyncResult.error as Error).constructor).toBe((syncResult.error as Error).constructor)
+    }
+  })
+
+  it.each(['.x', '. > 1', '[.x]', '{ f: .x }', 'flag ? .x : .x'])(
+    'bare lambda position %s yields callables in both walks',
+    async (source) => {
+      const expr = bonsai()
+      const flatten = (value: unknown): unknown[] => {
+        if (Array.isArray(value)) return value
+        if (value !== null && typeof value === 'object') return Object.values(value)
+        return [value]
+      }
+      for (const item of flatten(expr.evaluateSync(source, context))) {
+        expect(typeof item).toBe('function')
+      }
+      for (const item of flatten(await expr.evaluate(source, context))) {
+        expect(typeof item).toBe('function')
+      }
+    },
+  )
+
+  it('flatMap over an oversized callback result raises the typed limit error in both walks', async () => {
+    // A 130k-element context array exceeds V8's spread-argument ceiling
+    // (~125k); the async flatten must append by index so the typed
+    // MAX_ARRAY_LENGTH error is raised instead of an engine RangeError.
+    const big = Array.from({ length: 130_000 }, (_, index) => index)
+    const expr = bonsai()
+    const ctx = { items: [1], big }
+    const source = 'items.flatMap(. == 1 ? big : [])'
+
+    expect(() => expr.evaluateSync(source, ctx)).toThrow(
+      expect.objectContaining({ code: 'MAX_ARRAY_LENGTH' }) as Error,
+    )
+    await expect(expr.evaluate(source, ctx)).rejects.toMatchObject({
+      code: 'MAX_ARRAY_LENGTH',
+    })
+  })
+})

@@ -357,7 +357,9 @@ function pushCallArgument(args: unknown[], node: ASTNode, env: EvalEnv): void {
       env.g,
     )
     env.g.checkCallArguments(args.length + expanded.length)
-    args.push(...expanded)
+    // Append by index: `push(...expanded)` hits the engine's argument-count
+    // limit (~125k on V8) when a host raises maxCallArguments past it.
+    for (const element of expanded) args.push(element)
     return
   }
 
@@ -488,7 +490,7 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
                 g,
               )
               g.checkCallArguments(args.length + expanded.length)
-              args.push(...expanded)
+              for (const element of expanded) args.push(element)
             } else {
               args.push(evalArg(arg, env))
               g.checkCallArguments(args.length)

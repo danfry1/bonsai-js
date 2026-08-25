@@ -207,6 +207,18 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
         return result
       }
 
+      case 'SpreadElement':
+        return await evalNodeAsync(node.argument, env)
+
+      case 'LambdaAccessor':
+        return makeLambdaAccessor(node.property, g)
+
+      case 'LambdaIdentity':
+        return createBonsaiLambda((item: unknown) => {
+          g.step()
+          return item
+        })
+
       case 'LambdaExpression':
         return createBonsaiLambda((item: unknown) => {
           g.step()
@@ -328,7 +340,9 @@ async function pushCallArgumentAsync(
       env.g,
     )
     env.g.checkCallArguments(args.length + expanded.length)
-    args.push(...expanded)
+    // Append by index: `push(...expanded)` hits the engine's argument-count
+    // limit (~125k on V8) when a host raises maxCallArguments past it.
+    for (const element of expanded) args.push(element)
     return
   }
 
@@ -381,8 +395,16 @@ async function evalAsyncArrayMethod(
       for (let index = 0; index < arr.length; index++) {
         if (!Object.hasOwn(arr, index)) continue
         const value = await predicate(arr[index])
-        if (Array.isArray(value)) out.push(...expandSpreadValue(value))
-        else out.push(value)
+        if (Array.isArray(value)) {
+          // Append by index, not `push(...expanded)`: spreading into a call
+          // hits the engine's argument-count limit (~125k on V8) with a raw
+          // RangeError before the caller's checkResultLimits can produce the
+          // typed MAX_ARRAY_LENGTH error that the sync walk raises.
+          const expanded = expandSpreadValue(value)
+          for (const element of expanded) out.push(element)
+        } else {
+          out.push(value)
+        }
       }
       return { value: out }
     }
