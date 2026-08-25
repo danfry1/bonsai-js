@@ -45,7 +45,7 @@ const safe = bonsai({
 | `maxDepth` | number | 100 | Maximum traversal depth before a `MAX_DEPTH` security error is thrown. |
 | `maxArrayLength` | number | 100000 | Maximum array produced by the language, a method, transform, or function. |
 | `maxStringLength` | number | 100000 | Maximum string produced by the language, a method, transform, or function. |
-| `maxSteps` | number | 1000000 | Deterministic evaluator-work budget covering AST work, lambdas, spread/literal loops, and receiver-length estimates before linear native methods. Opaque extension work is excluded. `0` disables it. |
+| `maxSteps` | number | 1000000 | Deterministic evaluator-work budget covering AST work, lambdas, spread/literal loops, and work estimates before linear native methods (receiver length, or the copied span for `slice`). Opaque extension work is excluded. `0` disables it. |
 | `cacheSize` | number | 256 | Per-instance cache size for compiled expressions and parsed AST reuse. |
 | `allowedProperties` | string[] | - | Allowlist for member and method names. Root identifiers and object keys are not filtered. |
 | `deniedProperties` | string[] | - | Denylist for member and method names. Root identifiers and object keys are not filtered. |

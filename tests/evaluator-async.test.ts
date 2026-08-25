@@ -317,3 +317,80 @@ describe('sync/async node-kind parity', () => {
     })
   })
 })
+
+describe('Promise-like context values at the async read boundary', () => {
+  const thenable = {
+    calls: 0,
+    then(resolve: (value: string) => void) {
+      this.calls++
+      resolve('DB RESULT')
+    },
+  }
+
+  it('evaluateSync passes thenable context values through as inert data', () => {
+    const expr = bonsai()
+    expect(expr.evaluateSync('q', { q: thenable })).toBe(thenable)
+    expect(expr.evaluateSync('user.q', { user: { q: thenable } })).toBe(thenable)
+    expect(thenable.calls).toBe(0)
+  })
+
+  it('evaluate() rejects a thenable read with a typed error instead of awaiting it', async () => {
+    const expr = bonsai()
+    await expect(expr.evaluate('q', { q: thenable })).rejects.toMatchObject({
+      name: 'BonsaiTypeError',
+    })
+    await expect(expr.evaluate('user.q', { user: { q: thenable } })).rejects.toMatchObject({
+      name: 'BonsaiTypeError',
+    })
+    await expect(
+      expr.evaluate('items.map(.q)', { items: [{ q: thenable }] }),
+    ).rejects.toMatchObject({ name: 'BonsaiTypeError' })
+    // The host then() was never invoked: the ORM query never ran.
+    expect(thenable.calls).toBe(0)
+  })
+
+  it('evaluate() no longer hangs on a never-settling thenable', async () => {
+    const never = { then: () => undefined }
+    await expect(bonsai().evaluate('n', { n: never })).rejects.toMatchObject({
+      name: 'BonsaiTypeError',
+    })
+  })
+
+  it('extension results are still awaited (the purpose of evaluate)', async () => {
+    const expr = bonsai()
+    expr.addFunction('f', () => Promise.resolve(7))
+    expr.addTransform('later', (value) => Promise.resolve((value as number) + 1))
+    await expect(expr.evaluate('f() + 1')).resolves.toBe(8)
+    await expect(expr.evaluate('f() |> later')).resolves.toBe(8)
+  })
+
+  it('a non-function then property is plain data in both modes', async () => {
+    const expr = bonsai()
+    expect(expr.evaluateSync('o.then', { o: { then: 1 } })).toBe(1)
+    await expect(expr.evaluate('o.then', { o: { then: 1 } })).resolves.toBe(1)
+  })
+})
+
+describe('declared transform arity at the call site', () => {
+  it('rejects surplus arguments for transforms with declared parameters', async () => {
+    const { math, strings } = await import('../src/stdlib/index.js')
+    const expr = bonsai().use(math).use(strings)
+    expect(() => expr.evaluateSync('total |> round(2)', { total: 120.5 })).toThrow(
+      /no transform arguments/u,
+    )
+    expect(expr.evaluateSync('total |> round', { total: 120.5 })).toBe(121)
+    expect(() => expr.evaluateSync('name |> split(",", 1, 9)', { name: 'a,b' })).toThrow(
+      /at most 1 transform argument/u,
+    )
+    expect(expr.evaluateSync('name |> split(",")', { name: 'a,b' })).toEqual(['a', 'b'])
+    await expect(expr.evaluate('total |> round(2)', { total: 120.5 })).rejects.toMatchObject({
+      name: 'BonsaiTypeError',
+    })
+  })
+
+  it('transforms without declared parameters accept any arguments', () => {
+    const expr = bonsai()
+    expr.addTransform('anything', (value) => value)
+    expect(expr.evaluateSync('1 |> anything(1, 2, 3)')).toBe(1)
+  })
+})

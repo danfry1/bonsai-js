@@ -17,6 +17,7 @@ import {
   applyUnaryOp,
   chargeNativeMethod,
   checkResultLimits,
+  checkTransformArity,
   expandSpreadValue,
   getIdentifierName,
   getObjectLiteralKeyName,
@@ -199,9 +200,18 @@ function evalCompound(node: ASTNode, env: EvalEnv): unknown {
         for (const el of node.elements) {
           g.step()
           if (el.type === 'SpreadElement') {
-            elements.push(
-              ...expandSpreadValue(evalNode(el.argument, env), g.policy.maxArrayLength, g),
+            // Bulk append via length-extension and indexed writes:
+            // `push(...expanded)` hits the engine's argument-count limit
+            // (~125k on V8) when maxArrayLength is raised, and per-element
+            // push costs ~2.5x on the spread hot path.
+            const expanded = expandSpreadValue(
+              evalNode(el.argument, env),
+              g.policy.maxArrayLength,
+              g,
             )
+            const offset = elements.length
+            elements.length = offset + expanded.length
+            for (let i = 0; i < expanded.length; i++) elements[offset + i] = expanded[i]
           } else {
             elements.push(evalNode(el, env))
           }
@@ -303,7 +313,7 @@ function evalCallExpression(
         pushCallArgument(args, arg, env)
       }
       validateMethodArgs(receiver, methodName, args, g)
-      if (g.needsAccounting) chargeNativeMethod(receiver, methodName, g)
+      if (g.needsAccounting) chargeNativeMethod(receiver, methodName, args, g)
 
       // A native method cannot be interrupted mid-call. Linear audited methods
       // are pre-charged from receiver length above; Bonsai lambdas additionally
@@ -359,7 +369,11 @@ function pushCallArgument(args: unknown[], node: ASTNode, env: EvalEnv): void {
     env.g.checkCallArguments(args.length + expanded.length)
     // Append by index: `push(...expanded)` hits the engine's argument-count
     // limit (~125k on V8) when a host raises maxCallArguments past it.
-    for (const element of expanded) args.push(element)
+    {
+      const offset = args.length
+      args.length = offset + expanded.length
+      for (let i = 0; i < expanded.length; i++) args[offset + i] = expanded[i]
+    }
     return
   }
 
@@ -391,6 +405,7 @@ function evalPipe(input: unknown, transformNode: ASTNode, env: EvalEnv): unknown
     for (const arg of transformNode.args) {
       pushCallArgument(args, arg, env)
     }
+    checkTransformArity(func, calleeName, args.length)
     const result = rejectPromise(func(input, ...args), 'transform', calleeName)
     g.checkTimeout()
     checkResultLimits(result, g)
@@ -490,14 +505,18 @@ function evalLambdaBody(node: ASTNode, item: unknown, env: EvalEnv): unknown {
                 g,
               )
               g.checkCallArguments(args.length + expanded.length)
-              for (const element of expanded) args.push(element)
+              {
+                const offset = args.length
+                args.length = offset + expanded.length
+                for (let i = 0; i < expanded.length; i++) args[offset + i] = expanded[i]
+              }
             } else {
               args.push(evalArg(arg, env))
               g.checkCallArguments(args.length)
             }
           }
           validateMethodArgs(receiver, methodName, args, g)
-          if (g.needsAccounting) chargeNativeMethod(receiver, methodName, g)
+          if (g.needsAccounting) chargeNativeMethod(receiver, methodName, args, g)
 
           const result = rejectPromise(method.call(receiver, ...args), 'method', methodName)
           g.checkTimeout()

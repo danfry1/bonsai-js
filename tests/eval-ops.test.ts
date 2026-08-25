@@ -347,7 +347,7 @@ describe('validateMethodArgs - host-code conversion boundaries', () => {
   it.each([
     ['text', 'includes', 'a string argument', 'function'],
     [42, 'toString', 'a number argument', 'function'],
-    [[], 'toSorted', '0 arguments', 'number'],
+    [[], 'toSorted', '0 arguments', '1'],
     [[], 'concat', 'an array or primitive value', 'function'],
   ] as const)('rejects a host function passed to %s.%s', (receiver, method, expected, received) => {
     const error = errorOf(argsThunk(receiver, method, [() => 1])) as BonsaiTypeError
@@ -386,25 +386,26 @@ describe('validateMethodArgs - host-code conversion boundaries', () => {
   })
 
   it('reports exact arity contracts for fixed and optional signatures', () => {
+    // Arity errors report the received COUNT, not the type of the count.
     expect(errorOf(argsThunk('text', 'at', []))).toMatchObject({
       transform: 'at',
-      expected: '1 arguments',
-      received: 'number',
+      expected: '1 argument',
+      received: '0',
     })
     expect(errorOf(argsThunk('text', 'trim', [1]))).toMatchObject({
       transform: 'trim',
       expected: '0 arguments',
-      received: 'number',
+      received: '1',
     })
     expect(errorOf(argsThunk('text', 'substring', [0, 1, 2]))).toMatchObject({
       transform: 'substring',
       expected: '0 to 2 arguments',
-      received: 'number',
+      received: '3',
     })
     expect(errorOf(argsThunk([], 'with', [0]))).toMatchObject({
       transform: 'with',
       expected: '2 arguments',
-      received: 'number',
+      received: '1',
     })
   })
 
@@ -431,10 +432,10 @@ describe('validateMethodArgs - host-code conversion boundaries', () => {
 })
 
 describe('chargeNativeMethod', () => {
-  const stepsFor = (receiver: unknown, method: string): number => {
+  const stepsFor = (receiver: unknown, method: string, args: unknown[] = []): number => {
     const g = guard({ maxSteps: 100 })
     g.beginRun()
-    chargeNativeMethod(receiver, method, g)
+    chargeNativeMethod(receiver, method, args, g)
     g.endRun()
     return g.stepsTaken
   }
@@ -484,6 +485,20 @@ describe('chargeNativeMethod', () => {
     expect(stepsFor([1, 2, 3], 'map')).toBe(0)
     expect(stepsFor(123, 'slice')).toBe(0)
     expect(stepsFor({}, 'slice')).toBe(0)
+  })
+
+  it('charges slice by its normalized span, not the receiver length', () => {
+    // slice copies O(span); charging the whole receiver would reject cheap
+    // slices of big arrays under tight budgets and re-sample the clock on
+    // every call.
+    expect(stepsFor([1, 2, 3, 4], 'slice', [0, 2])).toBe(2)
+    expect(stepsFor('abcdefgh', 'slice', [1, 4])).toBe(3)
+    expect(stepsFor([1, 2, 3, 4], 'slice', [-2])).toBe(2)
+    expect(stepsFor([1, 2, 3, 4], 'slice', [0, -1])).toBe(3)
+    expect(stepsFor([1, 2, 3, 4], 'slice', [2, 1])).toBe(0)
+    expect(stepsFor([1, 2, 3, 4], 'slice', [0, 99])).toBe(4)
+    // No arguments still copies everything.
+    expect(stepsFor([1, 2, 3, 4], 'slice')).toBe(4)
   })
 })
 

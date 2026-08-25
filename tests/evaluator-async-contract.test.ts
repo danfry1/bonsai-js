@@ -118,7 +118,25 @@ describe('async evaluator direct contract', () => {
 
   it('covers the internal non-callable and invalid-transform guards', async () => {
     await expect(runParsed('(1 + 2)()')).rejects.toThrow('Cannot call non-identifier')
-    await expect(runParsed('5 |> 42')).rejects.toThrow('Invalid transform expression')
+    // A non-named pipe target is now a typed parse error (thrown synchronously
+    // by parse); the runtime guard stays covered through a hand-built AST as
+    // defense in depth.
+    expect(() => runParsed('5 |> 42')).toThrow('Pipe transform must be a named transform')
+    const ast = {
+      type: 'PipeExpression',
+      input: { type: 'NumberLiteral', value: 5, start: 0, end: 1 },
+      transform: { type: 'NumberLiteral', value: 42, start: 5, end: 7 },
+      start: 0,
+      end: 7,
+    } as const
+    await expect(
+      evaluateAsync(
+        ast,
+        {},
+        { transforms: {}, functions: {} },
+        new ExecutionContext(new SecurityPolicy()),
+      ),
+    ).rejects.toThrow('Invalid transform expression')
   })
 
   it('short-circuits computed optional members before evaluating their key', async () => {

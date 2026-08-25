@@ -227,6 +227,34 @@ export interface Bindings {
   readonly functions: Record<string, RegisteredFunction>
 }
 
+/**
+ * Declared maximum argument count per transform function (the arguments after
+ * the piped value), recorded when metadata declares `parameters`. Keyed by the
+ * function object so the evaluator's hot pipe path needs no extra plumbing
+ * through Bindings; a name-independent key means one function registered under
+ * two names with different declarations widens to the larger cap (the
+ * conservative direction: never falsely reject a declared-legal call).
+ */
+const declaredTransformMaxArgs = new WeakMap<TransformFn, number>()
+
+function recordDeclaredTransformArity(fn: TransformFn, metadata: TransformMetadata): void {
+  const parameters = metadata.parameters
+  if (parameters === undefined) return
+  const max = parameters.at(-1)?.rest === true ? Infinity : parameters.length
+  const previous = declaredTransformMaxArgs.get(fn)
+  declaredTransformMaxArgs.set(fn, previous === undefined ? max : Math.max(previous, max))
+}
+
+/**
+ * The declared argument cap for a transform, or undefined when its metadata
+ * declares no parameters (undeclared transforms accept anything, as before).
+ * A surplus argument is a silent wrong answer waiting to happen — the piped
+ * value is unaffected by the extras — so the evaluator rejects it loudly.
+ */
+export function transformMaxArgs(fn: TransformFn): number | undefined {
+  return declaredTransformMaxArgs.get(fn)
+}
+
 export interface PluginRegistry {
   addTransform: (name: string, fn: TransformFn, metadata?: TransformMetadata) => void
   replaceTransform: (name: string, fn: TransformFn, metadata?: TransformMetadata) => void
@@ -297,6 +325,7 @@ export function createPluginRegistry(): PluginRegistry {
     const normalizedMetadata = normalizeTransformMetadata(metadata)
     transformMap.set(name, fn)
     transformMetadataMap.set(name, normalizedMetadata)
+    recordDeclaredTransformArity(fn, normalizedMetadata)
     transformsDirty = true
     revision++
   }

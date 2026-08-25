@@ -39,9 +39,10 @@ export class BonsaiTypeError extends Error {
   location?: ErrorLocation
   formatted?: string
 
-  constructor(transform: string, expected: string, value: unknown) {
+  constructor(transform: string, expected: string, value: unknown, receivedText?: string) {
     let received: string
-    if (value === null) received = 'null'
+    if (receivedText !== undefined) received = receivedText
+    else if (value === null) received = 'null'
     else if (value instanceof Promise) received = 'Promise'
     else if (Array.isArray(value)) received = 'array'
     else received = typeof value

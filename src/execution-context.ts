@@ -103,6 +103,9 @@ export class ExecutionContext {
   private maxSteps: number
   private timeout: number
   private signal?: AbortSignal
+  // Set when waitFor delivers TIMEOUT/ABORTED to the caller, so the abandoned
+  // walk deterministically observes the same verdict at its next checkpoint.
+  private cancellation?: BonsaiSecurityError
   // True only while an evaluation is walking this context. Step accounting is
   // gated on it so that closures created during evaluation (lambda accessors,
   // identity/expression lambdas) that a host retains and invokes *after* the
@@ -135,6 +138,7 @@ export class ExecutionContext {
   reset(options: EvaluationOptions = NO_EVALUATION_OPTIONS): void {
     this.stepCount = 0
     this.depth = 0
+    this.cancellation = undefined
     this.applyOptions(options)
     this.nextCheck = this.computeNextCheck(0)
   }
@@ -231,6 +235,12 @@ export class ExecutionContext {
   }
 
   checkTimeout(): void {
+    // Once waitFor has delivered a cancellation to the caller, the abandoned
+    // walk must observe the SAME verdict at its next checkpoint. Without this
+    // flag the walk re-samples the clock, and a setTimeout that fired sub-ms
+    // before the monotonic deadline would let one more extension call slip
+    // through after the caller already received TIMEOUT.
+    if (this.cancellation !== undefined) throw this.cancellation
     if (this.signal?.aborted === true) {
       throw new BonsaiSecurityError('ABORTED', 'Evaluation aborted')
     }
@@ -251,7 +261,8 @@ export class ExecutionContext {
         if (timer !== undefined) clearTimeout(timer)
         signal?.removeEventListener('abort', onAbort)
       }
-      const rejectWith = (error: Error): void => {
+      const rejectWith = (error: BonsaiSecurityError): void => {
+        this.cancellation = error
         cleanup()
         reject(error)
       }

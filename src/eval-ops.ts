@@ -13,6 +13,7 @@ import { coerceToNumber, coerceToString } from './coerce.js'
 import type { ExecutionContext } from './execution-context.js'
 import { isBonsaiLambda } from './lambda.js'
 import { prepareArrayReceiver } from './array-data.js'
+import { transformMaxArgs } from './plugins.js'
 import type {
   ASTNode,
   BinaryExpressionOperator,
@@ -183,6 +184,24 @@ export function validateMethodCall(
   return method
 }
 
+/**
+ * Enforce a transform's declared argument cap at the call site. A surplus
+ * argument would be silently ignored by the implementation (`total |> round(2)`
+ * returning the unrounded integer), which is the worst failure mode for a
+ * rules language; declared metadata makes the mistake detectable, so fail loud.
+ * Transforms without declared parameters keep accepting anything.
+ */
+export function checkTransformArity(fn: TransformFn, name: string, argCount: number): void {
+  const max = transformMaxArgs(fn)
+  if (max !== undefined && argCount > max) {
+    const cap =
+      max === 0
+        ? 'no transform arguments'
+        : `at most ${max} transform argument${max === 1 ? '' : 's'}`
+    throw new BonsaiTypeError(name, cap, argCount, String(argCount))
+  }
+}
+
 export function resolveTransform(
   name: string,
   transforms: Record<string, TransformFn>,
@@ -311,8 +330,9 @@ function matchesMethodArgument(value: unknown, kind: MethodArgumentCode): boolea
 }
 
 function methodArityDescription(required: number, maximum: number): string {
-  if (maximum === Infinity) return `at least ${String(required)} arguments`
-  if (required === maximum) return `${String(required)} arguments`
+  const plural = (count: number): string => (count === 1 ? 'argument' : 'arguments')
+  if (maximum === Infinity) return `at least ${String(required)} ${plural(required)}`
+  if (required === maximum) return `${String(required)} ${plural(required)}`
   return `${String(required)} to ${String(maximum)} arguments`
 }
 
@@ -344,7 +364,12 @@ function validateMethodSignature(receiver: unknown, methodName: string, args: un
     ? Infinity
     : methodSignatureParamCount(signature)
   if (args.length < required || args.length > maximum) {
-    throw new BonsaiTypeError(methodName, methodArityDescription(required, maximum), args.length)
+    throw new BonsaiTypeError(
+      methodName,
+      methodArityDescription(required, maximum),
+      args.length,
+      String(args.length),
+    )
   }
   for (let index = 0; index < args.length; index++) {
     const kind = methodSignatureArgument(signature, index)
@@ -390,17 +415,46 @@ const LINEAR_ARRAY_METHODS: ReadonlySet<string> = new Set([
   'with',
 ])
 
+/**
+ * The number of elements `slice(start?, end?)` copies from a receiver of
+ * `length`, per the ECMAScript index-normalization rules. Arguments have been
+ * type-validated as numbers before charging.
+ */
+function normalizeSliceIndex(length: number, index: unknown, fallback: number): number {
+  if (typeof index !== 'number') return fallback
+  const truncated = Math.trunc(index)
+  if (truncated < 0) return Math.max(length + truncated, 0)
+  return Math.min(truncated, length)
+}
+
+function sliceSpan(length: number, start: unknown, end: unknown): number {
+  const from = normalizeSliceIndex(length, start, 0)
+  const to = normalizeSliceIndex(length, end, length)
+  return Math.max(to - from, 0)
+}
+
 /** Pre-charge native work that cannot be interrupted once the intrinsic starts. */
 export function chargeNativeMethod(
   receiver: unknown,
   methodName: string,
+  args: readonly unknown[],
   guard: ExecutionContext,
 ): void {
+  let length: number | undefined
   if (typeof receiver === 'string' && LINEAR_STRING_METHODS.has(methodName)) {
-    guard.addSteps(receiver.length)
+    length = receiver.length
   } else if (Array.isArray(receiver) && LINEAR_ARRAY_METHODS.has(methodName)) {
-    guard.addSteps(receiver.length)
+    length = receiver.length
   }
+  if (length === undefined) return
+  // slice copies only its normalized span; charging the whole receiver would
+  // both overtax tight budgets (`nums.slice(0, 3)` rejected on a big array)
+  // and trip the periodic clock checkpoint on every call.
+  if (methodName === 'slice') {
+    guard.addSteps(sliceSpan(length, args[0], args[1]))
+    return
+  }
+  guard.addSteps(length)
 }
 
 export function validateMethodArgs(

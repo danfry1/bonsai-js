@@ -455,8 +455,23 @@ describe('evaluator - non-callable and invalid-transform guards', () => {
     expect(() => run('(1 + 2)()')).toThrow('Cannot call non-identifier')
   })
 
-  it('throws "Invalid transform expression" when a pipe target is not a call or identifier', () => {
-    expect(() => run('5 |> 42')).toThrow('Invalid transform expression')
+  it('rejects a non-named pipe target at parse time with a typed error', () => {
+    expect(() => run('5 |> 42')).toThrow('Pipe transform must be a named transform')
+  })
+
+  it('keeps the runtime invalid-transform guard as defense in depth for hand-built ASTs', () => {
+    // The parser now rejects this shape, so reach the runtime guard directly.
+    const ast = {
+      type: 'PipeExpression',
+      input: { type: 'NumberLiteral', value: 5, start: 0, end: 1 },
+      transform: { type: 'NumberLiteral', value: 42, start: 5, end: 7 },
+      start: 0,
+      end: 7,
+    } as const
+    const ec = new ExecutionContext(new SecurityPolicy())
+    expect(() => evaluate(ast, {}, { transforms: {}, functions: {} }, ec)).toThrow(
+      'Invalid transform expression',
+    )
   })
 })
 

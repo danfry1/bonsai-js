@@ -77,7 +77,10 @@ Other differences to review:
   transforms with `defineTransform()` metadata (or pass `transformSignatures`)
   so pipe completions stay filtered.
 - Async transforms and functions are awaited by `evaluate()`. Promise values in
-  the context are not implicitly unwrapped.
+  the context are never implicitly unwrapped: `evaluateSync()` passes them
+  through as data, and reading one during `evaluate()` is a typed error (an
+  awaited thenable would invoke its host `then` — an ORM query object would
+  run its query). Resolve promises before building the context.
 - Extension names and the operator grammar are fixed after configuration; call
   `seal()` to enforce that lifecycle.
 

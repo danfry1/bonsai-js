@@ -362,7 +362,7 @@ const safe = bonsai({
 | `maxDepth` | number | 100 | Max parser/evaluator nesting depth |
 | `maxArrayLength` | number | 100000 | Max size of every produced array |
 | `maxStringLength` | number | 100000 | Max size of every produced string |
-| `maxSteps` | number | 1000000 | Max accounted evaluator steps per evaluation, a default-on bound independent of `timeout`; covers AST/lambda work and receiver-length estimates for linear native methods, but not opaque host-extension work (throws `MAX_STEPS`). `0` disables |
+| `maxSteps` | number | 1000000 | Max accounted evaluator steps per evaluation, a default-on bound independent of `timeout`; covers AST/lambda work and native-work estimates for linear built-in methods (receiver length; copied span for `slice`), but not opaque host-extension work (throws `MAX_STEPS`). `0` disables |
 | `cacheSize` | number | 256 | Per-instance cache size for compiled expressions and parsed AST reuse |
 | `allowedProperties` | string[] | - | Allowlist checked against member and method names, not root identifiers |
 | `deniedProperties` | string[] | - | Denylist checked against member and method names, not root identifiers |
@@ -637,7 +637,7 @@ Pipeline examples:
 
 ```
 products |> map(.price) |> avg |> round   → 25    (average price, rounded)
-orders |> map(.total) |> sum              → 347.50 (sum all order totals)
+orders |> map(.total) |> sum              → 347.5 (sum all order totals)
 ```
 
 ### Types

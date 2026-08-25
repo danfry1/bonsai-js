@@ -162,7 +162,7 @@ the expression language.
 | Expression depth  | `maxDepth`            | 100       | Evaluator recursion, call-stack growth, and native `flat` depth.                                                                                                                  |
 | Array length      | `maxArrayLength`      | 100,000   | Every array produced by the language, a method, transform, or function. Context data read back unchanged is never rejected for its size.                                          |
 | String length     | `maxStringLength`     | 100,000   | Every string produced by the language, a method, transform, or function, plus allocation pre-checks. Context data read back unchanged is never rejected for its size.             |
-| Step budget       | `maxSteps`            | 1,000,000 | Accounted evaluator work, including AST nodes, lambda calls, spread/literal loops, and receiver-length charges before linear native methods. Excludes opaque host-extension work. |
+| Step budget       | `maxSteps`            | 1,000,000 | Accounted evaluator work, including AST nodes, lambda calls, spread/literal loops, and native-work charges before linear built-in methods (receiver length, or the copied span for `slice`). Excludes opaque host-extension work. |
 | Wall-clock time   | `timeout`             | 0 (off)   | Total evaluation time, checked cooperatively.                                                                                                                                     |
 | Cancellation      | per-run `signal`      | none      | `AbortSignal`, sampled during sync work and raced at async waits.                                                                                                                 |
 

@@ -66,3 +66,36 @@ operands must be strings.
 | `"legacy" not in enabledFeatures` | `true` | |
 
 **Guideline:** when an expression becomes important business logic, add parentheses even when precedence would make it unnecessary. Stored rules are easier to review when grouping is explicit.
+
+## Precedence
+
+From loosest to tightest binding. Operators on the same row group left to
+right, except `**`, which groups right to left (`2 ** 3 ** 2` is `2 ** (3 ** 2)`).
+
+| Level | Operators |
+|---|---|
+| 1 (loosest) | `?:` (ternary) |
+| 2 | `\|>` (pipe) |
+| 3 | `\|\|` |
+| 4 | `&&` |
+| 5 | `??` |
+| 6 | `==` `!=` |
+| 7 | `<` `>` `<=` `>=` `in` `not in` |
+| 8 | `+` `-` |
+| 9 | `*` `/` `%` |
+| 10 | `**` (right-associative) |
+| 11 | `!` `-` `+` (unary) |
+| 12 (tightest) | member access, indexing, calls |
+
+Two ambiguous forms are parse errors, exactly as in JavaScript, so a stored
+rule can never silently mean the wrong thing:
+
+- A unary operator directly on the left of `**` — write `(-x) ** y` or
+  `-(x ** y)`.
+- Mixing `??` with `&&` or `||` without parentheses — write `(a ?? b) || c` or
+  `a ?? (b || c)`.
+
+The pipe reads its left side as "everything computed so far" and binds its
+result tightly on the right: `1 + 2 |> round` rounds the sum, while
+`items |> count + 1` adds one to the count. When a pipeline continues into
+arithmetic, parenthesize whichever reading you mean.

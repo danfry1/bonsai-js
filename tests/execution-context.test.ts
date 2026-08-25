@@ -546,3 +546,56 @@ describe('ExecutionContext per-run state and cancellation invariants', () => {
     })
   })
 })
+
+describe('deterministic cancellation after waitFor delivers a verdict', () => {
+  it('checkTimeout throws the delivered TIMEOUT even when the clock disagrees', async () => {
+    // Freeze the monotonic clock before the deadline: the waitFor timer fires
+    // on real time, but a later checkpoint sampling the frozen clock would
+    // conclude "not timed out yet" and let one more extension call through.
+    // The cancellation flag makes the delivered verdict sticky.
+    const policy = new SecurityPolicy({ timeout: 5 })
+    const ec = new ExecutionContext(policy, () => 0)
+    const pending = new Promise(() => {
+      /* never settles */
+    })
+
+    await expect(ec.waitFor(pending)).rejects.toMatchObject({ code: 'TIMEOUT' })
+    expect(() => {
+      ec.checkTimeout()
+    }).toThrow(/timeout/iu)
+  })
+
+  it('checkTimeout throws the delivered ABORTED after an abort rejection', async () => {
+    const controller = new AbortController()
+    const policy = new SecurityPolicy({})
+    const ec = new ExecutionContext(policy, () => 0, { signal: controller.signal })
+    const pending = new Promise(() => {
+      /* never settles */
+    })
+
+    const waited = ec.waitFor(pending)
+    controller.abort()
+    await expect(waited).rejects.toMatchObject({ code: 'ABORTED' })
+    expect(() => {
+      ec.checkTimeout()
+    }).toThrow(/aborted/iu)
+  })
+
+  it('reset clears a delivered cancellation for pooled reuse', async () => {
+    const policy = new SecurityPolicy({ timeout: 5 })
+    const ec = new ExecutionContext(policy, () => 0)
+    await expect(
+      ec.waitFor(
+        new Promise(() => {
+          /* never settles */
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: 'TIMEOUT',
+    })
+    ec.reset({ timeout: 0 })
+    expect(() => {
+      ec.checkTimeout()
+    }).not.toThrow()
+  })
+})

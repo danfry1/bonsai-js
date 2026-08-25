@@ -119,3 +119,81 @@ describe('template literal brace handling', () => {
     expect(evalSync('`${ `a}b` }-${ `c{d` }`')).toBe('a}b-c{d')
   })
 })
+
+describe('grammar ambiguity rules', () => {
+  const evalSync = (src: string): unknown => bonsai().evaluateSync(src)
+
+  it('refuses a unary base of ** without parentheses, as JavaScript does', () => {
+    expect(() => evalSync('-2 ** 2')).toThrow(/Parenthesize the unary expression/u)
+    expect(() => evalSync('!flag ** 2')).toThrow(ExpressionError)
+    expect(evalSync('(-2) ** 2')).toBe(4)
+    expect(evalSync('-(2 ** 2)')).toBe(-4)
+    expect(evalSync('2 ** -3')).toBe(0.125)
+    expect(evalSync('2 ** 3 ** 2')).toBe(512)
+  })
+
+  it('refuses ?? mixed with && or || without parentheses, as JavaScript does', () => {
+    expect(() => parse('a ?? b || c')).toThrow(/Parenthesize "\?\?"/u)
+    expect(() => parse('a && b ?? c')).toThrow(ExpressionError)
+    expect(() => parse('a || b ?? c')).toThrow(ExpressionError)
+    const context = { a: null, b: '', c: 'z' }
+    expect(bonsai().evaluateSync('(a ?? b) || c', context)).toBe('z')
+    expect(bonsai().evaluateSync('a ?? (b || c)', context)).toBe('z')
+    expect(bonsai().evaluateSync('a ?? b', context)).toBe('')
+    expect(bonsai().evaluateSync('b || c', context)).toBe('z')
+  })
+
+  it('refuses a non-named pipe transform with a typed parse error', () => {
+    expect(() => parse('x |> [1, 2]')).toThrow(ExpressionError)
+    expect(() => parse('x |> "s"')).toThrow(/named transform/u)
+    expect(() => parse('x |> "s"(1)')).toThrow(/named transform/u)
+    expect(() => parse('x |> 5')).toThrow(ExpressionError)
+  })
+})
+
+describe('parser stack safety across template nesting', () => {
+  it('fails closed with a typed error when nesting multiplies across template levels', () => {
+    // Each template level used to restart the grammar-depth budget, so
+    // moderate per-level nesting multiplied into a native stack overflow.
+    const level = (inner: string, parens: number): string =>
+      `\`\${${'('.repeat(parens)}${inner}${')'.repeat(parens)}}\``
+    let source = '1'
+    for (let i = 0; i < 6; i++) source = level(source, 460)
+    expect(() => parse(source)).toThrow(ExpressionError)
+    expect(() => parse(source)).toThrow(/nesting depth/u)
+
+    // Shallow per-level nesting across a few template levels still parses.
+    let fine = '1'
+    for (let i = 0; i < 4; i++) fine = level(fine, 20)
+    expect(parse(fine)).toBeDefined()
+  })
+
+  it('parses a nested template containing a backtick inside a quoted string', () => {
+    expect(bonsai().evaluateSync('`a${ `b${ "`" }` }c`')).toBe('ab`c')
+  })
+})
+
+describe('parse-time value limits', () => {
+  it('rejects a string literal longer than maxStringLength', () => {
+    const expr = bonsai({ maxStringLength: 3 })
+    expect(() => expr.evaluateSync('"abcd"')).toThrow(/MAX_STRING_LENGTH|String literal length/u)
+    expect(expr.evaluateSync('"abc"')).toBe('abc')
+  })
+
+  it('does not constant-fold a concat past maxStringLength', () => {
+    // Folding "ab" + "cd" into a literal would bypass the produced-string
+    // check that the same expression performs with variable operands.
+    const expr = bonsai({ maxStringLength: 3 })
+    expect(() => expr.evaluateSync('"ab" + "cd"')).toThrow(/String length/u)
+    expect(bonsai().evaluateSync('"ab" + "cd"')).toBe('abcd')
+  })
+
+  it('enforces maxCallArguments while parsing lambda-body call arguments', () => {
+    const args = Array.from({ length: 5 }, (_, i) => String(i)).join(', ')
+    expect(() =>
+      bonsai({ maxCallArguments: 3 }).evaluateSync(`items.map(.x.slice(${args}))`, {
+        items: [],
+      }),
+    ).toThrow(/MAX_CALL_ARGUMENTS|argument count/iu)
+  })
+})

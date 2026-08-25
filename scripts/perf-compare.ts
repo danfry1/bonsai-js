@@ -28,7 +28,10 @@ const MIN_RETAINED_RATIO = Number(process.env.PERF_COMPARE_MIN_RATIO ?? '0.75')
 // Each side is measured this many times, interleaved, and the best run is
 // kept. Taking the max rather than the mean discards GC pauses and scheduler
 // hiccups that would otherwise read as a regression.
-const ROUNDS = Number(process.env.PERF_COMPARE_ROUNDS ?? '2')
+// Three rounds: cases that legitimately sit near the threshold (slice retains
+// ~75% by design after native-work step charging) need the extra sample to
+// keep a noisy dip from failing the gate.
+const ROUNDS = Number(process.env.PERF_COMPARE_ROUNDS ?? '3')
 
 if (!(MIN_RETAINED_RATIO > 0 && MIN_RETAINED_RATIO <= 1)) {
   throw new Error('PERF_COMPARE_MIN_RATIO must be greater than 0 and at most 1')

@@ -1,7 +1,9 @@
 import type { ASTNode, BinaryExpressionOperator } from './types.js'
 
-export function compile(ast: ASTNode): ASTNode {
-  return optimize(ast)
+const DEFAULT_MAX_STRING_LENGTH = 100_000
+
+export function compile(ast: ASTNode, limits: { maxStringLength?: number } = {}): ASTNode {
+  return optimize(ast, limits.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH)
 }
 
 /**
@@ -9,8 +11,8 @@ export function compile(ast: ASTNode): ASTNode {
  * Evaluators retain the private tree's fast object shapes; exposing that same
  * object would let a caller mutate one artifact and poison later evaluations.
  */
-export function frozenAstView(ast: ASTNode): ASTNode {
-  return deepFreeze(optimize(ast))
+export function frozenAstView(ast: ASTNode, limits: { maxStringLength?: number } = {}): ASTNode {
+  return deepFreeze(optimize(ast, limits.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH))
 }
 
 function deepFreeze<T>(value: T): T {
@@ -19,102 +21,110 @@ function deepFreeze<T>(value: T): T {
   return Object.freeze(value)
 }
 
-function optimize(node: ASTNode): ASTNode {
-  switch (node.type) {
-    case 'BinaryExpression': {
-      const left = optimize(node.left)
-      const right = optimize(node.right)
+function optimize(root: ASTNode, maxStringLength: number): ASTNode {
+  return visit(root)
 
-      // Constant folding
-      if (isConstant(left) && isConstant(right)) {
-        const result = evalConstant(node.operator, valueOf(left), valueOf(right))
-        if (result !== undefined) {
-          return makeConstant(result, node.start, node.end)
+  function visit(node: ASTNode): ASTNode {
+    switch (node.type) {
+      case 'BinaryExpression': {
+        const left = visit(node.left)
+        const right = visit(node.right)
+
+        // Constant folding
+        if (isConstant(left) && isConstant(right)) {
+          const result = evalConstant(node.operator, valueOf(left), valueOf(right))
+          // A fold must never manufacture a literal the size policy would have
+          // rejected: a folded concat is still a produced string, so leave the
+          // node in place and let evaluation raise MAX_STRING_LENGTH.
+          const oversized = typeof result === 'string' && result.length > maxStringLength
+          if (result !== undefined && !oversized) {
+            return makeConstant(result, node.start, node.end)
+          }
+        }
+
+        return { ...node, left, right }
+      }
+
+      case 'ConditionalExpression': {
+        const test = visit(node.test)
+
+        // Dead branch elimination
+        if (isConstant(test)) {
+          const value = valueOf(test)
+          return isTruthy(value) ? visit(node.consequent) : visit(node.alternate)
+        }
+
+        return {
+          ...node,
+          test,
+          consequent: visit(node.consequent),
+          alternate: visit(node.alternate),
         }
       }
 
-      return { ...node, left, right }
-    }
-
-    case 'ConditionalExpression': {
-      const test = optimize(node.test)
-
-      // Dead branch elimination
-      if (isConstant(test)) {
-        const value = valueOf(test)
-        return isTruthy(value) ? optimize(node.consequent) : optimize(node.alternate)
-      }
-
-      return {
-        ...node,
-        test,
-        consequent: optimize(node.consequent),
-        alternate: optimize(node.alternate),
-      }
-    }
-
-    case 'UnaryExpression': {
-      const operand = optimize(node.operand)
-      if (isConstant(operand)) {
-        const val = valueOf(operand)
-        if (node.operator === '!' && typeof val === 'boolean') {
-          return { type: 'BooleanLiteral', value: !val, start: node.start, end: node.end }
+      case 'UnaryExpression': {
+        const operand = visit(node.operand)
+        if (isConstant(operand)) {
+          const val = valueOf(operand)
+          if (node.operator === '!' && typeof val === 'boolean') {
+            return { type: 'BooleanLiteral', value: !val, start: node.start, end: node.end }
+          }
+          if (node.operator === '-' && typeof val === 'number') {
+            return { type: 'NumberLiteral', value: -val, start: node.start, end: node.end }
+          }
         }
-        if (node.operator === '-' && typeof val === 'number') {
-          return { type: 'NumberLiteral', value: -val, start: node.start, end: node.end }
+        return { ...node, operand }
+      }
+
+      case 'PipeExpression':
+        return { ...node, input: visit(node.input), transform: visit(node.transform) }
+
+      case 'ArrayLiteral':
+        return { ...node, elements: node.elements.map((e) => visit(e)) }
+
+      case 'ObjectLiteral':
+        return {
+          ...node,
+          properties: node.properties.map((property) => ({
+            ...property,
+            key: visit(property.key),
+            value: visit(property.value),
+          })),
         }
-      }
-      return { ...node, operand }
+
+      case 'TemplateLiteral':
+        return { ...node, parts: node.parts.map((part) => visit(part)) }
+
+      case 'SpreadElement':
+        return { ...node, argument: visit(node.argument) }
+
+      case 'CallExpression':
+        return { ...node, callee: visit(node.callee), args: node.args.map((a) => visit(a)) }
+
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        return {
+          ...node,
+          object: visit(node.object),
+          property: visit(node.property),
+        }
+
+      case 'LambdaExpression':
+        return { ...node, body: visit(node.body) }
+
+      case 'NumberLiteral':
+      case 'StringLiteral':
+      case 'BooleanLiteral':
+      case 'NullLiteral':
+      case 'UndefinedLiteral':
+      case 'Identifier':
+      case 'LambdaAccessor':
+      case 'LambdaIdentity':
+        return { ...node }
+
+      default:
+        return node
     }
-
-    case 'PipeExpression':
-      return { ...node, input: optimize(node.input), transform: optimize(node.transform) }
-
-    case 'ArrayLiteral':
-      return { ...node, elements: node.elements.map((e) => optimize(e)) }
-
-    case 'ObjectLiteral':
-      return {
-        ...node,
-        properties: node.properties.map((property) => ({
-          ...property,
-          key: optimize(property.key),
-          value: optimize(property.value),
-        })),
-      }
-
-    case 'TemplateLiteral':
-      return { ...node, parts: node.parts.map((part) => optimize(part)) }
-
-    case 'SpreadElement':
-      return { ...node, argument: optimize(node.argument) }
-
-    case 'CallExpression':
-      return { ...node, callee: optimize(node.callee), args: node.args.map((a) => optimize(a)) }
-
-    case 'MemberExpression':
-    case 'OptionalMemberExpression':
-      return {
-        ...node,
-        object: optimize(node.object),
-        property: optimize(node.property),
-      }
-
-    case 'LambdaExpression':
-      return { ...node, body: optimize(node.body) }
-
-    case 'NumberLiteral':
-    case 'StringLiteral':
-    case 'BooleanLiteral':
-    case 'NullLiteral':
-    case 'UndefinedLiteral':
-    case 'Identifier':
-    case 'LambdaAccessor':
-    case 'LambdaIdentity':
-      return { ...node }
-
-    default:
-      return node
   }
 }
 

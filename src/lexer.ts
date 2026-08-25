@@ -329,6 +329,9 @@ export function tokenize(source: string, limits: SyntaxLimits = {}): Token[] {
             // Skip nested template literals so their raw braces (and the braces
             // of their own interpolations) do not throw off this brace count.
             // The nested template is preserved verbatim and re-parsed later.
+            // Quoted strings inside the nested template are skipped whole, so a
+            // backtick INSIDE such a string is not mistaken for the closing
+            // backtick (mirrors the parser's interpolation rescanner).
             if (ic === '`') {
               raw += ic
               i++
@@ -336,6 +339,25 @@ export function tokenize(source: string, limits: SyntaxLimits = {}): Token[] {
                 if (source[i] === '\\' && i + 1 < source.length) {
                   raw += source[i] + source[i + 1]
                   i += 2
+                  continue
+                }
+                if (source[i] === '"' || source[i] === "'") {
+                  const quote = source[i]
+                  raw += source[i]
+                  i++
+                  while (i < source.length && source[i] !== quote) {
+                    if (source[i] === '\\' && i + 1 < source.length) {
+                      raw += source[i] + source[i + 1]
+                      i += 2
+                      continue
+                    }
+                    raw += source[i]
+                    i++
+                  }
+                  if (i < source.length) {
+                    raw += source[i] // closing quote
+                    i++
+                  }
                   continue
                 }
                 raw += source[i]

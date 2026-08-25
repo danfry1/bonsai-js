@@ -1,10 +1,11 @@
 import type { ASTNode, Identifier, ObjectProperty } from './types.js'
 import type { Bindings } from './plugins.js'
 import type { ExecutionContext } from './execution-context.js'
-import { attachLocation } from './errors.js'
+import { attachLocation, BonsaiTypeError } from './errors.js'
 import type { EvalEnv } from './evaluator.js'
 import { createBonsaiLambda } from './lambda.js'
 import { coerceToString } from './coerce.js'
+import { isPromiseLike } from './promise-like.js'
 import {
   accessMember,
   accessMemberByName,
@@ -14,6 +15,7 @@ import {
   applyUnaryOp,
   chargeNativeMethod,
   checkResultLimits,
+  checkTransformArity,
   expandSpreadValue,
   getIdentifierName,
   getObjectLiteralKeyName,
@@ -24,6 +26,28 @@ import {
 } from './eval-ops.js'
 
 type AsyncEvalEnv = EvalEnv
+
+/**
+ * Reject Promise-like context values at the read boundary of the async walk.
+ *
+ * `evaluateSync` treats a thenable in context as inert data, but the async
+ * walk awaits every intermediate value, and JavaScript assimilation would
+ * invoke the thenable's host `.then` (executing an ORM query, or hanging
+ * forever on a never-settling thenable). Neither silently running host code
+ * nor a silent sync/async divergence is acceptable, so reading such a value
+ * in async mode fails loud. Extensions returning Promises are unaffected:
+ * awaiting an extension result is the documented purpose of `evaluate()`.
+ */
+function rejectThenableRead(value: unknown, name: string): unknown {
+  if (isPromiseLike(value)) {
+    throw new BonsaiTypeError(
+      name,
+      'a plain data value — Promise-like context values would be awaited by async evaluation; resolve them before building the context (evaluateSync treats them as data)',
+      value,
+    )
+  }
+  return value
+}
 type CallExpressionNode = Extract<ASTNode, { type: 'CallExpression' }>
 type MemberCalleeNode = Extract<ASTNode, { type: 'MemberExpression' | 'OptionalMemberExpression' }>
 type MemberCallExpressionNode = CallExpressionNode & { callee: MemberCalleeNode }
@@ -75,7 +99,7 @@ async function evalNodeAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unknown>
   if (node.type === 'UndefinedLiteral') return undefined
   if (node.type === 'Identifier') {
     env.g.checkNameAccess(node.name, 'identifier')
-    return readOwnProperty(env.ctx, node.name)
+    return rejectThenableRead(readOwnProperty(env.ctx, node.name), node.name)
   }
 
   return evalCompoundAsync(node, env)
@@ -125,9 +149,18 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
       case 'MemberExpression': {
         const object = await evalNodeAsync(node.object, env)
         try {
-          return node.computed
-            ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
-            : accessMemberByName(object, (node.property as Identifier).name, g)
+          return rejectThenableRead(
+            node.computed
+              ? accessMember(
+                  object,
+                  node.property,
+                  true,
+                  await evalNodeAsync(node.property, env),
+                  g,
+                )
+              : accessMemberByName(object, (node.property as Identifier).name, g),
+            'member access',
+          )
         } catch (e) {
           if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
           throw e
@@ -138,9 +171,18 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
         const object = await evalNodeAsync(node.object, env)
         if (object == null) return undefined
         try {
-          return node.computed
-            ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
-            : accessMemberByName(object, (node.property as Identifier).name, g)
+          return rejectThenableRead(
+            node.computed
+              ? accessMember(
+                  object,
+                  node.property,
+                  true,
+                  await evalNodeAsync(node.property, env),
+                  g,
+                )
+              : accessMemberByName(object, (node.property as Identifier).name, g),
+            'member access',
+          )
         } catch (e) {
           if (s !== undefined && s !== '') attachLocation(e, s, node.start, node.end)
           throw e
@@ -152,13 +194,17 @@ async function evalCompoundAsync(node: ASTNode, env: AsyncEvalEnv): Promise<unkn
         for (const el of node.elements) {
           g.step()
           if (el.type === 'SpreadElement') {
-            elements.push(
-              ...expandSpreadValue(
-                await evalNodeAsync(el.argument, env),
-                g.policy.maxArrayLength,
-                g,
-              ),
+            // Bulk append via length-extension and indexed writes (mirrors the
+            // sync walk): avoids the engine argument-count limit of
+            // `push(...expanded)` and the per-element push cost.
+            const expanded = expandSpreadValue(
+              await evalNodeAsync(el.argument, env),
+              g.policy.maxArrayLength,
+              g,
             )
+            const offset = elements.length
+            elements.length = offset + expanded.length
+            for (let i = 0; i < expanded.length; i++) elements[offset + i] = expanded[i]
           } else {
             elements.push(await evalNodeAsync(el, env))
           }
@@ -305,7 +351,7 @@ async function evalMethodCallAsync(
     await pushCallArgumentAsync(args, arg, env)
   }
   validateMethodArgs(receiver, methodName, args, g)
-  if (g.needsAccounting) chargeNativeMethod(receiver, methodName, g)
+  if (g.needsAccounting) chargeNativeMethod(receiver, methodName, args, g)
 
   // Native array callbacks cannot await Bonsai lambdas: handle the audited
   // higher-order catalog sequentially so order and short-circuiting match sync.
@@ -342,7 +388,11 @@ async function pushCallArgumentAsync(
     env.g.checkCallArguments(args.length + expanded.length)
     // Append by index: `push(...expanded)` hits the engine's argument-count
     // limit (~125k on V8) when a host raises maxCallArguments past it.
-    for (const element of expanded) args.push(element)
+    {
+      const offset = args.length
+      args.length = offset + expanded.length
+      for (let i = 0; i < expanded.length; i++) args[offset + i] = expanded[i]
+    }
     return
   }
 
@@ -401,7 +451,9 @@ async function evalAsyncArrayMethod(
           // RangeError before the caller's checkResultLimits can produce the
           // typed MAX_ARRAY_LENGTH error that the sync walk raises.
           const expanded = expandSpreadValue(value)
-          for (const element of expanded) out.push(element)
+          const offset = out.length
+          out.length = offset + expanded.length
+          for (let i = 0; i < expanded.length; i++) out[offset + i] = expanded[i]
         } else {
           out.push(value)
         }
@@ -471,6 +523,7 @@ async function evalPipeAsync(
     for (const arg of transformNode.args) {
       await pushCallArgumentAsync(args, arg, env)
     }
+    checkTransformArity(func, calleeName, args.length)
     const result = await func(input, ...args)
     g.checkTimeout()
     checkResultLimits(result, g)
@@ -500,7 +553,9 @@ async function evalLambdaBodyAsync(
   // lambda walk (parity).
   if (node.type === 'LambdaIdentity') return item
   if (node.type === 'LambdaAccessor') {
-    return item == null ? undefined : accessMemberByName(item, node.property, g)
+    return item == null
+      ? undefined
+      : rejectThenableRead(accessMemberByName(item, node.property, g), node.property)
   }
   if (
     node.type === 'NumberLiteral' ||
@@ -523,17 +578,23 @@ async function evalLambdaBodyAsync(
     switch (node.type) {
       case 'MemberExpression': {
         const object = await evalLambdaBodyAsync(node.object, item, env)
-        return node.computed
-          ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
-          : accessMemberByName(object, (node.property as Identifier).name, g)
+        return rejectThenableRead(
+          node.computed
+            ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
+            : accessMemberByName(object, (node.property as Identifier).name, g),
+          'member access',
+        )
       }
 
       case 'OptionalMemberExpression': {
         const object = await evalLambdaBodyAsync(node.object, item, env)
         if (object == null) return undefined
-        return node.computed
-          ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
-          : accessMemberByName(object, (node.property as Identifier).name, g)
+        return rejectThenableRead(
+          node.computed
+            ? accessMember(object, node.property, true, await evalNodeAsync(node.property, env), g)
+            : accessMemberByName(object, (node.property as Identifier).name, g),
+          'member access',
+        )
       }
 
       case 'CallExpression': {
@@ -615,6 +676,6 @@ function makeLambdaAccessor(property: string, guard: ExecutionContext): (item: u
   guard.checkNameAccess(property, 'member')
   return createBonsaiLambda((item: unknown) => {
     guard.step()
-    return readOwnProperty(item, property)
+    return rejectThenableRead(readOwnProperty(item, property), property)
   })
 }

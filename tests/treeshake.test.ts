@@ -98,19 +98,23 @@ describe('bundle size budgets', () => {
   it('core entry (evaluateExpression only) stays within budget', () => {
     // Raised from 63 KiB for runtime-enforced built-in signatures and
     // receiver/species hardening (~65 KiB measured).
-    expect(bundleSize(CORE)).toBeLessThan(66 * KB)
+    // Raised 66 -> 67 KiB for the v1-rc hardening tranche (grammar ambiguity
+    // rules, parse-time literal limits, async thenable-read rejection).
+    expect(bundleSize(CORE)).toBeLessThan(67 * KB)
   })
 
   it('full entry (bonsai + all stdlib) stays within budget', () => {
     // Captured array operations, generic array type metadata, an injectable
     // clock, and frozen compiled trees keep the complete entry at ~75 KiB.
-    expect(bundleSize(FULL)).toBeLessThan(76 * KB)
+    // Raised 76 -> 78 KiB for the v1-rc hardening tranche (see the core entry).
+    expect(bundleSize(FULL)).toBeLessThan(78 * KB)
   })
 
   it('autocomplete subpath stays within budget', () => {
     // Raised from 80 KiB when autocomplete started deriving pipe filters and
     // function detail text from BonsaiType metadata (~82 KiB measured).
-    expect(bundleSize(AUTOCOMPLETE)).toBeLessThan(87 * KB)
+    // Raised 87 -> 88 KiB with the same hardening tranche as the core entry.
+    expect(bundleSize(AUTOCOMPLETE)).toBeLessThan(88 * KB)
   })
 
   it('checker subpath stays within budget', () => {

@@ -47,11 +47,17 @@ jobs:
       - name: Lint
         run: bun run lint
 
+      - name: Dead code (knip)
+        run: bun run knip
+
       - name: Typecheck
         run: bun run typecheck
 
+      # test:coverage rather than test: a tag can be cut from a commit that
+      # never went through the pull-request gate, so the release gate enforces
+      # the same coverage floors CI does.
       - name: Test
-        run: bun run test
+        run: bun run test:coverage
 
       - name: Build
         run: bun run build

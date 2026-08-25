@@ -229,7 +229,7 @@ export function bonsai<TCtx extends BonsaiContext = Record<string, unknown>>(
   function getAst(source: string): ASTNode {
     let ast = astCache.get(source)
     if (ast) return ast
-    ast = compile(parse(source, policy))
+    ast = compile(parse(source, policy), policy)
     astCache.set(source, ast)
     return ast
   }
@@ -242,7 +242,7 @@ export function bonsai<TCtx extends BonsaiContext = Record<string, unknown>>(
     const optimized = getAst(source)
     let publicAst = publicAstCache.get(optimized)
     if (publicAst === undefined) {
-      publicAst = frozenAstView(optimized)
+      publicAst = frozenAstView(optimized, policy)
       publicAstCache.set(optimized, publicAst)
     }
     // Compilation binds to one immutable registry snapshot. Later mutable

@@ -37,6 +37,11 @@ as opaque identities: it does not navigate inherited state or coerce objects.
   values. Truthiness never invokes conversion hooks.
 - `??` evaluates its right side only when the left side is `null` or
   `undefined`.
+- Two ambiguous forms are parse errors, as in JavaScript: a unary operator
+  directly on the left of `**`, and `??` mixed with `&&`/`||` without
+  parentheses. Refusing them today is additive to relax later; committing to a
+  precedence is not. The full precedence table is published in the operator
+  documentation.
 - `in` and `not in` perform strict array membership, or substring membership
   when both operands are strings.
 
@@ -86,6 +91,16 @@ as opaque identities: it does not navigate inherited state or coerce objects.
 - `evaluateSync` rejects any Promise-like result and identifies the extension
   that requires asynchronous evaluation. `evaluate` awaits at extension and
   lambda boundaries.
+- Promise-like values in the context are inert data to `evaluateSync`; reading
+  one during `evaluate` is a typed error, because JavaScript assimilation would
+  otherwise invoke its host `then` (an ORM query object would execute; a
+  never-settling thenable would hang). Resolve promises before building the
+  context. Extensions returning Promises are unaffected — awaiting those is the
+  purpose of `evaluate`.
+- A transform whose metadata declares `parameters` rejects surplus arguments at
+  the call site; a surplus argument would otherwise be silently ignored
+  (`total |> round(2)` returning the unrounded integer). Transforms registered
+  without declared parameters accept any arguments, as before.
 
 ## Strings and conversion
 
