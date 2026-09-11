@@ -100,7 +100,7 @@
     "tsdown": "0.22.4",
     "typescript": "6.0.3",
     "vitepress": "1.6.4",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   },
   "overrides": {
     "vite": "7.3.3",
