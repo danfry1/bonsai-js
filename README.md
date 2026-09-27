@@ -146,6 +146,21 @@ All callable as `f(x, ...)` or `x.f(...)`.
 
 `env.listFunctions()` returns every signature and description, for documentation or tooling.
 
+## Syntax trees and visual editors
+
+`env.parse(source)` returns a JSON syntax tree with source offsets on every node, and `print(tree)` turns a tree back into source. Printing is deterministic and round-trips: `print(env.parse(print(tree)))` is the same text, with the fewest parentheses that keep the meaning. That is what a visual rule builder needs: parse, edit the tree, print, save.
+
+```ts
+import { bonsai, print } from 'bonsai-js'
+
+const tree = bonsai().parse('trim(name).toUpperCase()')
+print(tree)                        // 'trim(name).toUpperCase()'
+print(tree, { calls: 'method' })   // 'name.trim().toUpperCase()'
+print(tree, { calls: 'function' }) // 'toUpperCase(trim(name))'
+```
+
+`f(x)` and `x.f()` produce the same call node, so a builder can show any chain as a list of steps and choose how to print it. `env.listFunctions()` provides the palette (names, signatures, descriptions), and the language service provides the types at any position for dropdowns. Comments are not part of the tree.
+
 ## Editor support
 
 ```ts

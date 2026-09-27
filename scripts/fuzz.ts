@@ -27,7 +27,7 @@
 import { performance } from 'node:perf_hooks'
 import { deepStrictEqual } from 'node:assert/strict'
 import fc from 'fast-check'
-import { bonsai, isBonsaiError, t, type Type } from '../src/index.js'
+import { print, type Node, bonsai, isBonsaiError, t, type Type } from '../src/index.js'
 import { createLanguageService } from '../src/service/index.js'
 
 const DEFAULT_BUDGET_MS = 20_000
@@ -527,8 +527,46 @@ async function scenarioHolds(scenario: Scenario): Promise<boolean> {
       soundnessChecked++
       if (!sync.ok && SOUNDNESS_CODES.has(sync.code)) recordFinding(scenario, sync)
     }
+
+    // (d) printing is a faithful, idempotent round trip, in every call style.
+    if (env === openEnv) checkPrinting(env, source, context, sync)
   }
   return true
+}
+
+function checkPrinting(
+  env: ReturnType<typeof bonsai>,
+  source: string,
+  context: Record<string, unknown>,
+  expected: Outcome,
+): void {
+  const parsed = capture('parse', () => env.parse(source))
+  if (!parsed.ok) return
+  const compiled = capture('compile', () => env.compile(source))
+  const trees = [parsed.value as Node]
+  if (compiled.ok) trees.push((compiled.value as { ast: Node }).ast)
+  for (const tree of trees) {
+    for (const calls of ['preserve', 'method', 'function'] as const) {
+      const printed = print(tree, { calls })
+      const reparsed = capture('parse(print)', () => env.parse(printed))
+      if (!reparsed.ok)
+        throw new FuzzViolation(
+          `print gave unparseable ${JSON.stringify(printed)} for ${JSON.stringify(source)}`,
+        )
+      const again = print(reparsed.value as Node, { calls })
+      if (again !== printed) {
+        throw new FuzzViolation(
+          `print is not idempotent: ${JSON.stringify(printed)} then ${JSON.stringify(again)}`,
+        )
+      }
+      const outcome = capture('evaluateSync(print)', () => env.evaluateSync(printed, context))
+      if (!sameOutcome(expected, outcome)) {
+        throw new FuzzViolation(
+          `${JSON.stringify(source)} gave ${describeOutcome(expected)} but printed ${JSON.stringify(printed)} gave ${describeOutcome(outcome)}`,
+        )
+      }
+    }
+  }
 }
 
 // Junk targeted at the lexer/parser: random text plus structured fragments of

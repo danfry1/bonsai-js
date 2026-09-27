@@ -39,7 +39,9 @@ migrating; the website has an old-to-new table.
   result and context types are inferred from the schema; `env.check()` returns
   every diagnostic without throwing.
 - `bonsai-js/service` provides completions, hover, and diagnostics from the
-  checker. The `stdlib`, `checker`, and `autocomplete` subpaths are removed.
+  checker.
+- `print(tree, { calls })` turns a syntax tree back into source, round-tripping
+  with `env.parse` so visual editors can edit rules as trees. The `stdlib`, `checker`, and `autocomplete` subpaths are removed.
 
 ### Engine
 
