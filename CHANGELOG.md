@@ -7,94 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## 1.0.0
-<sub>2026-08-24</sub>
 
-- *(major)*
-  Bonsai 1.0: an explicit, teachable language contract; a typed authoring plane
-  (`bonsai-js/checker` plus schema-driven autocomplete); immutable, sealable
-  extension registries; per-run evaluation controls; and structural input limits.
-  Throughput is at or above 0.5.x on every gated case.
+A redesign of the language and the engine. Expressions written for 0.x need
+migrating; the website has an old-to-new table.
 
-  Breaking changes:
+### Language
 
-  - Operators are strict. `+` accepts two numbers or two strings; `-`, `*`, `/`,
-    `%`, `**`, and unary `-` require numbers; `<`, `>`, `<=`, `>=` require two
-    numbers or two strings. Mixed operands throw `BonsaiTypeError` instead of
-    coercing (`"Total: " + n` becomes `` `Total: ${n}` ``). Unary `+` converts
-    primitives only.
-  - Property reads are own-property only. Inherited members (class getters and
-    methods, `Map#size`, `Date#getTime`) read as `undefined`; serialize such
-    objects to plain data at the boundary. Reads on a nullish receiver still yield
-    `undefined`; method calls on a nullish receiver throw unless `?.` is used.
-  - Spread accepts arrays only (no Sets, Maps, or generators). `join` and
-    `toSorted` reject non-primitive elements. Higher-order methods accept only
-    Bonsai lambdas; host functions in context are data. Template interpolation,
-    computed keys, and string/number method arguments accept primitives only.
-  - Array methods dispatch to captured intrinsics; receiver overrides and
-    method monkey-patches are ignored. Subclasses and arrays with own
-    constructor/spreadability hooks are neutralized before species-producing
-    methods. Bundled array/math transforms likewise ignore receiver methods and
-    iterators. `find`, `some`, and `every` now short-circuit in pipeline form,
-    and async bundled array transforms await callbacks sequentially by default.
-  - Built-in method arity and parameter types are enforced at runtime from the
-    same catalog as the checker. Native missing-argument behavior and implicit
-    coercion are no longer accepted (`text.at()` and `text.slice("1")` throw).
-    Array `concat` accepts arrays and primitive values; wrap a record in an array
-    when appending it.
-  - Limits: new `maxSourceLength`, `maxTokens`, `maxAstNodes`,
-    `maxObjectProperties`, `maxCallArguments` options and security codes
-    (`MAX_SOURCE_LENGTH`, `MAX_TOKENS`, `MAX_AST_NODES`, `MAX_OBJECT_PROPERTIES`,
-    `MAX_CALL_ARGUMENTS`, `ABORTED`). `maxArrayLength`/`maxStringLength` now
-    apply to every produced value, including extension results.
-  - Registry: `addTransform`/`addFunction`/`addContextFunction` throw on a
-    duplicate name; use `replaceTransform`/`replaceFunction`/
-    `replaceContextFunction`. `use()` rolls back on error. Compiled expressions
-    keep the registry revision they were compiled with. `seal()` freezes the
-    registry. Names must be valid identifiers and may not be `__proto__`,
-    `constructor`, or `prototype`.
-  - Extension metadata uses one vocabulary: `inputType`, `parameters`,
-    `returnType`, `description` (`BonsaiType`, built with `t` from `bonsai-js`
-    or `bonsai-js/checker`). The coarse `inputTypes`/`outputType` fields and the
-    autocomplete `transformTypes` option are removed; use `transformSignatures`
-    for transforms registered without metadata.
-  - Autocomplete no longer probes transforms or evaluates expressions; it uses
-    registry metadata, `transformSignatures`, and an optional static `schema`.
-  - `evaluateSync` rejects cross-realm and user-defined thenables, not only
-    native Promises.
-  - Supported runtimes are Node 24+, current Bun, and ES2022 browsers.
+- Every function is callable as `f(x, a)` or `x.f(a)`; the pipe operator `|>`
+  is removed and its token reserved.
+- The standard library is built in, with JavaScript names (`toUpperCase`,
+  `includes`, `filter`) plus additions such as `sum`, `sortBy`, `groupBy`,
+  `unique`, `keys`, `round(x, digits)`, and calendar functions with time zones.
+- Lambdas: `x => ...` and `(acc, x) => ...` alongside `.field`. The implicit
+  `.` binds to the nearest argument whose parameter takes a function, so
+  `items.filter(.score > max(.a, .b))` reads naturally.
+- New: `let` bindings, `try(expr, fallback)`, `has(a.b)`, comments, timestamps
+  and durations (`now() - t > days(30)`), deep `==` on lists and maps.
+- `null` is the single absent value: missing properties read as `null` and
+  `x == null` holds for missing and null alike. Ordering comparisons with
+  `null` are `false`.
+- `&&`, `||`, `!`, and `?:` take booleans (`null` counts as false). Division by
+  zero and non-finite results are errors. Chained comparisons are parse errors.
 
-  Additions:
+### API
 
-  - `bonsai-js/checker`: `createChecker(instance, { schema })`, `t` builders
-    (including `t.literal`, `t.enum`, `t.record`, `t.nullable`), stable ranged
-    diagnostics, built-in method signatures, impossible-comparison detection,
-    expected-result checks.
-  - Per-evaluation `EvaluationOptions` (`timeout`, `maxSteps`, `signal`) on
-    `evaluate`, `evaluateSync`, and compiled expressions; async waits race the
-    deadline and `AbortSignal`. Linear native methods pre-charge `maxSteps` from
-    their receiver length before entering uninterruptible native work.
-  - `defineTransform`/`defineFunction`/`defineContextFunction`,
-    `getTransformMetadata`/`getFunctionMetadata`, `seal`/`isSealed`.
-  - `t` exported from the root entry; `bench:compare` relative performance gate.
-- *(minor)*
-  Make evaluation interruption a consistent boundary. Synchronous evaluation
-  samples a monotonic deadline during interpreter work and after extension/method
-  calls. Async evaluation races awaited boundaries against both the deadline and a
-  per-run `AbortSignal`, returning control even when a host Promise does not
-  settle. Array snapshots, spread, literals, and Bonsai-lambda callbacks are
-  charged cooperatively, while an already-running synchronous host extension
-  cannot be pre-empted. Per-evaluation `timeout`, `maxSteps`, and `signal` options
-  apply to one-shot and compiled APIs without mutating instance defaults. Timeout
-  and cancellation failures use the typed `TIMEOUT` and `ABORTED` security codes.
-- *(minor)*
-  Add a default-on `maxSteps` budget: a deterministic cap on evaluator work,
-  enforced independently of the wall-clock `timeout`. Accounting covers compound
-  AST nodes, Bonsai-lambda callbacks, array receiver snapshots, spread, and
-  literal loops; opaque work inside a registered host extension remains outside
-  the interpreter budget. Sync and async paths charge the same data-only array and
-  lambda work, including sparse receivers. Exceeding the budget throws
-  `BonsaiSecurityError` with code `MAX_STEPS`. The default is 1,000,000; set
-  `maxSteps: 0` to disable or override it for one evaluation.
+- `bonsai({ variables, strict, functions, libraries, limits, clock })` creates
+  an immutable environment; `extend()` derives one. Host functions are declared
+  with `fn({ params, returns, run })`, validated on every call, and must be
+  marked `async` to be awaited.
+- `env.compile(source, { expect })` type-checks and returns a program whose
+  result and context types are inferred from the schema; `env.check()` returns
+  every diagnostic without throwing.
+- `bonsai-js/service` provides completions, hover, and diagnostics from the
+  checker. The `stdlib`, `checker`, and `autocomplete` subpaths are removed.
+
+### Engine
+
+- Expressions compile to closures. Async code is generated only for subtrees
+  that reach an async host function, so `evaluate()` on ordinary expressions
+  runs at synchronous speed.
+- Every limit is on by default: source size, depth, node count, steps
+  (charged by lambda body size and data size), produced string and list sizes,
+  value depth, plus optional timeout and `AbortSignal`.
 
 ## [Unreleased]
 

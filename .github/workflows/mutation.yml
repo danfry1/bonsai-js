@@ -24,12 +24,6 @@ jobs:
           - cohort: core
             script: test:mutation:core
             report: reports/mutation/
-          - cohort: stdlib
-            script: test:mutation:stdlib
-            report: reports/mutation-stdlib/
-          - cohort: async
-            script: test:mutation:async
-            report: reports/mutation-async/
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

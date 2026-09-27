@@ -47,12 +47,8 @@ try {
     'package/package.json',
     'package/dist/index.mjs',
     'package/dist/index.d.mts',
-    'package/dist/stdlib/index.mjs',
-    'package/dist/stdlib/index.d.mts',
-    'package/dist/autocomplete/index.mjs',
-    'package/dist/autocomplete/index.d.mts',
-    'package/dist/checker/index.mjs',
-    'package/dist/checker/index.d.mts',
+    'package/dist/service/index.mjs',
+    'package/dist/service/index.d.mts',
     'package/README.md',
     'package/LICENSE',
     'package/CHANGELOG.md',
@@ -86,14 +82,12 @@ try {
   if (packedPkg.exports?.['.']?.import !== './dist/index.mjs') {
     throw new Error('Packed package root export does not point to ./dist/index.mjs')
   }
-  if (packedPkg.exports?.['./stdlib']?.import !== './dist/stdlib/index.mjs') {
-    throw new Error('Packed stdlib export does not point to ./dist/stdlib/index.mjs')
+  if (packedPkg.exports?.['./service']?.import !== './dist/service/index.mjs') {
+    throw new Error('Packed service export does not point to ./dist/service/index.mjs')
   }
-  if (packedPkg.exports?.['./autocomplete']?.import !== './dist/autocomplete/index.mjs') {
-    throw new Error('Packed autocomplete export does not point to ./dist/autocomplete/index.mjs')
-  }
-  if (packedPkg.exports?.['./checker']?.import !== './dist/checker/index.mjs') {
-    throw new Error('Packed checker export does not point to ./dist/checker/index.mjs')
+  const exportKeys = [...Object.keys(packedPkg.exports ?? {})].sort()
+  if (exportKeys.join(',') !== '.,./service') {
+    throw new Error(`Packed package exports unexpected subpaths: ${exportKeys.join(', ')}`)
   }
 
   mkdirSync(join(smokeDir, 'node_modules', 'bonsai-js'), { recursive: true })
@@ -105,37 +99,34 @@ try {
   writeFileSync(
     join(smokeDir, 'smoke.mjs'),
     [
-      "import { bonsai, evaluateExpression, ExpressionError } from 'bonsai-js'",
-      "import { all, strings } from 'bonsai-js/stdlib'",
-      "import { createAutocomplete } from 'bonsai-js/autocomplete'",
-      "import { createChecker, t } from 'bonsai-js/checker'",
+      "import { bonsai, fn, t, BonsaiCheckError, BonsaiRuntimeError, isBonsaiError } from 'bonsai-js'",
+      "import { createLanguageService } from 'bonsai-js/service'",
       '',
-      "if (evaluateExpression('1 + 2') !== 3) throw new Error('Root export smoke test failed')",
-      "if (typeof ExpressionError !== 'function') throw new Error('Error export missing from package root')",
+      'const env = bonsai({',
+      '  variables: { user: t.object({ name: t.string(), age: t.number() }), items: t.list(t.number()) },',
+      '  functions: { double: fn({ params: [t.number()], returns: t.number(), run: (n) => n * 2 }) },',
+      '})',
+      "const ctx = { user: { name: 'Ada', age: 36 }, items: [1, 2, 3] }",
       '',
-      'const expr = bonsai()',
-      'expr.use(strings)',
-      "if (expr.evaluateSync('\"hi\" |> upper') !== 'HI') throw new Error('Stdlib subpath import failed')",
+      "if (env.evaluateSync('1 + 2') !== 3) throw new Error('Root export smoke test failed')",
+      "if (env.evaluateSync('double(user.age)', ctx) !== 72) throw new Error('Host function call failed')",
+      "if (env.evaluateSync('items.map(. * 2).sum()', ctx) !== 12) throw new Error('Built-in method chain failed')",
+      "if ((await env.evaluate('user.name.toUpperCase()', ctx)) !== 'ADA') throw new Error('Async evaluate failed')",
       '',
-      'const full = bonsai()',
-      'full.use(all)',
-      "if (full.evaluateSync('items |> sum', { items: [1, 2, 3] }) !== 6) throw new Error('Combined stdlib import failed')",
+      "const adult = env.compile('user.age >= 18', { expect: t.boolean() })",
+      "if (adult.evaluateSync(ctx) !== true) throw new Error('Compiled program failed')",
       '',
-      'const versioned = bonsai()',
-      "versioned.addFunction('answer', () => 1)",
-      "const compiled = versioned.compile('answer()')",
-      "versioned.replaceFunction('answer', () => 2)",
-      "if (compiled.evaluateSync() !== 1 || versioned.evaluateSync('answer()') !== 2) throw new Error('Compiled registry snapshot failed')",
+      "if (env.check('user.nope').ok) throw new Error('Checker accepted an unknown property')",
+      'let rejected = false',
+      'try { env.compile(\'user.age + "x"\') } catch (error) { rejected = error instanceof BonsaiCheckError && isBonsaiError(error) }',
+      "if (!rejected) throw new Error('Compile did not throw BonsaiCheckError')",
+      "if (typeof BonsaiRuntimeError !== 'function') throw new Error('Error classes missing from package root')",
       '',
-      'const authoring = bonsai()',
-      "authoring.defineTransform({ name: 'length', inputType: t.string(), returnType: t.number(), evaluate: (value) => String(value).length })",
-      'authoring.seal()',
-      "if (!authoring.isSealed()) throw new Error('Registry seal failed')",
-      "const completions = createAutocomplete(authoring, { context: { name: 'Ada' } }).complete('name |> ', 8)",
-      "if (!completions.some((item) => item.label === 'length')) throw new Error('Autocomplete subpath or metadata integration failed')",
-      '',
-      "const checked = createChecker(authoring, { schema: t.object({ name: t.string() }) }).check('name |> length', { expectedType: t.number() })",
-      "if (!checked.valid || checked.type.kind !== 'number') throw new Error('Checker subpath failed')",
+      'const service = createLanguageService(env)',
+      "const labels = service.complete('user.', 5).items.map((item) => item.label)",
+      "if (!labels.includes('age') || !labels.includes('name')) throw new Error('Service subpath completions failed')",
+      "if (service.hover('user.age', 6)?.detail !== 'number') throw new Error('Service subpath hover failed')",
+      "if (service.diagnostics('user.nope').length === 0) throw new Error('Service subpath diagnostics failed')",
       '',
       "console.log('packed package smoke test passed')",
       '',

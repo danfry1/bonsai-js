@@ -138,31 +138,22 @@ split, caching, and the security model). A quick file map:
 
 ```
 src/
-  index.ts          # Public API: bonsai(), evaluateExpression()
-  types.ts          # TypeScript types and interfaces
-  errors.ts         # Error classes: ExpressionError, BonsaiTypeError, etc.
-  lexer.ts          # Tokenizer
-  parser.ts         # Recursive descent parser
-  compiler.ts       # AST optimizer (constant folding, dead branch elimination)
-  evaluator.ts      # Synchronous evaluator
-  evaluator-async.ts # Asynchronous evaluator
-  eval-ops.ts       # Shared evaluation helpers
-  coerce.ts         # Data-only primitive conversion rules
-  lambda.ts         # Branded Bonsai lambda callbacks
-  promise-like.ts   # Cross-realm Promise-like detection
-  safe-methods.ts   # Audited intrinsic method catalog
-  execution-context.ts # Security policy and per-evaluation state
-  plugins.ts        # Plugin registry
-  cache.ts          # LRU cache
-  autocomplete/     # Optional static completion engine
-  checker/          # Optional schema-driven static checker
-  stdlib/           # Standard library modules (strings, arrays, math, types, dates)
-tests/              # Test files
-benchmarks/         # Performance benchmarks
+  index.ts              # Public API exports
+  environment.ts        # bonsai(), fn(), environments, programs, caching
+  types.ts              # Static types, the t builders, Infer
+  errors.ts             # Error classes, codes, diagnostics, code frames
+  syntax/               # lexer, parser, syntax tree
+  check/checker.ts      # Implicit-lambda binding, type inference, overload resolution
+  compile/compiler.ts   # Closure compiler (sync and async-where-needed)
+  runtime/              # Value semantics, per-run state and limits, time zones
+  functions/            # Function/overload model and the built-in library
+  service/              # Language service: completions, hover, diagnostics
+tests/                  # Test files (conformance.test.ts pins the language)
+docs/language.md        # The language reference
 ```
 
 ## Stability Policy
 
-See [docs/v1-contract.md](./docs/v1-contract.md) for the release contract and
-[docs/stability-policy.md](./docs/stability-policy.md) for what is public API
-and what may change in minor releases.
+See [docs/stability-policy.md](./docs/stability-policy.md) for what is public
+API and what may change in minor releases. Any change to the language must
+update [docs/language.md](./docs/language.md) and `tests/conformance.test.ts`.

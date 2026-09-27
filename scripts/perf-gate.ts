@@ -1,11 +1,10 @@
 import { performance } from 'node:perf_hooks'
 import { bonsai } from '../src/index.js'
-import { strings, arrays, math } from '../src/stdlib/index.js'
 
 interface PerfCase {
   name: string
   minHz: number
-  fn: () => void
+  fn: () => unknown
 }
 
 interface PerfResult {
@@ -17,57 +16,53 @@ interface PerfResult {
 const OPS_PER_SECOND = 1000
 const PERCENT = 100
 const WARMUP_ITERATIONS = 20_000
+const ASYNC_WARMUP_ITERATIONS = 2000
 const DURATION_MS = 250
 const MIN_CACHE_EFFECTIVENESS = 5
 const MIN_COMPILED_RATIO = 0.85
-const LAST_SAMPLE_ITEM = 5
-const SAMPLE_ITEMS = [1, 2, 3, 4, LAST_SAMPLE_ITEM] as const
+const ITEM_COUNT = 1000
+const PRICE_SPREAD = 50
+const QTY_SPREAD = 5
+const LAST_ID = 999
 
-// A larger array exercises per-element step accounting (default-on via maxSteps)
-// on the lambda-callback and spread paths, which the small SAMPLE_ITEMS case
-// above does not. Guards against a regression in the accounting hot path.
-const LAMBDA_ITEM_COUNT = 1000
-const lambdaContext = {
-  items: Array.from({ length: LAMBDA_ITEM_COUNT }, (_, i) => ({ x: i })),
-}
-const spreadContext = {
-  items: Array.from({ length: LAMBDA_ITEM_COUNT }, (_, i) => i),
-}
+// Bonsai template source, not a JavaScript template.
+// oxlint-disable-next-line no-template-curly-in-string
+const TEMPLATE = '`${user.name} (${user.age}) on ${user.plan}`'
+const RULE = 'user.age >= 18 && user.country == "GB" && user.plan == "pro"'
 
+// A larger list exercises the per-element step accounting on the lambda path.
 const collectionContext = {
-  items: Array.from({ length: LAMBDA_ITEM_COUNT }, (_, i) => ({
-    x: i,
+  items: Array.from({ length: ITEM_COUNT }, (_, i) => ({
+    id: i,
     active: i % 2 === 0,
+    price: (i % PRICE_SPREAD) + 1,
+    qty: (i % QTY_SPREAD) + 1,
   })),
-  nums: spreadContext.items,
 }
 
 const context = {
   user: {
     name: 'Dan',
     age: 30,
-    verified: true,
-    profile: { address: { city: 'London' } },
+    country: 'GB',
+    plan: 'pro',
+    tags: ['beta', 'staff', 'vip'],
   },
-  items: SAMPLE_ITEMS,
+  a: { x: 3 },
+  b: { y: 4 },
+  c: { z: 5 },
 }
 
 function writeLine(message: string): void {
   process.stdout.write(`${message}\n`)
 }
 
-const expr = bonsai()
-expr.use(strings)
-expr.use(arrays)
-expr.use(math)
+const env = bonsai()
+const compiled = env.compile(RULE)
+// A zero-size cache forces every evaluateSync(source) through parse, check, and compile.
+const uncached = bonsai({ limits: { cacheSize: 0 } })
 
-const compiled = expr.compile('user.age >= 18 && user.verified')
-const uncached = bonsai()
-uncached.use(strings)
-uncached.use(arrays)
-uncached.use(math)
-
-function measure(fn: () => void): number {
+function measure(fn: () => unknown): number {
   for (let i = 0; i < WARMUP_ITERATIONS; i++) fn()
 
   let iterations = 0
@@ -84,104 +79,63 @@ function measure(fn: () => void): number {
   return (iterations * OPS_PER_SECOND) / elapsedMs
 }
 
+async function measureAsync(fn: () => Promise<unknown>): Promise<number> {
+  for (let i = 0; i < ASYNC_WARMUP_ITERATIONS; i++) await fn()
+
+  let iterations = 0
+  const start = performance.now()
+  let now = start
+
+  while (now - start < DURATION_MS) {
+    await fn()
+    iterations++
+    now = performance.now()
+  }
+
+  return (iterations * OPS_PER_SECOND) / (now - start)
+}
+
 // Floors are set to roughly one tenth of the throughput observed on a fast
 // developer machine. That leaves comfortable headroom for slower, noisier CI
-// runners (which run perhaps a third to a half as fast) while still failing on
-// a catastrophic regression (a ~3x or worse slowdown). This is a guard against
-// regressions, not a microbenchmark; tighten deliberately if you record a
-// CI-measured baseline. The cache-effectiveness ratio below is the relative,
-// machine-independent check.
+// runners while still failing on a catastrophic regression. This is a guard
+// against regressions, not a microbenchmark; scripts/perf-compare.ts provides
+// the tighter same-machine comparison. The cache-effectiveness and compiled
+// parity ratios below are the relative, machine-independent checks.
 const cases: PerfCase[] = [
   {
-    name: 'cached literal',
-    minHz: 4_000_000,
-    fn: () => {
-      expr.evaluateSync('42')
-    },
-  },
-  {
-    name: 'cached comparison',
+    name: 'cached rule',
     minHz: 1_200_000,
-    fn: () => {
-      expr.evaluateSync('user.age >= 18 && user.verified', context)
-    },
+    fn: () => env.evaluateSync(RULE, context),
   },
   {
-    name: 'transform pipeline',
-    minHz: 1_500_000,
-    fn: () => {
-      expr.evaluateSync('user.name |> upper', context)
-    },
+    name: 'compiled rule',
+    minHz: 1_600_000,
+    fn: () => compiled.evaluateSync(context),
   },
   {
-    name: 'compiled comparison',
-    minHz: 1_200_000,
-    fn: () => {
-      compiled.evaluateSync(context)
-    },
+    name: 'arithmetic',
+    minHz: 900_000,
+    fn: () => env.evaluateSync('a.x * b.y + c.z * 2', context),
   },
   {
-    name: 'array transform',
-    minHz: 2_500_000,
-    fn: () => {
-      expr.evaluateSync('items |> sum', context)
-    },
+    name: 'filter(.active).map(.price * .qty) x1000',
+    minHz: 5_000,
+    fn: () => env.evaluateSync('items.filter(.active).map(.price * .qty)', collectionContext),
   },
   {
-    // Per-element accounting path: a bonsai lambda charges one step per element.
-    name: 'lambda map (.x) x1000',
-    minHz: 12_000,
-    fn: () => {
-      expr.evaluateSync('items.map(.x)', lambdaContext)
-    },
+    name: 'some(.id == 999) x1000',
+    minHz: 7_000,
+    fn: () => env.evaluateSync(`items.some(.id == ${String(LAST_ID)})`, collectionContext),
   },
   {
-    // Per-element accounting path: spread materialization charges per element.
-    name: 'array spread x1000',
-    minHz: 15_000,
-    fn: () => {
-      expr.evaluateSync('[...items]', spreadContext)
-    },
-  },
-  // The cases below have no absolute floor of their own (their throughput is
-  // dominated by native work); they exist for the relative base-vs-head
-  // comparison in scripts/perf-compare.ts, which is what actually catches a
-  // regression. Member reads, array method dispatch, and membership were all
-  // hot paths that regressed silently before that comparison existed.
-  {
-    name: 'deep member access',
-    minHz: 1_000_000,
-    fn: () => {
-      expr.evaluateSync('user.profile.address.city', context)
-    },
+    name: 'in on list',
+    minHz: 800_000,
+    fn: () => env.evaluateSync('"vip" in user.tags', context),
   },
   {
-    name: 'filter(.active).map(.x) x1000',
-    minHz: 8_000,
-    fn: () => {
-      expr.evaluateSync('items.filter(.active).map(.x)', collectionContext)
-    },
-  },
-  {
-    name: 'includes on x1000',
-    minHz: 50_000,
-    fn: () => {
-      expr.evaluateSync('nums.includes(999)', collectionContext)
-    },
-  },
-  {
-    name: 'in on x1000',
-    minHz: 50_000,
-    fn: () => {
-      expr.evaluateSync('999 in nums', collectionContext)
-    },
-  },
-  {
-    name: 'slice on x1000',
+    name: 'template',
     minHz: 500_000,
-    fn: () => {
-      expr.evaluateSync('nums.slice(0, 3)', collectionContext)
-    },
+    fn: () => env.evaluateSync(TEMPLATE, context),
   },
 ]
 
@@ -190,6 +144,18 @@ const results: PerfResult[] = cases.map((entry) => ({
   hz: measure(entry.fn),
   minHz: entry.minHz,
 }))
+
+results.push({
+  name: 'async evaluate (sync expression)',
+  hz: await measureAsync(() => env.evaluate(RULE, context)),
+  minHz: 600_000,
+})
+
+results.push({
+  name: 'cold compile',
+  hz: measure(() => uncached.evaluateSync(RULE, context)),
+  minHz: 28_000,
+})
 
 // Machine-readable output for scripts/perf-compare.ts.
 const jsonPath = process.env.PERF_GATE_JSON
@@ -201,19 +167,15 @@ if (jsonPath !== undefined && jsonPath !== '') {
   )
 }
 
-const uncachedHz = measure(() => {
-  uncached.clearCache()
-  uncached.evaluateSync('user.age >= 18 && user.verified', context)
-})
+function resultNamed(name: string): PerfResult {
+  const found = results.find((entry) => entry.name === name)
+  if (!found) throw new Error(`Missing ${name} benchmark result`)
+  return found
+}
 
-const cachedComparison = results.find((entry) => entry.name === 'cached comparison')
-if (!cachedComparison) {
-  throw new Error('Missing cached comparison benchmark result')
-}
-const compiledComparison = results.find((entry) => entry.name === 'compiled comparison')
-if (!compiledComparison) {
-  throw new Error('Missing compiled comparison benchmark result')
-}
+const cachedRule = resultNamed('cached rule')
+const compiledRule = resultNamed('compiled rule')
+const coldCompile = resultNamed('cold compile')
 
 writeLine('Performance gate results:')
 for (const result of results) {
@@ -223,9 +185,9 @@ for (const result of results) {
   )
 }
 
-const ratio = cachedComparison.hz / uncachedHz
-writeLine(`- cache effectiveness: ${ratio.toFixed(2)}x faster than uncached parsing`)
-const compiledRatio = compiledComparison.hz / cachedComparison.hz
+const ratio = cachedRule.hz / coldCompile.hz
+writeLine(`- cache effectiveness: ${ratio.toFixed(2)}x faster than a cold compile`)
+const compiledRatio = compiledRule.hz / cachedRule.hz
 writeLine(`- compiled/cached parity: ${compiledRatio.toFixed(2)}x`)
 
 const failures = results
@@ -234,13 +196,13 @@ const failures = results
 
 if (ratio < MIN_CACHE_EFFECTIVENESS) {
   failures.push(
-    `cached comparison should be at least ${String(MIN_CACHE_EFFECTIVENESS)}x faster than uncached parsing, got ${ratio.toFixed(2)}x`,
+    `cached rule should be at least ${String(MIN_CACHE_EFFECTIVENESS)}x faster than a cold compile, got ${ratio.toFixed(2)}x`,
   )
 }
 
 if (compiledRatio < MIN_COMPILED_RATIO) {
   failures.push(
-    `compiled comparison should retain at least ${String(MIN_COMPILED_RATIO * PERCENT)}% of cached throughput, got ${(compiledRatio * PERCENT).toFixed(1)}%`,
+    `compiled rule should retain at least ${String(MIN_COMPILED_RATIO * PERCENT)}% of cached throughput, got ${(compiledRatio * PERCENT).toFixed(1)}%`,
   )
 }
 

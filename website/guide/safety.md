@@ -1,119 +1,80 @@
-# Safety & Sandboxing
+# Safety
 
-Bonsai constrains the expression language. It is suitable for safe expression evaluation, but your own registered extensions still run as normal host JavaScript.
+Bonsai is designed to evaluate expression text written by people you do not fully trust (customers, admins, rule authors) against data and functions you do trust. This page summarizes what an expression can and cannot do, and what remains your responsibility. The full threat model is in [docs/threat-model.md](https://github.com/danfry1/bonsai-js/blob/main/docs/threat-model.md).
 
-## What Bonsai blocks by default
+## Trust boundaries
 
-Expressions cannot access the global scope, import modules, or reach dangerous prototype properties.
+| Party | Trusted? | Notes |
+| --- | --- | --- |
+| Expression text | No | May be arbitrary and adversarial. |
+| Context data you pass in | Yes | Its getters and Proxies are your code and run when read. |
+| Host functions you declare | Yes | They run with full privileges. |
+| The Bonsai package | Yes | Zero runtime dependencies. |
 
-```ts
-"hello".__proto__          // Error: Access to __proto__ is not allowed
-constructor                  // Error: Access to constructor is not allowed
+## What an expression cannot do
+
+**Run code.** There is no `eval`, `new Function`, or generated code. The only callable things are built-in functions and the host functions you declared. A function value found in data can be compared but never called, and `x.f()` always resolves `f` among the declared functions, never on `x`.
+
+**Reach prototypes or globals.** A property read returns an own property of a plain map. Inherited members, class methods, and prototype getters never resolve. `__proto__`, `constructor`, and `prototype` are rejected as syntax, as computed keys, and in keys spread from host data. Maps created by expressions have a null prototype.
+
+<!-- context: { user: { name: "Ada" } } -->
+```bonsai
+user.__proto__ // error: SYNTAX
+user["constructor"] // error: BLOCKED_PROPERTY
+user.toString // => null
 ```
 
-## Property restrictions
+**Trigger conversion hooks.** Templates, comparisons, keys, and arithmetic never call `valueOf`, `toString`, `toJSON`, or `Symbol.toPrimitive`. Built-ins use their own loops, never the receiver's methods, iterators, or `Symbol.species`.
 
-`allowedProperties` and `deniedProperties` apply to **member access** (`obj.name`) and **method calls** (`str.slice()`), not root identifiers (`name`) or object-literal keys (`{ name: value }`). Numeric array indices (e.g., `items[0]`) bypass allow/deny lists automatically.
+**Mutate your data.** No operator or built-in modifies its input. `sort` and `reverse` return new lists.
+
+**Exhaust resources.** Every expression terminates. Straight-line code is bounded by the parse limits, and anything proportional to data (lambda calls, equality, membership, concatenation, spread, templates, built-ins) charges a step budget. Produced strings and lists are size-checked before they are allocated, and cyclic data fails closed on the depth limit. See [Limits](/api/limits).
+
+**Escape into async work.** A host function must be declared `async: true` to be awaited. `evaluateSync()` rejects an expression that calls one before any host code runs. A promise returned from a function not declared async is an error, a thenable in the context is inert data, and `evaluate()` refuses to return a promise-like value.
+
+## What remains your responsibility
+
+- **Host functions are your code.** Validate their inputs if they reach sensitive systems and give them their own timeouts. A synchronous host function that is already running cannot be interrupted.
+- **Getters and Proxies run when read.** Pass plain data when the context contains anything sensitive or expensive to compute.
+- **Only put in the context what expressions may see.** Every own property of the context is readable. Build a dedicated context object rather than passing a whole database row or request.
+- **Set a timeout on interactive paths.** The step budget bounds work deterministically but not wall-clock time spent inside host functions.
+- **Bonsai is not a process boundary.** If your host functions or context data are themselves untrusted, evaluate in a worker or a separate process.
+
+## A hardened setup
 
 ```ts
-const expr = bonsai({
-  allowedProperties: ['name', 'plan']
+import { bonsai, t } from 'bonsai-js'
+
+const env = bonsai({
+  variables: {
+    account: t.object({ plan: t.enum('free', 'pro'), seats: t.number() }),
+  },
+  strict: true, // undeclared variables are errors
+  limits: { maxSourceLength: 2_000, maxSteps: 50_000, timeout: 50 },
 })
 
-expr.evaluateSync('user.name', {
-  user: { name: "Alice", plan: "pro", secret: "xyz" }
-}) // "Alice"
+const source = 'account.plan == "pro" && account.seats > 5' // from a user
+const result = env.check(source, { expect: t.boolean() })
+result.ok // => true
 
-expr.evaluateSync('user.secret', {
-  user: { secret: "xyz" }
-}) // Error: "secret" is not in allowed properties
+// Save only expressions that pass the check, then evaluate the saved text:
+const rule = env.compile(source, { expect: t.boolean() })
+const controller = new AbortController()
+rule.evaluateSync({ account: { plan: 'pro', seats: 10 } }, { signal: controller.signal }) // => true
 ```
 
-For `user.name`, only `name` is a member name; `user` is a root identifier. A
-deeper path such as `account.user.name` requires `user` and `name`.
+Checking at save time rejects typos and type errors before they reach production:
 
-::: warning Root identifiers are always accessible
-`allowedProperties` and `deniedProperties` only restrict member access after the dot. Root identifiers (the top-level keys in your context object) are never filtered. Pass a minimal context object rather than relying on property lists to hide top-level data.
-:::
-
-::: tip Use an allowlist for user-authored expressions
-`allowedProperties` is the single most effective control for expressions you did not write yourself. Prefer it over a denylist, which requires anticipating every sensitive name.
-:::
-
-## Defense-in-depth hardening
-
-Beyond the configurable property restrictions, Bonsai applies several layers of protection automatically:
-
-| Protection | What it does |
-| --- | --- |
-| Own-property lookup | Root identifiers and members read own properties only. Prototype chains are never walked, so inherited members and a polluted `Object.prototype` cannot surface as values. |
-| Null-prototype object literals | Objects created inside expressions (e.g., `{ a: 1 }`) use `Object.create(null)`, preventing prototype pollution through expression-constructed objects. |
-| Captured safe intrinsics | Only audited string, number, and array methods are callable. Bonsai invokes captured built-ins, so receiver overrides and later prototype monkey-patches are ignored. |
-| Data-only arrays | Spread copies elements by index and never consults a custom iterator; it accepts arrays only. Subclasses and arrays with own constructor/spreadability hooks are neutralized before species-producing methods run. Bundled transforms use captured operations too. |
-| Branded callbacks | Higher-order methods accept only Bonsai-created lambdas, never context-supplied host callbacks. |
-| Primitive-only conversion | Operators, templates, computed keys, and method arguments cannot invoke object conversion hooks. |
-| Numeric index bypass | Canonical numeric array indices (e.g., `items[0]`) automatically bypass allow/deny lists, so you don't need to whitelist numeric strings. |
-| Sync Promise-like guard | `evaluateSync()` detects cross-realm and custom Promise-like results and throws an actionable `BonsaiTypeError`. |
-
-## Recommended deployment profiles
-
-| Scenario | Recommended posture |
-| --- | --- |
-| Trusted internal expressions | Defaults are often fine, but still keep custom plugins small and explicit. |
-| User-authored business rules | Use an allowlist, set all resource limits, validate before save, and compile only accepted expressions. |
-| Higher-risk multi-tenant environments | Use the Bonsai limits plus worker/process isolation for stronger containment. |
-
-## Resource limits
-
-Protect against resource exhaustion before and during evaluation with structural,
-depth, output-size, and work limits, plus optional time and cancellation controls.
-
+<!-- continue -->
 ```ts
-const expr = bonsai({
-  timeout: 50,                // cooperative timeout in ms (opt-in)
-  maxSourceLength: 10000,     // input before tokenization
-  maxTokens: 2500,            // lexical tokens
-  maxAstNodes: 2000,          // syntax-tree size
-  maxObjectProperties: 500,   // one object literal
-  maxCallArguments: 100,      // per call, before and after spread expansion
-  maxDepth: 50,               // nesting depth
-  maxArrayLength: 10000,      // every produced array
-  maxStringLength: 10000,     // every produced string
-  maxSteps: 500000            // evaluator work (default 1,000,000)
-}).seal()
+env.check('account.billingEmail').diagnostics[0].code // => "UNKNOWN_PROPERTY"
 ```
 
-`maxSteps` is on by default and bounds evaluator-driven work (the AST walk,
-bonsai-lambda iteration, spread and literal loops, plus receiver-length charges
-for linear native methods) even with
-no `timeout` set. It does not count work inside an opaque host extension.
+::: warning Types are not access control
+A closed `t.object` type stops `account.billingEmail` from checking, but it does not hide data. A computed index with a dynamic key (`account[key]`) and `keys()`, `values()`, or `entries()` read every own property of the value you pass at run time, declared or not. The context you pass is the only boundary on what an expression can read.
+:::
 
-Each evaluation may override `timeout` and `maxSteps`, and may accept an
-`AbortSignal`, without changing instance defaults:
-
-```ts
-await expr.evaluate(source, context, {
-  timeout: 25,
-  signal: request.signal
-})
+<!-- context: { account: { plan: "pro", seats: 10, internalNotes: "do not show" } } -->
+```bonsai
+account.keys() // => ["plan", "seats", "internalNotes"]
 ```
-
-## What Bonsai does not do
-
-| Concern | What to know |
-| --- | --- |
-| Custom transforms/functions | They run as normal host JavaScript. Bonsai does not sandbox code you register yourself. |
-| Timeouts | Timeout checks are cooperative during evaluator traversal. They do not forcibly interrupt arbitrary synchronous host code. |
-| Async cancellation | Async waits race the deadline and signal, but underlying I/O continues unless the extension cancels it. |
-| Proxies | JavaScript reflection can execute Proxy traps. Pass plain data when trap execution is outside your trust boundary. |
-| Hard isolation | If you need a stronger boundary, run evaluation in a worker or separate process. |
-
-::: warning Timeouts do not interrupt host code
-The `timeout` limit is cooperative: it is checked between evaluator steps. A custom transform or function that blocks synchronously for a long time will not be interrupted mid-execution. If you need hard preemption, run evaluation in a worker or separate process.
-:::
-
-::: tip For user-authored expressions
-Start with a minimal plain-data context, use `allowedProperties`, tighten the
-resource limits for your domain, pass request cancellation, seal the configured
-instance, and treat every custom plugin as trusted application code.
-:::

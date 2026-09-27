@@ -1,15 +1,5 @@
 <script setup lang="ts">
-const samples = [
-  { comment: 'Transform pipelines', code: '"  hello world  " |> trim |> upper', result: '"HELLO WORLD"' },
-  { comment: 'Null-safe navigation', code: 'user?.profile?.avatar ?? "default.png"', result: '"default.png"' },
-  { comment: 'Lambda predicates', code: 'users |> filter(.age >= 18) |> map(.name)', result: '["Alice"]' },
-]
-
-const useCases = [
-  { kicker: 'Pricing & Eligibility', title: 'Business Rules', body: 'A pricing rule changes every quarter. With Bonsai it is a text field in your admin panel that evaluates at runtime.', code: 'order.total\n  >= freeShippingThreshold\n  && customer.tier == "gold"' },
-  { kicker: 'Search & Admin UIs', title: 'Filter Builders', body: 'Store a saved view as a string and evaluate it per row, with no custom query parser to build or maintain.', code: 'orders |> filter(\n  .status == "pending"\n  && .total > 500\n)' },
-  { kicker: 'Notifications & Emails', title: 'Templates', body: 'Template expressions live alongside the copy, not buried in application code or a separate engine.', code: '`Hi ${user.firstName},\n  order ${order.id} ships\n  ${shipDate |> formatDate}`' },
-]
+import { samples, useCases } from './home/samples'
 </script>
 
 <template>

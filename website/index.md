@@ -1,11 +1,11 @@
 ---
 layout: home
-title: Bonsai — Safe Expressions for Rules, Filters, and Templates
+title: 'Bonsai: safe, typed expressions for rules, filters, and templates'
 titleTemplate: false
 hero:
   name: Bonsai
-  text: Safe expressions for rules, filters, and templates.
-  tagline: A constrained expression language for pricing rules, search filters, workflow conditions, and user-authored logic. Replace fragile eval()-style glue with typed errors, cacheable compilation, and real sandbox controls.
+  text: Safe, typed expressions for rules, filters, and templates.
+  tagline: A small expression language for pricing rules, saved filters, formula fields, and user-authored logic. JavaScript syntax, checked against your data types before it runs, and bounded when it does.
   image:
     src: /logo.png
     alt: Bonsai
@@ -20,14 +20,14 @@ hero:
       text: GitHub
       link: https://github.com/danfry1/bonsai-js
 features:
-  - title: Zero runtime dependencies
-    details: Ships nothing into your dependency tree. Runs in Node 24+, Bun, and the browser.
-  - title: Typed API and rich errors
-    details: Structured, discriminated error types with security codes and type guards — not thrown strings.
+  - title: Familiar syntax
+    details: JavaScript operators and names. Every function is also a method, so sum(xs) and xs.sum() are the same call.
+  - title: Checked before it runs
+    details: Declare your data with t and get errors for typos, wrong types, and possible nulls, with exact ranges and suggestions.
   - title: Safe by construction
-    details: Property allowlists, depth limits, and timeout guards. Built for expressions that come from config or end users.
-  - title: Cacheable compilation
-    details: Compile once, evaluate on hot paths. Pluggable transforms and functions extend the language without unsafe escape hatches.
+    details: No globals, prototypes, conversion hooks, or mutation. Every evaluation terminates within a step budget and size limits.
+  - title: Editor support and zero dependencies
+    details: Completions, hover, and diagnostics from bonsai-js/service. Runs in Node.js, Bun, and modern browsers.
 ---
 
 <HomeShowcase />

@@ -8,7 +8,7 @@
             <h1>How does a computer evaluate an expression?</h1>
             <p class="hiw-subtitle">
               You type <code>1 + 2 * 3</code> and get <code>7</code>. But to a computer, that's
-              just a string of characters -- it has no idea what <code>+</code> or <code>*</code>
+              just a string of characters: it has no idea what <code>+</code> or <code>*</code>
               means. So how does it figure it out? It turns out the answer involves one of the most
               elegant ideas in computer science.
             </p>
@@ -32,7 +32,7 @@
               <p>
                 The first step is <strong>tokenization</strong>: scanning the characters and
                 grouping them into meaningful chunks called <strong>tokens</strong>. Think of it
-                like reading -- you don't process one letter at a time, you recognize whole words.
+                like reading: you don't process one letter at a time, you recognize whole words.
                 That's what the tokenizer does: it turns a stream of characters into a list of
                 meaningful pieces.
               </p>
@@ -63,13 +63,13 @@
               <h2>The problem: which operation goes first?</h2>
               <p>
                 Now we have tokens, but we've hit a wall. Look at <code>1 + 2 * 3</code>. If we just
-                go left to right -- add first, then multiply -- we get <strong>9</strong>. But the
+                go left to right (add first, then multiply), we get <strong>9</strong>. But the
                 correct answer is <strong>7</strong>, because multiplication should happen before
                 addition.
               </p>
               <p>
                 A flat list of tokens doesn't capture this. The tokens just say "number, plus,
-                number, times, number" -- there's nothing in that list that tells us which operation
+                number, times, number", and there's nothing in that list that tells us which operation
                 to do first. We need a data structure that can represent <strong>priority</strong>.
                 And that's exactly what a tree gives us.
               </p>
@@ -99,7 +99,17 @@
                   <tbody>
                     <tr>
                       <td>Highest</td>
-                      <td><code>!</code> <code>-</code> (unary)</td>
+                      <td><code>.</code> <code>?.</code> <code>[]</code> calls</td>
+                      <td>Left</td>
+                    </tr>
+                    <tr>
+                      <td></td>
+                      <td><code>!</code> <code>-</code> (prefix)</td>
+                      <td>Right</td>
+                    </tr>
+                    <tr>
+                      <td></td>
+                      <td><code>**</code></td>
                       <td>Right</td>
                     </tr>
                     <tr>
@@ -114,13 +124,13 @@
                     </tr>
                     <tr>
                       <td></td>
-                      <td><code>&lt;</code> <code>&lt;=</code> <code>&gt;</code> <code>&gt;=</code></td>
-                      <td>Left</td>
+                      <td><code>&lt;</code> <code>&lt;=</code> <code>&gt;</code> <code>&gt;=</code> <code>in</code> <code>not in</code></td>
+                      <td>Does not chain</td>
                     </tr>
                     <tr>
                       <td></td>
                       <td><code>==</code> <code>!=</code></td>
-                      <td>Left</td>
+                      <td>Does not chain</td>
                     </tr>
                     <tr>
                       <td></td>
@@ -129,7 +139,12 @@
                     </tr>
                     <tr>
                       <td></td>
-                      <td><code>||</code> <code>??</code></td>
+                      <td><code>||</code></td>
+                      <td>Left</td>
+                    </tr>
+                    <tr>
+                      <td></td>
+                      <td><code>??</code></td>
                       <td>Left</td>
                     </tr>
                     <tr>
@@ -139,8 +154,8 @@
                     </tr>
                     <tr>
                       <td>Lowest</td>
-                      <td><code>|&gt;</code> (pipe)</td>
-                      <td>Left</td>
+                      <td><code>let x = e; body</code></td>
+                      <td>Prefix</td>
                     </tr>
                   </tbody>
                 </table>
@@ -161,13 +176,13 @@
                 Here's the key insight: <strong>in a tree, deeper nodes get computed first.</strong>
                 If we put <code>2 * 3</code> deeper than <code>+ 1</code>, multiplication
                 automatically happens before addition. We don't need special rules during evaluation
-                -- the structure itself <em>encodes</em> the order of operations.
+                because the structure itself <em>encodes</em> the order of operations.
               </p>
               <p>
                 This is called an <strong>Abstract Syntax Tree (AST)</strong>. The parser's entire
                 job is to read the flat token list and build this tree, placing higher-priority
                 operations deeper. Once you have the tree, the hard problem of "what order?" is
-                already solved. Try changing the expression below -- notice how <code>*</code> and
+                already solved. Try changing the expression below and notice how <code>*</code> and
                 <code>/</code> always sit deeper than <code>+</code> and <code>-</code>.
               </p>
             </div>
@@ -203,7 +218,7 @@
               <span class="hiw-step-label">Step 4</span>
               <h2>Walking the tree to get an answer</h2>
               <p>
-                Now comes the satisfying part. We have a tree -- how do we get a number out of it?
+                Now comes the satisfying part. We have a tree; how do we get a number out of it?
                 Start at the bottom. The leaves are just values: <code>1</code>, <code>2</code>,
                 <code>3</code>. They're already "solved."
               </p>
@@ -239,6 +254,7 @@
                     <option value="10 > 5 && 3 < 7">Boolean logic</option>
                     <option value='3 > 2 ? "yes" : "no"'>Ternary condition</option>
                     <option value="!(2 + 2 == 5)">Negation</option>
+                    <option value="[1, 2, 3].map(. * 10).sum()">Function calls</option>
                   </select>
                 </div>
               </div>
@@ -268,13 +284,14 @@
               <h2>The same idea scales to everything</h2>
               <p>
                 So far we've only seen numbers and arithmetic. But real expressions have variables,
-                function calls, conditions, even pipelines like <code>items |> filter(active)</code>.
+                function calls, conditions, and lambdas like <code>items.filter(.active)</code>.
                 Does the tree idea still work?
               </p>
               <p>
-                It does -- beautifully. Every new feature just adds a new kind of node. A ternary
-                <code>?:</code> becomes a node with three children. A pipe <code>|></code> becomes a
-                node where the left child feeds into the right. The rule never changes:
+                It does. Every new feature just adds a new kind of node. A ternary
+                <code>?:</code> becomes a node with three children. A method call
+                <code>items.filter(...)</code> becomes a call node whose first child is the receiver, and
+                <code>.active</code> becomes a lambda node wrapping the current item. The rule never changes:
                 <strong>deeper nodes get computed first, and results bubble up.</strong> Hover over a
                 node to see exactly which part of the expression it represents.
               </p>
@@ -297,8 +314,9 @@
                 <option value='user.score * 2 > threshold ? "pass" : "fail"'>
                   Ternary condition
                 </option>
-                <option value="items |> filter(active) |> length">Pipe chain</option>
-                <option value='user?.profile?.name ?? "Anonymous"'>Optional chaining</option>
+                <option value="items.filter(.active).map(.name)">Lambdas</option>
+                <option value="let total = price * qty; total > 100 ? total * 0.9 : total">let binding</option>
+                <option value='user.profile?.name ?? "Anonymous"'>Null defaults</option>
                 <option value="price * (1 - discount / 100)">Pricing rule</option>
                 <option value='age >= 18 && country == "US"'>Access control</option>
               </select>
@@ -315,65 +333,53 @@
         </div>
       </section>
 
-      <!-- Section 7: Optimization -->
+      <!-- Section 7: Checking -->
       <section class="hiw-section" id="hiw-optimization">
         <div class="container">
           <div class="hiw-layout">
             <div class="hiw-narrative">
               <span class="hiw-step-label">Step 6</span>
-              <h2>Why compute what you already know?</h2>
+              <h2>Check the tree before running it</h2>
               <p>
-                Imagine evaluating <code>x + 2 * 3</code> a million times with different values of
-                <code>x</code>. Every single time, the evaluator walks down to <code>2 * 3</code>,
-                multiplies them, and gets <code>6</code>. But that subtree has no variables -- the
-                answer is always <code>6</code>. Why keep recomputing it?
+                A tree also lets us find mistakes without running anything. If we know the shape of
+                the data (here <code>user</code> has a numeric <code>score</code> and a string
+                <code>name</code>, and <code>items</code> is a list of <code>{ name, active }</code>),
+                we can work out a <strong>type</strong> for every node, bottom-up, exactly the way
+                evaluation works out values.
               </p>
               <p>
-                This is <strong>constant folding</strong>: the compiler walks the tree before
-                evaluation and looks for subtrees where every leaf is a literal. When it finds one,
-                it evaluates it on the spot and replaces the entire subtree with a single number. The
-                tree gets smaller, and the evaluator has less work to do -- for free, on every future
-                run.
+                A leaf <code>user.score</code> is a number; <code>user.score * 2</code> is a number;
+                comparing it with <code>threshold</code> gives a boolean. When a node's children have
+                types the node cannot accept, such as <code>user.name * 2</code>, or a property that
+                does not exist, such as <code>user.scroe</code>, the checker reports it with the exact
+                range, before the expression ever runs. Bonsai then compiles the checked tree into
+                small JavaScript closures, once, so later evaluations skip all of this work.
               </p>
             </div>
             <div class="hiw-interactive-panel">
-              <label for="opt-input" class="hiw-panel-label"
-                >Expression with constant sub-expressions</label
-              >
+              <label for="opt-input" class="hiw-panel-label">Expression</label>
               <div class="hiw-opt-input-row">
                 <input
                   id="opt-input"
                   class="hiw-input"
                   type="text"
-                  value="x + 2 * 3"
+                  value="user.score * 2 > threshold"
                   spellcheck="false"
                   autocomplete="off"
                 />
-                <button id="opt-run-btn" class="hiw-play-btn" type="button">Show Optimization</button>
+                <button id="opt-run-btn" class="hiw-play-btn" type="button">Check</button>
               </div>
-              <div class="hiw-opt-split">
-                <div class="hiw-opt-pane">
-                  <div class="hiw-opt-label">Before</div>
-                  <div class="hiw-tree-container hiw-tree-container--sm">
-                    <svg
-                      id="opt-before-svg"
-                      class="hiw-tree-svg"
-                      role="img"
-                      aria-label="Tree before optimization"
-                    ></svg>
-                  </div>
-                </div>
-                <div class="hiw-opt-pane">
-                  <div class="hiw-opt-label">After</div>
-                  <div class="hiw-tree-container hiw-tree-container--sm">
-                    <svg
-                      id="opt-after-svg"
-                      class="hiw-tree-svg"
-                      role="img"
-                      aria-label="Tree after optimization"
-                    ></svg>
-                  </div>
-                </div>
+              <label for="opt-presets" class="hiw-panel-label" style="margin-top: 10px">Presets</label>
+              <select id="opt-presets" class="hiw-select">
+                <option value="">-- choose a preset --</option>
+                <option value="user.score * 2 > threshold">Well typed</option>
+                <option value="user.scroe > threshold">Typo</option>
+                <option value="user.name * 2">Wrong type</option>
+                <option value="items.filter(.active).map(.name)">Lambdas</option>
+                <option value='items.find(.active).name.toUpperCase()'>Possibly null</option>
+              </select>
+              <div class="hiw-tree-container">
+                <svg id="opt-tree-svg" class="hiw-tree-svg" role="img" aria-label="Checked tree"></svg>
               </div>
               <div id="opt-message" class="hiw-opt-message" aria-live="polite"></div>
             </div>
@@ -387,8 +393,8 @@
           <h2>Try it yourself</h2>
           <p class="hiw-subtitle">
             Characters become tokens. Tokens become a tree. The tree encodes priority. Walking the
-            tree produces the answer. And the compiler shrinks the tree before you even start. That's
-            the whole pipeline -- and it all runs live in the Playground.
+            tree produces the answer, and walking it with types instead of values finds mistakes
+            before anything runs. That is the whole pipeline, and it all runs live in the Playground.
           </p>
           <div class="hiw-cta-actions">
             <a href="/bonsai-js/playground" class="cta-btn">Open Playground</a>
@@ -408,7 +414,8 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { tokenize, parse, compile } from 'bonsai-src'
+import { bonsai, isBonsaiError, Duration, t, formatType } from 'bonsai-src'
+import { tokenize } from 'bonsai-lexer'
 import './how-it-works/how-it-works.css'
 
 const root = ref<HTMLElement>()
@@ -434,7 +441,6 @@ interface AstNode {
   [key: string]: unknown
 }
 
-type Primitive = string | number | boolean | null | undefined
 
 interface LayoutNode {
   id: number
@@ -469,7 +475,8 @@ interface RenderOptions {
 
 interface EvalStep {
   node: AstNode
-  value: Primitive
+  /** Rendered value, or undefined when the node has no standalone value (a lambda, `.`). */
+  value: string | undefined
 }
 
 onMounted(() => {
@@ -480,30 +487,45 @@ onMounted(() => {
   const $ = <T extends HTMLElement = HTMLElement>(sel: string): T | null =>
     rootEl.querySelector<T>(sel)
 
+  // One open environment parses and evaluates everything on this page. The
+  // checking section uses a second environment with a small declared schema.
+  const env = bonsai()
+  const checkEnv = bonsai({
+    variables: {
+      user: t.object({ name: t.string(), score: t.number() }),
+      threshold: t.number(),
+      items: t.list(t.object({ name: t.string(), active: t.boolean() })),
+    },
+    strict: true,
+  })
+  const parse = (source: string): AstNode => env.parse(source) as unknown as AstNode
+
   // ─── AST Helper Functions ──────────────────────────────────────────────────
 
   function nodeCategory(node: AstNode): string {
     switch (node.type) {
-      case 'NumberLiteral':
-      case 'StringLiteral':
-      case 'BooleanLiteral':
-      case 'NullLiteral':
-      case 'UndefinedLiteral':
+      case 'Literal':
+      case 'Template':
+      case 'List':
+      case 'Map':
         return 'literal'
-      case 'BinaryExpression':
-      case 'UnaryExpression':
+      case 'Binary':
+      case 'Unary':
         return 'operator'
-      case 'Identifier':
+      case 'Variable':
+      case 'Local':
         return 'identifier'
-      case 'PipeExpression':
-      case 'CallExpression':
+      case 'Call':
         return 'pipe'
-      case 'ConditionalExpression':
+      case 'Conditional':
+      case 'Let':
+      case 'Try':
+      case 'Has':
         return 'control'
-      case 'MemberExpression':
-      case 'OptionalMemberExpression':
-      case 'LambdaAccessor':
-      case 'LambdaExpression':
+      case 'Member':
+      case 'Index':
+      case 'It':
+      case 'Lambda':
         return 'member'
       default:
         return 'literal'
@@ -512,82 +534,82 @@ onMounted(() => {
 
   function nodeLabel(node: AstNode): string {
     switch (node.type) {
-      case 'NumberLiteral':
-        return String(node.value)
-      case 'StringLiteral':
-        return `"${String(node.value)}"`
-      case 'BooleanLiteral':
-        return String(node.value)
-      case 'NullLiteral':
-        return 'null'
-      case 'UndefinedLiteral':
-        return 'undefined'
-      case 'Identifier':
-        return String(node.name)
-      case 'BinaryExpression':
-        return String(node.operator)
-      case 'UnaryExpression':
-        return String(node.operator)
-      case 'ConditionalExpression':
-        return '? :'
-      case 'MemberExpression':
-        return node.computed ? '[]' : '.'
-      case 'OptionalMemberExpression':
-        return node.computed ? '?.[]' : '?.'
-      case 'PipeExpression':
-        return '|>'
-      case 'CallExpression': {
-        const callee = node.callee as AstNode | undefined
-        if (callee && callee.type === 'Identifier') return `${String(callee.name)}()`
-        return 'call()'
-      }
-      case 'ArrayLiteral':
-        return '[...]'
-      case 'ObjectLiteral':
-        return '{...}'
-      case 'TemplateLiteral':
+      case 'Literal':
+        return typeof node.value === 'string' ? JSON.stringify(node.value) : String(node.value)
+      case 'Template':
         return '`...`'
-      case 'SpreadElement':
+      case 'Variable':
+      case 'Local':
+        return String(node.name)
+      case 'It':
+        return '.'
+      case 'Binary':
+      case 'Unary':
+        return String(node.operator)
+      case 'Conditional':
+        return '? :'
+      case 'Member':
+        return `${node.optional ? '?.' : '.'}${String(node.name)}`
+      case 'Index':
+        return node.optional ? '?.[]' : '[]'
+      case 'Call':
+        return `${String(node.name)}()`
+      case 'List':
+        return '[...]'
+      case 'Map':
+        return '{...}'
+      case 'Spread':
         return '...'
-      case 'LambdaAccessor':
-        return `.${String(node.property)}`
-      case 'LambdaExpression':
-        return 'lambda'
+      case 'Lambda': {
+        const params = node.params as string[]
+        return node.implicit ? 'lambda .' : `(${params.join(', ')}) =>`
+      }
+      case 'Let':
+        return `let ${String(node.name)}`
+      case 'Has':
+        return 'has()'
+      case 'Try':
+        return 'try()'
       default:
         return node.type
     }
   }
 
   function nodeChildren(node: AstNode): AstNode[] {
+    const unspread = (item: AstNode) => (item.type === 'Spread' ? (item.argument as AstNode) : item)
     switch (node.type) {
-      case 'BinaryExpression':
+      case 'Binary':
         return [node.left as AstNode, node.right as AstNode]
-      case 'UnaryExpression':
+      case 'Unary':
         return [node.operand as AstNode]
-      case 'ConditionalExpression':
-        return [node.test as AstNode, node.consequent as AstNode, node.alternate as AstNode]
-      case 'MemberExpression':
-      case 'OptionalMemberExpression':
-        return node.computed
-          ? [node.object as AstNode, node.property as AstNode]
-          : [node.object as AstNode]
-      case 'PipeExpression':
-        return [node.input as AstNode, node.transform as AstNode]
-      case 'CallExpression':
-        return [node.callee as AstNode, ...(node.args as AstNode[])]
-      case 'ArrayLiteral':
-        return [...(node.elements as AstNode[])]
-      case 'ObjectLiteral':
-        return (node.properties as { key: AstNode; value: AstNode }[]).flatMap((p) => [
-          p.key,
-          p.value,
-        ])
-      case 'TemplateLiteral':
-        return [...(node.parts as AstNode[])]
-      case 'SpreadElement':
-        return [node.argument as AstNode]
-      case 'LambdaExpression':
+      case 'Conditional':
+        return [node.test as AstNode, node.then as AstNode, node.otherwise as AstNode]
+      case 'Member':
+        return [node.object as AstNode]
+      case 'Index':
+        return [node.object as AstNode, node.index as AstNode]
+      case 'Call':
+        return (node.args as AstNode[]).map(unspread)
+      case 'List':
+        return (node.items as AstNode[]).map(unspread)
+      case 'Map':
+        return (node.entries as AstNode[]).flatMap((entry) =>
+          entry.type === 'Spread'
+            ? [entry.argument as AstNode]
+            : typeof entry.key === 'string'
+              ? [entry.value as AstNode]
+              : [entry.key as AstNode, entry.value as AstNode],
+        )
+      case 'Template':
+        return (node.parts as (string | AstNode)[]).filter((part): part is AstNode => typeof part !== 'string')
+      case 'Lambda':
         return [node.body as AstNode]
+      case 'Let':
+        return [node.value as AstNode, node.body as AstNode]
+      case 'Has':
+        return [node.target as AstNode]
+      case 'Try':
+        return [node.body as AstNode, node.fallback as AstNode]
       default:
         return []
     }
@@ -852,80 +874,75 @@ onMounted(() => {
 
   // ─── Tokenization Display ────────────────────────────────────────────────────
 
-  function tokenTypeClass(type: string): string {
-    switch (type) {
-      case 'Number':
+  const OPERATORS = new Set([
+    '+', '-', '*', '/', '%', '**', '==', '!=', '<', '<=', '>', '>=', '&&', '||', '??', '!', '?', ':',
+    '?.', '=>', '=', '...',
+  ])
+
+  function tokenTypeClass(kind: string, value: string): string {
+    switch (kind) {
+      case 'number':
         return 'hiw-token-type-number'
-      case 'String':
+      case 'string':
+      case 'template':
         return 'hiw-token-type-string'
-      case 'Boolean':
-        return 'hiw-token-type-boolean'
-      case 'Operator':
-        return 'hiw-token-type-operator'
-      case 'Identifier':
+      case 'name':
         return 'hiw-token-type-identifier'
-      case 'Punctuation':
-        return 'hiw-token-type-punctuation'
-      case 'Pipe':
-        return 'hiw-token-type-pipe'
-      case 'OptionalChain':
-        return 'hiw-token-type-operator'
-      case 'NullishCoalescing':
-        return 'hiw-token-type-operator'
-      case 'Spread':
-        return 'hiw-token-type-punctuation'
-      case 'Null':
-        return 'hiw-token-type-boolean'
-      case 'Undefined':
-        return 'hiw-token-type-boolean'
-      case 'TemplateLiteral':
-        return 'hiw-token-type-string'
+      case 'keyword':
+        return value === 'true' || value === 'false' || value === 'null'
+          ? 'hiw-token-type-boolean'
+          : 'hiw-token-type-operator'
+      case 'punct':
+        return OPERATORS.has(value) ? 'hiw-token-type-operator' : 'hiw-token-type-punctuation'
       default:
         return 'hiw-token-type-punctuation'
     }
   }
 
+  const TOKEN_LABELS: Record<string, string> = {
+    number: 'Number',
+    string: 'String',
+    template: 'Template',
+    name: 'Name',
+    keyword: 'Keyword',
+  }
+
   function renderTokens(containerEl: HTMLElement, source: string): { error?: unknown } {
     containerEl.replaceChildren()
 
-    let tokens: { type: string; value?: string }[]
+    let tokens: { kind: string; value: string; start: number; end: number }[]
     try {
-      tokens = tokenize(source) as { type: string; value?: string }[]
+      tokens = tokenize(source, { maxSourceLength: 10_000, maxTokens: 10_000 })
     } catch (err) {
       return { error: err }
     }
 
-    // Filter out EOF tokens
-    const visible = tokens.filter((t) => t.type !== 'EOF')
-
+    const visible = tokens.filter((token) => token.kind !== 'eof')
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
     visible.forEach((token, i) => {
       const div = document.createElement('div')
-      div.className = `hiw-token ${tokenTypeClass(token.type)}`
+      div.className = `hiw-token ${tokenTypeClass(token.kind, token.value)}`
 
       const valueSpan = document.createElement('span')
       valueSpan.className = 'hiw-token-value'
-      valueSpan.textContent = token.value || token.type
+      valueSpan.textContent = source.slice(token.start, token.end)
       div.appendChild(valueSpan)
 
       const typeSpan = document.createElement('span')
       typeSpan.className = 'hiw-token-type'
-      typeSpan.textContent = token.type
+      typeSpan.textContent =
+        TOKEN_LABELS[token.kind] ?? (OPERATORS.has(token.value) ? 'Operator' : 'Punctuation')
       div.appendChild(typeSpan)
 
-      if (reduced) {
-        containerEl.appendChild(div)
-      } else {
-        div.style.animationDelay = `${i * 80}ms`
-        containerEl.appendChild(div)
-      }
+      if (!reduced) div.style.animationDelay = `${i * 80}ms`
+      containerEl.appendChild(div)
     })
 
     containerEl.setAttribute(
       'aria-label',
       `${visible.length} token${visible.length !== 1 ? 's' : ''}: ${visible
-        .map((t) => t.value || t.type)
+        .map((token) => source.slice(token.start, token.end))
         .join(', ')}`,
     )
 
@@ -934,129 +951,37 @@ onMounted(() => {
 
   // ─── Evaluation Stepper ──────────────────────────────────────────────────────
 
-  function buildEvalSequence(ast: AstNode): EvalStep[] {
-    const sequence: EvalStep[] = []
-
-    function walk(node: AstNode): void {
-      switch (node.type) {
-        case 'NumberLiteral':
-          sequence.push({ node, value: node.value as Primitive })
-          break
-        case 'StringLiteral':
-          sequence.push({ node, value: node.value as Primitive })
-          break
-        case 'BooleanLiteral':
-          sequence.push({ node, value: node.value as Primitive })
-          break
-        case 'NullLiteral':
-          sequence.push({ node, value: null })
-          break
-        case 'BinaryExpression': {
-          const left = node.left as AstNode
-          const right = node.right as AstNode
-          walk(left)
-          walk(right)
-          const leftStep = sequence.filter((s) => s.node === left).at(-1)
-          const rightStep = sequence.filter((s) => s.node === right).at(-1)
-          const leftVal = leftStep ? leftStep.value : undefined
-          const rightVal = rightStep ? rightStep.value : undefined
-          const result = evalBinaryOp(String(node.operator), leftVal, rightVal)
-          sequence.push({ node, value: result })
-          break
-        }
-        case 'UnaryExpression': {
-          const operand = node.operand as AstNode
-          walk(operand)
-          const operandStep = sequence.filter((s) => s.node === operand).at(-1)
-          const operandVal = operandStep ? operandStep.value : undefined
-          let result: Primitive
-          if (node.operator === '!' && typeof operandVal === 'boolean') {
-            result = !operandVal
-          } else if (node.operator === '-' && typeof operandVal === 'number') {
-            result = -operandVal
-          } else if (node.operator === '+') {
-            result = Number(operandVal)
-          } else {
-            result = undefined
-          }
-          sequence.push({ node, value: result })
-          break
-        }
-        case 'ConditionalExpression': {
-          const test = node.test as AstNode
-          const consequent = node.consequent as AstNode
-          const alternate = node.alternate as AstNode
-          walk(test)
-          walk(consequent)
-          walk(alternate)
-          const testStep = sequence.filter((s) => s.node === test).at(-1)
-          const testVal = testStep ? testStep.value : undefined
-          const consequentStep = sequence.filter((s) => s.node === consequent).at(-1)
-          const alternateStep = sequence.filter((s) => s.node === alternate).at(-1)
-          const result = testVal
-            ? consequentStep
-              ? consequentStep.value
-              : undefined
-            : alternateStep
-              ? alternateStep.value
-              : undefined
-          sequence.push({ node, value: result })
-          break
-        }
-        default:
-          sequence.push({ node, value: undefined })
-          break
-      }
+  function formatValue(value: unknown): string {
+    if (value === null || value === undefined) return 'null'
+    if (typeof value === 'string') return JSON.stringify(value)
+    if (value instanceof Date) return value.toISOString()
+    if (value instanceof Duration) return value.toString()
+    if (Array.isArray(value)) return `[${value.map(formatValue).join(', ')}]`
+    if (typeof value === 'object') {
+      return `{ ${Object.entries(value as Record<string, unknown>)
+        .map(([k, v]) => `${k}: ${formatValue(v)}`)
+        .join(', ')} }`
     }
+    return String(value)
+  }
 
+  // Every node's value is computed by evaluating that node's own source text
+  // with the real evaluator, so the animation always agrees with Bonsai.
+  // Nodes without a standalone value (a lambda, `.`) show nothing.
+  function buildEvalSequence(ast: AstNode, source: string): EvalStep[] {
+    const sequence: EvalStep[] = []
+    const walk = (node: AstNode): void => {
+      for (const child of nodeChildren(node)) walk(child)
+      let value: string | undefined
+      try {
+        value = formatValue(env.evaluateSync(source.slice(node.start, node.end)))
+      } catch (error) {
+        value = isBonsaiError(error) && error.code !== 'SYNTAX' && error.code !== 'CHECK' ? error.code : undefined
+      }
+      sequence.push({ node, value })
+    }
     walk(ast)
     return sequence
-  }
-
-  function evalBinaryOp(op: string, left: Primitive, right: Primitive): Primitive {
-    // The evaluation visualization intentionally mirrors the runtime's coercion
-    // behavior for arithmetic/comparison demos, so loose operands are expected.
-    const l = left as never
-    const r = right as never
-    switch (op) {
-      case '+':
-        return (l as number) + (r as number)
-      case '-':
-        return (l as number) - (r as number)
-      case '*':
-        return (l as number) * (r as number)
-      case '/':
-        return (l as number) / (r as number)
-      case '%':
-        return (l as number) % (r as number)
-      case '**':
-        return (l as number) ** (r as number)
-      case '<':
-        return l < r
-      case '>':
-        return l > r
-      case '<=':
-        return l <= r
-      case '>=':
-        return l >= r
-      case '==':
-        return left === right
-      case '!=':
-        return left !== right
-      case '&&':
-        return (l && r) as Primitive
-      case '||':
-        return (l || r) as Primitive
-      default:
-        return undefined
-    }
-  }
-
-  function formatValue(v: Primitive): string {
-    if (v === undefined) return 'undefined'
-    if (v === null) return 'null'
-    if (typeof v === 'string') return `"${v}"`
-    return String(v)
   }
 
   // ─── Utility ─────────────────────────────────────────────────────────────────
@@ -1122,7 +1047,7 @@ onMounted(() => {
 
       let ast: AstNode
       try {
-        ast = parse(source) as unknown as AstNode
+        ast = parse(source)
       } catch {
         return
       }
@@ -1156,6 +1081,7 @@ onMounted(() => {
 
     let currentLayout: TreeLayout | null = null
     let currentAst: AstNode | null = null
+    let currentSource = ''
     let evalInterval: ReturnType<typeof setInterval> | null = null
 
     function updateTree(): void {
@@ -1169,12 +1095,13 @@ onMounted(() => {
 
       let ast: AstNode
       try {
-        ast = parse(source) as unknown as AstNode
+        ast = parse(source)
       } catch {
         return
       }
 
       currentAst = ast
+      currentSource = source
       currentLayout = layoutTree(ast)
       renderTree(svgEl, currentLayout, { animated: false })
 
@@ -1192,7 +1119,7 @@ onMounted(() => {
 
       playBtn.disabled = true
 
-      const sequence = buildEvalSequence(currentAst)
+      const sequence = buildEvalSequence(currentAst, currentSource)
       let stepIndex = 0
 
       // Map from AST node to layout node id
@@ -1221,7 +1148,7 @@ onMounted(() => {
           // Show final result
           const lastStep = sequence[sequence.length - 1]
           if (lastStep && lastStep.value !== undefined && resultEl) {
-            resultEl.textContent = `= ${formatValue(lastStep.value)}`
+            resultEl.textContent = `= ${lastStep.value}`
           }
           return
         }
@@ -1241,7 +1168,7 @@ onMounted(() => {
         if (step.value !== undefined) {
           const valueText = gEl.querySelector('.hiw-node-value')
           if (valueText) {
-            valueText.textContent = formatValue(step.value)
+            valueText.textContent = step.value
             valueText.classList.add('visible')
           }
         }
@@ -1283,7 +1210,7 @@ onMounted(() => {
 
       let ast: AstNode
       try {
-        ast = parse(source) as unknown as AstNode
+        ast = parse(source)
       } catch {
         return
       }
@@ -1313,81 +1240,47 @@ onMounted(() => {
   function initOptSection(): void {
     const input = $<HTMLInputElement>('#opt-input')
     const runBtn = $<HTMLButtonElement>('#opt-run-btn')
-    const beforeSvg = $<HTMLElement>('#opt-before-svg') as SVGElement | null
-    const afterSvg = $<HTMLElement>('#opt-after-svg') as SVGElement | null
+    const presets = $<HTMLSelectElement>('#opt-presets')
+    const svgEl = $<HTMLElement>('#opt-tree-svg') as SVGElement | null
     const messageEl = $('#opt-message')
 
-    if (!input || !runBtn || !beforeSvg || !afterSvg) return
+    if (!input || !runBtn || !svgEl || !messageEl) return
 
-    function updateBefore(): void {
-      if (!input || !beforeSvg) return
+    function run(): void {
+      if (!input || !svgEl || !messageEl) return
       const source = input.value.trim()
-      if (!source) {
-        beforeSvg.replaceChildren()
-        return
-      }
-
-      let ast: AstNode
-      try {
-        ast = parse(source) as unknown as AstNode
-      } catch {
-        return
-      }
-
-      const layout = layoutTree(ast)
-      renderTree(beforeSvg, layout, { animated: false })
-    }
-
-    function runOptimization(): void {
-      if (!input || !beforeSvg || !afterSvg) return
-      const source = input.value.trim()
+      svgEl.replaceChildren()
+      messageEl.replaceChildren()
       if (!source) return
 
-      let ast: AstNode
       try {
-        ast = parse(source) as unknown as AstNode
+        renderTree(svgEl, layoutTree(parse(source)), { animated: true })
       } catch {
-        return
+        // syntax errors are reported below
       }
 
-      let optimized: AstNode
-      try {
-        optimized = compile(ast as never) as unknown as AstNode
-      } catch {
-        return
+      const result = checkEnv.check(source)
+      const lines: string[] = []
+      if (result.ok && result.type) lines.push(`OK: the result type is ${formatType(result.type)}`)
+      for (const d of result.diagnostics) {
+        const excerpt = source.slice(d.start, d.end)
+        lines.push(`${d.severity === 'error' ? 'Error' : 'Warning'} at "${excerpt}": ${d.message}`)
       }
-
-      const beforeLayout = layoutTree(ast)
-      const afterLayout = layoutTree(optimized)
-
-      renderTree(beforeSvg, beforeLayout, { animated: false })
-      renderTree(afterSvg, afterLayout, { animated: true })
-
-      if (messageEl) {
-        const beforeCount = beforeLayout.nodes.length
-        const afterCount = afterLayout.nodes.length
-        messageEl.replaceChildren()
-
-        if (afterCount < beforeCount) {
-          const reduced = beforeCount - afterCount
-          messageEl.textContent = `Optimized: ${beforeCount} nodes reduced to ${afterCount} (saved ${reduced} node${reduced !== 1 ? 's' : ''})`
-        } else {
-          messageEl.textContent = 'Already optimal -- no constant sub-expressions to fold'
-        }
-      }
+      messageEl.textContent = lines.join('\n')
     }
 
-    input.addEventListener(
-      'input',
-      debounce(() => {
-        updateBefore()
-        if (afterSvg) afterSvg.replaceChildren()
-        if (messageEl) messageEl.replaceChildren()
-      }, DEBOUNCE_MS),
-    )
-
-    runBtn.addEventListener('click', runOptimization)
-    updateBefore()
+    input.addEventListener('input', debounce(run, DEBOUNCE_MS))
+    runBtn.addEventListener('click', run)
+    if (presets) {
+      presets.addEventListener('change', () => {
+        if (presets.value) {
+          input.value = presets.value
+          run()
+          presets.value = ''
+        }
+      })
+    }
+    run()
   }
 
   // ─── Scroll Reveal ───────────────────────────────────────────────────────────

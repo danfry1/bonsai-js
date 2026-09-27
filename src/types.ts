@@ -1,602 +1,386 @@
-// === Inferred Type Names ===
+import type { Duration } from './runtime/values.js'
 
-/** Closed set of type names produced by runtime type inference. */
-export type InferredTypeName =
-  | 'string'
-  | 'number'
-  | 'boolean'
-  | 'array'
-  | 'object'
-  | 'null'
-  | 'undefined'
+/**
+ * The static type vocabulary. Types are plain JSON-serializable objects so a
+ * schema can be stored, sent to an editor, or generated from another schema
+ * language.
+ */
+export type Type =
+  | AnyType
+  | NeverType
+  | NullType
+  | BooleanType
+  | NumberType
+  | StringType
+  | TimestampType
+  | DurationType
+  | LiteralType
+  | ListType
+  | MapType
+  | UnionType
+  | OpaqueType
+  | FunctionType
+  | TypeVar
 
-// === Static Type Metadata ===
+export interface AnyType {
+  readonly kind: 'any'
+}
+export interface NeverType {
+  readonly kind: 'never'
+}
+export interface NullType {
+  readonly kind: 'null'
+}
+export interface BooleanType {
+  readonly kind: 'boolean'
+}
+export interface NumberType {
+  readonly kind: 'number'
+}
+export interface StringType {
+  readonly kind: 'string'
+}
+export interface TimestampType {
+  readonly kind: 'timestamp'
+}
+export interface DurationType {
+  readonly kind: 'duration'
+}
+export interface LiteralType<V extends string | number | boolean = string | number | boolean> {
+  readonly kind: 'literal'
+  readonly value: V
+}
+export interface ListType<E extends Type = Type> {
+  readonly kind: 'list'
+  readonly element: E
+}
+/**
+ * A string-keyed record. `fields` are the known keys; `rest` types any other
+ * key (an open record). Without `rest`, reading an unknown key is a check error.
+ */
+export interface MapType<
+  F extends Readonly<Record<string, Type>> = Readonly<Record<string, Type>>,
+  R extends Type | undefined = Type | undefined,
+> {
+  readonly kind: 'map'
+  readonly fields: F
+  readonly rest?: R
+}
+export interface UnionType<M extends readonly Type[] = readonly Type[]> {
+  readonly kind: 'union'
+  readonly types: M
+}
+/**
+ * A value the host declares as not navigable. The checker rejects property
+ * access on it; at run time objects are read through their own properties.
+ */
+export interface OpaqueType<N extends string = string> {
+  readonly kind: 'opaque'
+  readonly name: N
+}
+/** Only lambdas have function types; they cannot be stored in values. */
+export interface FunctionType {
+  readonly kind: 'function'
+  readonly params: readonly Type[]
+  readonly result: Type
+}
+/** A type variable in a built-in signature, e.g. `T` in `first(list<T>): T?`. */
+export interface TypeVar {
+  readonly kind: 'var'
+  readonly name: string
+}
 
-/** JSON-serializable type vocabulary used by the optional static checker. */
-export type BonsaiType =
-  | { readonly kind: 'unknown' }
-  | { readonly kind: 'string' }
-  | { readonly kind: 'number' }
-  | { readonly kind: 'boolean' }
-  | { readonly kind: 'null' }
-  | { readonly kind: 'undefined' }
-  /** A single string, number, or boolean value; unions of literals model enums. */
-  | { readonly kind: 'literal'; readonly value: string | number | boolean }
-  | { readonly kind: 'array'; readonly element: BonsaiType }
-  | {
-      readonly kind: 'object'
-      readonly properties: Readonly<Record<string, BonsaiType>>
-      readonly additionalProperties?: BonsaiType | false
+const ANY: AnyType = Object.freeze({ kind: 'any' })
+const NEVER: NeverType = Object.freeze({ kind: 'never' })
+const NULL: NullType = Object.freeze({ kind: 'null' })
+const BOOLEAN: BooleanType = Object.freeze({ kind: 'boolean' })
+const NUMBER: NumberType = Object.freeze({ kind: 'number' })
+const STRING: StringType = Object.freeze({ kind: 'string' })
+const TIMESTAMP: TimestampType = Object.freeze({ kind: 'timestamp' })
+const DURATION: DurationType = Object.freeze({ kind: 'duration' })
+
+/** Type builders. */
+export const t = Object.freeze({
+  any: (): AnyType => ANY,
+  never: (): NeverType => NEVER,
+  null: (): NullType => NULL,
+  boolean: (): BooleanType => BOOLEAN,
+  number: (): NumberType => NUMBER,
+  string: (): StringType => STRING,
+  timestamp: (): TimestampType => TIMESTAMP,
+  duration: (): DurationType => DURATION,
+  literal: <const V extends string | number | boolean>(value: V): LiteralType<V> =>
+    Object.freeze({ kind: 'literal', value }),
+  /** A union of literals: `t.enum('free', 'pro')`. */
+  enum: <const V extends readonly (string | number | boolean)[]>(
+    ...values: V
+  ): UnionType<{ [K in keyof V]: LiteralType<V[K]> }> =>
+    Object.freeze({
+      kind: 'union',
+      types: Object.freeze(values.map((value) => Object.freeze({ kind: 'literal', value }))),
+    }) as unknown as UnionType<{ [K in keyof V]: LiteralType<V[K]> }>,
+  list: <E extends Type>(element: E): ListType<E> => Object.freeze({ kind: 'list', element }),
+  /** A closed record with known fields. */
+  object: <const F extends Readonly<Record<string, Type>>>(fields: F): MapType<F, undefined> =>
+    Object.freeze({ kind: 'map', fields: Object.freeze({ ...fields }) }),
+  /** An open record: every key has type `value`. */
+  record: <V extends Type>(value: V): MapType<Record<never, never>, V> =>
+    Object.freeze({ kind: 'map', fields: Object.freeze({}), rest: value }),
+  union: <const M extends readonly Type[]>(...types: M): UnionType<M> =>
+    Object.freeze({ kind: 'union', types: Object.freeze([...types]) as unknown as M }),
+  /** `T | null`. Absent keys read as null, so this also marks a field optional. */
+  optional: <T extends Type>(type: T): UnionType<readonly [T, NullType]> =>
+    Object.freeze({ kind: 'union', types: Object.freeze([type, NULL] as const) }),
+  opaque: <const N extends string>(name: N): OpaqueType<N> =>
+    Object.freeze({ kind: 'opaque', name }),
+})
+
+// === TypeScript inference from schemas ===
+
+type Simplify<T> = { [K in keyof T]: T[K] }
+
+type NullableKeys<F> = {
+  [K in keyof F]: null extends Infer<F[K]> ? K : never
+}[keyof F]
+
+interface PrimitiveTypes {
+  any: unknown
+  never: never
+  null: null
+  boolean: boolean
+  number: number
+  string: string
+  timestamp: Date
+  duration: Duration
+  opaque: unknown
+  function: unknown
+  var: unknown
+}
+
+type InferMap<F, R> = Simplify<
+  { readonly [K in Exclude<keyof F, NullableKeys<F>>]: Infer<F[K]> } & {
+    readonly [K in NullableKeys<F>]?: Infer<F[K]> | undefined
+  } & (R extends Type ? { readonly [key: string]: Infer<R> } : unknown)
+>
+
+/** The TypeScript type of values described by a Bonsai type. */
+export type Infer<T> = [Type] extends [T]
+  ? unknown
+  : T extends { readonly kind: 'literal'; readonly value: infer V }
+    ? V
+    : T extends { readonly kind: 'list'; readonly element: infer E }
+      ? readonly Infer<E>[]
+      : T extends { readonly kind: 'map'; readonly fields: infer F; readonly rest?: infer R }
+        ? InferMap<F, R>
+        : T extends { readonly kind: 'union'; readonly types: infer M extends readonly unknown[] }
+          ? Infer<M[number]>
+          : T extends { readonly kind: infer K extends keyof PrimitiveTypes }
+            ? PrimitiveTypes[K]
+            : unknown
+
+/** The context type of a variable declaration record. */
+export type InferVariables<V> = Simplify<
+  { readonly [K in Exclude<keyof V, NullableKeys<V>>]: Infer<V[K]> } & {
+    readonly [K in NullableKeys<V>]?: Infer<V[K]> | undefined
+  }
+>
+
+// === Type operations ===
+
+export function isNullable(type: Type): boolean {
+  switch (type.kind) {
+    case 'any':
+    case 'null':
+      return true
+    case 'union':
+      return type.types.some(isNullable)
+    case 'boolean':
+    case 'duration':
+    case 'function':
+    case 'list':
+    case 'literal':
+    case 'map':
+    case 'never':
+    case 'number':
+    case 'opaque':
+    case 'string':
+    case 'timestamp':
+    case 'var':
+    default:
+      return false
+  }
+}
+
+/** The declared type of `key` in a map type (own fields only, never prototype names). */
+export function fieldOf(type: MapType, key: string): Type | undefined {
+  return Object.hasOwn(type.fields, key) ? type.fields[key] : undefined
+}
+
+/** Removes `null` from a type. */
+export function nonNull(type: Type): Type {
+  if (type.kind === 'null') return NEVER
+  if (type.kind === 'union') return unionOf(type.types.map(nonNull))
+  return type
+}
+
+/** The base kind a literal widens to. */
+export function widen(type: Type): Type {
+  if (type.kind === 'literal') {
+    if (typeof type.value === 'string') return STRING
+    return typeof type.value === 'number' ? NUMBER : BOOLEAN
+  }
+  if (type.kind === 'union') return unionOf(type.types.map(widen))
+  return type
+}
+
+function sameType(a: Type, b: Type): boolean {
+  return a === b || typeKey(a) === typeKey(b)
+}
+
+/** A canonical string for de-duplication. */
+export function typeKey(type: Type): string {
+  switch (type.kind) {
+    case 'literal':
+      return `lit:${typeof type.value}:${String(type.value)}`
+    case 'list':
+      return `list<${typeKey(type.element)}>`
+    case 'map':
+      return `map{${Object.keys(type.fields)
+        .sort()
+        .map((k) => `${k}:${typeKey(type.fields[k])}`)
+        .join(',')}}${type.rest ? `[${typeKey(type.rest)}]` : ''}`
+    case 'union':
+      return `(${type.types.map(typeKey).sort().join('|')})`
+    case 'opaque':
+      return `opaque:${type.name}`
+    case 'function':
+      return `fn(${type.params.map(typeKey).join(',')})=>${typeKey(type.result)}`
+    case 'var':
+      return `var:${type.name}`
+    case 'any':
+    case 'boolean':
+    case 'duration':
+    case 'never':
+    case 'null':
+    case 'number':
+    case 'string':
+    case 'timestamp':
+    default:
+      return type.kind
+  }
+}
+
+/** Flattens, de-duplicates, and simplifies a union. */
+export function unionOf(types: readonly Type[]): Type {
+  const flat: Type[] = []
+  const visit = (type: Type): void => {
+    if (type.kind === 'union') type.types.forEach(visit)
+    else if (type.kind !== 'never') flat.push(type)
+  }
+  types.forEach(visit)
+  if (flat.some((type) => type.kind === 'any')) return ANY
+  const out: Type[] = []
+  for (const type of flat) {
+    if (out.some((existing) => sameType(existing, type))) continue
+    // A literal next to its own base kind is redundant.
+    if (type.kind === 'literal' && flat.some((other) => other.kind === widen(type).kind)) continue
+    out.push(type)
+  }
+  if (out.length === 0) return NEVER
+  if (out.length === 1) return out[0]
+  return Object.freeze({ kind: 'union', types: Object.freeze(out) })
+}
+
+/** Whether every value of `source` is a valid `target` (gradual: `any` both ways). */
+export function isAssignable(source: Type, target: Type): boolean {
+  if (source.kind === 'any' || target.kind === 'any' || source.kind === 'never') return true
+  if (target.kind === 'var' || source.kind === 'var') return true
+  if (source.kind === 'union') return source.types.every((member) => isAssignable(member, target))
+  if (target.kind === 'union') return target.types.some((member) => isAssignable(source, member))
+  switch (target.kind) {
+    case 'literal':
+      return source.kind === 'literal' && source.value === target.value
+    case 'list':
+      return source.kind === 'list' && isAssignable(source.element, target.element)
+    case 'map': {
+      if (source.kind !== 'map') return false
+      for (const [key, fieldType] of Object.entries(target.fields)) {
+        const sourceField = fieldOf(source, key) ?? source.rest
+        if (sourceField === undefined) {
+          if (!isNullable(fieldType)) return false
+        } else if (!isAssignable(sourceField, fieldType)) return false
+      }
+      if (target.rest !== undefined) {
+        for (const fieldType of Object.values(source.fields)) {
+          if (!isAssignable(fieldType, target.rest)) return false
+        }
+        if (source.rest !== undefined && !isAssignable(source.rest, target.rest)) return false
+      }
+      return true
     }
-  | { readonly kind: 'union'; readonly members: readonly BonsaiType[] }
-
-/** Object-shaped static type accepted as a root context schema. */
-export type BonsaiObjectType = Extract<BonsaiType, { readonly kind: 'object' }>
-
-/** One declared extension parameter. Rest parameters must be last. */
-export interface ParameterMetadata {
-  readonly name: string
-  readonly type: BonsaiType
-  readonly optional?: boolean
-  readonly rest?: boolean
-  readonly description?: string
+    case 'opaque':
+      return source.kind === 'opaque' && source.name === target.name
+    case 'function':
+      return source.kind === 'function'
+    case 'boolean':
+    case 'duration':
+    case 'never':
+    case 'null':
+    case 'number':
+    case 'string':
+    case 'timestamp':
+    default:
+      return (
+        source.kind === target.kind ||
+        (source.kind === 'literal' && widen(source).kind === target.kind)
+      )
+  }
 }
 
-// === Policy Snapshot ===
-
-/** Read-only snapshot of the security policy, returned by {@link BonsaiInstance.getPolicy}. */
-export interface PolicySnapshot {
-  readonly maxSourceLength: number
-  readonly maxTokens: number
-  readonly maxAstNodes: number
-  readonly maxObjectProperties: number
-  readonly maxCallArguments: number
-  readonly maxDepth: number
-  readonly maxArrayLength: number
-  readonly maxStringLength: number
-  readonly maxSteps: number
-  readonly timeout: number
-  readonly allowedProperties?: readonly string[]
-  readonly deniedProperties?: readonly string[]
+/** Whether two types can hold a common value (used for always-false comparisons). */
+export function overlaps(a: Type, b: Type): boolean {
+  if (a.kind === 'any' || b.kind === 'any' || a.kind === 'var' || b.kind === 'var') return true
+  if (a.kind === 'union') return a.types.some((member) => overlaps(member, b))
+  if (b.kind === 'union') return b.types.some((member) => overlaps(a, member))
+  if (a.kind === 'literal' && b.kind === 'literal') return a.value === b.value
+  return widen(a).kind === widen(b).kind
 }
 
-// === Property Resolution ===
-
-/** Discriminated result from {@link resolvePropertyChain}. */
-export type ResolveResult =
-  | { found: true; value: unknown }
-  | { found: false; reason: 'blocked' | 'not-object' | 'not-found' }
-
-// === Source Positions ===
-
-export interface SourcePosition {
-  line: number
-  column: number
-  offset: number
-}
-
-// === Token Types ===
-
-export type BinaryOperator =
-  | '||'
-  | '&&'
-  | '=='
-  | '!='
-  | '<'
-  | '>'
-  | '<='
-  | '>='
-  | '+'
-  | '-'
-  | '*'
-  | '/'
-  | '%'
-  | '**'
-  | 'in'
-  | 'not'
-
-export type UnaryOperator = '!' | '-' | '+'
-export type BinaryExpressionOperator = Exclude<BinaryOperator, 'not'> | 'not in' | '??'
-
-export type OperatorValue = BinaryOperator | UnaryOperator
-
-export type PunctuationValue = '(' | ')' | '[' | ']' | '{' | '}' | ',' | '.' | ':' | '?'
-
-interface BaseToken {
-  start: number
-  end: number
-}
-
-export type Token =
-  | ({ type: 'Number'; value: string } & BaseToken)
-  | ({ type: 'String'; value: string } & BaseToken)
-  | ({ type: 'TemplateLiteral'; value: string } & BaseToken)
-  | ({ type: 'Boolean'; value: 'true' | 'false' } & BaseToken)
-  | ({ type: 'Null'; value: 'null' } & BaseToken)
-  | ({ type: 'Undefined'; value: 'undefined' } & BaseToken)
-  | ({ type: 'Identifier'; value: string } & BaseToken)
-  | ({ type: 'Operator'; value: OperatorValue } & BaseToken)
-  | ({ type: 'Punctuation'; value: PunctuationValue } & BaseToken)
-  | ({ type: 'Pipe'; value: '|>' } & BaseToken)
-  | ({ type: 'OptionalChain'; value: '?.' } & BaseToken)
-  | ({ type: 'NullishCoalescing'; value: '??' } & BaseToken)
-  | ({ type: 'Spread'; value: '...' } & BaseToken)
-  | ({ type: 'EOF'; value: '' } & BaseToken)
-
-export type TokenType = Token['type']
-
-// === AST Nodes ===
-
-interface BaseNode {
-  readonly start: number
-  readonly end: number
-}
-
-export interface NumberLiteral extends BaseNode {
-  readonly type: 'NumberLiteral'
-  readonly value: number
-}
-
-export interface StringLiteral extends BaseNode {
-  readonly type: 'StringLiteral'
-  readonly value: string
-}
-
-export interface BooleanLiteral extends BaseNode {
-  readonly type: 'BooleanLiteral'
-  readonly value: boolean
-}
-
-export interface NullLiteral extends BaseNode {
-  readonly type: 'NullLiteral'
-  readonly value: null
-}
-
-export interface UndefinedLiteral extends BaseNode {
-  readonly type: 'UndefinedLiteral'
-  readonly value: undefined
-}
-
-export interface Identifier extends BaseNode {
-  readonly type: 'Identifier'
-  readonly name: string
-}
-
-export interface BinaryExpression extends BaseNode {
-  readonly type: 'BinaryExpression'
-  readonly operator: BinaryExpressionOperator
-  readonly left: ASTNode
-  readonly right: ASTNode
-}
-
-export interface UnaryExpression extends BaseNode {
-  readonly type: 'UnaryExpression'
-  readonly operator: UnaryOperator
-  readonly operand: ASTNode
-}
-
-export interface ConditionalExpression extends BaseNode {
-  readonly type: 'ConditionalExpression'
-  readonly test: ASTNode
-  readonly consequent: ASTNode
-  readonly alternate: ASTNode
-}
-
-export interface MemberExpression extends BaseNode {
-  readonly type: 'MemberExpression'
-  readonly object: ASTNode
-  readonly property: ASTNode
-  readonly computed: boolean
-}
-
-export interface OptionalMemberExpression extends BaseNode {
-  readonly type: 'OptionalMemberExpression'
-  readonly object: ASTNode
-  readonly property: ASTNode
-  readonly computed: boolean
-}
-
-export interface ArrayLiteral extends BaseNode {
-  readonly type: 'ArrayLiteral'
-  readonly elements: readonly (ASTNode | SpreadElement)[]
-}
-
-export interface ObjectLiteral extends BaseNode {
-  readonly type: 'ObjectLiteral'
-  readonly properties: readonly ObjectProperty[]
-}
-
-export interface ObjectProperty extends BaseNode {
-  readonly type: 'ObjectProperty'
-  readonly key: ASTNode
-  readonly value: ASTNode
-  readonly computed: boolean
-}
-
-export interface CallExpression extends BaseNode {
-  readonly type: 'CallExpression'
-  readonly callee: ASTNode
-  readonly args: readonly ASTNode[]
-}
-
-export interface PipeExpression extends BaseNode {
-  readonly type: 'PipeExpression'
-  readonly input: ASTNode
-  readonly transform: ASTNode
-}
-
-export interface TemplateLiteral extends BaseNode {
-  readonly type: 'TemplateLiteral'
-  readonly parts: readonly (StringLiteral | ASTNode)[]
-}
-
-export interface SpreadElement extends BaseNode {
-  readonly type: 'SpreadElement'
-  readonly argument: ASTNode
-}
-
-export interface LambdaAccessor extends BaseNode {
-  readonly type: 'LambdaAccessor'
-  readonly property: string
-}
-
-export interface LambdaExpression extends BaseNode {
-  readonly type: 'LambdaExpression'
-  readonly body: ASTNode
-}
-
-export interface LambdaIdentity extends BaseNode {
-  readonly type: 'LambdaIdentity'
-}
-
-export type ASTNode =
-  | NumberLiteral
-  | StringLiteral
-  | BooleanLiteral
-  | NullLiteral
-  | UndefinedLiteral
-  | Identifier
-  | BinaryExpression
-  | UnaryExpression
-  | ConditionalExpression
-  | MemberExpression
-  | OptionalMemberExpression
-  | ArrayLiteral
-  | ObjectLiteral
-  | CallExpression
-  | PipeExpression
-  | TemplateLiteral
-  | SpreadElement
-  | LambdaAccessor
-  | LambdaExpression
-  | LambdaIdentity
-
-// === Configuration ===
-
-/** Structural limits applied before an expression can reach evaluation. */
-export interface SyntaxLimits {
-  /** Maximum UTF-16 source length. Default: 100,000. */
-  maxSourceLength?: number
-  /** Maximum number of lexical tokens, excluding EOF. Default: 25,000. */
-  maxTokens?: number
-  /** Maximum number of AST and object-property nodes. Default: 10,000. */
-  maxAstNodes?: number
-  /** Maximum number of properties in an object literal. Default: 10,000. */
-  maxObjectProperties?: number
-  /** Maximum number of arguments in one call, checked both syntactically and after spread expansion. Default: 1,000. */
-  maxCallArguments?: number
-}
-
-/** Options for creating a Bonsai instance via {@link BonsaiInstance}. */
-export interface BonsaiOptions extends SyntaxLimits {
-  /** Cooperative timeout in milliseconds. 0 (default) disables timeout checks. */
-  timeout?: number
-  /** Maximum expression nesting depth. Default: 100. */
-  maxDepth?: number
-  /** Maximum array size produced during evaluation (literals, spread, and array-returning methods). Default: 100,000. */
-  maxArrayLength?: number
-  /** Maximum string size produced by a string-returning method (padStart, padEnd, repeat, join, concat, slice, ...). Default: 100,000. */
-  maxStringLength?: number
-  /**
-   * Maximum number of evaluator steps a single evaluation may take, a
-   * deterministic bound on work that applies without a wall-clock timeout. A
-   * "step" is one accounted evaluator operation: a compound-node visit, a
-   * lambda-callback invocation (once per visited element in a higher-order
-   * method), spread element, template/literal-loop element, or pre-charged unit
-   * of linear native work based on receiver length. Work inside an opaque
-   * registered extension is NOT counted. A native call cannot be interrupted
-   * once started, so charging occurs before the intrinsic is invoked.
-   * Default: 1,000,000. Set to 0 to disable.
-   */
-  maxSteps?: number
-  /** Allowlist of property/method names expressions can access. */
-  allowedProperties?: string[]
-  /** Denylist of property/method names expressions cannot access. */
-  deniedProperties?: string[]
-  /** LRU cache size for compiled expressions and parsed ASTs. Default: 256. */
-  cacheSize?: number
-}
-
-/** Controls for one evaluation. Values override the instance defaults for that run only. */
-export interface EvaluationOptions {
-  /** Cooperative wall-clock timeout in milliseconds. */
-  timeout?: number
-  /** Deterministic evaluator step budget. Set to 0 to disable for this run. */
-  maxSteps?: number
-  /** Cancels async waits and is sampled during synchronous evaluator work. */
-  signal?: AbortSignal
-}
-
-/** A transform receives the piped value as its first argument: `value |> myTransform(arg)`. */
-export type TransformFn = (value: unknown, ...args: unknown[]) => unknown
-
-/**
- * Relational array typing that cannot be expressed by a fixed return type.
- * Callback rules consume an optional Bonsai lambda in the first transform
- * argument and infer it against the input array's element type.
- */
-export type ArrayTransformTypeRule =
-  | 'preserve'
-  | 'optional-element'
-  | 'flatten'
-  | 'map'
-  | 'filter'
-  | 'find'
-  | 'some'
-  | 'every'
-
-/** Declarative transform information consumed by tooling without calling the transform. */
-export interface TransformMetadata {
-  /**
-   * Type accepted as the piped input. Omit when every type is accepted. Used
-   * by the checker for exact matching and by autocomplete (widened to its
-   * runtime kind) to filter `|>` suggestions.
-   */
-  readonly inputType?: BonsaiType
-  /** Types of arguments after the piped input value. */
-  readonly parameters?: readonly ParameterMetadata[]
-  /** Return type. Lets autocomplete continue inference through `a |> t |> ` chains. */
-  readonly returnType?: BonsaiType
-  /** Generic array input/result relationship used by the checker. */
-  readonly arrayTypeRule?: ArrayTransformTypeRule
-  /** Short human-readable description for editors and generated documentation. */
-  readonly description?: string
-}
-
-/** Preferred declarative form for registering a transform. */
-export interface TransformDefinition extends TransformMetadata {
-  readonly name: string
-  readonly evaluate: TransformFn
-}
-
-/** A function is called directly by name: `myFunction(arg1, arg2)`. */
-export type FunctionFn = (...args: unknown[]) => unknown
-
-/** Declarative function information consumed by tooling without calling the function. */
-export interface FunctionMetadata {
-  /** Declared call parameters for static checking and signature help. */
-  readonly parameters?: readonly ParameterMetadata[]
-  /** Return type, consumed by the checker and shown by autocomplete. */
-  readonly returnType?: BonsaiType
-  /** Short human-readable description for editors and generated documentation. */
-  readonly description?: string
-}
-
-/** Preferred declarative form for registering a pure function. */
-export interface FunctionDefinition extends FunctionMetadata {
-  readonly name: string
-  readonly evaluate: FunctionFn
-}
-
-/** The shape of an evaluation context object. */
-export type BonsaiContext = object
-type EmptyContext = Record<never, never>
-
-/**
- * Evaluation/compiled call sites only require a `context` argument when the
- * instance context type has required keys. Untyped instances keep the current
- * ergonomic `evaluateSync(expr)` / `compiled.evaluateSync()` behavior.
- */
-export type EvaluationContextArgs<TCtx extends BonsaiContext = Record<string, unknown>> =
-  EmptyContext extends TCtx
-    ? [context?: TCtx, options?: EvaluationOptions]
-    : [context: TCtx, options?: EvaluationOptions]
-
-/**
- * A context-aware function. Receives the live evaluation context as its first
- * parameter, followed by the call's argument values. The context is typed
- * `Readonly<TCtx>` to signal read-only intent; it is passed by reference and is
- * not copied or frozen, so treat it as read-only. Registered via
- * {@link BonsaiInstance.addContextFunction}.
- */
-export type ContextFunctionFn<TCtx extends BonsaiContext = Record<string, unknown>> = (
-  context: Readonly<TCtx>,
-  ...args: unknown[]
-) => unknown
-
-/** Preferred declarative form for registering a context-aware function. */
-export interface ContextFunctionDefinition<
-  TCtx extends BonsaiContext = Record<string, unknown>,
-> extends FunctionMetadata {
-  readonly name: string
-  readonly evaluate: ContextFunctionFn<TCtx>
-}
-
-/**
- * A registry entry for a callable invoked as `name(args)` in expressions,
- * tagged with its kind so the evaluator knows how to call it. Pure functions
- * receive only the call arguments; context functions receive the evaluation
- * context as their first parameter. Pure and context functions share one
- * namespace, so a name resolves to exactly one entry.
- */
-export type RegisteredFunction =
-  | { kind: 'pure'; fn: FunctionFn }
-  | { kind: 'context'; fn: ContextFunctionFn }
-
-/**
- * The extension surface handed to a {@link BonsaiPlugin}: everything needed to
- * register transforms and functions (and to compose other plugins via
- * {@link PluginRegistrar.use}), but deliberately *not* the context-consuming
- * members (`evaluate`, `evaluateSync`, `compile`).
- *
- * Omitting those is what makes this interface **covariant** in `TCtx`: the only
- * place `TCtx` appears is the `ctx` parameter of an {@link addContextFunction}
- * callback (an input of an input). A registrar for a wider context is therefore
- * usable wherever a registrar for a narrower one is expected, which is exactly
- * what lets {@link PluginRegistrar.use} accept a plugin whose context
- * requirement `TCtx` satisfies, soundly and without casts, for contexts declared
- * with either `type` or `interface`.
- *
- * The `TCtx`-bearing members are declared as property signatures so their
- * variance is exact, rather than the bivariance TypeScript grants to method
- * signatures.
- */
-export interface PluginRegistrar<TCtx extends BonsaiContext = Record<string, unknown>> {
-  /**
-   * Apply another plugin. Accepts any plugin whose required context `TCtx`
-   * satisfies: a plugin written for this exact context, a context-agnostic
-   * plugin (`BonsaiPlugin`, i.e. `BonsaiPlugin<object>`), or one written against
-   * any context that `TCtx` is assignable to. A plugin that requires a field
-   * this context does not provide is a type error.
-   */
-  use: (plugin: BonsaiPlugin<TCtx>) => this
-  /** Register a named transform for use with the pipe operator (`|>`). */
-  addTransform: (name: string, fn: TransformFn, metadata?: TransformMetadata) => this
-  /** Explicitly replace an existing transform. Throws when the name is not registered. */
-  replaceTransform: (name: string, fn: TransformFn, metadata?: TransformMetadata) => this
-  /** Register a transform using the preferred self-describing definition form. */
-  defineTransform: (definition: TransformDefinition) => this
-  /** Register a named function callable as `name(args)` in expressions. */
-  addFunction: (name: string, fn: FunctionFn, metadata?: FunctionMetadata) => this
-  /** Explicitly replace an existing pure or context-aware function with a pure function. */
-  replaceFunction: (name: string, fn: FunctionFn, metadata?: FunctionMetadata) => this
-  /** Register a pure function using the preferred self-describing definition form. */
-  defineFunction: (definition: FunctionDefinition) => this
-  /**
-   * Register a context-aware function callable as `name(args)` in expressions.
-   * The function receives the live evaluation context as its first parameter
-   * (typed `Readonly<TCtx>` for read-only intent; passed by reference, not
-   * copied or frozen). Shares a namespace with {@link addFunction}; duplicate
-   * names are rejected so plugins cannot silently replace each other.
-   *
-   * The callback may read any subset of `TCtx`; reading a field `TCtx` does not
-   * declare is a type error, so a function can never observe context the
-   * evaluator is not guaranteed to supply.
-   */
-  addContextFunction: (
-    name: string,
-    fn: ContextFunctionFn<TCtx>,
-    metadata?: FunctionMetadata,
-  ) => this
-  /** Explicitly replace an existing pure or context-aware function with a context function. */
-  replaceContextFunction: (
-    name: string,
-    fn: ContextFunctionFn<TCtx>,
-    metadata?: FunctionMetadata,
-  ) => this
-  /** Register a context-aware function using the preferred self-describing definition form. */
-  defineContextFunction: (definition: ContextFunctionDefinition<TCtx>) => this
-  /** Remove a previously registered transform. Returns true if it existed. */
-  removeTransform: (name: string) => boolean
-  /** Remove a previously registered function (pure or context-aware). Returns true if it existed. */
-  removeFunction: (name: string) => boolean
-  /** Check whether a transform with the given name is registered. */
-  hasTransform: (name: string) => boolean
-  /** Check whether a function (pure or context-aware) with the given name is registered. */
-  hasFunction: (name: string) => boolean
-  /** Check whether a function with the given name was registered via {@link addContextFunction}. */
-  isContextFunction: (name: string) => boolean
-  /** List all registered transform names. */
-  listTransforms: () => string[]
-  /** Read declarative metadata for a registered transform. */
-  getTransformMetadata: (name: string) => TransformMetadata | undefined
-  /** List all registered function names (both pure and context-aware). */
-  listFunctions: () => string[]
-  /** Read declarative metadata for a registered function. */
-  getFunctionMetadata: (name: string) => FunctionMetadata | undefined
-}
-
-/**
- * A plugin extends an instance with transforms and functions. It receives a
- * {@link PluginRegistrar}, never the full instance, so it cannot evaluate
- * against a context it did not supply.
- *
- * `TCtx` is the context the plugin *requires* (the fields its context functions
- * read). It defaults to `object`, the top of the context lattice that every
- * context satisfies, so a plugin registering only transforms/pure functions is
- * context-agnostic and applies to any instance.
- */
-export type BonsaiPlugin<TCtx extends BonsaiContext = object> = (
-  registrar: PluginRegistrar<TCtx>,
-) => void
-
-/**
- * Core Bonsai instance returned by `bonsai()`. Extends {@link PluginRegistrar}
- * with the context-consuming members plus instance-level utilities. The
- * context-bearing members are property signatures so their context parameter is
- * checked with strict (sound) variance.
- */
-export interface BonsaiInstance<
-  TCtx extends BonsaiContext = Record<string, unknown>,
-> extends PluginRegistrar<TCtx> {
-  /**
-   * Permanently lock the extension registry. Sealing is idempotent; every
-   * later registration/removal attempt throws.
-   */
-  seal: () => this
-  /** Whether the extension registry has been sealed. */
-  isSealed: () => boolean
-  /** Returns a read-only snapshot of the security policy for autocomplete filtering. */
-  getPolicy: () => PolicySnapshot
-  /** Clear the compiled expression and AST caches. */
-  clearCache: () => void
-  /** Pre-compile an expression for repeated evaluation. */
-  compile: (expression: string) => CompiledExpression<TCtx>
-  /** Evaluate an expression asynchronously. Required when transforms/functions are async. */
-  evaluate: <T = unknown>(expression: string, ...args: EvaluationContextArgs<TCtx>) => Promise<T>
-  /** Evaluate an expression synchronously. Throws if a transform/function returns a Promise. */
-  evaluateSync: <T = unknown>(expression: string, ...args: EvaluationContextArgs<TCtx>) => T
-  /**
-   * Parse an expression and extract its references without evaluating it.
-   * Syntax only: it does not verify that referenced bindings exist or check
-   * types; use `bonsai-js/checker` for that.
-   */
-  validate: (expression: string) => ValidationResult
-}
-
-/** A pre-compiled expression that can be evaluated repeatedly with different contexts. */
-export interface CompiledExpression<TCtx extends BonsaiContext = Record<string, unknown>> {
-  /** Evaluate asynchronously. Required when transforms/functions are async. */
-  evaluate: <T = unknown>(...args: EvaluationContextArgs<TCtx>) => Promise<T>
-  /** Evaluate synchronously. Throws if a transform/function returns a Promise. */
-  evaluateSync: <T = unknown>(...args: EvaluationContextArgs<TCtx>) => T
-  /** The deeply frozen optimized AST after constant folding and dead branch elimination. */
-  readonly ast: ASTNode
-  /** The original expression string. */
-  readonly source: string
-}
-
-/** Identifiers, transforms, and functions referenced by a parsed expression. */
-export interface ExpressionReferences {
-  identifiers: string[]
-  transforms: string[]
-  functions: string[]
-}
-
-/**
- * Result of {@link BonsaiInstance.validate}. Discriminated on the `valid` field:
- * narrow with `if (result.valid)` to reach `references`/`ast`, or the `errors`.
- */
-export type ValidationResult =
-  | { valid: true; errors: []; ast: ASTNode; references: ExpressionReferences }
-  | { valid: false; errors: ValidationError[] }
-
-/** A syntax error with position information from {@link BonsaiInstance.validate}. */
-export interface ValidationError {
-  /** Human-readable message without source context. */
-  message: string
-  /** 1-based line/column of the error in the source expression. */
-  position: { line: number; column: number }
-  /** Message with source context and a caret pointing at the error. Always present. */
-  formatted: string
+/** Human-readable type text, e.g. `{ name: string, tags: string[] } | null`. */
+export function formatType(type: Type): string {
+  switch (type.kind) {
+    case 'literal':
+      return JSON.stringify(type.value)
+    case 'list': {
+      const inner = formatType(type.element)
+      return type.element.kind === 'union' || type.element.kind === 'function'
+        ? `(${inner})[]`
+        : `${inner}[]`
+    }
+    case 'map': {
+      const entries = Object.entries(type.fields).map(
+        ([k, v]) => `${/^[A-Za-z_$][\w$]*$/u.test(k) ? k : JSON.stringify(k)}: ${formatType(v)}`,
+      )
+      if (type.rest !== undefined) entries.push(`[key: string]: ${formatType(type.rest)}`)
+      return entries.length === 0 ? '{}' : `{ ${entries.join(', ')} }`
+    }
+    case 'union':
+      return type.types.map(formatType).join(' | ')
+    case 'opaque':
+      return type.name
+    case 'function':
+      return `(${type.params.map(formatType).join(', ')}) => ${formatType(type.result)}`
+    case 'var':
+      return type.name
+    case 'any':
+    case 'boolean':
+    case 'duration':
+    case 'never':
+    case 'null':
+    case 'number':
+    case 'string':
+    case 'timestamp':
+    default:
+      return type.kind
+  }
 }

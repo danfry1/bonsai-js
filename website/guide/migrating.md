@@ -1,145 +1,130 @@
-# Migrate to Bonsai
+# Migrating from 0.x
 
-Bonsai deliberately looks familiar, but migration should be treated as a
-semantic change rather than a package-name replacement. Start with a corpus of
-your real expressions and expected results, translate it once, then run that
-corpus against both engines before switching production traffic.
+Bonsai 1.0 is a redesign. The expression syntax is still JavaScript-like, but the language now has a static checker, a single function namespace with every built-in included, strict booleans, one absent value (`null`), and value equality. The JavaScript API is built around an immutable environment instead of a mutable instance with plugins.
 
-## From Jexl
+Most expressions need small, mechanical changes. This page lists them.
 
-The instance and evaluation APIs map closely:
+## Expressions
 
-| Jexl | Bonsai |
-|---|---|
-| `jexl.eval(source, context)` | `expr.evaluate(source, context)` |
-| `jexl.evalSync(source, context)` | `expr.evaluateSync(source, context)` |
-| `jexl.compile(source)` | `expr.compile(source)` |
-| `jexl.addTransform(name, fn)` | `expr.addTransform(name, fn, metadata)` |
-| `jexl.addFunction(name, fn)` | `expr.addFunction(name, fn, metadata)` |
-| `value\|transform(arg)` | `value \|> transform(arg)` |
-| `items[.active]` | `items.filter(.active)` |
-| `value ^ exponent` | `value ** exponent` |
+| 0.x | 1.x | Notes |
+| --- | --- | --- |
+| `name \|> trim \|> upper` | `name.trim().toUpperCase()` | `\|>` is reserved and is a syntax error in 1.x. |
+| `a \|> f(b)` | `a.f(b)` or `f(a, b)` | Every function is also a method. |
+| `upper`, `lower` | `toUpperCase`, `toLowerCase` | JavaScript names. |
+| `flatten` | `flat` | |
+| `isString(x)`, `isNumber(x)`, `isArray(x)` | `type(x) == "string"`, `"number"`, `"list"` | `type()` returns the kind of any value. |
+| `isNull(x)` | `x == null` | Also true when `x` is missing. |
+| `toBool(x)` | an explicit test, for example `x != ""` or `x > 0` | Booleans are strict. |
+| `diffDays(a, b)` | `inDays(a - b)` | Subtracting timestamps gives a duration. `abs(...)` for an absolute value. |
+| `now()` (milliseconds) | `now()` (a timestamp) | Compare with `now() - t > days(30)`. |
+| `formatDate(ts, "YYYY-MM-DD")` | `formatDate(t, "yyyy-MM-dd")` | Tokens are `yyyy MM dd HH mm ss SSS`, and an optional time zone argument is accepted. |
+| `undefined` | `null` | There is no `undefined` literal. |
+| `substring`, `charAt`, `concat` | `slice`, `at`, `+` | |
+| `toSorted()`, `toReversed()` | `sort()`, `reverse()` | They never mutate, so the `to` prefix is not needed. |
+| `+x` (unary plus) | `toNumber(x)` | There is no unary plus. |
 
-Jexl's published grammar uses JavaScript's coercing operators. Bonsai is
-stricter: `==` is identity equality, `+` accepts two numbers or two strings,
-and ordered comparisons require two numbers or two strings. Audit expressions
-that relied on values such as `"1" == 1`, numeric strings, object conversion, or
-Jexl's `//` floor-division operator. Use a trusted function for domain-specific
-conversion or floor division.
+## Semantics that changed
 
-Jexl also permits custom unary and binary operators. Bonsai keeps its grammar
-closed so that parsing, checking, autocomplete, and runtime semantics cannot
-drift. Migrate a custom operator to a clearly named function or transform.
+**`== null` includes missing values.** In 0.x `==` was JavaScript `===`, so a missing property (`undefined`) was not equal to `null`. Now every absent value is `null`:
 
-```ts
-// Jexl
-jexl.addBinaryOp('_=', 20, caseInsensitiveEqual)
-await jexl.eval('customer.plan _= "PRO"', context)
-
-// Bonsai
-const expr = bonsai().defineFunction({
-  name: 'equalFolded',
-  parameters: [
-    { name: 'left', type: t.string() },
-    { name: 'right', type: t.string() },
-  ],
-  returnType: t.boolean(),
-  evaluate: (left, right) =>
-    String(left).localeCompare(String(right), undefined, { sensitivity: 'accent' }) === 0,
-})
-
-await expr.evaluate('equalFolded(customer.plan, "PRO")', context)
+<!-- context: { user: { name: "Ada" } } -->
+```bonsai
+user.middleName == null // => true
 ```
 
-Other differences to review:
+**`==` compares by value.** Lists and maps compare deeply; in 0.x they compared by reference.
 
-- Bonsai reads own properties only. Prototype members (class getters and
-  methods, `Map#size`, `Date#getTime`) are not a data source; serialize such
-  objects to plain objects and arrays at the boundary. Sets, Maps, and other
-  iterables cannot be spread; pass arrays.
-- Arithmetic and ordering are strict: `"Total: " + n` and `age > "18"` are
-  typed errors rather than coercions. Use a template literal (`` `Total: ${n}` ``)
-  and compare numbers with numbers. A missing numeric field compared with `>=`
-  is an error, not `false`; guard it with `??` or check it with the static
-  checker.
-- Array filtering is explicit through `filter(...)`; a bracket expression is an
-  index/property lookup.
-- Property reads on a nullish receiver yield `undefined`, as in Jexl. Method
-  calls on a nullish receiver throw; use `?.` there (`user.name?.trim()`).
-  Nullish fallback uses `??`.
-- `join` and `toSorted` reject non-primitive elements instead of calling
-  `toString` implicitly.
-- Built-in methods enforce Bonsai's declared arity and parameter types at
-  runtime; they do not inherit JavaScript's missing-argument or implicit
-  coercion behavior. Rewrite `text.slice("1")` as `text.slice(1)` and supply
-  required arguments such as `text.at(index)`.
-- Autocomplete no longer probes transforms by executing them. Register custom
-  transforms with `defineTransform()` metadata (or pass `transformSignatures`)
-  so pipe completions stay filtered.
-- Async transforms and functions are awaited by `evaluate()`. Promise values in
-  the context are never implicitly unwrapped: `evaluateSync()` passes them
-  through as data, and reading one during `evaluate()` is a typed error (an
-  awaited thenable would invoke its host `then` — an ORM query object would
-  run its query). Resolve promises before building the context.
-- Extension names and the operator grammar are fixed after configuration; call
-  `seal()` to enforce that lifecycle.
-
-The [Jexl language reference](https://github.com/TomFrost/Jexl#all-the-details)
-is the source of truth when inventorying old syntax.
-
-## From `eval()` or `new Function()`
-
-Do not pass the whole application scope as context. Define a small data contract
-for the expression, register the few trusted operations it needs, and keep side
-effects outside the language.
-
-```ts
-import { bonsai } from 'bonsai-js'
-import { createChecker, t } from 'bonsai-js/checker'
-
-const contextSchema = t.object({
-  order: t.object({ total: t.number(), country: t.string() }),
-  customer: t.object({ plan: t.string() }),
-})
-
-const expr = bonsai({
-  allowedProperties: ['total', 'country', 'plan'],
-  maxSourceLength: 5_000,
-  maxSteps: 100_000,
-}).seal()
-
-const source = 'order.total >= 100 && customer.plan == "pro"'
-const checked = createChecker(expr, {
-  schema: contextSchema,
-  expectedType: t.boolean(),
-}).check(source)
-
-if (!checked.valid) throw new Error(JSON.stringify(checked.diagnostics))
-const rule = expr.compile(source)
-const result = rule.evaluateSync({
-  order: { total: 129, country: 'GB' },
-  customer: { plan: 'pro' },
-})
+<!-- context: {} -->
+```bonsai
+[1, 2] == [1, 2] // => true
 ```
 
-JavaScript expressions containing assignment, mutation, constructors, global
-objects, arbitrary method calls, statements, or closures need redesign rather
-than translation. Move that behavior into audited host code and expose a pure,
-narrow function to Bonsai only when the expression genuinely needs it.
+**Booleans are strict.** `&&`, `||`, `!`, and `?:` accept booleans and `null` (as `false`). In 0.x they followed JavaScript truthiness and `a || b` returned `a` itself. Replace `name || "Anonymous"` with `name ?? "Anonymous"`, and `items.length && ...` with `items.length > 0 && ...`.
 
-## Cut over safely
+<!-- context: { name: null, items: [] } -->
+```bonsai
+name ?? "Anonymous" // => "Anonymous"
+items.length > 0 && items[0] == 1 // => false
+name || "Anonymous" // error: TYPE_ERROR
+```
 
-1. Export the production expression corpus and representative plain-data
-   contexts, removing secrets.
-2. Translate syntax and record every intentional semantic difference.
-3. Declare extension signatures and a context schema; run the static checker on
-   the whole corpus.
-4. Compare old and new results in shadow traffic. Classify mismatches instead of
-   weakening Bonsai's strict behavior globally.
-5. Set domain-specific structural, work, and output limits.
-6. Compile repeated expressions, seal the configured instance, and switch only
-   after the corpus is green.
+**No coercion.** `"a" + 1` and `null + 1` are errors. Use a template for text (`` `a${1}` ``) and `??` for defaults.
 
-For stored rules, keep the original source, migrated source, expected result,
-and Bonsai version together. That fixture becomes both your migration audit and
-your future upgrade test.
+**No `NaN` or `Infinity`.** Division by zero is a `DIVISION_BY_ZERO` error instead of `Infinity`. Wrap with `try(expr, fallback)` if a default is wanted.
+
+**Comparisons with `null` are `false`.** `null < 1` is `false`, not `true` as in JavaScript.
+
+**Dates are timestamps.** A `Date` in the context is a timestamp, and arithmetic uses durations (`days(3)`, `hours(1)`). Numbers are not treated as dates; convert epoch milliseconds with `timestamp(ms)`.
+
+**Lambdas are type-directed.** `.` binds to the nearest enclosing argument whose parameter is a function, so an expression such as `items.filter(.price > max(.bonus, 10))` now works: `.bonus` belongs to the item. In 0.x the shorthand could not be passed into another call.
+
+## API
+
+| 0.x | 1.x |
+| --- | --- |
+| `const expr = bonsai(options)` | `const env = bonsai({ variables, strict, functions, libraries, limits, clock })` |
+| `expr.use(strings).use(arrays)`, `bonsai-js/stdlib` | Nothing to import: every built-in is always available. |
+| `expr.addFunction('f', fn)` | `bonsai({ functions: { f: fn({ params, returns, run }) } })` |
+| `expr.addContextFunction('f', (ctx, ...) => ...)` | `fn({ params, returns, context: true, run: (ctx, ...args) => ... })` |
+| `expr.addTransform('f', fn)` | A host function. Call it as `x.f()`. |
+| Plugins (`BonsaiPlugin`) | A `Library`: `{ name, functions }`, passed as `libraries: [lib]`. |
+| `expr.evaluateSync(src, ctx)` | `env.evaluateSync(src, ctx)` (unchanged) |
+| `expr.evaluate(src, ctx)` | `env.evaluate(src, ctx)`; async host functions must be declared `async: true`. |
+| `expr.compile(src)` | `env.compile(src, { expect })` returns a checked `Program`. |
+| `expr.validate(src)` | `env.check(src)` returns `{ ok, type, diagnostics }` and never throws. |
+| `result.references.identifiers` | `program.references.variables` |
+| `evaluateExpression(src, ctx)` | `bonsai().evaluateSync(src, ctx)` |
+| `allowedProperties`, `deniedProperties` | Pass only the data expressions may read. Declare variables with `t` and `strict: true` to catch unknown names and fields at check time. |
+| `timeout`, `maxDepth`, `maxSteps`, ... options | `limits: { timeout, maxDepth, maxSteps, ... }` (see [Limits](/api/limits)). |
+| `cacheSize` option, `clearCache()` | `limits: { cacheSize }`. Environments are immutable; create a new one to start with an empty cache. |
+| `expr.seal()` | Not needed: environments are immutable. `env.extend()` returns a new environment. |
+| `listFunctions()`, `listTransforms()`, `hasFunction()` | `env.listFunctions()`, `env.describeFunction(name)` |
+| `bonsai-js/autocomplete`, `createAutocomplete(expr)` | `bonsai-js/service`, `createLanguageService(env)`. Completions come from types, not from evaluating the context. |
+| `bonsai-js/checker` | Built in: `env.check()` and `env.compile()`. |
+| `tokenize`, `parse`, `compile` exports | `env.parse(src)` returns the syntax tree. |
+| `ExpressionError` | `BonsaiSyntaxError` (code `SYNTAX`) |
+| `BonsaiTypeError`, `BonsaiReferenceError` | `BonsaiCheckError` at compile time, `BonsaiRuntimeError` at run time |
+| `BonsaiSecurityError` | `BonsaiLimitError` for limits; blocked properties are `SYNTAX` or `BLOCKED_PROPERTY` |
+| `formatError(e)`, `formatBonsaiError(e)` | `error.formatted` |
+
+## Host functions, before and after
+
+```ts
+import { bonsai, fn, t } from 'bonsai-js'
+
+// 0.x:
+//   const expr = bonsai()
+//   expr.addFunction('discount', (total, rate) => total * (1 - rate))
+//   expr.addContextFunction('hasPermission', (ctx, action) => ctx.perms.includes(action))
+
+const env = bonsai({
+  functions: {
+    discount: fn({
+      params: [t.number(), t.number()],
+      returns: t.number(),
+      run: (total, rate) => total * (1 - rate),
+    }),
+    hasPermission: fn({
+      params: [t.string()],
+      returns: t.boolean(),
+      context: true,
+      run: (ctx, action) => (ctx.perms as string[]).includes(action),
+    }),
+  },
+})
+
+env.evaluateSync('hasPermission("admin") ? total.discount(0.1) : total', {
+  perms: ['admin'],
+  total: 200,
+}) // => 180
+```
+
+Declared parameter and result types mean the checker rejects `discount("a", 1)` before it runs, arguments are validated before your code is called, and a result of the wrong type is a `HOST_ERROR` instead of propagating.
+
+## Suggested order
+
+1. Replace the instance setup with `bonsai({ ... })` and move functions into `functions` with `fn`.
+2. Run `env.check()` over your stored expressions. Syntax errors point at `|>` and removed names; check errors point at type problems.
+3. Rewrite pipes as method calls and rename functions using the table above.
+4. Review expressions that relied on truthiness (`||` for defaults, numbers or strings as conditions) and on `undefined`.
+5. Add `variables` declarations with `t` to get type errors and editor completions.

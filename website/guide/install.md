@@ -1,13 +1,13 @@
-# Installation
+# Install
 
-Install Bonsai with your preferred package manager. The package is ESM-only with TypeScript types included.
+Bonsai is published to npm as an ESM-only package with TypeScript types included. It has no runtime dependencies.
 
 ::: code-group
-```bash [bun]
-bun add bonsai-js
-```
 ```bash [npm]
 npm install bonsai-js
+```
+```bash [bun]
+bun add bonsai-js
 ```
 ```bash [pnpm]
 pnpm add bonsai-js
@@ -17,19 +17,24 @@ yarn add bonsai-js
 ```
 :::
 
-Then import and start evaluating:
+## Entry points
+
+| Import | Contents |
+| --- | --- |
+| `bonsai-js` | `bonsai()`, `fn()`, the type builders `t`, error classes, and types |
+| `bonsai-js/service` | `createLanguageService()` for editor completions, hover, and diagnostics |
+
+## Runtimes
+
+Node.js 24 and newer, current Bun, and modern browsers with ES2022 and `Intl.DateTimeFormat` time zone support. The same code runs everywhere: there are no Node-specific APIs and no generated code, so Bonsai works under a Content Security Policy that forbids `eval`.
+
+## First evaluation
 
 ```ts
 import { bonsai } from 'bonsai-js'
 
-const expr = bonsai()
-const qualifiesForFreeShipping = expr.evaluateSync(
-  'order.total >= freeShippingThreshold',
-  { order: { total: 120 }, freeShippingThreshold: 100 }
-)
-console.log(qualifiesForFreeShipping) // true
+const env = bonsai()
+env.evaluateSync('order.total >= threshold', { order: { total: 120 }, threshold: 100 }) // => true
 ```
 
-**Most applications start with the same pattern:** create one shared instance, load only the stdlib modules you need, use `evaluateSync()` for sync paths, and use `compile()` for repeated rules.
-
-Next: [Quick Start](/guide/quick-start) shows the standard setup pattern.
+Next: the [Quick Start](/guide/quick-start) adds types, checking, and compiled programs.

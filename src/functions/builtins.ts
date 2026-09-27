@@ -1,0 +1,1198 @@
+import {
+  RegexSyntaxError,
+  compileRegex,
+  searchRegex,
+  type Program as RegexProgram,
+} from '../runtime/regex.js'
+import type { State } from '../runtime/state.js'
+import {
+  checkDatePattern,
+  addDays,
+  addMonths,
+  formatTimestamp,
+  fromWallClock,
+  isoWeekday,
+  parseTimestamp,
+  wallClock,
+} from '../runtime/time.js'
+import {
+  BLOCKED_KEYS,
+  Duration,
+  MS_PER_DAY,
+  MS_PER_HOUR,
+  MS_PER_MINUTE,
+  MS_PER_SECOND,
+  MS_PER_WEEK,
+  contains,
+  describeKind,
+  equals,
+  kindOf,
+  order,
+  sortOrder,
+  timeOf,
+  toText,
+} from '../runtime/values.js'
+import { t, unionOf, widen, type Type } from '../types.js'
+import {
+  K,
+  T,
+  U,
+  define,
+  fnType,
+  overload,
+  type AsyncLambda,
+  type CallSite,
+  type FunctionDef,
+  type Lambda,
+} from './define.js'
+
+/** String work charges one extra step per 2^6 = 64 characters. */
+const CHARS_PER_STEP_SHIFT = 6
+const MAX_ROUND_DIGITS = 15
+const MAX_FIXED_DIGITS = 100
+const MONTHS_PER_YEAR = 12
+
+const any = t.any()
+const num = t.number()
+const str = t.string()
+const bool = t.boolean()
+const ts = t.timestamp()
+const dur = t.duration()
+const listT = t.list(T)
+const optT = t.optional(T)
+const optStr = t.optional(str)
+const predicate = fnType([T, num], bool)
+const primitiveText = t.union(str, num, bool, t.null())
+
+// === argument helpers ===
+
+function integer(value: unknown, what: string, site: CallSite): number {
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    throw site.state.error(
+      'INVALID_ARGUMENT',
+      `${what} must be an integer, not ${typeof value === 'number' ? String(value) : describeKind(value)}`,
+      site.span,
+    )
+  }
+  return value
+}
+
+function nonNegativeInteger(value: unknown, what: string, site: CallSite): number {
+  const n = integer(value, what, site)
+  if (n < 0) throw site.state.error('INVALID_ARGUMENT', `${what} must not be negative`, site.span)
+  return n
+}
+
+function finite(value: number, site: CallSite): number {
+  if (!Number.isFinite(value))
+    throw site.state.error('NON_FINITE', 'Result is not a finite number', site.span)
+  return value
+}
+
+function newList(length: number, site: CallSite): unknown[] {
+  site.state.listLimit(length, site.span)
+  return new Array<unknown>(length)
+}
+
+/** Appends to a growing list, enforcing the list limit as it grows. */
+function push(out: unknown[], value: unknown, site: CallSite): void {
+  if (out.length >= site.state.limits.maxListLength) site.state.listLimit(out.length + 1, site.span)
+  out.push(value)
+}
+
+function numbersOf(items: readonly unknown[], what: string, site: CallSite): number[] {
+  site.state.charge(items.length)
+  const out: number[] = []
+  for (const value of items) {
+    if (value === null || value === undefined) continue
+    if (typeof value !== 'number') {
+      throw site.state.error(
+        'TYPE_ERROR',
+        `${what} expects numbers but found ${describeKind(value)}`,
+        site.span,
+      )
+    }
+    out.push(value)
+  }
+  return out
+}
+
+function textOf(value: unknown, site: CallSite): string {
+  return toText(value, site.state, site.span)
+}
+
+function asLambda(value: unknown): Lambda {
+  return value as Lambda
+}
+
+function asAsyncLambda(value: unknown): AsyncLambda {
+  return value as AsyncLambda
+}
+
+function truthy(value: unknown, site: CallSite): boolean {
+  if (value === true) return true
+  if (value === false || value === null || value === undefined) return false
+  throw site.state.error(
+    'TYPE_ERROR',
+    `The lambda must return a boolean, not ${describeKind(value)}`,
+    site.span,
+  )
+}
+
+function list(value: unknown): readonly unknown[] {
+  return value as readonly unknown[]
+}
+
+function stateOf(site: CallSite): State {
+  return site.state
+}
+
+// === patterns and number formats ===
+
+const MAX_CACHED = 256
+const MAX_INTL_DIGITS = 20
+const regexCache = new Map<string, RegexProgram>()
+const numberFormats = new Map<string, Intl.NumberFormat>()
+
+function regexFor(pattern: string, site: CallSite): RegexProgram {
+  let program = regexCache.get(pattern)
+  if (program !== undefined) return program
+  try {
+    program = compileRegex(pattern)
+  } catch (error) {
+    if (error instanceof RegexSyntaxError)
+      throw site.state.error('INVALID_ARGUMENT', error.message, site.span)
+    throw error
+  }
+  if (regexCache.size >= MAX_CACHED) regexCache.clear()
+  regexCache.set(pattern, program)
+  return program
+}
+
+function numberFormat(
+  locale: string,
+  options: Intl.NumberFormatOptions,
+  site: CallSite,
+): Intl.NumberFormat {
+  const key = `${locale}\u0000${JSON.stringify(options)}`
+  let format = numberFormats.get(key)
+  if (format !== undefined) return format
+  try {
+    format = new Intl.NumberFormat(locale, options)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw site.state.error('INVALID_ARGUMENT', `Invalid number format: ${message}`, site.span)
+  }
+  if (numberFormats.size >= MAX_CACHED) numberFormats.clear()
+  numberFormats.set(key, format)
+  return format
+}
+
+// === strings ===
+
+function replaceText(
+  text: string,
+  find: string,
+  replacement: string,
+  all: boolean,
+  site: CallSite,
+): string {
+  if (find === '') {
+    if (!all) {
+      site.state.stringLimit(text.length + replacement.length, site.span)
+      return replacement + text
+    }
+    site.state.stringLimit(text.length + replacement.length * (text.length + 1), site.span)
+    return text === '' ? replacement : replacement + text.split('').join(replacement) + replacement
+  }
+  let out = ''
+  let from = 0
+  for (;;) {
+    const at = text.indexOf(find, from)
+    if (at === -1) break
+    out += text.slice(from, at) + replacement
+    site.state.stringLimit(out.length + text.length - at - find.length, site.span)
+    from = at + find.length
+    if (!all) break
+  }
+  site.state.charge(1 + (text.length >>> CHARS_PER_STEP_SHIFT))
+  return out + text.slice(from)
+}
+
+function pad(
+  text: string,
+  length: unknown,
+  fill: unknown,
+  atStart: boolean,
+  site: CallSite,
+): string {
+  const target = nonNegativeInteger(length, 'Target length', site)
+  // Overload dispatch guarantees `fill` is a string, or null/undefined when omitted.
+  const filler = typeof fill === 'string' ? fill : ' '
+  if (target <= text.length || filler === '') return text
+  site.state.stringLimit(target, site.span)
+  site.state.charge(1 + (target >>> CHARS_PER_STEP_SHIFT))
+  return atStart ? text.padStart(target, filler) : text.padEnd(target, filler)
+}
+
+function roundTo(value: number, digits: number, site: CallSite): number {
+  if (!Number.isInteger(digits) || digits < -MAX_ROUND_DIGITS || digits > MAX_ROUND_DIGITS) {
+    throw site.state.error(
+      'INVALID_ARGUMENT',
+      'Digits must be an integer between -15 and 15',
+      site.span,
+    )
+  }
+  if (value === 0 || !Number.isFinite(value)) return finite(value, site)
+  // Shift the decimal exponent textually so 1.005 rounds to 1.01, then round
+  // half away from zero and shift back.
+  const shift = (n: number, by: number): number => {
+    const [mantissa, exponent] = n.toExponential().split('e') as [string, string]
+    return Number(`${mantissa}e${Number(exponent) + by}`)
+  }
+  const shifted = Math.round(Math.abs(shift(value, digits)))
+  const result = shifted === 0 ? 0 : Math.sign(value) * shift(shifted, -digits)
+  return finite(result === 0 ? 0 : result, site)
+}
+
+// === lists ===
+
+function sortKeyed(
+  items: readonly unknown[],
+  keys: readonly unknown[],
+  direction: unknown,
+  site: CallSite,
+): unknown[] {
+  const descending = direction === 'desc'
+  if (
+    direction !== undefined &&
+    direction !== null &&
+    direction !== 'asc' &&
+    direction !== 'desc'
+  ) {
+    throw site.state.error('INVALID_ARGUMENT', 'Sort direction must be "asc" or "desc"', site.span)
+  }
+  const n = items.length
+  site.state.charge(n === 0 ? 1 : Math.ceil(n * Math.log2(n + 1)))
+  const indices = Array.from({ length: n }, (_, i) => i)
+  indices.sort((a, b) => {
+    const result = sortOrder(keys[a], keys[b], site.state, site.span)
+    return descending ? -result : result
+  })
+  return indices.map((i) => items[i])
+}
+
+function groupKey(key: unknown, site: CallSite): string {
+  let name: string
+  if (typeof key === 'string') name = key
+  else if (typeof key === 'number' || typeof key === 'boolean') name = String(key)
+  else
+    throw site.state.error(
+      'TYPE_ERROR',
+      `A group key must be a string, number, or boolean, not ${describeKind(key)}`,
+      site.span,
+    )
+  if (BLOCKED_KEYS.has(name))
+    throw site.state.error('BLOCKED_PROPERTY', `"${name}" cannot be used as a key`, site.span)
+  return name
+}
+
+/** The list for `key`, created on first use. Own keys only: "toString" is a valid group. */
+function bucket(groups: Record<string, unknown[]>, key: string): unknown[] {
+  if (Object.hasOwn(groups, key)) return groups[key]
+  const created: unknown[] = []
+  groups[key] = created
+  return created
+}
+
+function uniqueOf(items: readonly unknown[], site: CallSite): unknown[] {
+  const s = stateOf(site)
+  s.charge(items.length)
+  const seen = new Set<unknown>()
+  const objects: unknown[] = []
+  const out: unknown[] = []
+  for (const item of items) {
+    const value = item === undefined ? null : item
+    if (value !== null && typeof value === 'object') {
+      s.charge(objects.length)
+      if (objects.some((other) => equals(other, value, s))) continue
+      objects.push(value)
+    } else {
+      if (seen.has(value)) continue
+      seen.add(value)
+    }
+    out.push(value)
+  }
+  return out
+}
+
+function flatten(items: readonly unknown[], site: CallSite): unknown[] {
+  site.state.charge(items.length)
+  const out: unknown[] = []
+  for (const item of items) {
+    if (Array.isArray(item)) {
+      site.state.listLimit(out.length + item.length, site.span)
+      site.state.charge(item.length)
+      for (const inner of item) out.push(inner)
+    } else {
+      push(out, item, site)
+    }
+  }
+  return out
+}
+
+function joinText(items: readonly unknown[], separator: unknown, site: CallSite): string {
+  const sep = separator === undefined || separator === null ? ',' : (separator as string)
+  site.state.charge(items.length)
+  let out = ''
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    if (
+      item !== null &&
+      item !== undefined &&
+      typeof item === 'object' &&
+      !(item instanceof Date) &&
+      !(item instanceof Duration)
+    ) {
+      throw site.state.error(
+        'TYPE_ERROR',
+        `join needs text-like items but found ${describeKind(item)}`,
+        site.span,
+      )
+    }
+    const piece = (i === 0 ? '' : sep) + textOf(item, site)
+    site.state.stringLimit(out.length + piece.length, site.span)
+    out += piece
+  }
+  return out
+}
+
+function extreme(items: readonly unknown[], sign: 1 | -1, site: CallSite): unknown {
+  site.state.charge(items.length)
+  let best: unknown = null
+  for (const item of items) {
+    if (item === null || item === undefined) continue
+    if (best === null) {
+      best = item
+      continue
+    }
+    const result = order(item, best, site.state, site.span) as number
+    if (result * sign > 0) best = item
+  }
+  return best
+}
+
+function entryList(map: Record<string, unknown>, site: CallSite): string[] {
+  const keys = Object.keys(map).filter((key) => !BLOCKED_KEYS.has(key))
+  site.state.charge(keys.length)
+  site.state.listLimit(keys.length, site.span)
+  return keys
+}
+
+/** Result type of reading values out of a map type. */
+function valueTypeOf(type: Type | undefined): Type {
+  if (type === undefined || type.kind !== 'map') return any
+  const members = Object.values(type.fields)
+  if (type.rest !== undefined) members.push(type.rest)
+  return members.length === 0 ? any : unionOf(members.map(widen))
+}
+
+// === definitions ===
+
+const STRING_FUNCTIONS: FunctionDef[] = [
+  define('toUpperCase', 'Upper-cases text.', [
+    overload([str], str, ([s]) => (s as string).toUpperCase()),
+  ]),
+  define('toLowerCase', 'Lower-cases text.', [
+    overload([str], str, ([s]) => (s as string).toLowerCase()),
+  ]),
+  define('trim', 'Removes leading and trailing whitespace.', [
+    overload([str], str, ([s]) => (s as string).trim()),
+  ]),
+  define('trimStart', 'Removes leading whitespace.', [
+    overload([str], str, ([s]) => (s as string).trimStart()),
+  ]),
+  define('trimEnd', 'Removes trailing whitespace.', [
+    overload([str], str, ([s]) => (s as string).trimEnd()),
+  ]),
+  define('startsWith', 'Whether text starts with a prefix.', [
+    overload([str, str], bool, ([s, p]) => (s as string).startsWith(p as string)),
+  ]),
+  define('endsWith', 'Whether text ends with a suffix.', [
+    overload([str, str], bool, ([s, p]) => (s as string).endsWith(p as string)),
+  ]),
+  define('includes', 'Whether text contains a substring, or a list contains a value.', [
+    overload([str, str], bool, ([s, p]) => (s as string).includes(p as string)),
+    overload([listT, any], bool, ([l, v], site) => contains(l, v, site.state, site.span)),
+  ]),
+  define('indexOf', 'Position of the first match, or -1.', [
+    overload([str, str], num, ([s, p]) => (s as string).indexOf(p as string)),
+    overload([listT, any], num, ([l, v], site) => {
+      const items = list(l)
+      site.state.charge(items.length)
+      for (let i = 0; i < items.length; i++) if (equals(items[i], v, site.state)) return i
+      return -1
+    }),
+  ]),
+  define('lastIndexOf', 'Position of the last match, or -1.', [
+    overload([str, str], num, ([s, p]) => (s as string).lastIndexOf(p as string)),
+    overload([listT, any], num, ([l, v], site) => {
+      const items = list(l)
+      site.state.charge(items.length)
+      for (let i = items.length - 1; i >= 0; i--) if (equals(items[i], v, site.state)) return i
+      return -1
+    }),
+  ]),
+  define('slice', 'A section of text or a list; negative positions count from the end.', [
+    overload(
+      [str, num, num],
+      str,
+      ([s, a, b], site) =>
+        (s as string).slice(
+          integer(a, 'Start', site),
+          b === undefined || b === null ? undefined : integer(b, 'End', site),
+        ),
+      { required: 2 },
+    ),
+    overload(
+      [listT, num, num],
+      listT,
+      ([l, a, b], site) => {
+        const items = list(l)
+        const out = items.slice(
+          integer(a, 'Start', site),
+          b === undefined || b === null ? undefined : integer(b, 'End', site),
+        )
+        site.state.charge(out.length)
+        return out
+      },
+      { required: 2 },
+    ),
+  ]),
+  define('split', 'Splits text on a separator.', [
+    overload(
+      [str, str, num],
+      t.list(str),
+      ([s, sep, limit], site) => {
+        const text = s as string
+        site.state.charge(1 + (text.length >>> 4))
+        const max =
+          limit === undefined || limit === null
+            ? undefined
+            : nonNegativeInteger(limit, 'Limit', site)
+        // Never materialize more parts than the list limit allows.
+        const cap = site.state.limits.maxListLength + 1
+        const parts = text.split(sep as string, max === undefined ? cap : Math.min(max, cap))
+        site.state.listLimit(parts.length, site.span)
+        return parts
+      },
+      { required: 2 },
+    ),
+  ]),
+  define('replace', 'Replaces the first occurrence of some text (no patterns).', [
+    overload([str, str, str], str, ([s, f, r], site) =>
+      replaceText(s as string, f as string, r as string, false, site),
+    ),
+  ]),
+  define('replaceAll', 'Replaces every occurrence of some text (no patterns).', [
+    overload([str, str, str], str, ([s, f, r], site) =>
+      replaceText(s as string, f as string, r as string, true, site),
+    ),
+  ]),
+  define('padStart', 'Pads text at the start to a length.', [
+    overload([str, num, str], str, ([s, n, f], site) => pad(s as string, n, f, true, site), {
+      required: 2,
+    }),
+  ]),
+  define('padEnd', 'Pads text at the end to a length.', [
+    overload([str, num, str], str, ([s, n, f], site) => pad(s as string, n, f, false, site), {
+      required: 2,
+    }),
+  ]),
+  define('repeat', 'Repeats text a number of times.', [
+    overload([str, num], str, ([s, n], site) => {
+      const count = nonNegativeInteger(n, 'Count', site)
+      const text = s as string
+      site.state.stringLimit(text.length * count, site.span)
+      site.state.charge(1 + ((text.length * count) >>> CHARS_PER_STEP_SHIFT))
+      return text.repeat(count)
+    }),
+  ]),
+  define('at', 'The item or character at a position; negative positions count from the end.', [
+    overload(
+      [str, num],
+      optStr,
+      ([s, i], site) => (s as string).at(integer(i, 'Index', site)) ?? null,
+    ),
+    overload([listT, num], optT, ([l, i], site) => list(l).at(integer(i, 'Index', site)) ?? null),
+  ]),
+  define(
+    'matches',
+    'Whether text contains a match for a regular expression (RE2 syntax, linear time; anchor with ^ and $; prefix (?i) to ignore case).',
+    [
+      overload(
+        [str, str],
+        bool,
+        ([s, p], site) => {
+          const program = regexFor(p as string, site)
+          return searchRegex(program, s as string, (n) => {
+            site.state.charge(n)
+          })
+        },
+        {
+          literals: ([, pattern]) => {
+            if (typeof pattern !== 'string') return undefined
+            try {
+              compileRegex(pattern)
+              return undefined
+            } catch (error) {
+              return error instanceof Error ? error.message : String(error)
+            }
+          },
+        },
+      ),
+    ],
+  ),
+  define('toString', 'Renders a value as text, as a template would.', [
+    overload([t.union(primitiveText, ts, dur)], str, ([v], site) => textOf(v, site)),
+  ]),
+  define('toNumber', 'Parses text as a number.', [
+    overload([t.union(str, num)], num, ([v], site) => {
+      if (typeof v === 'number') return v
+      const text = (v as string).trim()
+      const value = text === '' ? Number.NaN : Number(text)
+      if (!Number.isFinite(value)) {
+        throw site.state.error(
+          'INVALID_ARGUMENT',
+          `Cannot convert ${JSON.stringify(v)} to a number`,
+          site.span,
+        )
+      }
+      return value
+    }),
+  ]),
+]
+
+const NUMBER_FUNCTIONS: FunctionDef[] = [
+  define('round', 'Rounds half away from zero, optionally to a number of decimal digits.', [
+    overload(
+      [num, num],
+      num,
+      ([n, d], site) =>
+        roundTo(n as number, d === undefined || d === null ? 0 : (d as number), site),
+      { required: 1 },
+    ),
+  ]),
+  define('floor', 'Rounds down.', [overload([num], num, ([n]) => Math.floor(n as number))]),
+  define('ceil', 'Rounds up.', [overload([num], num, ([n]) => Math.ceil(n as number))]),
+  define('trunc', 'Drops the fractional part.', [
+    overload([num], num, ([n]) => Math.trunc(n as number)),
+  ]),
+  define('abs', 'Absolute value.', [
+    overload([num], num, ([n]) => Math.abs(n as number)),
+    overload([dur], dur, ([d]) => new Duration(Math.abs((d as Duration).ms))),
+  ]),
+  define('sqrt', 'Square root.', [
+    overload([num], num, ([n], site) => finite(Math.sqrt(n as number), site)),
+  ]),
+  define('clamp', 'Limits a number to a range.', [
+    overload([num, num, num], num, ([n, lo, hi], site) => {
+      if ((lo as number) > (hi as number))
+        throw site.state.error('INVALID_ARGUMENT', 'clamp: min is greater than max', site.span)
+      return Math.min(Math.max(n as number, lo as number), hi as number)
+    }),
+  ]),
+  define('toFixed', 'Formats a number with a fixed number of decimals.', [
+    overload([num, num], str, ([n, d], site) => {
+      const digits = nonNegativeInteger(d, 'Digits', site)
+      if (digits > MAX_FIXED_DIGITS)
+        throw site.state.error('INVALID_ARGUMENT', 'Digits must be at most 100', site.span)
+      // Round half away from zero first, so toFixed(1.005, 2) agrees with round(1.005, 2).
+      const value = digits <= MAX_ROUND_DIGITS ? roundTo(n as number, digits, site) : (n as number)
+      return value.toFixed(digits)
+    }),
+  ]),
+  define(
+    'formatNumber',
+    'Formats a number with grouping, e.g. 1,234.5, with optional decimals and locale (default "en-US").',
+    [
+      overload(
+        [num, t.optional(num), t.optional(str)],
+        str,
+        ([n, d, locale], site) => {
+          const digits =
+            d === undefined || d === null ? undefined : nonNegativeInteger(d, 'Decimals', site)
+          if (digits !== undefined && digits > MAX_INTL_DIGITS) {
+            throw site.state.error(
+              'INVALID_ARGUMENT',
+              `Decimals must be at most ${MAX_INTL_DIGITS}`,
+              site.span,
+            )
+          }
+          const options: Intl.NumberFormatOptions =
+            digits === undefined
+              ? { maximumFractionDigits: MAX_INTL_DIGITS }
+              : { minimumFractionDigits: digits, maximumFractionDigits: digits }
+          const value =
+            digits === undefined || digits > MAX_ROUND_DIGITS
+              ? (n as number)
+              : roundTo(n as number, digits, site)
+          return numberFormat(typeof locale === 'string' ? locale : 'en-US', options, site).format(
+            value,
+          )
+        },
+        { required: 1 },
+      ),
+    ],
+  ),
+  define(
+    'formatCurrency',
+    'Formats an amount in a currency (ISO 4217 code such as "EUR"), with an optional locale (default "en-US").',
+    [
+      overload(
+        [num, str, t.optional(str)],
+        str,
+        ([n, currency, locale], site) =>
+          numberFormat(
+            typeof locale === 'string' ? locale : 'en-US',
+            { style: 'currency', currency: currency as string },
+            site,
+          ).format(n as number),
+        { required: 2 },
+      ),
+    ],
+  ),
+  define('min', 'The smallest value (nulls are skipped); null for an empty list.', [
+    overload([listT], optT, ([l], site) => extreme(list(l), -1, site), { ordered: ['T'] }),
+    overload([num], num, (args, site) => extreme(args, -1, site), { rest: num }),
+  ]),
+  define('max', 'The largest value (nulls are skipped); null for an empty list.', [
+    overload([listT], optT, ([l], site) => extreme(list(l), 1, site), { ordered: ['T'] }),
+    overload([num], num, (args, site) => extreme(args, 1, site), { rest: num }),
+  ]),
+  define('sum', 'The sum of the numbers in a list (nulls are skipped).', [
+    overload([t.list(t.optional(num))], num, ([l], site) => {
+      let total = 0
+      for (const n of numbersOf(list(l), 'sum', site)) total += n
+      return finite(total, site)
+    }),
+    overload([t.list(t.optional(dur))], dur, ([l], site) => {
+      site.state.charge(list(l).length)
+      let total = 0
+      for (const d of list(l)) if (d instanceof Duration) total += d.ms
+      return new Duration(finite(total, site))
+    }),
+  ]),
+  define('avg', 'The mean of the numbers in a list (nulls are skipped); null for no numbers.', [
+    overload([t.list(t.optional(num))], t.optional(num), ([l], site) => {
+      const values = numbersOf(list(l), 'avg', site)
+      if (values.length === 0) return null
+      let total = 0
+      for (const n of values) total += n
+      return finite(total / values.length, site)
+    }),
+  ]),
+]
+
+function hof(
+  name: string,
+  description: string,
+  result: Type,
+  run: (items: readonly unknown[], fn: Lambda, site: CallSite, extra: unknown[]) => unknown,
+  runAsync: (
+    items: readonly unknown[],
+    fn: AsyncLambda,
+    site: CallSite,
+    extra: unknown[],
+  ) => Promise<unknown>,
+  {
+    lambda = predicate,
+    extraParams = [],
+    ordered = [],
+  }: {
+    readonly lambda?: Type
+    readonly extraParams?: readonly Type[]
+    readonly ordered?: readonly string[]
+  } = {},
+): FunctionDef {
+  return define(name, description, [
+    overload(
+      [listT, lambda, ...extraParams],
+      result,
+      ([l, f, ...extra], site) => run(list(l), asLambda(f), site, extra),
+      {
+        required: 2,
+        runAsync: ([l, f, ...extra], site) => runAsync(list(l), asAsyncLambda(f), site, extra),
+        ...(ordered.length === 0 ? {} : { ordered }),
+      },
+    ),
+  ])
+}
+
+const LIST_FUNCTIONS: FunctionDef[] = [
+  hof(
+    'map',
+    'Transforms each item.',
+    t.list(U),
+    (items, fn, site) => {
+      const out = newList(items.length, site)
+      for (let i = 0; i < items.length; i++) out[i] = fn(items[i], i)
+      return out
+    },
+    async (items, fn, site) => {
+      const out = newList(items.length, site)
+      for (let i = 0; i < items.length; i++) out[i] = await fn(items[i], i)
+      return out
+    },
+    { lambda: fnType([T, num], U) },
+  ),
+  hof(
+    'filter',
+    'Keeps the items for which the lambda is true.',
+    listT,
+    (items, fn, site) => {
+      const out: unknown[] = []
+      for (let i = 0; i < items.length; i++) if (truthy(fn(items[i], i), site)) out.push(items[i])
+      return out
+    },
+    async (items, fn, site) => {
+      const out: unknown[] = []
+      for (let i = 0; i < items.length; i++)
+        if (truthy(await fn(items[i], i), site)) out.push(items[i])
+      return out
+    },
+  ),
+  hof(
+    'find',
+    'The first item for which the lambda is true, or null.',
+    optT,
+    (items, fn, site) => {
+      for (let i = 0; i < items.length; i++)
+        if (truthy(fn(items[i], i), site)) return items[i] ?? null
+      return null
+    },
+    async (items, fn, site) => {
+      for (let i = 0; i < items.length; i++)
+        if (truthy(await fn(items[i], i), site)) return items[i] ?? null
+      return null
+    },
+  ),
+  hof(
+    'findIndex',
+    'The position of the first item for which the lambda is true, or -1.',
+    num,
+    (items, fn, site) => {
+      for (let i = 0; i < items.length; i++) if (truthy(fn(items[i], i), site)) return i
+      return -1
+    },
+    async (items, fn, site) => {
+      for (let i = 0; i < items.length; i++) if (truthy(await fn(items[i], i), site)) return i
+      return -1
+    },
+  ),
+  hof(
+    'some',
+    'Whether the lambda is true for at least one item.',
+    bool,
+    (items, fn, site) => {
+      for (let i = 0; i < items.length; i++) if (truthy(fn(items[i], i), site)) return true
+      return false
+    },
+    async (items, fn, site) => {
+      for (let i = 0; i < items.length; i++) if (truthy(await fn(items[i], i), site)) return true
+      return false
+    },
+  ),
+  hof(
+    'every',
+    'Whether the lambda is true for every item.',
+    bool,
+    (items, fn, site) => {
+      for (let i = 0; i < items.length; i++) if (!truthy(fn(items[i], i), site)) return false
+      return true
+    },
+    async (items, fn, site) => {
+      for (let i = 0; i < items.length; i++) if (!truthy(await fn(items[i], i), site)) return false
+      return true
+    },
+  ),
+  hof(
+    'none',
+    'Whether the lambda is false for every item.',
+    bool,
+    (items, fn, site) => {
+      for (let i = 0; i < items.length; i++) if (truthy(fn(items[i], i), site)) return false
+      return true
+    },
+    async (items, fn, site) => {
+      for (let i = 0; i < items.length; i++) if (truthy(await fn(items[i], i), site)) return false
+      return true
+    },
+  ),
+  hof(
+    'flatMap',
+    'Transforms each item and flattens list results one level.',
+    t.list(U),
+    (items, fn, site) => {
+      const out: unknown[] = []
+      for (let i = 0; i < items.length; i++) {
+        const value = fn(items[i], i)
+        if (Array.isArray(value)) {
+          site.state.listLimit(out.length + value.length, site.span)
+          site.state.charge(value.length)
+          for (const inner of value) out.push(inner)
+        } else push(out, value, site)
+      }
+      return out
+    },
+    async (items, fn, site) => {
+      const out: unknown[] = []
+      for (let i = 0; i < items.length; i++) {
+        const value = await fn(items[i], i)
+        if (Array.isArray(value)) {
+          site.state.listLimit(out.length + value.length, site.span)
+          site.state.charge(value.length)
+          for (const inner of value) out.push(inner)
+        } else push(out, value, site)
+      }
+      return out
+    },
+    { lambda: fnType([T, num], t.union(t.list(U), U)) },
+  ),
+  hof(
+    'sortBy',
+    'Sorts by a key; pass "desc" to reverse. Nulls sort first.',
+    listT,
+    (items, fn, site, [direction]) =>
+      sortKeyed(
+        items,
+        items.map((item, i) => fn(item, i)),
+        direction,
+        site,
+      ),
+    async (items, fn, site, [direction]) => {
+      const keys: unknown[] = []
+      for (let i = 0; i < items.length; i++) keys.push(await fn(items[i], i))
+      return sortKeyed(items, keys, direction, site)
+    },
+    { lambda: fnType([T, num], K), extraParams: [t.enum('asc', 'desc')], ordered: ['K'] },
+  ),
+  hof(
+    'groupBy',
+    'Groups items into a map of lists by a key.',
+    t.record(listT),
+    (items, fn, site) => {
+      const out: Record<string, unknown[]> = {}
+      for (let i = 0; i < items.length; i++)
+        bucket(out, groupKey(fn(items[i], i), site)).push(items[i])
+      return out
+    },
+    async (items, fn, site) => {
+      const out: Record<string, unknown[]> = {}
+      for (let i = 0; i < items.length; i++)
+        bucket(out, groupKey(await fn(items[i], i), site)).push(items[i])
+      return out
+    },
+    { lambda: fnType([T, num], t.union(str, num, bool)) },
+  ),
+  define('count', 'The number of items, or of items for which the lambda is true.', [
+    overload([listT], num, ([l]) => list(l).length),
+    overload(
+      [listT, predicate],
+      num,
+      ([l, f], site) => {
+        const items = list(l)
+        const fn = asLambda(f)
+        let n = 0
+        for (let i = 0; i < items.length; i++) if (truthy(fn(items[i], i), site)) n++
+        return n
+      },
+      {
+        runAsync: async ([l, f], site) => {
+          const items = list(l)
+          const fn = asAsyncLambda(f)
+          let n = 0
+          for (let i = 0; i < items.length; i++) if (truthy(await fn(items[i], i), site)) n++
+          return n
+        },
+      },
+    ),
+  ]),
+  define('reduce', 'Folds a list into one value: reduce(list, (acc, item) => ..., initial).', [
+    overload(
+      [listT, fnType([U, T], U), U],
+      U,
+      ([l, f, initial]) => {
+        const items = list(l)
+        const fn = f as (acc: unknown, item: unknown) => unknown
+        let acc = initial
+        for (const item of items) acc = fn(acc, item)
+        return acc
+      },
+      {
+        runAsync: async ([l, f, initial]) => {
+          const items = list(l)
+          const fn = f as (acc: unknown, item: unknown) => unknown
+          let acc = initial
+          for (const item of items) acc = await fn(acc, item)
+          return acc
+        },
+      },
+    ),
+  ]),
+  define('sort', 'Sorts numbers, text, timestamps, or durations; pass "desc" to reverse.', [
+    overload(
+      [listT, t.enum('asc', 'desc')],
+      listT,
+      ([l, d], site) => sortKeyed(list(l), list(l), d, site),
+      {
+        required: 1,
+        ordered: ['T'],
+      },
+    ),
+  ]),
+  define('reverse', 'The items in reverse order.', [
+    overload([listT], listT, ([l], site) => {
+      site.state.charge(list(l).length)
+      return [...list(l)].reverse()
+    }),
+  ]),
+  define('unique', 'The items without duplicates (by value), in first-seen order.', [
+    overload([listT], listT, ([l], site) => uniqueOf(list(l), site)),
+  ]),
+  define('flat', 'Flattens nested lists one level.', [
+    overload([t.list(any)], t.list(any), ([l], site) => flatten(list(l), site)),
+  ]),
+  define('first', 'The first item, or null.', [
+    overload([listT], optT, ([l]) => list(l)[0] ?? null),
+  ]),
+  define('last', 'The last item, or null.', [
+    overload([listT], optT, ([l]) => list(l).at(-1) ?? null),
+  ]),
+  define('join', 'Joins items into text with a separator (default ",").', [
+    overload(
+      [t.list(t.union(primitiveText, ts, dur)), str],
+      str,
+      ([l, sep], site) => joinText(list(l), sep, site),
+      {
+        required: 1,
+      },
+    ),
+  ]),
+  define('isEmpty', 'Whether a list, text, or map has no items; null is empty.', [
+    overload([t.union(t.list(any), str, t.record(any), t.null())], bool, ([v]) => {
+      if (v === null || v === undefined) return true
+      if (Array.isArray(v) || typeof v === 'string') return v.length === 0
+      return Object.keys(v).length === 0
+    }),
+  ]),
+]
+
+const MAP_FUNCTIONS: FunctionDef[] = [
+  define('keys', 'The keys of a map.', [
+    overload([t.record(any)], t.list(str), ([m], site) =>
+      entryList(m as Record<string, unknown>, site),
+    ),
+  ]),
+  define('values', 'The values of a map.', [
+    overload([t.record(T)], listT, ([m], site) => {
+      const map = m as Record<string, unknown>
+      return entryList(map, site).map((key) => map[key] ?? null)
+    }),
+  ]),
+  define('entries', 'The { key, value } pairs of a map.', [
+    overload([t.record(T)], t.list(t.object({ key: str, value: T })), ([m], site) => {
+      const map = m as Record<string, unknown>
+      return entryList(map, site).map((key) => ({ key, value: map[key] ?? null }))
+    }),
+  ]),
+  define(
+    'type',
+    'The kind of a value: "null", "boolean", "number", "string", "list", "map", "timestamp", "duration", or "opaque".',
+    [overload([any], str, ([v]) => kindOf(v))],
+  ),
+]
+
+const optZone = t.optional(str)
+
+function zoneArg(value: unknown): string | null {
+  return value === undefined || value === null ? null : (value as string)
+}
+
+function field(
+  name: string,
+  description: string,
+  pick: (clock: ReturnType<typeof wallClock>) => number,
+): FunctionDef {
+  return define(name, description, [
+    overload([ts, optZone], num, ([d, z], site) => pick(wallClock(d as Date, zoneArg(z), site)), {
+      required: 1,
+    }),
+  ])
+}
+
+function durationUnit(name: string, unitMs: number, description: string): FunctionDef {
+  return define(name, description, [
+    overload([num], dur, ([n], site) => new Duration(finite((n as number) * unitMs, site))),
+  ])
+}
+
+function durationIn(name: string, unitMs: number, description: string): FunctionDef {
+  return define(name, description, [overload([dur], num, ([d]) => (d as Duration).ms / unitMs)])
+}
+
+const TIME_FUNCTIONS: FunctionDef[] = [
+  define('now', 'The current time, fixed for one evaluation.', [
+    overload([], ts, (_, site) => site.state.now()),
+  ]),
+  define('timestamp', 'Parses ISO-8601 text or epoch milliseconds into a timestamp.', [
+    overload([str], ts, ([s], site) => parseTimestamp(s as string, site)),
+    overload([num], ts, ([n], site) => {
+      const date = new Date(n as number)
+      if (Number.isNaN(date.getTime()))
+        throw site.state.error('INVALID_ARGUMENT', 'Timestamp out of range', site.span)
+      return date
+    }),
+    overload([ts], ts, ([d]) => d),
+  ]),
+  durationUnit('weeks', MS_PER_WEEK, 'A duration of n weeks.'),
+  durationUnit('days', MS_PER_DAY, 'A duration of n days (24 hours each).'),
+  durationUnit('hours', MS_PER_HOUR, 'A duration of n hours.'),
+  durationUnit('minutes', MS_PER_MINUTE, 'A duration of n minutes.'),
+  durationUnit('seconds', MS_PER_SECOND, 'A duration of n seconds.'),
+  durationUnit('milliseconds', 1, 'A duration of n milliseconds.'),
+  durationIn('inDays', MS_PER_DAY, 'A duration as a (fractional) number of days.'),
+  durationIn('inHours', MS_PER_HOUR, 'A duration as a number of hours.'),
+  durationIn('inMinutes', MS_PER_MINUTE, 'A duration as a number of minutes.'),
+  durationIn('inSeconds', MS_PER_SECOND, 'A duration as a number of seconds.'),
+  durationIn('inMilliseconds', 1, 'A duration as a number of milliseconds.'),
+  field('year', 'The calendar year, in a time zone (default UTC).', (c) => c.year),
+  field('month', 'The month 1-12, in a time zone (default UTC).', (c) => c.month),
+  field('day', 'The day of the month, in a time zone (default UTC).', (c) => c.day),
+  field('hour', 'The hour 0-23, in a time zone (default UTC).', (c) => c.hour),
+  field('minute', 'The minute, in a time zone (default UTC).', (c) => c.minute),
+  field('second', 'The second, in a time zone (default UTC).', (c) => c.second),
+  field(
+    'dayOfWeek',
+    'The ISO weekday (Monday 1 to Sunday 7), in a time zone (default UTC).',
+    isoWeekday,
+  ),
+  define('startOfDay', 'Midnight at the start of the day, in a time zone (default UTC).', [
+    overload(
+      [ts, optZone],
+      ts,
+      ([d, z], site) => {
+        const clock = wallClock(d as Date, zoneArg(z), site)
+        return fromWallClock(
+          { ...clock, hour: 0, minute: 0, second: 0, millisecond: 0 },
+          zoneArg(z),
+          site,
+        )
+      },
+      { required: 1 },
+    ),
+  ]),
+  define('startOfMonth', 'Midnight on the first of the month, in a time zone (default UTC).', [
+    overload(
+      [ts, optZone],
+      ts,
+      ([d, z], site) => {
+        const clock = wallClock(d as Date, zoneArg(z), site)
+        return fromWallClock(
+          { ...clock, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 },
+          zoneArg(z),
+          site,
+        )
+      },
+      { required: 1 },
+    ),
+  ]),
+  define('startOfYear', 'Midnight on January 1, in a time zone (default UTC).', [
+    overload(
+      [ts, optZone],
+      ts,
+      ([d, z], site) => {
+        const clock = wallClock(d as Date, zoneArg(z), site)
+        return fromWallClock(
+          { ...clock, month: 1, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 },
+          zoneArg(z),
+          site,
+        )
+      },
+      { required: 1 },
+    ),
+  ]),
+  define('addDays', 'Adds calendar days (keeps the wall-clock time across DST), in a time zone.', [
+    overload(
+      [ts, num, optZone],
+      ts,
+      ([d, n, z], site) => addDays(d as Date, n as number, zoneArg(z), site),
+      { required: 2 },
+    ),
+  ]),
+  define('addMonths', 'Adds calendar months, clamping the day to the month length.', [
+    overload(
+      [ts, num, optZone],
+      ts,
+      ([d, n, z], site) => addMonths(d as Date, n as number, zoneArg(z), site),
+      { required: 2 },
+    ),
+  ]),
+  define('addYears', 'Adds calendar years (Feb 29 becomes Feb 28).', [
+    overload(
+      [ts, num, optZone],
+      ts,
+      ([d, n, z], site) =>
+        addMonths(d as Date, integer(n, 'Years', site) * MONTHS_PER_YEAR, zoneArg(z), site),
+      { required: 2 },
+    ),
+  ]),
+  define(
+    'formatDate',
+    'Formats a timestamp in a time zone (default UTC). Tokens: yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS; quote literal text.',
+    [
+      overload(
+        [ts, str, optZone],
+        str,
+        ([d, p, z], site) => {
+          timeOf(d as Date, site.state, site.span)
+          const text = formatTimestamp(d as Date, p as string, zoneArg(z), site)
+          site.state.stringLimit(text.length, site.span)
+          return text
+        },
+        {
+          required: 2,
+          literals: ([, pattern]) =>
+            typeof pattern === 'string' ? checkDatePattern(pattern) : undefined,
+        },
+      ),
+    ],
+  ),
+]
+
+/** Result types that depend on argument types beyond simple type variables. */
+export const RESULT_REFINERS: Readonly<
+  Record<string, (args: readonly Type[]) => Type | undefined>
+> = {
+  values: (args) => t.list(valueTypeOf(args[0])),
+  entries: (args) => t.list(t.object({ key: str, value: valueTypeOf(args[0]) })),
+  flat: (args) => {
+    const list0 = args[0]
+    if (list0?.kind !== 'list') return undefined
+    const element = list0.element
+    const members = element.kind === 'union' ? element.types : [element]
+    return t.list(
+      unionOf(members.map((member) => (member.kind === 'list' ? member.element : member))),
+    )
+  },
+}
+
+export const BUILTINS: ReadonlyMap<string, FunctionDef> = new Map(
+  [
+    ...STRING_FUNCTIONS,
+    ...NUMBER_FUNCTIONS,
+    ...LIST_FUNCTIONS,
+    ...MAP_FUNCTIONS,
+    ...TIME_FUNCTIONS,
+  ].map((def) => [def.name, def]),
+)

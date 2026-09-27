@@ -1,90 +1,54 @@
 # Performance
 
-The fastest path is a reused instance, compiled hot-path expressions, and sync execution when your extensions do not need promises.
-
-| Need | Best choice |
-| --- | --- |
-| One quick sync evaluation | `evaluateSync()` |
-| Repeated hot-path evaluation | `compile()` once, then `compiled.evaluateSync()` |
-| Async plugin or function call | `evaluate()` or `compiled.evaluate()` |
-| Small bundle surface | Import only the stdlib modules you actually use |
+Bonsai parses and checks an expression once, compiles it to a tree of closures, and evaluates that tree directly. There is no interpreter loop over the syntax tree and no `eval`. A typical rule evaluates in well under a microsecond.
 
 ## Recommended usage
 
-| Practice | Why it helps |
+| Practice | Why |
 | --- | --- |
-| Create one instance and reuse it | Keeps the per-instance caches warm and avoids repeated setup work. |
-| Compile repeated expressions | Avoids repeated parse/compile work and gives you an explicit reusable handle. |
-| Prefer `evaluateSync()` | Avoids promise overhead when your transforms/functions are synchronous. |
-| Import only the stdlib modules you need | Keeps bundle size and startup overhead down. |
-| Use `clearCache()` sparingly | Clearing caches is useful for churny workloads, but it throws away warm-state performance. |
+| Create one environment and reuse it | The environment owns the program cache. Creating one per request throws the cache away. |
+| `compile()` expressions that run repeatedly | Parsing and checking happen once. Keep the `Program` next to the data it evaluates. |
+| Prefer `evaluateSync()` | The synchronous path avoids promise overhead. Use `evaluate()` only when an expression calls an async host function. |
+| Size the cache for your workload | `env.evaluateSync(source, ...)` caches up to `limits.cacheSize` programs (default 256) by source text. Raise it if you evaluate thousands of distinct sources; set `0` to disable caching. |
+
+```ts
+import { bonsai, t } from 'bonsai-js'
+
+const env = bonsai({
+  variables: { order: t.object({ total: t.number(), country: t.string() }) },
+})
+
+// Compile once...
+const rule = env.compile('order.total >= 100 && order.country == "GB"', { expect: t.boolean() })
+
+// ...evaluate many times.
+const orders = [
+  { total: 120, country: 'GB' },
+  { total: 80, country: 'GB' },
+]
+orders.filter((order) => rule.evaluateSync({ order })).length // => 1
+```
+
+## Why it is fast
+
+- **Checked once, compiled once.** The static checker resolves overloads ahead of time when argument types are known, so the compiled program calls the right implementation directly instead of dispatching on every evaluation.
+- **Closures, not a tree walk.** Each syntax node becomes a small closure; a program is a function call away from its result.
+- **Reused evaluation state.** A program reuses its evaluation state between synchronous runs instead of allocating a new one each time.
+- **Cheap limits.** The step budget is a counter, and the timeout reads the clock only periodically, so the safety limits cost little on the hot path.
+- **No dependencies.** Nothing to initialize or ship besides the library itself.
 
 ## Benchmarks
 
-Measured with [vitest bench](https://vitest.dev/guide/features.html#benchmarking) on Apple Silicon (M-series). Treat these as point-in-time guidance, not part of the API contract.
+The repository includes a comparison against `@marcbachmann/cel-js`, another safe expression language, on the same workloads. On Node, a typical rule evaluates about 10 million times per second, 1.3x to 2x faster than cel-js. Reproduce it from a checkout with:
 
-| Expression | Example | ops/sec | µs/op |
-| --- | --- | --- | --- |
-| Simple literal | `42` | ~30,000,000 | 0.033 |
-| Arithmetic | `1 + 2 * 3` | ~30,000,000 | 0.033 |
-| Property access | `user.name` | ~21,000,000 | 0.048 |
-| Comparison + logic | `user.age >= 18 && user.verified` | ~11,000,000 | 0.091 |
-| Transform pipeline | `user.name \|> upper` | ~12,000,000 | 0.083 |
-| Array operations | `items \|> sum` | ~17,000,000 | 0.059 |
-
-### vs Jexl
-
-Measured with the `vs-jexl-fair` benchmark (both libraries used the way each is meant to be: bonsai auto-cached, jexl with its own setup).
-
-| Scenario | Speedup |
-| --- | --- |
-| Default sync usage (Bonsai cached, Jexl uncached) | 38.7x faster |
-| Pre-compiled comparison + logic | 3.7x faster |
-| Pre-compiled literal | 3.0x faster |
-| Pre-compiled arithmetic | 13.3x faster |
-| Pre-compiled property access | 2.2x faster |
-| Pre-compiled ternary | 3.8x faster |
-| Pre-compiled transform | 2.3x faster |
-
-These figures are from the 20 August 2026 local run. The benchmark compares
-`evaluateSync` with `evalSync` for default synchronous usage and keeps both
-libraries on their documented execution APIs. It reports each scenario
-separately; it is evidence for regression and architectural choices, not a
-universal speed claim.
-
-Run benchmarks yourself: `bunx vitest bench`
-
-## Why it's fast
-
-- **Per-instance caches** - repeated expressions reuse parsed ASTs and compiled expression objects.
-- **Compiler optimizations** - Constant folding and dead branch elimination at compile time.
-- **Zero dependencies** - no runtime dependency graph to initialize or ship.
-- **Hand-written parser** - Recursive descent, no parser generators or regex-heavy tokenizers.
-
-## Optimization tips
-
-**Use `compile()` for repeated expressions.** If the same expression runs in a loop or on every request, compile it once and reuse the compiled object. This skips parsing and optimization entirely.
-
-```ts
-// Good: compile once, evaluate many
-const rule = expr.compile('order.total >= freeShippingThreshold && order.country == "GB"')
-for (const order of orders) {
-  if (rule.evaluateSync({ order, freeShippingThreshold: 100 })) { /* ... */ }
-}
+```bash
+bun run bench
 ```
 
-**Use `evaluateSync` over `evaluate`.** The sync path avoids Promise overhead. Only use `evaluate` when you have async transforms.
+Treat benchmark numbers as point-in-time guidance for your hardware, not as part of the API contract.
 
-**Choose an appropriate cache size.** The default (256) works well for most applications. If you have thousands of unique expression strings, increase it. If memory is tight, decrease it.
+## Things that cost more
 
-```ts
-// High-volume: larger cache
-const expr = bonsai({ cacheSize: 1024 })
-
-// Memory-constrained: smaller cache
-const expr = bonsai({ cacheSize: 64 })
-```
-
-::: tip Most apps do not need benchmark chasing
-The biggest wins come from reusing one instance, compiling repeated expressions, and avoiding async evaluation unless you genuinely need it.
-:::
+- **Large data.** Work proportional to data (lambdas over long lists, deep equality on big values, long templates) is linear in the data, like the JavaScript equivalent. The step budget bounds it.
+- **Async evaluation.** An expression that calls an async host function runs on a separate async path with an `await` per async call. Expressions that do not call async functions run on the synchronous path even through `evaluate()`.
+- **Cache misses.** Every distinct source text passed to `env.evaluate*()` is parsed, checked, and compiled the first time it is seen. If your sources are generated with values embedded in them, pass the values through the context instead so the text stays the same.

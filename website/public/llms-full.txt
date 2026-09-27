@@ -1,825 +1,284 @@
-# Bonsai - Full Documentation
+# Bonsai: full reference for LLMs
 
-> A safe, fast expression language for rules, filters, and templates with pipe operators, optional chaining, and a modular plugin system.
+Bonsai (`bonsai-js` on npm) is a small, total, typed expression language for JavaScript. It evaluates untrusted expression text against host data without executing JavaScript. Every expression terminates: there are no loops, recursion, or assignment. An expression reaches host code only through functions the host declared and data the host put in the context.
 
-Bonsai lets you safely evaluate expression strings in JavaScript. Think of it as a tiny, sandboxed language for data transformations, business rules, and template logic - without the security risks of running arbitrary code.
+Entry points: `bonsai-js` (environment, types, errors) and `bonsai-js/service` (editor features). ESM only, zero dependencies. Runtimes: Node.js 24+, current Bun, modern ESM browsers.
 
-- Package: `bonsai-js`
-- ESM-only, TypeScript-first, zero runtime dependencies
-- Fast compiled evaluation with cache support and benchmark regression gates
-
----
-
-## Installation
-
-```
-bun add bonsai-js
-npm install bonsai-js
-```
-
-Basic usage:
-
-```js
-import { bonsai } from 'bonsai-js'
-
-const expr = bonsai()
-const result = expr.evaluateSync('1 + 2')
-// 3
-```
-
----
-
-## Quick Start
-
-### Step 1: Simple expressions
-
-Bonsai evaluates expression strings and returns JavaScript values.
-
-```
-2 + 3 * 4       → 14
-"hello"          → "hello"
-true             → true
-```
-
-### Step 2: Context variables
-
-Pass data into expressions via a context object. Its properties become variables.
-
-```
-user.age >= 18   → true      data: { user: { name: "Alice", age: 25 } }
-price * quantity → 29.97     data: { price: 9.99, quantity: 3 }
-```
-
-### Step 3: Add the standard library
-
-Bonsai ships with a modular standard library. Import what you need and register with `use()`.
-
-```js
-import { strings, arrays, math } from 'bonsai-js/stdlib'
-
-const expr = bonsai()
-expr.use(strings) // upper, lower, trim, split, ...
-expr.use(arrays)  // filter, map, sort, unique, ...
-expr.use(math)    // sum, avg, round, clamp, ...
-```
-
-### Step 4: Pipe transforms
-
-The pipe operator `|>` passes a value through a transform. Read it as "then".
-
-```
-name |> trim |> upper   → "DAN"   data: { name: "  dan  " }
-```
-
-### Step 5: Putting it all together
-
-Combine pipes, lambdas, and stdlib transforms into powerful data pipelines.
-
-```
-users |> filter(.age >= 18) |> map(.name) |> join(", ")   → "Alice, Charlie"
-data: { users: [{ name: "Alice", age: 25 }, { name: "Bob", age: 15 }, { name: "Charlie", age: 30 }] }
-```
-
----
-
-## Core Concepts
-
-### Evaluation model
-
-Every expression goes through three phases:
-
-```
-Source string  →  Parse (AST)  →  Compile (optimize)  →  Evaluate (result)
-```
-
-Compiled expressions are automatically cached. If you evaluate the same string twice, parsing is skipped. For hot paths, use `compile()` to get a reusable object.
-
-### Context objects
-
-The context is a plain object whose properties become variables. Nested data works with dot and bracket notation.
-
-```
-user.name       → "Alice"      data: { user: { name: "Alice", scores: [90, 85, 92] } }
-user.scores[0]  → 90           (same context)
-```
-
-### Transforms vs functions
-
-**Transforms** receive a piped value as their first argument - used with `|>`.
-**Functions** are called by name with parentheses.
-
-```
-"hello" |> upper   → "HELLO"   (upper is a transform - piped value is its input)
-min(5, 3)          → 3         (min is a function - called directly with arguments)
-```
-
-Tip: Does it process a single input? Make it a transform. Does it take multiple independent arguments? Make it a function.
-
----
-
-## Literals & Types
-
-Bonsai supports these literal types:
-
-```
-42               → 42          (number)
-"hello world"    → "hello world" (string, single or double quotes)
-true             → true        (boolean)
-null             → null
-3.14             → 3.14        (decimals)
-1_000_000        → 1000000     (underscores for readability)
-0xFF             → 255         (hexadecimal)
-0b1010           → 10          (binary)
-1.5e3            → 1500        (scientific notation)
-```
-
----
-
-## Operators
-
-Operators work like JavaScript, except `==` is always strict - no accidental type coercion.
-
-### Arithmetic
-
-```
-2 + 3 * 4   → 14     (standard precedence - * before +)
-2 ** 10     → 1024   (exponentiation)
-(2 + 3) * 4 → 20    (parentheses override)
-17 % 5      → 2      (remainder)
-```
-
-### Comparison & equality
-
-```
-age >= 18    → true    data: { age: 25 }
-1 == "1"     → false   (strict - no type coercion, ever)
-```
-
-### Conditional logic
-
-```
-score >= 90 ? "A" : "B"   → "A"           (ternary - inline if/else)
-name ?? "Anonymous"        → "Anonymous"   (?? - fallback only for null/undefined)
-name || "Anonymous"        → "Anonymous"   (|| - fallback for any falsy value)
-"" ?? "fallback"           → ""            (?? preserves "", 0, false)
-```
-
-### Membership
-
-```
-"admin" in roles           → true    data: { roles: ["admin", "user"] }
-"hello" in "hello world"   → true    (also works as substring check)
-"guest" not in roles       → true
-```
-
-### Logical
-
-```
-active && verified   → true only if both are true
-!active              → boolean negation
-```
-
----
-
-## Property Access
-
-Navigate nested objects safely.
-
-### Dot & bracket notation
-
-```
-user.name              → "Alice"
-user.scores[0]         → 90
-data["first-name"]     → "Dan"    (brackets for keys with special characters)
-```
-
-### Optional chaining
-
-`?.` returns `undefined` instead of throwing when accessing properties on `null`.
-
-```
-user?.profile?.avatar               → undefined   data: { user: null }
-user?.profile?.avatar ?? "default.png" → "default.png"   (combine with ?? for fallbacks)
-```
-
----
-
-## Pipe Operator
-
-Build readable data pipelines by chaining transforms left-to-right. The pipe operator is Bonsai's most powerful feature.
-
-### Basic pipe
-
-The `|>` operator passes the left-hand value as the first argument to the transform on the right.
-
-```
-"hello" |> upper   → "HELLO"
-```
-
-### Chaining
-
-Each transform receives the output of the previous one. Left-to-right data flow.
-
-```
-"  hello  " |> trim |> upper   → "HELLO"
-```
-
-### Pipes with arguments
-
-The piped value is always the first argument. Extra arguments follow in parentheses.
-
-```
-"a,b,c" |> split(",")   → ["a", "b", "c"]
-150 |> clamp(0, 100)     → 100
-```
-
-### Complex pipelines
-
-```
-users |> filter(.age >= 18) |> map(.name) |> join(", ")   → "Alice, Charlie"
-data: { users: [{ name: "Alice", age: 25 }, { name: "Bob", age: 15 }, { name: "Charlie", age: 30 }] }
-```
-
----
-
-## Collections
-
-Build arrays and objects directly in expressions.
-
-### Array literals
-
-```
-[1, 2, 3]              → [1, 2, 3]
-[0, ...items, 99]      → [0, 1, 2, 3, 99]   (spread operator)
-```
-
-### Object literals
-
-```
-{ name: "Alice", age: 25 }   → { name: "Alice", age: 25 }
-{ name, age }                 → shorthand - values from context
-```
-
-### Method calls
-
-Call safe built-in methods on strings, arrays, and numbers.
-
-```
-"hello world".slice(0, 5)   → "hello"
-[1, 2, 3].includes(2)       → true
-"hello".toUpperCase()        → "HELLO"
-```
-
----
-
-## Template Literals
-
-Build dynamic strings by embedding variables and expressions.
-
-```
-`Hello ${name}!`             → "Hello world!"      data: { name: "world" }
-`${x} + ${y} = ${x + y}`    → "2 + 3 = 5"         data: { x: 2, y: 3 }
-`${user.name} is ${user.age}` → "Alice is 25"
-```
-
----
-
-## Lambda Predicates
-
-Concise shorthand for "do this to each item" - extract properties, filter by condition, or test collections.
-
-### Property extraction
-
-A dot prefix (`.name`) means "get this property from each item" - shorthand for `item => item.name`.
-
-```
-users |> map(.name)   → ["Alice", "Bob"]
-users |> map(.age)    → [25, 15]
-data: { users: [{ name: "Alice", age: 25 }, { name: "Bob", age: 15 }] }
-```
-
-### Predicate filtering
-
-Add a condition after the dot (`.age >= 18`) to test each item - shorthand for `item => item.age >= 18`.
-
-```
-users |> filter(.age >= 18)              → [{ name: "Alice", age: 25 }]
-users |> find(.name == "Bob")            → { name: "Bob", age: 15 }
-users |> some(.age >= 18)                → true   (at least one match)
-users |> every(.age >= 18)               → false  (not all match)
-```
-
-### Compound lambdas
-
-Lambdas support method calls and chained property access.
-
-```
-users |> filter(.name.startsWith("A"))   → [{ name: "Alice", age: 25 }]
-```
-
-Note: Lambdas only work as arguments to array transforms. They can't be used as standalone expressions.
-
----
-
-## API Reference
-
-### bonsai(options?)
-
-Creates a new Bonsai instance. All options are optional.
-
-```js
-import { bonsai } from 'bonsai-js'
-
-// Default instance
-const expr = bonsai()
-
-// Restricted instance
-const safe = bonsai({
-  timeout: 50,
-  maxSourceLength: 10000,
-  maxTokens: 2500,
-  maxAstNodes: 2000,
-  maxDepth: 50,
-  maxObjectProperties: 500,
-  maxCallArguments: 100,
-  maxArrayLength: 10000,
-  maxStringLength: 10000,
-  maxSteps: 500000,
-  allowedProperties: ['age', 'country', 'plan']
-})
-```
-
-#### Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `timeout` | number | 0 | Evaluation timeout in milliseconds. `0` disables timeout checks |
-| `maxSourceLength` | number | 100000 | Max source characters before tokenization |
-| `maxTokens` | number | 25000 | Max lexical tokens |
-| `maxAstNodes` | number | 10000 | Max syntax-tree nodes |
-| `maxObjectProperties` | number | 10000 | Max properties in one object literal |
-| `maxCallArguments` | number | 1000 | Max arguments in one call, before and after spread expansion |
-| `maxDepth` | number | 100 | Max parser/evaluator nesting depth |
-| `maxArrayLength` | number | 100000 | Max size of every produced array |
-| `maxStringLength` | number | 100000 | Max size of every produced string |
-| `maxSteps` | number | 1000000 | Max accounted evaluator steps per evaluation, a default-on bound independent of `timeout`; covers AST/lambda work and native-work estimates for linear built-in methods (receiver length; copied span for `slice`), but not opaque host-extension work (throws `MAX_STEPS`). `0` disables |
-| `cacheSize` | number | 256 | Per-instance cache size for compiled expressions and parsed AST reuse |
-| `allowedProperties` | string[] | - | Allowlist checked against member and method names, not root identifiers |
-| `deniedProperties` | string[] | - | Denylist checked against member and method names, not root identifiers |
-
-### evaluateSync(expression, context?)
-
-Evaluate an expression synchronously and return the result immediately.
-
-```js
-expr.evaluateSync('2 + 3 * 4')                          // 14
-expr.evaluateSync('price * quantity', { price: 9.99, quantity: 3 })  // 29.97
-expr.evaluateSync('name |> trim |> upper', { name: '  dan  ' })     // "DAN"
-expr.evaluateSync('user?.email ?? "no email"', { user: null })       // "no email"
-```
-
-### evaluate(expression, context?)
-
-Evaluate asynchronously and return a Promise. Required when any transform or function is async.
-
-```js
-expr.addTransform('fetchPrice', async (id) => {
-  const res = await fetch(`/api/prices/${id}`)
-  return res.json()
-})
-
-const price = await expr.evaluate('productId |> fetchPrice', { productId: 42 })
-```
-
-Tip: Use `evaluateSync` only when all registered transforms/functions are synchronous. It rejects Promise-like results with a typed error instead of exposing them to the expression.
-
-### compile(expression)
-
-Returns a `CompiledExpression` object with its own `evaluateSync` and `evaluate` methods, plus the deeply frozen optimized `ast` and original `source`.
-
-```js
-const check = expr.compile('user.age >= minAge')
-
-check.evaluateSync({ user: { age: 25 }, minAge: 18 }) // true
-check.evaluateSync({ user: { age: 15 }, minAge: 18 }) // false
-check.evaluateSync({ user: { age: 21 }, minAge: 21 }) // true
-
-check.ast    // deeply frozen optimized AST object
-check.source // "user.age >= minAge"
-```
-
-### validate(expression)
-
-Check syntax and extract referenced identifiers/functions/transforms without evaluating. Use the checker below for semantic validation.
-
-```js
-expr.validate('user.age >= 18')
-// { valid: true, errors: [], ast: {...}, references: {...} }
-
-expr.validate('1 +')
-// { valid: false, errors: [{message: "...", position: {...}}] }
-```
-
-### Static checker
-
-`bonsai-js/checker` checks context properties, strict operators, nullability,
-safe methods, extension signatures, and expected result types without executing
-the expression or host extensions.
+## Quick start
 
 ```ts
-import { createChecker, t } from 'bonsai-js/checker'
+import { bonsai, fn, t } from 'bonsai-js'
 
-const schema = t.object({
-  user: t.object({
-    name: t.string(),
-    age: t.number(),
-    nickname: t.optional(t.string()),
-  }),
+const env = bonsai({
+  variables: {
+    customer: t.object({ tier: t.enum('standard', 'gold'), email: t.optional(t.string()) }),
+    cart: t.object({ items: t.list(t.object({ price: t.number(), qty: t.number() })) }),
+  },
+  strict: true,
 })
 
-const checker = createChecker(expr, {
-  schema,
-  expectedType: t.boolean(),
+env.check('customer.teir == "gold"').ok // false: UNKNOWN_PROPERTY, did you mean "tier"?
+const freeShipping = env.compile('customer.tier == "gold" || cart.items.map(.price * .qty).sum() >= 50', {
+  expect: t.boolean(),
 })
-
-checker.check('user.age >= 18') // valid; inferred boolean
-checker.check('user.agge >= 18') // UNKNOWN_PROPERTY with an exact range
+freeShipping.evaluateSync({ customer: { tier: 'standard' }, cart: { items: [{ price: 20, qty: 3 }] } }) // true
+env.evaluateSync('customer.email ?? "no email"', ctx) // one-off evaluation, compiled once and cached
 ```
 
-Pass the same `schema` to `createAutocomplete(expr, { schema })` for static
-property, method, pipe, and lambda completions.
+## Values
 
-### defineTransform(definition)
+- `null`: the single absent value. Missing properties, missing variables, and host `undefined` read as `null`.
+- boolean, number (IEEE-754 double; NaN/Infinity results are errors), string (UTF-16; `length` counts code units).
+- list (host arrays, never mutated), map (other host objects via own properties; object literals).
+- timestamp (a host `Date`, `now()`, `timestamp("2026-01-01T00:00:00Z")`), duration (`days(3)`, `t1 - t2`).
+- Functions, symbols, bigints are opaque: comparable with `==`, not readable.
+- `type(x)` returns "null", "boolean", "number", "string", "list", "map", "timestamp", "duration", or "opaque".
 
-Prefer declarative definitions so the checker and autocomplete engine can use
-the same input, parameter, return, and description metadata as the runtime.
-Generic array transforms can also declare `arrayTypeRule` so the checker infers
-element-preserving and lambda-dependent results from metadata rather than names.
+## Syntax
+
+- Literals: `42`, `3.14`, `1e-3`, `1_000`, `0xff`, `0b101`, `0o17` (a number starts with a digit: `.5` is invalid), `"text"`, `'text'`, `true`, `false`, `null`, `[1, ...rest]`, `{ a: 1, "b-c": 2, [key]: 3, ...other, name }`.
+- Comments: `// line` and `/* block */`.
+- Templates: `` `Hello ${name}` ``. `null` renders as empty text, timestamps and durations as ISO-8601, lists and maps are a type error.
+- Reserved: `true false null let in not`. `has(...)` and `try(...)` are special forms. `|>` is reserved and is a syntax error.
+
+## Operators (loosest to tightest)
+
+1. `let x = e; body`
+2. `c ? a : b` (right-associative)
+3. `??`
+4. `||`
+5. `&&`
+6. `==` `!=` (do not chain)
+7. `<` `<=` `>` `>=` `in` `not in` (do not chain)
+8. `+` `-`
+9. `*` `/` `%`
+10. `**` (right-associative)
+11. prefix `!` `-`
+12. `.` `?.` `[]` `?.[]` calls
+
+Syntax errors instead of silent groupings: `??` mixed with `&&`/`||` without parentheses, `-x ** 2`, `a < b < c`, `a == b == c`.
+
+- Equality: by value, no coercion. `1 == "1"` false; `[1, [2]] == [1, [2]]` true; maps compare by keys and values in any order; timestamps by instant; different kinds are unequal (never an error). `x == null` is true for missing or null.
+- Ordering: two numbers, two strings, two timestamps, or two durations. If either side is `null` the result is `false` (so `users.filter(.age >= 18)` skips users without an age). Other mixes are type errors.
+- Arithmetic: `+` on numbers, strings, lists, durations; timestamp +/- duration; timestamp - timestamp = duration; duration * or / number; duration / duration = number. No other combination: `null + 1`, `"a" + 1`, `t + 30` are errors. Division by zero is an error.
+- Logic: `!`, `&&`, `||`, `?:` accept booleans and `null` (false); anything else is a type error. `&&`/`||` short-circuit and return booleans. `a ?? b` evaluates `b` only when `a` is `null`.
+- Membership: `x in list` (by `==`), `"sub" in "string"`, `"key" in map`, `x in null` is false, `x not in y`.
+
+## Property access
+
+- `a.b` reads an own property of a map; missing is `null`; any property of `null` is `null`. Strings and lists have only `length`; other reads on non-maps are type errors.
+- `a[k]`: string keys on maps (numbers become decimal text), integer indices on lists and strings (out of range, negative, or fractional is `null`; use `at(-1)`), `null` receiver or key gives `null`.
+- `?.` equals `.` for reads. For calls it makes that one call return `null` when the receiver is `null`; it does not skip the rest of the chain: write `a?.trim()?.toUpperCase()`.
+- Calling a function with `null` as the first argument, when no overload accepts null, is a `NULL_RECEIVER` error.
+- `__proto__`, `constructor`, `prototype` are never readable or valid keys.
+- `has(a.b)` / `has(a[k])`: whether the own key (or list index) exists, even if the value is `null`.
+
+## Functions and lambdas
+
+- One namespace: `f(x, a)` and `x.f(a)` are the same call. `f` always resolves to a built-in or declared host function, never to a value in data.
+- Built-ins are overloaded on parameter types; the overload is chosen statically when types are known, otherwise by runtime kinds.
+- A host function with a built-in's name replaces it in that environment.
+- Lambdas are arguments for function parameters only: `users.filter(u => u.age >= 18)`, `orders.map((o, i) => ...)`.
+- Implicit `.`: `users.filter(.age >= 18 && !.suspended)`, `xs.map(. * 2)`, `rows.map(.[0])`. `.` binds to the nearest enclosing argument whose parameter is a function, skipping ordinary parameters: `users.filter(.score > max(.bonus, 10))` compares each user's own fields; `groups.map(.users.filter(.active).length)`.
+- `.` directly inside an explicit lambda body is an error; name the outer item: `orders.filter(o => o.lines.some(.sku == o.promoSku))`.
+- Higher-order functions call lambdas in order and stop early when the result is known.
+
+## let, try, has
+
+- `let total = items.map(.price * .qty).sum(); total > 100 ? total * 0.9 : total`. Bindings may shadow context variables, not other bindings.
+- `try(expr, fallback)` catches evaluation errors (type errors, invalid arguments, division by zero, host failures), never syntax, check, or limit errors.
+
+## Time
+
+Timestamps are instants; durations are exact (a day is 24 hours). Calendar functions take an optional IANA time zone and default to UTC: `year(t, tz)`, `startOfDay(t, tz)`, `addMonths(t, 1, tz)`, `formatDate(t, pattern, tz)`. `now()` is read once per evaluation from the environment clock. `addDays` keeps wall-clock time across DST; `+ days(n)` keeps exact length.
+
+## Static checking
+
+Gradual: unknown values are `any` (open environments, undeclared variables in non-strict environments, open records). Errors: `UNKNOWN_VARIABLE` (strict), `UNKNOWN_PROPERTY` (closed records and map literals), `UNKNOWN_FUNCTION`, `NO_OVERLOAD`, `TYPE_ERROR`, `NULLABLE_RECEIVER`, `INVALID_LAMBDA`, `BLOCKED_PROPERTY`, `EXPECTED_TYPE`, `INVALID_ARGUMENT`, plus `SYNTAX` and `LIMIT` from `check()`. Warnings (severity "warning", code `TYPE_ERROR`): comparisons that can never hold, ordering comparisons with possibly-null values, `??` on never-null values, lambdas that may return null where a boolean is expected.
+
+## API
+
+### bonsai(options) -> Environment
+
+Options: `variables` (Record of types), `strict` (undeclared variables are errors), `functions` (host functions), `libraries` (`{ name, functions?, variables? }[]`, duplicate names are errors), `limits`, `clock` (`() => Date`), `validateContext` (check the context against declared types before each evaluation; fails with `INVALID_CONTEXT`).
+
+Environment members:
+- `check(src, { expect? })` -> `{ ok, type, diagnostics }`; never throws.
+- `compile(src, { expect? })` -> Program; throws `BonsaiSyntaxError`, `BonsaiCheckError`, `BonsaiLimitError`.
+- `evaluateSync(src, ctx?, options?)`, `evaluate(src, ctx?, options?)`: compile through an LRU cache (`limits.cacheSize`, default 256) and evaluate.
+- `extend(options)` -> new environment with more variables/functions/libraries.
+- `listFunctions()`, `describeFunction(name)` -> `{ name, description, host, async, signatures: [{ params, required, rest?, returns }] }`.
+- `parse(src)` -> syntax tree; `variables`; `strict`.
+
+Evaluation options: `timeout` (ms), `maxSteps`, `signal` (AbortSignal).
+
+### Program
+
+`source`, `ast`, `type`, `async`, `warnings`, `references: { variables, functions }`, `evaluate(ctx?, options?)`, `evaluateSync(ctx?, options?)`. Results are plain values; timestamps are `Date`; durations are `Duration` (`ms`, ISO `toString()`).
+
+### Host functions
 
 ```ts
-expr.defineTransform({
-  name: 'double',
-  inputType: t.number(),
-  returnType: t.number(),
-  evaluate: (value) => Number(value) * 2,
-})
-
-expr.evaluateSync('5 |> double')        // 10
-```
-
-`addTransform()` remains available. Duplicate registration is rejected; use
-`replaceTransform()` for an intentional override. `defineFunction()`,
-`defineContextFunction()`, and their `add*`/`replace*` variants follow the same
-rule. Call `seal()` after configuration to make the registry immutable.
-
-### addFunction(name, fn)
-
-Register a pure function called directly by name.
-
-```js
-expr.addFunction('greet', (name) => `Hello, ${name}!`)
-expr.addFunction('clamp', (val, min, max) => Math.min(Math.max(val, min), max))
-
-expr.evaluateSync('greet("world")')      // "Hello, world!"
-expr.evaluateSync('clamp(150, 0, 100)')  // 100
-```
-
-### addContextFunction(name, fn)
-
-Register a function that reads the evaluation context. The function receives the live evaluation context (typed `Readonly<TCtx>`) as its first parameter, followed by the call's arguments. The context is passed by reference, not copied or frozen, so treat it as read-only. Pure functions and context-aware functions share a single namespace.
-
-```ts
-interface AppContext {
-  currentUserId: string
-  perms: readonly string[]
-}
-
-const app = bonsai<AppContext>()
-
-app.addContextFunction('lookupCurrentUserTier', async (ctx) => {
-  const row = await db.users.findById(ctx.currentUserId)
-  return row?.tier ?? 'free'
-})
-
-app.addContextFunction('hasPermission', (ctx, action) =>
-  ctx.perms.includes(String(action))
-)
-
-await app.evaluate(
-  'lookupCurrentUserTier() == "pro" && hasPermission("admin")',
-  { currentUserId: 'u_123', perms: ['admin', 'write'] }
-)
-```
-
-Typing the instance with `bonsai<AppContext>()` propagates the context shape through `evaluate`, `evaluateSync`, `compile`, and `addContextFunction` for end-to-end type safety. When the context type has required fields, the context argument becomes required at every call site.
-
-The context is passed to context functions by reference (not copied or frozen); the `Readonly<TCtx>` parameter type signals read-only intent. Pass a fresh context object per evaluation if you need isolation between evaluations.
-
-Use `isContextFunction(name)` to check whether a registered function reads the context.
-
-### use(plugin)
-
-Register a plugin. A plugin is a function that receives the Bonsai instance.
-
-```js
-expr.use(strings)    // from bonsai-js/stdlib
-expr.use(myPlugin)   // custom plugin
-```
-
----
-
-## Standard Library
-
-Import individual modules from `bonsai-js/stdlib`.
-
-### Strings
-
-Clean, format, and transform text.
-
-```js
-import { strings } from 'bonsai-js/stdlib'
-expr.use(strings)
-```
-
-| Transform | Example | Result |
-|-----------|---------|--------|
-| `upper` | `"hello" \|> upper` | `"HELLO"` |
-| `lower` | `"HELLO" \|> lower` | `"hello"` |
-| `trim` | `"  hi  " \|> trim` | `"hi"` |
-| `split(sep)` | `"a,b,c" \|> split(",")` | `["a", "b", "c"]` |
-| `replace(s, r)` | `"hello" \|> replace("l", "r")` | `"herro"` |
-| `startsWith(s)` | `"hello" \|> startsWith("he")` | `true` |
-| `endsWith(s)` | `"hello" \|> endsWith("lo")` | `true` |
-| `includes(s)` | `"hello" \|> includes("ell")` | `true` |
-| `padStart(len, fill)` | `"42" \|> padStart(5, "0")` | `"00042"` |
-| `padEnd(len, fill)` | `"hi" \|> padEnd(5, ".")` | `"hi..."` |
-
-`find`, `some`, and `every` short-circuit. Async higher-order transforms await
-callbacks sequentially by default, preserving order without unbounded I/O
-fan-out.
-
-Pipeline examples:
-
-```
-name |> trim |> lower                   → "alice"       data: { name: "  Alice  " }
-title |> lower |> replace(" ", "-")     → "my-post-title"  data: { title: "My Post Title" }
-```
-
-### Arrays
-
-Filter, map, sort, and aggregate collections.
-
-```js
-import { arrays } from 'bonsai-js/stdlib'
-expr.use(arrays)
-```
-
-#### Basic transforms
-
-| Transform | Example | Result |
-|-----------|---------|--------|
-| `count` | `[1, 2, 3] \|> count` | `3` |
-| `first` | `[10, 20, 30] \|> first` | `10` |
-| `last` | `[10, 20, 30] \|> last` | `30` |
-| `reverse` | `[1, 2, 3] \|> reverse` | `[3, 2, 1]` |
-| `flatten` | `[[1, 2], [3, 4]] \|> flatten` | `[1, 2, 3, 4]` |
-| `unique` | `[1, 2, 2, 3] \|> unique` | `[1, 2, 3]` |
-| `join(sep)` | `["a", "b"] \|> join("-")` | `"a-b"` |
-| `sort` | `[3, 1, 2] \|> sort` | `[1, 2, 3]` |
-
-#### Higher-order transforms (with lambda predicates)
-
-| Transform | Example | Result |
-|-----------|---------|--------|
-| `filter(pred)` | `users \|> filter(.age >= 18)` | Array of matching items |
-| `map(fn)` | `users \|> map(.name)` | Array of extracted values |
-| `find(pred)` | `users \|> find(.age >= 18)` | First matching item |
-| `some(pred)` | `users \|> some(.age >= 18)` | `true` if any match |
-| `every(pred)` | `users \|> every(.age >= 18)` | `true` if all match |
-
-Pipeline examples:
-
-```
-users |> filter(.age >= 18) |> map(.name)    → ["Alice", "Charlie"]   (get names of adult users)
-orders |> some(.total > 100)                  → true                   (check if any order exceeds $100)
-products |> map(.category) |> unique |> sort  → ["electronics", "food", "toys"]
-```
-
-### Math
-
-Round, clamp, sum, and average.
-
-```js
-import { math } from 'bonsai-js/stdlib'
-expr.use(math)
-```
-
-#### Transforms
-
-| Transform | Example | Result |
-|-----------|---------|--------|
-| `round` | `3.7 \|> round` | `4` |
-| `floor` | `3.7 \|> floor` | `3` |
-| `ceil` | `3.2 \|> ceil` | `4` |
-| `abs` | `-42 \|> abs` | `42` |
-| `sum` | `[10, 20, 30] \|> sum` | `60` |
-| `avg` | `[10, 20, 30] \|> avg` | `20` |
-| `clamp(min, max)` | `150 \|> clamp(0, 100)` | `100` |
-
-#### Functions
-
-| Function | Example | Result |
-|----------|---------|--------|
-| `min(a, b)` | `min(5, 3)` | `3` |
-| `max(a, b)` | `max(5, 3)` | `5` |
-
-Pipeline examples:
-
-```
-products |> map(.price) |> avg |> round   → 25    (average price, rounded)
-orders |> map(.total) |> sum              → 347.5 (sum all order totals)
-```
-
-### Types
-
-Check what kind of value you have and convert between types.
-
-```js
-import { types } from 'bonsai-js/stdlib'
-expr.use(types)
-```
-
-| Transform | Example | Result |
-|-----------|---------|--------|
-| `isString` | `"hello" \|> isString` | `true` |
-| `isNumber` | `42 \|> isNumber` | `true` |
-| `isArray` | `[1, 2] \|> isArray` | `true` |
-| `isNull` | `null \|> isNull` | `true` |
-| `toBool` | `1 \|> toBool` | `true` |
-| `toNumber` | `"42" \|> toNumber` | `42` |
-| `toString` | `42 \|> toString` | `"42"` |
-
-### Dates
-
-Get the current time, format dates, and calculate differences.
-
-```js
-import { dates } from 'bonsai-js/stdlib'
-expr.use(dates)
-```
-
-| Type | Name | Example | Result |
-|------|------|---------|--------|
-| Function | `now()` | `now()` | Current timestamp (ms) |
-| Transform | `formatDate(fmt)` | `now() \|> formatDate("YYYY-MM-DD")` | `"2026-03-07"` |
-
-The default `dates` plugin uses the host wall clock. Use
-`createDates({ now: () => fixedTimestamp })` for deterministic evaluation.
-| Transform | `diffDays(other)` | `ts1 \|> diffDays(ts2)` | Absolute day difference |
-
-Format patterns: `YYYY` (year), `MM` (month), `DD` (day), `HH` (hours), `mm` (minutes), `ss` (seconds).
-
----
-
-## Writing Plugins
-
-A plugin is a function that receives a Bonsai instance and extends it with transforms or functions.
-
-### Plugin structure
-
-```js
-import type { BonsaiPlugin } from 'bonsai-js'
-
-const myPlugin: BonsaiPlugin = (expr) => {
-  expr.addTransform('double', (val) => val * 2)
-  expr.addFunction('greet', (name) => `Hello, ${name}!`)
-}
-```
-
-### Registering plugins
-
-```js
-const expr = bonsai()
-expr.use(myPlugin)
-
-expr.evaluateSync('5 |> double')       // 10
-expr.evaluateSync('greet("world")')    // "Hello, world!"
-```
-
-### Real-world example: currency plugin
-
-```js
-const currency: BonsaiPlugin = (expr) => {
-  expr.addTransform('usd', (val) => `$${Number(val).toFixed(2)}`)
-  expr.addTransform('eur', (val) => `${Number(val).toFixed(2)} EUR`)
-  expr.addFunction('discount', (price, pct) => price * (1 - pct / 100))
-}
-
-const expr = bonsai()
-expr.use(currency)
-
-expr.evaluateSync('price |> usd', { price: 29.9 })
-// "$29.90"
-
-expr.evaluateSync('discount(price, 20) |> usd', { price: 100 })
-// "$80.00"
-```
-
-Tip: Keep plugins focused on a single domain. A "currency" plugin, a "validation" plugin, etc.
-
----
-
-## Safety & Sandboxing
-
-Bonsai is designed to be safe for evaluating untrusted expressions.
-
-### What's blocked
-
-Bonsai blocks access to `__proto__`, `constructor`, and `prototype` by default. Expressions cannot access the global scope, require modules, or execute arbitrary code.
-
-### Property restrictions
-
-Use `allowedProperties` (whitelist) or `deniedProperties` (blacklist) to control which member and method names expressions can access. These apply to member access (`obj.name`) and method calls (`str.slice()`), not root identifiers (`name`) or object-literal keys (`{ name: value }`). Numeric array indices (e.g., `items[0]`) bypass allow/deny lists automatically.
-
-```js
-const expr = bonsai({
-  allowedProperties: ['user', 'name', 'plan']
-})
-
-expr.evaluateSync('user.name', { user: { name: "Alice", plan: "pro" } })
-// "Alice" - root identifier 'user' is always accessible; 'name' is allowed as a member
-
-expr.evaluateSync('user.secret', { user: { secret: "xyz" } })
-// Error: "secret" is not in allowed properties
-```
-
-### Defense-in-depth hardening
-
-Beyond configurable property restrictions, Bonsai applies several automatic protections:
-
-- **Own-property lookup**: Root identifiers and members read own properties only. Prototype chains are never walked, so inherited members and a polluted `Object.prototype` cannot surface as values. Property reads on a nullish receiver yield `undefined`; method calls on one throw.
-- **Null-prototype object literals**: Objects created inside expressions use `Object.create(null)`, preventing prototype pollution through expression-constructed objects.
-- **Captured safe intrinsics**: Only audited string, number, and array methods are callable. Captured built-ins prevent receiver overrides and later prototype monkey-patches from changing evaluation.
-- **Data-only arrays and callbacks**: Spread copies by index and never consults a custom iterator; subclasses and own constructor/spreadability hooks are neutralized before species-producing methods; bundled transforms use captured operations; higher-order methods accept only Bonsai-created lambdas.
-- **Primitive-only conversion**: Operators, templates, computed keys, and method arguments cannot invoke object conversion hooks.
-- **Numeric index bypass**: Canonical numeric array indices automatically bypass allow/deny lists.
-- **Sync Promise-like guard**: `evaluateSync()` detects native, cross-realm, and custom Promise-like results and throws an actionable `BonsaiTypeError`.
-
-### Resource limits
-
-```js
-const expr = bonsai({
-  timeout: 50,
-  maxSourceLength: 10000,
-  maxTokens: 2500,
-  maxAstNodes: 2000,
-  maxObjectProperties: 500,
-  maxCallArguments: 100,
-  maxDepth: 50,
-  maxArrayLength: 10000,
-  maxStringLength: 10000,
-  maxSteps: 500000
+fn({
+  params: [t.string(), t.optional(t.number())],
+  required: 1, // later parameters are optional, must be nullable, and arrive as null when omitted
+  rest: t.number(), // optional variadic type
+  returns: t.boolean(),
+  async: false, // true: run returns a promise; evaluateSync rejects the expression with ASYNC_IN_SYNC
+  context: false, // true: run(ctx, ...args)
+  description: 'Shown in listFunctions and editor hovers',
+  run: (name, count) => true,
 })
 ```
 
-`maxSteps` is on by default and bounds evaluator-driven work even with no
-`timeout`; it does not count opaque host-extension work. Per-run `timeout`,
-`maxSteps`, and `AbortSignal` options can tighten one-shot or compiled
-evaluation without mutating instance defaults.
+Arguments are validated before `run`; results are checked against `returns` (`HOST_ERROR` otherwise); exceptions become `HOST_ERROR` with `cause`. `withContext<Ctx>()` returns an `fn` variant whose `run` receives a typed context.
 
-Tip: For user-facing applications, start with minimal plain data, use an
-allowlist, set structural/work/output limits, check before save, pass request
-cancellation, seal the registry, and use a worker/process when hard isolation
-is required. Trusted extensions and Proxy traps remain outside the interpreter's
-sandbox guarantees.
+### Types (t)
 
----
+`t.string()`, `t.number()`, `t.boolean()`, `t.null()`, `t.timestamp()`, `t.duration()`, `t.literal(v)`, `t.enum(...values)`, `t.list(T)`, `t.object({ ... })` (closed), `t.record(V)` (open; reads are `V | null`), `t.optional(T)` (`T | null`, also optional key), `t.union(...)`, `t.opaque(name)`, `t.any()`, `t.never()`. `Infer<typeof T>` gives the TypeScript type. `formatType(type)`, `isAssignable(source, target)`. Types are JSON-serializable.
 
-## Performance Tips
+### Errors
 
-Bonsai is designed for high throughput. A local Apple Silicon regression-gate
-run on 20 August 2026 measured 33.3M cached literals/s, 14.4M cached
-comparisons/s, 16.6M transform pipelines/s, 14.1M compiled comparisons/s, and
-229K `map(.x)` evaluations/s over 1,000 items. Cached comparison evaluation was
-16.2x faster than uncached parsing. These are point-in-time regression signals,
-not cross-machine API promises; run `bun run bench:gate` in your environment.
+All errors extend `BonsaiError` with `code`, `source`, `span`, `position` (1-based), `formatted` (message + code frame).
+- `BonsaiSyntaxError`: `SYNTAX`
+- `BonsaiCheckError`: `CHECK` (`.diagnostics`)
+- `BonsaiLimitError`: `SOURCE_TOO_LONG`, `TOO_DEEP`, `TOO_MANY_NODES`, `STEP_LIMIT`, `STRING_LIMIT`, `LIST_LIMIT`, `TIMEOUT`, `ABORTED`
+- `BonsaiRuntimeError`: `TYPE_ERROR`, `NO_OVERLOAD`, `NULL_RECEIVER`, `DIVISION_BY_ZERO`, `NON_FINITE`, `BLOCKED_PROPERTY`, `INVALID_ARGUMENT`, `ASYNC_IN_SYNC`, `HOST_ERROR`, `INVALID_CONTEXT`
 
-### Tips
+### Limits (defaults)
 
-**Use `compile()` for repeated expressions.** If the same expression runs in a loop or on every request, compile it once and reuse the compiled object.
+`maxSourceLength` 100000, `maxDepth` 128, `maxNodes` 20000, `maxSteps` 1000000 (0 disables), `maxStringLength` 100000, `maxListLength` 100000, `maxValueDepth` 64, `timeout` 0 (none), `cacheSize` 256.
 
-```js
-const rule = expr.compile('user.age >= 18 && user.verified')
-for (const user of users) {
-  if (rule.evaluateSync({ user })) { /* ... */ }
-}
-```
+### Language service (bonsai-js/service)
 
-**Use `evaluateSync` over `evaluate`.** The sync path avoids Promise overhead. Only use `evaluate` when you have async transforms.
+`createLanguageService(env)` -> `{ complete(src, offset), hover(src, offset), diagnostics(src) }`. `complete` returns `{ from, to, items: [{ label, kind, detail, documentation?, insertText }] }` with kinds `variable`, `local`, `property`, `function`, `method`, `keyword`. It never evaluates or calls host functions.
 
-**Choose an appropriate cache size.** The default (256) works well for most applications. Increase for thousands of unique expressions, decrease for memory-constrained environments.
+## Security model
 
-```js
-const expr = bonsai({ cacheSize: 1024 }) // high-volume
-const expr = bonsai({ cacheSize: 64 })   // memory-constrained
-```
+Expression text is untrusted; context data and host functions are trusted. Expressions cannot run code, reach prototypes or globals, call functions found in data, trigger conversion hooks, mutate data, or run unbounded. Host functions run with full privileges and cannot be interrupted while running synchronously; getters and Proxies in the context run when read. Declared types are not access control: `keys()`, `values()`, `entries()`, and dynamic indexing read every own property of the data passed in.
+
+## Migrating from 0.x
+
+`a |> f(b)` -> `a.f(b)`; `upper`/`lower` -> `toUpperCase`/`toLowerCase`; `flatten` -> `flat`; stdlib plugins -> built in; `addFunction` -> `functions: { name: fn({...}) }`; `addContextFunction` -> `fn({ context: true, ... })`; `validate()` -> `check()`; `evaluateExpression` -> `bonsai().evaluateSync`; `allowedProperties` -> pass only the data expressions may read; `x == null` now includes missing values; `&&`/`||` are strict booleans (use `??` for defaults).
+
+## Built-in functions
+
+Every built-in is callable as `f(x, ...)` or `x.f(...)`. `?` marks an optional parameter.
+
+<!-- BEGIN GENERATED FUNCTIONS -->
+
+### Text
+
+- toUpperCase(string): string: Upper-cases text.
+- toLowerCase(string): string: Lower-cases text.
+- trim(string): string: Removes leading and trailing whitespace.
+- trimStart(string): string: Removes leading whitespace.
+- trimEnd(string): string: Removes trailing whitespace.
+- startsWith(string, string): boolean: Whether text starts with a prefix.
+- endsWith(string, string): boolean: Whether text ends with a suffix.
+- includes(string, string): boolean: Whether text contains a substring, or a list contains a value.
+- indexOf(string, string): number: Position of the first match, or -1.
+- lastIndexOf(string, string): number: Position of the last match, or -1.
+- slice(string, number, number?): string: A section of text or a list; negative positions count from the end.
+- split(string, string, number?): string[]: Splits text on a separator.
+- replace(string, string, string): string: Replaces the first occurrence of some text (no patterns).
+- replaceAll(string, string, string): string: Replaces every occurrence of some text (no patterns).
+- padStart(string, number, string?): string: Pads text at the start to a length.
+- padEnd(string, number, string?): string: Pads text at the end to a length.
+- repeat(string, number): string: Repeats text a number of times.
+- at(string, number): string | null: The item or character at a position; negative positions count from the end.
+- matches(string, string): boolean: Whether text contains a match for a regular expression (RE2 syntax, linear time; anchor with ^ and $; prefix (?i) to ignore case).
+- toString(string | number | boolean | null | timestamp | duration): string: Renders a value as text, as a template would.
+- toNumber(string | number): number: Parses text as a number.
+
+### Lists
+
+- map(T[], (T, number) => U): U[]: Transforms each item.
+- filter(T[], (T, number) => boolean): T[]: Keeps the items for which the lambda is true.
+- find(T[], (T, number) => boolean): T | null: The first item for which the lambda is true, or null.
+- findIndex(T[], (T, number) => boolean): number: The position of the first item for which the lambda is true, or -1.
+- some(T[], (T, number) => boolean): boolean: Whether the lambda is true for at least one item.
+- every(T[], (T, number) => boolean): boolean: Whether the lambda is true for every item.
+- none(T[], (T, number) => boolean): boolean: Whether the lambda is false for every item.
+- count(T[]): number; count(T[], (T, number) => boolean): number: The number of items, or of items for which the lambda is true.
+- flatMap(T[], (T, number) => U[] | U): U[]: Transforms each item and flattens list results one level.
+- reduce(T[], (U, T) => U, U): U: Folds a list into one value: reduce(list, (acc, item) => ..., initial).
+- sort(T[], ("asc" | "desc")?): T[]: Sorts numbers, text, timestamps, or durations; pass "desc" to reverse.
+- sortBy(T[], (T, number) => K, ("asc" | "desc")?): T[]: Sorts by a key; pass "desc" to reverse. Nulls sort first.
+- groupBy(T[], (T, number) => string | number | boolean): { [key: string]: T[] }: Groups items into a map of lists by a key.
+- reverse(T[]): T[]: The items in reverse order.
+- unique(T[]): T[]: The items without duplicates (by value), in first-seen order.
+- flat(any[]): any[]: Flattens nested lists one level.
+- first(T[]): T | null: The first item, or null.
+- last(T[]): T | null: The last item, or null.
+- join((string | number | boolean | null | timestamp | duration)[], string?): string: Joins items into text with a separator (default ",").
+- slice(T[], number, number?): T[]: A section of text or a list; negative positions count from the end.
+- at(T[], number): T | null: The item or character at a position; negative positions count from the end.
+- includes(T[], any): boolean: Whether text contains a substring, or a list contains a value.
+- indexOf(T[], any): number: Position of the first match, or -1.
+- lastIndexOf(T[], any): number: Position of the last match, or -1.
+- isEmpty(any[] | string | { [key: string]: any } | null): boolean: Whether a list, text, or map has no items; null is empty.
+- min(T[]): T | null: The smallest value (nulls are skipped); null for an empty list.
+- max(T[]): T | null: The largest value (nulls are skipped); null for an empty list.
+- sum((number | null)[]): number; sum((duration | null)[]): duration: The sum of the numbers in a list (nulls are skipped).
+- avg((number | null)[]): number | null: The mean of the numbers in a list (nulls are skipped); null for no numbers.
+
+### Numbers
+
+- round(number, number?): number: Rounds half away from zero, optionally to a number of decimal digits.
+- floor(number): number: Rounds down.
+- ceil(number): number: Rounds up.
+- trunc(number): number: Drops the fractional part.
+- abs(number): number: Absolute value.
+- sqrt(number): number: Square root.
+- clamp(number, number, number): number: Limits a number to a range.
+- toFixed(number, number): string: Formats a number with a fixed number of decimals.
+- formatNumber(number, number?, string?): string: Formats a number with grouping, e.g. 1,234.5, with optional decimals and locale (default "en-US").
+- formatCurrency(number, string, string?): string: Formats an amount in a currency (ISO 4217 code such as "EUR"), with an optional locale (default "en-US").
+- min(T[]): T | null; min(number, ...number): number: The smallest value (nulls are skipped); null for an empty list.
+- max(T[]): T | null; max(number, ...number): number: The largest value (nulls are skipped); null for an empty list.
+- sum((number | null)[]): number: The sum of the numbers in a list (nulls are skipped).
+- avg((number | null)[]): number | null: The mean of the numbers in a list (nulls are skipped); null for no numbers.
+
+### Maps and Values
+
+- keys({ [key: string]: any }): string[]: The keys of a map.
+- values({ [key: string]: T }): T[]: The values of a map.
+- entries({ [key: string]: T }): { key: string, value: T }[]: The { key, value } pairs of a map.
+- isEmpty(any[] | string | { [key: string]: any } | null): boolean: Whether a list, text, or map has no items; null is empty.
+- type(any): string: The kind of a value: "null", "boolean", "number", "string", "list", "map", "timestamp", "duration", or "opaque".
+- toString(string | number | boolean | null | timestamp | duration): string: Renders a value as text, as a template would.
+
+### Time
+
+- now(): timestamp: The current time, fixed for one evaluation.
+- timestamp(string): timestamp; timestamp(number): timestamp; timestamp(timestamp): timestamp: Parses ISO-8601 text or epoch milliseconds into a timestamp.
+- weeks(number): duration: A duration of n weeks.
+- days(number): duration: A duration of n days (24 hours each).
+- hours(number): duration: A duration of n hours.
+- minutes(number): duration: A duration of n minutes.
+- seconds(number): duration: A duration of n seconds.
+- milliseconds(number): duration: A duration of n milliseconds.
+- inDays(duration): number: A duration as a (fractional) number of days.
+- inHours(duration): number: A duration as a number of hours.
+- inMinutes(duration): number: A duration as a number of minutes.
+- inSeconds(duration): number: A duration as a number of seconds.
+- inMilliseconds(duration): number: A duration as a number of milliseconds.
+- year(timestamp, string?): number: The calendar year, in a time zone (default UTC).
+- month(timestamp, string?): number: The month 1-12, in a time zone (default UTC).
+- day(timestamp, string?): number: The day of the month, in a time zone (default UTC).
+- hour(timestamp, string?): number: The hour 0-23, in a time zone (default UTC).
+- minute(timestamp, string?): number: The minute, in a time zone (default UTC).
+- second(timestamp, string?): number: The second, in a time zone (default UTC).
+- dayOfWeek(timestamp, string?): number: The ISO weekday (Monday 1 to Sunday 7), in a time zone (default UTC).
+- startOfDay(timestamp, string?): timestamp: Midnight at the start of the day, in a time zone (default UTC).
+- startOfMonth(timestamp, string?): timestamp: Midnight on the first of the month, in a time zone (default UTC).
+- startOfYear(timestamp, string?): timestamp: Midnight on January 1, in a time zone (default UTC).
+- addDays(timestamp, number, string?): timestamp: Adds calendar days (keeps the wall-clock time across DST), in a time zone.
+- addMonths(timestamp, number, string?): timestamp: Adds calendar months, clamping the day to the month length.
+- addYears(timestamp, number, string?): timestamp: Adds calendar years (Feb 29 becomes Feb 28).
+- formatDate(timestamp, string, string?): string: Formats a timestamp in a time zone (default UTC). Tokens: yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS; quote literal text.
+- abs(duration): duration: Absolute value.
+- sum((duration | null)[]): duration: The sum of the numbers in a list (nulls are skipped).
+
+<!-- END GENERATED FUNCTIONS -->

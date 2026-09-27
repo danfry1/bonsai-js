@@ -1,13 +1,12 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   // Entry points that legitimately "consume" code. The published package entries
-  // (src/index.ts, src/stdlib/index.ts, src/autocomplete/index.ts) are detected
-  // automatically from the package.json "exports" field, so only the non-src
-  // graphs are listed here. Including them means their imports count as usage, so
-  // devDependencies like jexl (benchmarks) are not falsely reported as unused.
+  // (src/index.ts, src/service/index.ts) are detected automatically from the
+  // package.json "exports" field, so only the non-src graphs are listed here.
+  // Including them means their imports count as usage, so devDependencies used
+  // only by tests or scripts are not falsely reported as unused.
   "entry": [
     "tests/**/*.test.ts",
-    "benchmarks/**/*.bench.ts",
     "scripts/*.ts"
     // website/.vitepress lives under a dot-directory knip does not match, so a
     // website entry pattern only produces a "no matches" hint.

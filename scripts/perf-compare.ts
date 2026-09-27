@@ -12,7 +12,8 @@
  * Usage: bun run scripts/perf-compare.ts [baseRef] (default: origin/main)
  *
  * The current perf-gate.ts is copied into the base worktree so both sides run
- * identical cases; the gate only uses APIs that exist on every supported base.
+ * identical cases. A base whose public API predates the one the gate uses
+ * cannot run those cases, so the comparison is skipped (exit 0) with a notice.
  */
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
@@ -60,6 +61,26 @@ function runGate(cwd: string, jsonPath: string): Record<string, number> {
   return JSON.parse(readFileSync(jsonPath, 'utf8')) as Record<string, number>
 }
 
+// Exports the gate relies on. A base without them has an incompatible API.
+const REQUIRED_EXPORTS = ['bonsai', 'fn', 't', 'isBonsaiError']
+
+function baseApiCompatible(cwd: string): boolean {
+  const entry = join(cwd, 'src', 'index.ts')
+  const probe = [
+    `const m = await import(${JSON.stringify(entry)})`,
+    `const required = ${JSON.stringify(REQUIRED_EXPORTS)}`,
+    'if (required.some((name) => !(name in m))) process.exit(3)',
+    'const env = m.bonsai({ limits: { cacheSize: 0 } })',
+    "if (typeof env.compile !== 'function' || typeof env.evaluateSync !== 'function') process.exit(3)",
+  ].join('\n')
+  try {
+    execFileSync('bun', ['-e', probe], { cwd, stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
 function best(runs: Record<string, number>[]): Record<string, number> {
   const out: Record<string, number> = {}
   for (const run of runs) {
@@ -79,46 +100,52 @@ try {
   // The base worktree shares this checkout's installed dependencies.
   symlinkSync(join(root, 'node_modules'), join(baseDir, 'node_modules'), 'dir')
 
-  const baseRuns: Record<string, number>[] = []
-  const headRuns: Record<string, number>[] = []
-  for (let round = 0; round < ROUNDS; round++) {
-    const basePath = join(scratch, `base-${String(round)}.json`)
-    const headPath = join(scratch, `head-${String(round)}.json`)
-    // Alternate order to avoid consistently favoring either side through CPU
-    // warm-up, thermal drift, or other time-correlated runner behavior.
-    if (round % 2 === 0) {
-      baseRuns.push(runGate(baseDir, basePath))
-      headRuns.push(runGate(root, headPath))
-    } else {
-      headRuns.push(runGate(root, headPath))
-      baseRuns.push(runGate(baseDir, basePath))
-    }
-  }
-  const base = best(baseRuns)
-  const head = best(headRuns)
-
-  const failures: string[] = []
-  writeLine('Relative performance (head vs base, best of rounds):')
-  for (const [name, headHz] of Object.entries(head)) {
-    const baseHz = base[name]
-    if (baseHz === undefined || baseHz === 0) {
-      writeLine(`- ${name}: ${Math.round(headHz).toLocaleString()} ops/sec (no base measurement)`)
-      continue
-    }
-    const ratio = headHz / baseHz
-    const status = ratio >= MIN_RETAINED_RATIO ? 'OK' : 'REGRESSION'
+  if (!baseApiCompatible(baseDir)) {
     writeLine(
-      `- ${name}: ${Math.round(headHz).toLocaleString()} vs ${Math.round(baseHz).toLocaleString()} ops/sec (${(ratio * PERCENT).toFixed(0)}%) [${status}]`,
+      `${baseRef} has an incompatible API (missing ${REQUIRED_EXPORTS.join('/')} or the environment methods the gate uses); skipping the relative comparison.`,
     )
-    if (ratio < MIN_RETAINED_RATIO) {
-      failures.push(
-        `${name} retained only ${(ratio * PERCENT).toFixed(0)}% of base throughput (minimum ${String(MIN_RETAINED_RATIO * PERCENT)}%)`,
-      )
+  } else {
+    const baseRuns: Record<string, number>[] = []
+    const headRuns: Record<string, number>[] = []
+    for (let round = 0; round < ROUNDS; round++) {
+      const basePath = join(scratch, `base-${String(round)}.json`)
+      const headPath = join(scratch, `head-${String(round)}.json`)
+      // Alternate order to avoid consistently favoring either side through CPU
+      // warm-up, thermal drift, or other time-correlated runner behavior.
+      if (round % 2 === 0) {
+        baseRuns.push(runGate(baseDir, basePath))
+        headRuns.push(runGate(root, headPath))
+      } else {
+        headRuns.push(runGate(root, headPath))
+        baseRuns.push(runGate(baseDir, basePath))
+      }
     }
-  }
+    const base = best(baseRuns)
+    const head = best(headRuns)
 
-  if (failures.length > 0) {
-    throw new Error(`Performance regression against ${baseRef}:\n- ${failures.join('\n- ')}`)
+    const failures: string[] = []
+    writeLine('Relative performance (head vs base, best of rounds):')
+    for (const [name, headHz] of Object.entries(head)) {
+      const baseHz = base[name]
+      if (baseHz === undefined || baseHz === 0) {
+        writeLine(`- ${name}: ${Math.round(headHz).toLocaleString()} ops/sec (no base measurement)`)
+        continue
+      }
+      const ratio = headHz / baseHz
+      const status = ratio >= MIN_RETAINED_RATIO ? 'OK' : 'REGRESSION'
+      writeLine(
+        `- ${name}: ${Math.round(headHz).toLocaleString()} vs ${Math.round(baseHz).toLocaleString()} ops/sec (${(ratio * PERCENT).toFixed(0)}%) [${status}]`,
+      )
+      if (ratio < MIN_RETAINED_RATIO) {
+        failures.push(
+          `${name} retained only ${(ratio * PERCENT).toFixed(0)}% of base throughput (minimum ${String(MIN_RETAINED_RATIO * PERCENT)}%)`,
+        )
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`Performance regression against ${baseRef}:\n- ${failures.join('\n- ')}`)
+    }
   }
 } finally {
   try {

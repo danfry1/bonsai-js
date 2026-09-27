@@ -816,3 +816,26 @@
     font-size: 0.72rem;
   }
 }
+
+/* ── Diagnostics ── */
+.pg-expr-highlight .hl-error {
+  text-decoration: underline wavy var(--error);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+
+.pg-expr-highlight .hl-warn {
+  text-decoration: underline wavy #f59e0b;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+
+.pg-error.pg-warning {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.6);
+  color: #d97706;
+}
+
+.dark .pg-error.pg-warning {
+  color: #fbbf24;
+}

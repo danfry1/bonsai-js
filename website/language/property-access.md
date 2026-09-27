@@ -1,45 +1,92 @@
 # Property Access
 
-Use property access to read nested objects, array elements, and dynamic keys from the context object. A missing own property resolves to `undefined`, which makes `??` defaults very natural. Reading a property from a nullish receiver also yields `undefined`; only calling a method on a nullish receiver is an error (use `?.` there).
+<!-- context: { user: { name: "Ada", nickname: null, tags: ["admin", "beta"], address: { city: "London" } }, counts: { "7": 3 }, id: 7, key: "name" } -->
 
-| Pattern | Use it for |
-|---|---|
-| `user.name` | Read a known property |
-| `items[0]` | Read an array element |
-| `record[key]` | Use a dynamic property name from context |
-| `user?.profile?.avatar ?? "default.png"` | Make the null-tolerant path explicit and provide a fallback |
+## Variables
 
-## Dot & bracket notation
+A name reads a variable from the context. In an open environment (no declared variables), an unknown name reads as `null`; in a strict environment it is a check error. Variables and functions are separate namespaces: `sum` as a variable and `sum(...)` as a call do not conflict.
 
-| Expression | Result | Note |
-|---|---|---|
-| `customer.name` | `"Alicia"` | |
-| `order.items[0].sku` | `"SKU-001"` | |
-| `profile["first-name"]` | `"Alicia"` | brackets for keys with special characters |
+## Members: `a.b`
 
-## Optional chaining
+`a.b` reads the own property `b` of a map. Reading a missing property gives `null`, and reading any property of `null` gives `null`, so chains of reads never fail on missing data:
 
-Use `?.` when you want to say, directly in the expression, that a missing branch is expected and should quietly produce `undefined`.
+```bonsai
+user.name // => "Ada"
+user.address.city // => "London"
+user.profile.avatar // => null
+user.profile.avatar ?? "default.png" // => "default.png"
+```
 
-| Expression | Result | Note |
-|---|---|---|
-| `customer?.billing?.country` | `undefined` | `{ customer: null }` (no error thrown) |
-| `customer?.billing?.country ?? "GB"` | `"GB"` | combine with `??` for fallbacks |
-| `messages?.[locale] ?? messages?.en` | `"Bonjour"` | optional chaining also works with computed keys |
+Strings and lists have exactly one property, `length`. Reading any other property of a string, number, boolean, list, timestamp, duration, or opaque value is a type error. Functions are called, not read: write `user.name.toUpperCase()`, not `user.name.toUpperCase`.
 
-Plain `.` access is also null-tolerant for property reads: `customer.billing.country`
-with `{ customer: null }` evaluates to `undefined` rather than throwing, so rules
-over sparse data stay readable. Where `?.` makes a difference is method calls:
-`customer.name.trim()` throws a typed error when `name` is nullish, while
-`customer.name?.trim()` evaluates to `undefined`.
+```bonsai
+user.name.length // => 3
+user.tags.length // => 2
+user.name.first // error: TYPE_ERROR
+```
 
-Property lookup reads own properties only, never the prototype chain: a class
-getter or method defined on a prototype reads as `undefined`, and a polluted
-`Object.prototype` cannot leak into results. Own getters defined by your host
-objects are read like any other own property. Computed keys accept primitives
-only, so object conversion hooks do not run.
+## Indexing: `a[k]`
 
-**Security note:** allowlists and denylists apply to member and method names,
-not root identifiers or object-literal keys. If `user.secret` should be blocked,
-`secret` must stay out of `allowedProperties`; `user` is controlled by which
-top-level values you put in the context.
+| Receiver | Key | Result |
+| --- | --- | --- |
+| map | string | the own property, or `null` |
+| map | number | the property named by its decimal text |
+| list or string | integer | the item or character, or `null` when the position does not exist |
+| `null` | anything | `null` |
+| anything | `null` | `null` |
+
+Negative and fractional positions do not exist, so they give `null`. Use `at(-1)` or `last()` to count from the end.
+
+```bonsai
+user["name"] // => "Ada"
+user[key] // => "Ada"
+counts[id] // => 3
+user.tags[0] // => "admin"
+user.tags[5] // => null
+user.tags[-1] // => null
+user.tags.at(-1) // => "beta"
+"hello"[1] // => "e"
+```
+
+## Optional calls: `?.`
+
+`?.` is accepted wherever `.` is and means the same for reads (which already give `null` on `null`). It matters for calls: a function call with a `null` receiver is an error, while `?.` makes that one call return `null` instead.
+
+```bonsai
+user.nickname.toUpperCase() // error: NULL_RECEIVER
+user.nickname?.toUpperCase() // => null
+user.nickname?.toUpperCase() ?? user.name // => "Ada"
+```
+
+Unlike JavaScript, `?.` short-circuits only its own call, not the rest of the chain. Write `?.` at every call that may receive `null`:
+
+```bonsai
+user.nickname?.trim()?.toUpperCase() // => null
+```
+
+With declared types, the checker reports a missing `?.` before evaluation (`NULLABLE_RECEIVER`). See [Static Checking](/language/checking).
+
+## Presence: `has`
+
+`has(a.b)` is `true` when `a` is a map with an own property `b`, even if its value is `null`. It distinguishes "present but null" from "missing", which `== null` does not. See [let, try, and has](/language/let-try-has).
+
+```bonsai
+has(user.nickname) // => true
+has(user.middleName) // => false
+user.nickname == null && user.middleName == null // => true
+```
+
+## Blocked names
+
+`__proto__`, `constructor`, and `prototype` are never readable. As a literal property name they are a syntax error; as a computed key they are a runtime `BLOCKED_PROPERTY` error.
+
+```bonsai
+user.__proto__ // error: SYNTAX
+user["constructor"] // error: BLOCKED_PROPERTY
+```
+
+Only own properties are visible. Inherited members such as `toString` or `hasOwnProperty` are not properties of a map:
+
+```bonsai
+user.hasOwnProperty // => null
+```
