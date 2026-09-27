@@ -45,7 +45,10 @@ migrating; the website has an old-to-new table.
 - `program.explain(context)` (and `explainAsync`, `env.explain`) evaluates and
   returns a trace of every sub-expression's value, with skipped branches and
   per-item lambda runs, to show why a rule produced its result; `reasons()`
-  lists the deciding conditions (all of them with `exhaustive: true`). The `stdlib`, `checker`, and `autocomplete` subpaths are removed.
+  lists the deciding conditions (all of them with `exhaustive: true`).
+- `program.partial(known, { unknown })` evaluates what the known data decides
+  and returns the value, a final error, or an exact residual expression (with
+  bindings) that needs only the unknown data. The `stdlib`, `checker`, and `autocomplete` subpaths are removed.
 
 ### Engine
 

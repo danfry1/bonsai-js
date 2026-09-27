@@ -533,8 +533,69 @@ async function scenarioHolds(scenario: Scenario): Promise<boolean> {
 
     // (e) explain() agrees with evaluation and its trace is plain data.
     if (env === openEnv) checkExplain(env, source, context, sync)
+
+    // (f) partial evaluation with part of the context is faithful: its value,
+    // or its residual evaluated with the full context, matches evaluation.
+    if (env === openEnv) checkPartial(env, source, context, sync)
   }
   return true
+}
+
+const HASH_MULTIPLIER = 31
+const FIELD_UNKNOWN_BIT = 0x100
+const LIMIT_CODES = new Set([
+  'STEP_LIMIT',
+  'STRING_LIMIT',
+  'LIST_LIMIT',
+  'TOO_DEEP',
+  'TIMEOUT',
+  'ABORTED',
+])
+
+function checkPartial(
+  env: ReturnType<typeof bonsai>,
+  source: string,
+  context: Record<string, unknown>,
+  expected: Outcome,
+): void {
+  if (!expected.ok && LIMIT_CODES.has(expected.code)) return
+  const compiled = capture('compile', () => env.compile(source))
+  if (!compiled.ok) return
+  const program = compiled.value as { partial: (known: object, options?: object) => unknown }
+  // Deterministically hide some variables (and sometimes a single field).
+  let hash = 0
+  for (let i = 0; i < source.length; i++) hash = (hash * HASH_MULTIPLIER + source.charCodeAt(i)) | 0
+  const names = Object.keys(context)
+  const unknown = names.filter((_, i) => ((hash >>> i) & 1) === 1)
+  if ((hash & FIELD_UNKNOWN_BIT) !== 0 && names.includes('items')) unknown.push('items.0')
+  const known: Record<string, unknown> = {}
+  for (const name of names) if (!unknown.includes(name)) known[name] = context[name]
+  const result = capture('partial', () => program.partial(known, { unknown }))
+  if (!result.ok) {
+    if (LIMIT_CODES.has(result.code)) return
+    throw new FuzzViolation(
+      `partial threw ${result.code} for ${JSON.stringify(source)} (unknown ${unknown.join(',')})`,
+    )
+  }
+  const partial = result.value as
+    | { status: 'value'; value: unknown }
+    | { status: 'error'; error: { code: string } }
+    | { status: 'residual'; source: string; evaluateSync: (ctx: object) => unknown }
+  let outcome: Outcome
+  if (partial.status === 'value') outcome = { ok: true, value: partial.value }
+  else if (partial.status === 'error')
+    outcome = { ok: false, code: partial.error.code, message: '' }
+  else {
+    outcome = capture('residual', () => partial.evaluateSync(context))
+    if (!outcome.ok && LIMIT_CODES.has(outcome.code)) return
+  }
+  if (!sameOutcome(expected, outcome)) {
+    const shown =
+      partial.status === 'residual' ? ` (residual ${JSON.stringify(partial.source)})` : ''
+    throw new FuzzViolation(
+      `partial of ${JSON.stringify(source)} with ${unknown.join(',') || 'nothing'} unknown gave ${describeOutcome(outcome)}${shown}, evaluation gave ${describeOutcome(expected)}`,
+    )
+  }
 }
 
 function checkExplain(
