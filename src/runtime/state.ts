@@ -93,6 +93,11 @@ export class State {
     if (signal !== undefined && isAborted(this)) throw abortError(this)
   }
 
+  /** Grows the locals array for a program with more slots (partial evaluation). */
+  ensureLocals(count: number): void {
+    if (this.locals.length < count) this.locals.length = count
+  }
+
   release(): void {
     this.tracer = undefined
     this.ctx = NO_CONTEXT

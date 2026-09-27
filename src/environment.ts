@@ -18,6 +18,7 @@ import {
   type FunctionDef,
   type ValidationBudget,
 } from './functions/define.js'
+import { partiallyEvaluate, type PartialOptions, type PartialResult } from './partial.js'
 import { DEFAULT_RUNTIME_LIMITS, State, type RuntimeLimits } from './runtime/state.js'
 import { errorText, isMap } from './runtime/values.js'
 import {
@@ -259,6 +260,16 @@ export interface Program<Ctx = object, R = unknown> {
   explain: (...args: ExplainArgs<Ctx>) => Explanation<R>
   /** Like explain, for expressions that call async host functions. */
   explainAsync: (...args: ExplainArgs<Ctx>) => Promise<Explanation<R>>
+  /**
+   * Evaluates what can be evaluated from partial data. Returns the value when
+   * the known data decides it, or a simplified residual expression (source and
+   * syntax tree) that needs only the unknown data. Evaluating the residual with
+   * the full data gives the same result as evaluating this program.
+   */
+  partial: (
+    known: Partial<Ctx> & Record<string, unknown>,
+    options?: PartialOptions,
+  ) => PartialResult<R>
 }
 
 export interface ExplainOptions extends EvaluateOptions {
@@ -1134,10 +1145,81 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       }
     }
 
+    // Sub-trees compiled on their own for partial evaluation, by free locals.
+    const subtrees = new WeakMap<Node, Map<string, CompiledProgram>>()
+
+    function partial(known: Record<string, unknown>, options: PartialOptions): PartialResult<R> {
+      const context = contextOf(known)
+      const now = options.now
+      const state = new State(
+        settings.runtimeLimits,
+        now === undefined ? settings.clock : () => now,
+      )
+      state.reset(context, source, 0, settings.runtimeLimits.maxSteps, settings.timeout, undefined)
+      try {
+        return partiallyEvaluate<R>(
+          {
+            analysis,
+            hostKind: (name) => {
+              const def = settings.host.get(name)
+              return def === undefined
+                ? undefined
+                : { async: def.async === true, context: def.context === true }
+            },
+            charge: () => {
+              state.charge(1)
+            },
+            evaluate: (node, locals) => {
+              const key = locals.map(([name]) => name).join('\u0000')
+              let byLocals = subtrees.get(node)
+              if (byLocals === undefined) subtrees.set(node, (byLocals = new Map()))
+              let code = byLocals.get(key)
+              if (code === undefined) {
+                code = compileProgram({ ...analysis, root: node }, 'sync', {
+                  locals: locals.map(([name]) => name),
+                })
+                byLocals.set(key, code)
+              }
+              state.ensureLocals(code.localCount)
+              locals.forEach(([, value], slot) => {
+                state.locals[slot] = value
+              })
+              try {
+                return code.run(state)
+              } catch (error) {
+                throw hostDataFailure(error, source)
+              }
+            },
+            compileResidual: (residual) => {
+              // The original expression passed the checker; inlining known
+              // values can make a failing branch statically visible, and that
+              // failure must happen at run time, as it would have.
+              // Analyzed as a tree (not re-parsed), so the printer's parentheses
+              // cannot push it past the parse depth limit.
+              const program = makeProgram<unknown>(
+                source,
+                analyze(residual, { ...checkEnv, variables: undefined, strict: false }),
+              )
+              return {
+                evaluateSync: (ctx) => (program as Program).evaluateSync(ctx),
+                evaluate: (ctx) => (program as Program).evaluate(ctx),
+              }
+            },
+          },
+          context,
+          options,
+        )
+      } finally {
+        state.release()
+      }
+    }
+
     // Programs are shared: the tree compiles lazily, so it must not change afterwards.
     return Object.freeze({
       explain: (...args: ExplainArgs<Ctx>) => explainSync(args[0], args[1]),
       explainAsync: (...args: ExplainArgs<Ctx>) => explainAsync(args[0], args[1]),
+      partial: (known: Record<string, unknown>, options: PartialOptions = {}) =>
+        partial(known, options),
       source,
       ast: deepFreeze(analysis.root),
       type: deepFreeze(analysis.type),

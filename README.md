@@ -198,6 +198,30 @@ rule.explain({ user }, { exhaustive: true }).reasons().map((r) => r.text)
 
 `explanation.trace` is the full tree: each node has an `id`, `kind`, `text`, `start`/`end` source offsets, `value` or `error`, and `children`. Parts skipped by short-circuiting are marked `evaluated: false`, and lambdas record each item they ran on under `iterations` (up to `maxIterations`, default 20; `maxTraceNodes` caps the whole trace). `JSON.stringify(explanation)` gives a bounded, cycle-safe snapshot that never runs getters. Evaluation errors are returned (`ok: false`, `error`) with the failing node marked, never thrown; invalid options or context throw, as with `evaluate()`. Use `explainAsync()` for expressions that call async host functions. Explaining uses a separately compiled program, so ordinary evaluation is not slowed down.
 
+## Partial evaluation
+
+`partial()` evaluates what it can from the data you have and returns either the answer or a simplified expression that needs only the missing data:
+
+```ts
+import { bonsai } from 'bonsai-js'
+
+const rule = bonsai().compile('user.plan == "pro" && order.total > limits.minTotal')
+const limits = { minTotal: 100 }
+
+rule.partial({ user: { plan: 'free' }, limits }) // { status: 'value', value: false }
+
+const result = rule.partial({ user: { plan: 'pro' }, limits })
+if (result.status === 'residual') {
+  result.source // 'order.total > 100'
+  result.dependsOn // ['order.total']
+  result.evaluateSync({ order: { total: 150 } }) // true, the same answer as with all the data
+}
+```
+
+Use it to decide early (can this user ever pass?), to precompute the per-user part of a rule once and evaluate the rest per request, or to push a filter down to where the data lives. Unknowns default to the variables missing from what you pass; `unknown: ['order', 'user.riskScore']` names them explicitly (unknown wins over a value you did pass).
+
+The result is exact: evaluating the residual with the full data gives the same value or error as evaluating the original. Short primitives are written into the residual; other known values (lists, maps, dates) are kept in `result.bindings` and referenced by name, and `evaluateSync`/`evaluate` on the result supply them. `now()` and host functions stay in the residual unless you pass `now` or `callHostFunctions: true`. When the known data already decides that evaluation fails, the result is `{ status: 'error', error }`.
+
 ## Syntax trees and visual editors
 
 `env.parse(source)` returns a JSON syntax tree with source offsets on every node, and `print(tree)` turns a tree back into source. Printing is deterministic and round-trips: `print(env.parse(print(tree)))` is the same text, with the fewest parentheses that keep the meaning. That is what a visual rule builder needs: parse, edit the tree, print, save.

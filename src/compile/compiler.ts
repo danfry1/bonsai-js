@@ -106,6 +106,12 @@ export interface CompileOptions {
    * evaluation pays nothing for tracing.
    */
   readonly trace?: boolean
+  /**
+   * Free local names the compiled tree may read (for compiling a sub-tree
+   * on its own). They occupy slots 0..n-1 in order; the caller stores their
+   * values in `state.locals` before running.
+   */
+  readonly locals?: readonly string[]
 }
 
 export function compileProgram(
@@ -871,7 +877,9 @@ export function compileProgram(
     }
   }
 
-  const root = compile(analysis.root, { locals: new Map(), it: undefined })
+  const freeLocals = new Map<string, number>()
+  for (const name of options.locals ?? []) freeLocals.set(name, slots++)
+  const root = compile(analysis.root, { locals: freeLocals, it: undefined })
   const fn = root.fn
   const run = root.async
     ? (s: State): unknown =>
