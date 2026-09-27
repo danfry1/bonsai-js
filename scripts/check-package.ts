@@ -102,6 +102,7 @@ try {
       ...['CallNode', 'CallStyle', 'CheckResult', 'CompileOptions', 'ConditionalNode'],
       ...['ContextOf', 'Diagnostic', 'DiagnosticCode', 'Duration', 'DurationType'],
       ...['Environment', 'EnvironmentOptions', 'ErrorCode', 'ErrorInit', 'EvaluateOptions'],
+      ...['ExplainOptions', 'Explanation', 'Iteration', 'Trace'],
       ...['FnSpec', 'FunctionInfo', 'FunctionType', 'HasNode', 'HostFunction', 'IndexNode'],
       ...['Infer', 'InferVariables', 'ItNode', 'LambdaNode', 'LetNode', 'Library', 'Limits'],
       ...['ListNode', 'ListType', 'LiteralNode', 'LiteralType', 'LocalNode', 'MapEntry'],

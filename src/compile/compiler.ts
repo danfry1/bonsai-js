@@ -9,6 +9,7 @@ import {
   type Overload,
 } from '../functions/define.js'
 import type { State } from '../runtime/state.js'
+import { errorInfo, type Tracer } from '../runtime/trace.js'
 import {
   add,
   chargeKey,
@@ -98,14 +99,69 @@ function recoverable(error: unknown): boolean {
  * Compiles an analyzed tree. In `sync` mode every closure is synchronous. In
  * `async` mode only the nodes on a path to an async host call become async.
  */
-export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): CompiledProgram {
+export interface CompileOptions {
+  /**
+   * Instrument every node to record its value on `state.tracer` (for
+   * explain()). Traced programs are compiled separately, so ordinary
+   * evaluation pays nothing for tracing.
+   */
+  readonly trace?: boolean
+}
+
+export function compileProgram(
+  analysis: Analysis,
+  mode: 'sync' | 'async',
+  options: CompileOptions = {},
+): CompiledProgram {
   let slots = 0
   const allowAsync = mode === 'async'
+  const tracing = options.trace === true
 
   const sync = (fn: (s: State) => unknown): Code => ({ fn, async: false })
   const asyncCode = (fn: (s: State) => Promise<unknown>): Code => ({ fn, async: true })
 
   function compile(node: Node, scope: Scope): Code {
+    const code = compileNode(node, scope)
+    return tracing ? instrument(node, code) : code
+  }
+
+  function instrument(node: Node, code: Code): Code {
+    const fn = code.fn
+    if (!code.async) {
+      return sync((s) => {
+        const tracer = s.tracer as Tracer
+        const trace = tracer.enter(node)
+        if (trace === undefined) return fn(s)
+        try {
+          const value = fn(s)
+          trace.value = value
+          return value
+        } catch (error) {
+          trace.error = errorInfo(error)
+          throw error
+        } finally {
+          tracer.exit()
+        }
+      })
+    }
+    return asyncCode(async (s) => {
+      const tracer = s.tracer as Tracer
+      const trace = tracer.enter(node)
+      if (trace === undefined) return fn(s)
+      try {
+        const value = await fn(s)
+        trace.value = value
+        return value
+      } catch (error) {
+        trace.error = errorInfo(error)
+        throw error
+      } finally {
+        tracer.exit()
+      }
+    })
+  }
+
+  function compileNode(node: Node, scope: Scope): Code {
     switch (node.type) {
       case 'Literal': {
         const value = node.value
@@ -249,6 +305,12 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
   }
 
   function compileMember(node: Extract<Node, { type: 'Member' }>, scope: Scope): Code {
+    if (tracing) {
+      // Every step of a.b.c is its own traced node.
+      const object = compile(node.object, scope)
+      const name = node.name
+      return strict1(object, (s, o) => readMember(o, name, s, node))
+    }
     // Fuse a chain of static member reads: a.b.c reads in one closure.
     const names: string[] = []
     const spans: Span[] = []
@@ -322,6 +384,8 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
     const r = right.fn
     const anyAsync = left.async || right.async
 
+    if (tracing && (op === '&&' || op === '||')) return compileExplainedLogic(node, left, right)
+
     switch (op) {
       case '&&':
         if (!anyAsync)
@@ -373,6 +437,57 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
         () => b,
         at,
       )(s)
+    })
+  }
+
+  /**
+   * && and || when explaining. With `exhaustive`, the side that
+   * short-circuiting would skip is still evaluated (and traced) so every
+   * deciding condition is recorded; its evaluation errors are ignored and the
+   * result is the ordinary one.
+   */
+  function compileExplainedLogic(node: BinaryNode, left: Code, right: Code): Code {
+    const isAnd = node.operator === '&&'
+    const what = `"${node.operator}"`
+    const extraSync = (s: State, r: (s: State) => unknown): void => {
+      const tracer = s.tracer as Tracer
+      tracer.extraDepth++
+      try {
+        r(s)
+      } catch (error) {
+        if (!(error instanceof BonsaiRuntimeError)) throw error
+      } finally {
+        tracer.extraDepth--
+      }
+    }
+    if (!left.async && !right.async) {
+      const [l, r] = [left.fn, right.fn]
+      return sync((s) => {
+        const a = truth(l(s), s, node.left, what)
+        if (a !== isAnd) {
+          if ((s.tracer as Tracer).exhaustive) extraSync(s, r)
+          return a
+        }
+        return truth(r(s), s, node.right, what)
+      })
+    }
+    return asyncCode(async (s) => {
+      const a = truth(await left.fn(s), s, node.left, what)
+      if (a !== isAnd) {
+        const tracer = s.tracer as Tracer
+        if (tracer.exhaustive) {
+          tracer.extraDepth++
+          try {
+            await right.fn(s)
+          } catch (error) {
+            if (!(error instanceof BonsaiRuntimeError)) throw error
+          } finally {
+            tracer.extraDepth--
+          }
+        }
+        return a
+      }
+      return truth(await right.fn(s), s, node.right, what)
     })
   }
 
@@ -566,13 +681,38 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
               return b(s)
             }
       // Name the failing item: "... (at item 3)". Only the innermost lambda annotates.
-      return (item: unknown, index: unknown) => {
+      // Built-ins call lambdas as (item, index); reduce calls (acc, item, index).
+      const annotated = (argA: unknown, argB: unknown, position?: number): unknown => {
+        const index = position ?? argB
         try {
-          const result = run(item, index)
+          const result = run(argA, argB)
           return body.async ? annotateAsync(result as Promise<unknown>, index) : result
         } catch (error) {
           throw annotate(error, index)
         }
+      }
+      if (!tracing) return annotated
+      // Record each run as an iteration of the enclosing call.
+      return (argA: unknown, argB: unknown, position?: number) => {
+        const tracer = s.tracer as Tracer
+        const recorded =
+          position === undefined
+            ? tracer.enterIteration(node, typeof argB === 'number' ? argB : 0, argA)
+            : tracer.enterIteration(node, position, argB, argA)
+        if (!body.async) {
+          try {
+            return annotated(argA, argB, position)
+          } finally {
+            tracer.exitIteration(recorded)
+          }
+        }
+        return (async () => {
+          try {
+            return await annotated(argA, argB, position)
+          } finally {
+            tracer.exitIteration(recorded)
+          }
+        })()
       }
     }
     return { fn: make, async: body.async }

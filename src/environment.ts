@@ -20,6 +20,16 @@ import {
 } from './functions/define.js'
 import { DEFAULT_RUNTIME_LIMITS, State, type RuntimeLimits } from './runtime/state.js'
 import { errorText, isMap } from './runtime/values.js'
+import {
+  DEFAULT_MAX_ITERATIONS,
+  DEFAULT_MAX_TRACE_NODES,
+  Tracer,
+  reasonsOf,
+  renderTrace,
+  snapshot,
+  snapshotTrace,
+  type Trace,
+} from './runtime/trace.js'
 import type { Node } from './syntax/ast.js'
 import { isName } from './syntax/lexer.js'
 import { DEFAULT_PARSE_LIMITS, parse, type ParseLimits } from './syntax/parser.js'
@@ -240,6 +250,56 @@ export interface Program<Ctx = object, R = unknown> {
   }
   evaluate: (...args: Args<Ctx>) => Promise<R>
   evaluateSync: (...args: Args<Ctx>) => R
+  /**
+   * Evaluates and records the value of every sub-expression, so you can show
+   * why the result came out as it did. Never throws for evaluation errors:
+   * they are returned in the explanation. Slower than evaluateSync.
+   */
+  explain: (...args: ExplainArgs<Ctx>) => Explanation<R>
+  /** Like explain, for expressions that call async host functions. */
+  explainAsync: (...args: ExplainArgs<Ctx>) => Promise<Explanation<R>>
+}
+
+export interface ExplainOptions extends EvaluateOptions {
+  /** How many lambda runs to record per call (the rest are counted). Default 20. */
+  readonly maxIterations?: number
+  /** Sub-expressions to record in total before stopping (the result stays exact). Default 10,000. */
+  readonly maxTraceNodes?: number
+  /**
+   * Also evaluate the side of && and || that short-circuiting would skip, so
+   * reasons() lists every failing condition rather than the first. Those
+   * parts are marked `extra`; their errors are ignored and the result is
+   * unchanged. Host functions on those parts do run. Default false.
+   */
+  readonly exhaustive?: boolean
+}
+
+type ExplainArgs<Ctx> =
+  Record<string, never> extends Ctx
+    ? [context?: Ctx, options?: ExplainOptions]
+    : [context: Ctx, options?: ExplainOptions]
+
+/** The result of explain(): the outcome plus a trace of every sub-expression. */
+export type Explanation<R> = (
+  | { readonly ok: true; readonly value: R }
+  | { readonly ok: false; readonly error: BonsaiError }
+) & {
+  /** The root of the trace; its `value` is the result. Values are live references. */
+  readonly trace: Trace
+  /** True when maxTraceNodes stopped recording before evaluation finished. */
+  readonly truncated: boolean
+  /**
+   * The conditions that decided the result, following &&, ||, and ! down to
+   * the comparisons and values (or the error) behind it.
+   */
+  reasons: () => Trace[]
+  /** The trace as an indented, human-readable tree. */
+  toString: () => string
+  /**
+   * A JSON-safe snapshot: values are bounded copies (cycles, bigints, dates,
+   * and durations handled) and getters are never run. `JSON.stringify` uses it.
+   */
+  toJSON: () => unknown
 }
 
 export interface CompileOptions<E extends Type = Type> {
@@ -277,6 +337,10 @@ export interface Environment<Ctx = object> {
   evaluate: <R = unknown>(source: string, ...args: Args<Ctx>) => Promise<R>
   /** Compiles (cached) and evaluates synchronously. */
   evaluateSync: <R = unknown>(source: string, ...args: Args<Ctx>) => R
+  /** Compiles (cached) and explains; see Program.explain. Throws only for syntax and check errors. */
+  explain: <R = unknown>(source: string, ...args: ExplainArgs<Ctx>) => Explanation<R>
+  /** Compiles (cached) and explains asynchronously. */
+  explainAsync: <R = unknown>(source: string, ...args: ExplainArgs<Ctx>) => Promise<Explanation<R>>
   /** Looks up a function (host or built-in). */
   describeFunction: (name: string) => FunctionInfo | undefined
   /** Every callable function, host functions first. */
@@ -698,7 +762,7 @@ function validateContext(
  * Reading host data (a getter, a Proxy trap, a `then` hook) can throw. Such a
  * failure is a HOST_ERROR, never a raw JavaScript error.
  */
-function hostDataFailure(error: unknown, source: string): unknown {
+function hostDataFailure(error: unknown, source: string): BonsaiError {
   if (error instanceof BonsaiError) return error
   return new BonsaiRuntimeError('HOST_ERROR', `Reading host data failed: ${errorText(error)}`, {
     source,
@@ -725,6 +789,18 @@ function checkedClock(clock: () => Date): () => Date {
     }
     return value
   }
+}
+
+/** The evaluation options inside explain options (explain's own keys removed). */
+function evaluateOptionsOf(options: ExplainOptions | undefined): EvaluateOptions | undefined {
+  if (options === undefined || options === null || typeof options !== 'object') return options
+  const {
+    maxIterations: _iterations,
+    maxTraceNodes: _nodes,
+    exhaustive: _exhaustive,
+    ...rest
+  } = options
+  return rest
 }
 
 function contextOf(value: unknown): Record<string, unknown> {
@@ -903,8 +979,116 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       return result
     }
 
+    let traceSync: CompiledProgram | undefined
+    let traceAsync: CompiledProgram | undefined
+
+    function explanation(
+      tracer: Tracer,
+      outcome: { ok: true; value: R } | { ok: false; error: BonsaiError },
+    ): Explanation<R> {
+      const trace = tracer.finish()
+      const truncated = tracer.truncated
+      return Object.freeze({
+        ...outcome,
+        trace,
+        truncated,
+        reasons: () => reasonsOf(trace),
+        toString: () => renderTrace(trace, truncated),
+        toJSON: () => ({
+          ok: outcome.ok,
+          ...(outcome.ok
+            ? { value: snapshot(outcome.value) }
+            : { error: { code: outcome.error.code, message: outcome.error.message } }),
+          truncated,
+          trace: snapshotTrace(trace),
+        }),
+      })
+    }
+
+    function failure(error: unknown): { ok: false; error: BonsaiError } {
+      return { ok: false, error: hostDataFailure(error, source) }
+    }
+
+    function tracerFor(options: ExplainOptions | undefined): Tracer {
+      const maxIterations = options?.maxIterations ?? DEFAULT_MAX_ITERATIONS
+      const maxNodes = options?.maxTraceNodes ?? DEFAULT_MAX_TRACE_NODES
+      for (const [name, value] of [
+        ['maxIterations', maxIterations],
+        ['maxTraceNodes', maxNodes],
+      ] as const) {
+        if (!Number.isInteger(value) || value < 0) {
+          throw new TypeError(`Explain option "${name}" must be a non-negative integer`)
+        }
+      }
+      return new Tracer(
+        source,
+        analysis.root,
+        maxIterations,
+        maxNodes,
+        options?.exhaustive === true,
+      )
+    }
+
+    function explainSync(context: unknown, options: ExplainOptions | undefined): Explanation<R> {
+      const tracer = tracerFor(options)
+      if (analysis.async) {
+        return explanation(
+          tracer,
+          failure(
+            new BonsaiRuntimeError(
+              'ASYNC_IN_SYNC',
+              'This expression calls an async function; use explainAsync()',
+              { source },
+            ),
+          ),
+        )
+      }
+      const code = (traceSync ??= compileProgram(analysis, 'sync', { trace: true }))
+      const limits = evaluationLimits(evaluateOptionsOf(options), settings)
+      const ctx = contextOf(context)
+      const state = new State(settings.runtimeLimits, settings.clock)
+      try {
+        prepare(state, ctx, limits, code.localCount)
+        state.tracer = tracer
+        const value = code.run(state) as R
+        checked(value, state)
+        state.checkTime()
+        return explanation(tracer, { ok: true, value })
+      } catch (error) {
+        return explanation(tracer, failure(error))
+      } finally {
+        state.release()
+      }
+    }
+
+    async function explainAsync(
+      context: unknown,
+      options: ExplainOptions | undefined,
+    ): Promise<Explanation<R>> {
+      if (!analysis.async) return explainSync(context, options)
+      const tracer = tracerFor(options)
+      const code = (traceAsync ??= compileProgram(analysis, 'async', { trace: true }))
+      const limits = evaluationLimits(evaluateOptionsOf(options), settings)
+      const ctx = contextOf(context)
+      const state = new State(settings.runtimeLimits, settings.clock)
+      try {
+        prepare(state, ctx, limits, code.localCount)
+        state.tracer = tracer
+        const value = settle((await code.run(state)) as R)
+        checked(value, state)
+        state.checkTime()
+        return explanation(tracer, { ok: true, value })
+      } catch (error) {
+        return explanation(tracer, failure(error))
+      } finally {
+        state.release()
+      }
+    }
+
     // Programs are shared: the tree compiles lazily, so it must not change afterwards.
     return Object.freeze({
+      explain: (...args: ExplainArgs<Ctx>) => explainSync(args[0], args[1]),
+      explainAsync: (...args: ExplainArgs<Ctx>) => explainAsync(args[0], args[1]),
       source,
       ast: deepFreeze(analysis.root),
       type: deepFreeze(analysis.type),
@@ -987,6 +1171,10 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     },
     evaluateSync: <R>(source: string, ...args: Args<Ctx>) =>
       cached(source).evaluateSync(...args) as R,
+    explain: <R>(source: string, ...args: ExplainArgs<Ctx>) =>
+      cached(source).explain(...args) as Explanation<R>,
+    explainAsync: <R>(source: string, ...args: ExplainArgs<Ctx>) =>
+      cached(source).explainAsync(...args) as Promise<Explanation<R>>,
     describeFunction(name: string): FunctionInfo | undefined {
       const def = checkEnv.lookup(name)
       return def === undefined ? undefined : info(def)

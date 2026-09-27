@@ -8,6 +8,8 @@ export type {
   EnvironmentOptions,
   EvaluateOptions,
   FnSpec,
+  ExplainOptions,
+  Explanation,
   FunctionInfo,
   HostFunction,
   Library,
@@ -74,4 +76,5 @@ export type {
 } from './syntax/ast.js'
 export type { ParseLimits } from './syntax/parser.js'
 export { print } from './syntax/printer.js'
+export type { Iteration, Trace } from './runtime/trace.js'
 export type { PrintOptions } from './syntax/printer.js'

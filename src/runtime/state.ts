@@ -1,3 +1,4 @@
+import type { Tracer } from './trace.js'
 import { BonsaiLimitError, BonsaiRuntimeError, type ErrorCode, type Span } from '../errors.js'
 
 /** Runtime limits. Every limit is on by default; options only change the budget. */
@@ -57,6 +58,8 @@ export class State {
   zones: Map<string, unknown> | undefined = undefined
   /** Costly resources (patterns, formatters) this evaluation has used; created on demand. */
   private resources: Map<string, unknown> | undefined = undefined
+  /** Set only while explaining; traced programs record into it. */
+  tracer: Tracer | undefined = undefined
   readonly limits: RuntimeLimits
   readonly clock: () => Date
 
@@ -91,6 +94,7 @@ export class State {
   }
 
   release(): void {
+    this.tracer = undefined
     this.ctx = NO_CONTEXT
     this.resources = undefined
     this.shapes = undefined
