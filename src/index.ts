@@ -5,6 +5,8 @@ export type {
   Environment,
   EnvironmentOptions,
   EvaluateOptions,
+  ExplainOptions,
+  Explanation,
   FunctionInfo,
   HostFunction,
   Library,
@@ -25,4 +27,5 @@ export {
 export type { Diagnostic, DiagnosticCode, ErrorCode, Span } from './errors.js'
 export type * from './syntax/ast.js'
 export { print } from './syntax/printer.js'
+export type { Iteration, Trace } from './runtime/trace.js'
 export type { PrintOptions } from './syntax/printer.js'

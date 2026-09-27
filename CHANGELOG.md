@@ -41,7 +41,11 @@ migrating; the website has an old-to-new table.
 - `bonsai-js/service` provides completions, hover, and diagnostics from the
   checker.
 - `print(tree, { calls })` turns a syntax tree back into source, round-tripping
-  with `env.parse` so visual editors can edit rules as trees. The `stdlib`, `checker`, and `autocomplete` subpaths are removed.
+  with `env.parse` so visual editors can edit rules as trees.
+- `program.explain(context)` (and `explainAsync`, `env.explain`) evaluates and
+  returns a trace of every sub-expression's value, with skipped branches and
+  per-item lambda runs, to show why a rule produced its result; `reasons()`
+  lists the deciding conditions (all of them with `exhaustive: true`). The `stdlib`, `checker`, and `autocomplete` subpaths are removed.
 
 ### Engine
 
