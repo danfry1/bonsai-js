@@ -152,8 +152,8 @@ in the function namespace.
 Passing `null` for an optional parameter uses its default.
 
 `try(expr, fallback)` evaluates `expr` and, if it fails with an evaluation
-error (type error, invalid argument, host function failure), evaluates
-`fallback` instead. Limit errors (steps, size, timeout, cancellation) are never
+error (type error, invalid argument, or a failure in host code such as a host
+function or a context getter), evaluates `fallback` instead. Limit errors (steps, size, timeout, cancellation) are never
 caught.
 
 ## 6. Lambdas

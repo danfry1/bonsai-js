@@ -99,6 +99,7 @@ export default defineConfig({
           { text: 'Errors', link: '/api/errors' },
           { text: 'Limits', link: '/api/limits' },
           { text: 'Language Service', link: '/api/service' },
+          { text: 'Explaining Results', link: '/api/explain' },
           { text: 'Syntax Trees and print()', link: '/api/printer' },
         ],
       },

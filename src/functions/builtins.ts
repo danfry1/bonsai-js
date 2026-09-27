@@ -924,17 +924,17 @@ const LIST_FUNCTIONS: FunctionDef[] = [
       U,
       ([l, f, initial]) => {
         const items = list(l)
-        const fn = f as (acc: unknown, item: unknown) => unknown
+        const fn = f as (acc: unknown, item: unknown, index: number) => unknown
         let acc = initial
-        for (const item of items) acc = fn(acc, item)
+        for (let i = 0; i < items.length; i++) acc = fn(acc, items[i], i)
         return acc
       },
       {
         runAsync: async ([l, f, initial]) => {
           const items = list(l)
-          const fn = f as (acc: unknown, item: unknown) => unknown
+          const fn = f as (acc: unknown, item: unknown, index: number) => unknown
           let acc = initial
-          for (const item of items) acc = await fn(acc, item)
+          for (let i = 0; i < items.length; i++) acc = await fn(acc, items[i], i)
           return acc
         },
       },
