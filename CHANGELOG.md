@@ -48,7 +48,10 @@ migrating; the website has an old-to-new table.
   lists the deciding conditions (all of them with `exhaustive: true`).
 - `program.partial(known, { unknown })` evaluates what the known data decides
   and returns the value, a final error, or an exact residual expression (with
-  bindings) that needs only the unknown data. The `stdlib`, `checker`, and `autocomplete` subpaths are removed.
+  bindings) that needs only the unknown data.
+- `bonsai-js/query`: `toSQL` (Postgres, SQLite) and `toMongo` translate a
+  filter over a declared record into a parameterized query that selects exactly
+  the records the filter accepts. The `stdlib`, `checker`, and `autocomplete` subpaths are removed.
 
 ### Engine
 

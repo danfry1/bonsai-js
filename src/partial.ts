@@ -163,6 +163,8 @@ export interface ResidualResult<R> {
   readonly bindings: Readonly<Record<string, unknown>>
   /** Context paths the residual still reads (besides `bindings`). */
   readonly dependsOn: readonly string[]
+  /** Host functions the residual still calls (they may replace a built-in of the same name). */
+  readonly hostFunctions: readonly string[]
   /** Evaluates the residual with the (full) context; bindings are supplied for you. */
   readonly evaluateSync: (context?: object) => R
   readonly evaluate: (context?: object) => Promise<R>
@@ -405,7 +407,13 @@ export function partiallyEvaluate<R>(
       const leftTrue = value === true
       if (leftTrue !== isAnd) return { known: true, value: leftTrue } // false && x, true || x
       const right = peval(node.right, env)
-      if (right.known) return residual(withKnownLocals(node, env))
+      if (right.known) {
+        // true && y and false || y are truth(y): a boolean, false for null, or a failure.
+        if (right.value === true || right.value === false)
+          return { known: true, value: right.value }
+        if (right.value === null || right.value === undefined) return { known: true, value: false }
+        return residual(withKnownLocals(node, env))
+      }
       // true && x and false || x are x only when x always yields a boolean.
       return residual(
         alwaysBoolean(right.node) ? right.node : { ...node, left: asNode(left), right: right.node },
@@ -497,12 +505,23 @@ export function partiallyEvaluate<R>(
     dependsOn: [...residualDeps.paths]
       .filter((path) => !Object.hasOwn(frozenBindings, path.split('.')[0]))
       .sort(),
+    hostFunctions: hostCalls(outcome.node, engine.hostKind),
     evaluateSync: (context?: object) => compiled.evaluateSync(withBindings(context)) as R,
     evaluate: (context?: object) => compiled.evaluate(withBindings(context)) as Promise<R>,
   })
 }
 
 // === tree helpers ===
+
+function hostCalls(root: Node, hostKind: PartialEngine['hostKind']): string[] {
+  const names = new Set<string>()
+  const visit = (node: Node): void => {
+    if (node.type === 'Call' && hostKind(node.name) !== undefined) names.add(node.name)
+    forEachChild(node, visit)
+  }
+  visit(root)
+  return [...names].sort()
+}
 
 /** Rebuilds `node` with each child replaced; lambda arguments are passed with their node. */
 function mapChildren(node: Node, f: (child: Node, lambda?: LambdaNode) => Node): Node {

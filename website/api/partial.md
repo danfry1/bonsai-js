@@ -36,7 +36,7 @@ result.status === 'residual' && result.evaluateSync({ order: { total: 150 } }) /
 |---|---|
 | `value` | The known data decides the result: `value` |
 | `error` | Evaluation fails whatever the unknown data is: `error` |
-| `residual` | `residual` (syntax tree), `source`, `bindings`, `dependsOn`, and `evaluateSync` / `evaluate` |
+| `residual` | `residual` (syntax tree), `source`, `bindings`, `dependsOn`, `hostFunctions` (host functions the residual still calls), and `evaluateSync` / `evaluate` |
 
 The residual is exact: evaluating it with the full data gives the same value or error as evaluating the original expression with the full data. Simplifications that would change a result (for example turning `x && false` into `false` when `x` could fail) are not made.
 

@@ -192,6 +192,26 @@ Use it to decide early (can this user ever pass?), to precompute the per-user pa
 
 The result is exact: evaluating the residual with the full data gives the same value or error as evaluating the original. Short primitives are written into the residual; other known values (lists, maps, dates) are kept in `result.bindings` and referenced by name, and `evaluateSync`/`evaluate` on the result supply them. `now()` and host functions stay in the residual unless you pass `now` or `callHostFunctions: true`. When the known data already decides that evaluation fails, the result is `{ status: 'error', error }`.
 
+## Filters in your database
+
+`bonsai-js/query` turns a filter written in Bonsai into a SQL `WHERE` clause (Postgres, SQLite) or a MongoDB filter, so user-defined filters run where the data lives:
+
+```ts
+import { toMongo, toSQL } from 'bonsai-js/query'
+
+const filter = env.compile('order.status == "paid" && order.total > minTotal')
+const columns = { status: 'text', total: 'number' } as const
+
+toSQL(filter, { row: 'order', columns, dialect: 'postgres', known: { minTotal: 100 } })
+// { sql: '(COALESCE(("status" COLLATE "C") = ($1::text COLLATE "C"), FALSE) AND COALESCE("total"::float8 > $2::float8, FALSE))',
+//   params: ['paid', 100] }
+
+toMongo(filter, { row: 'order', fields: columns, known: { minTotal: 100 } })
+// { filter: { $and: [{ status: { $eq: 'paid' } }, { total: { $gt: 100 } }] }, options: { collation: { locale: 'simple' } } }
+```
+
+The query selects exactly the records for which the filter evaluates to `true` in Bonsai, including null handling (SQL's three-valued logic is made two-valued) and records where the filter would fail (they are excluded). Only declared columns can be queried, values are always parameters, and anything without an exact database equivalent throws a `BonsaiTranslationError` pointing at it. This is checked by differential tests against real SQLite, Postgres, and a MongoDB query engine.
+
 ## Syntax trees and visual editors
 
 `env.parse(source)` returns a JSON syntax tree with source offsets on every node, and `print(tree)` turns a tree back into source. Printing is deterministic and round-trips: `print(env.parse(print(tree)))` is the same text, with the fewest parentheses that keep the meaning. That is what a visual rule builder needs: parse, edit the tree, print, save.

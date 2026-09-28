@@ -24,6 +24,8 @@ export type ErrorCode =
   | 'ASYNC_IN_SYNC'
   | 'HOST_ERROR'
   | 'INVALID_CONTEXT'
+  // query translation
+  | 'UNTRANSLATABLE'
 
 export interface Span {
   readonly start: number
