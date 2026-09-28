@@ -23,7 +23,7 @@ The service reads the environment's variables, built-ins, and host functions, in
 
 ## Completions
 
-`complete(source, offset)` returns the items that fit at a cursor position (a UTF-16 offset) and the range `from`..`to` that accepting an item should replace. Items are ranked by how well they match what has been typed, and member completions are type-aware: after a list you get list functions, after a map its fields.
+`complete(source, offset)` returns the items that fit at a cursor position (a UTF-16 offset) and the range `start`..`end` that accepting an item should replace (an item with its own `range` replaces that instead). Items are ranked by how well they match what has been typed, and member completions are type-aware: after a list you get list functions, after a map its fields.
 
 <!-- continue -->
 ```ts
@@ -31,7 +31,7 @@ const afterDot = service.complete('orders.filter(.', 15)
 afterDot.items.map((item) => item.label).slice(0, 3) // => ["id", "paid", "total"]
 
 const partial = service.complete('user.na', 7)
-partial.from // => 5
+partial.start // => 5
 partial.items[0].label // => "name"
 partial.items[0].insertText // => "name"
 ```
@@ -73,8 +73,10 @@ Any editor component that can ask for completions at an offset works. The patter
 textarea.addEventListener('input', () => {
   const source = textarea.value
   const offset = textarea.selectionStart
-  const { from, to, items } = service.complete(source, offset)
-  showMenu(items, (item) => replaceRange(from, to, item.insertText))
+  const { start, end, items } = service.complete(source, offset)
+  showMenu(items, (item) =>
+    replaceRange(item.range?.start ?? start, item.range?.end ?? end, item.insertText),
+  )
   showProblems(service.diagnostics(source))
 })
 ```

@@ -32,7 +32,7 @@ import {
   timeOf,
   toText,
 } from '../runtime/values.js'
-import { t, unionOf, widen, type Type } from '../types.js'
+import { isExact, t, unionOf, widen, type Type } from '../types.js'
 import {
   K,
   T,
@@ -392,6 +392,8 @@ function entryList(map: Record<string, unknown>, site: CallSite): string[] {
 /** Result type of reading values out of a map type. */
 function valueTypeOf(type: Type | undefined): Type {
   if (type === undefined || type.kind !== 'map') return any
+  // A declared object may hold keys it does not list, of any type.
+  if (type.rest === undefined && !isExact(type)) return any
   const members = Object.values(type.fields)
   if (type.rest !== undefined) members.push(type.rest)
   return members.length === 0 ? any : unionOf(members.map(widen))

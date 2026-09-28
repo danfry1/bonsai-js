@@ -1,4 +1,4 @@
-import type { Diagnostic, DiagnosticCode } from '../errors.js'
+import { BonsaiLimitError, type Diagnostic, type DiagnosticCode } from '../errors.js'
 import { RESULT_REFINERS } from '../functions/builtins.js'
 import { isLambdaPosition, type FunctionDef, type Overload } from '../functions/define.js'
 import {
@@ -10,15 +10,22 @@ import {
   type SpreadNode,
 } from '../syntax/ast.js'
 import {
+  chargeTypeWork,
+  exactObject,
   fieldOf,
   formatType,
   isAssignable,
+  isExact,
   isNullable,
   nonNull,
   overlaps,
+  sameType,
   t,
+  TypeBudgetExceeded,
   unionOf,
   widen,
+  withFields,
+  withTypeBudget,
   type MapType,
   type Type,
 } from '../types.js'
@@ -73,13 +80,39 @@ export interface ProbeScope {
   readonly it: Type | undefined
 }
 
+/**
+ * Paths (see pathKey) known to be non-null, as a chain of frames so entering a
+ * condition adds only its own facts (a long `&&` chain stays linear).
+ */
+interface Facts {
+  readonly keys: ReadonlySet<string>
+  readonly parent: Facts | undefined
+  /** Facts about `.` from enclosing frames do not reach a new implicit lambda. */
+  readonly hidesIt: boolean
+}
+
+function hasFact(facts: Facts | undefined, key: string): boolean {
+  const aboutIt = key === 'it' || key.startsWith('it.') || key.startsWith('it[')
+  for (let frame = facts; frame !== undefined; frame = frame.parent) {
+    if (frame.keys.has(key)) return true
+    if (frame.hidesIt && aboutIt) return false
+  }
+  return false
+}
+
 interface Scope {
   readonly locals: ReadonlyMap<string, Type>
   /** Type of the implicit parameter `.` in the innermost implicit lambda. */
   readonly it: Type | undefined
-  /** Paths (see pathKey) known to be non-null here, from enclosing conditions. */
-  readonly nonNull?: ReadonlySet<string>
+  /** Paths known to be non-null here, from enclosing conditions. */
+  readonly nonNull?: Facts | undefined
 }
+
+/**
+ * Type work allowed per analysis: generous for the largest sources the parse
+ * limits admit, small enough that a pathological one fails fast.
+ */
+const CHECK_BUDGET = 500_000
 
 function containsIt(node: Node): boolean {
   if (node.type === 'It') return true
@@ -117,6 +150,14 @@ function expectationProblem(actual: Type, expected: Type): string | undefined {
       const field = fieldOf(actual, key)
       return field !== undefined && !isAssignable(field, expected.fields[key])
     })
+    const rest = expected.rest
+    const wrongRest =
+      rest === undefined
+        ? []
+        : Object.keys(actual.fields).filter(
+            (key) =>
+              !Object.hasOwn(expected.fields, key) && !isAssignable(actual.fields[key], rest),
+          )
     const parts: string[] = []
     if (missing.length > 0) parts.push(`missing ${missing.map((k) => `"${k}"`).join(', ')}`)
     if (extra.length > 0)
@@ -128,9 +169,14 @@ function expectationProblem(actual: Type, expected: Type): string | undefined {
         `"${key}" should be ${formatType(expected.fields[key])} but is ${formatType(fieldOf(actual, key) as Type)}`,
       )
     }
+    for (const key of wrongRest) {
+      parts.push(
+        `"${key}" should be ${formatType(rest as Type)} but is ${formatType(actual.fields[key])}`,
+      )
+    }
     if (parts.length > 0)
       return `The result does not match ${formatType(expected)}: ${parts.join('; ')}`
-    return undefined
+    if (isAssignable(actual, expected)) return undefined
   }
   if (isAssignable(actual, expected)) return undefined
   return `Expected the expression to produce ${formatType(expected)} but it produces ${formatType(actual)}`
@@ -141,8 +187,21 @@ function suggestAll(names: readonly string[], candidates: readonly string[]): st
   return hints.length > 0 ? hints.join('') : ''
 }
 
-/** A stable key for a readable path (`user.address.city`), or undefined. */
+const pathKeys = new WeakMap<Node, string | null>()
+
+/**
+ * A stable key for a readable path, or undefined. `m.a` and `m["a"]` share a
+ * key: segments are `."name"` (JSON-quoted, so no two paths collide) or `[n]`.
+ */
 function pathKey(node: Node): string | undefined {
+  const cached = pathKeys.get(node)
+  if (cached !== undefined) return cached ?? undefined
+  const key = computePathKey(node)
+  pathKeys.set(node, key ?? null)
+  return key
+}
+
+function computePathKey(node: Node): string | undefined {
   switch (node.type) {
     case 'Variable':
       return `v:${node.name}`
@@ -152,12 +211,14 @@ function pathKey(node: Node): string | undefined {
       return 'it'
     case 'Member': {
       const base = pathKey(node.object)
-      return base === undefined ? undefined : `${base}.${node.name}`
+      return base === undefined ? undefined : `${base}.${JSON.stringify(node.name)}`
     }
     case 'Index': {
       const base = pathKey(node.object)
       if (base === undefined || node.index.type !== 'Literal') return undefined
-      return `${base}[${JSON.stringify(node.index.value)}]`
+      const { value } = node.index
+      if (typeof value === 'string') return `${base}.${JSON.stringify(value)}`
+      return typeof value === 'number' ? `${base}[${value}]` : undefined
     }
     case 'Binary':
     case 'Call':
@@ -176,8 +237,23 @@ function pathKey(node: Node): string | undefined {
   }
 }
 
+const factMemo = [
+  new WeakMap<Node, ReadonlySet<string>>(),
+  new WeakMap<Node, ReadonlySet<string>>(),
+]
+
 /** Paths that are non-null whenever `condition` evaluates to `positive`. */
-function nonNullFacts(condition: Node, positive: boolean): Set<string> {
+function nonNullFacts(condition: Node, positive: boolean): ReadonlySet<string> {
+  const memo = factMemo[positive ? 1 : 0]
+  let facts = memo.get(condition)
+  if (facts === undefined) {
+    facts = computeFacts(condition, positive)
+    memo.set(condition, facts)
+  }
+  return facts
+}
+
+function computeFacts(condition: Node, positive: boolean): ReadonlySet<string> {
   const out = new Set<string>()
   switch (condition.type) {
     case 'Unary':
@@ -188,7 +264,11 @@ function nonNullFacts(condition: Node, positive: boolean): Set<string> {
         const a = nonNullFacts(left, positive)
         const b = nonNullFacts(right, positive)
         // a && b true (or a || b false): both hold. Otherwise only common facts.
-        if ((operator === '&&') === positive) return new Set([...a, ...b])
+        if ((operator === '&&') === positive) {
+          if (a.size === 0) return b
+          if (b.size === 0) return a
+          return new Set([...a, ...b])
+        }
         return new Set([...a].filter((key) => b.has(key)))
       }
       if (operator === '!=' || operator === '==') {
@@ -236,7 +316,21 @@ function nonNullFacts(condition: Node, positive: boolean): Set<string> {
 
 function withFacts(scope: Scope, facts: ReadonlySet<string>): Scope {
   if (facts.size === 0) return scope
-  return { ...scope, nonNull: new Set([...(scope.nonNull ?? []), ...facts]) }
+  return { ...scope, nonNull: { keys: facts, parent: scope.nonNull, hidesIt: false } }
+}
+
+/** The field names of a path key suffix (`."a"."b"`), or undefined at an index. */
+function pathSegments(suffix: string): string[] | undefined {
+  const out: string[] = []
+  const segment = /^\.(?<name>"(?:[^"\\]|\\.)*")/u
+  let rest = suffix
+  while (rest !== '') {
+    const match = segment.exec(rest)
+    if (match === null) return undefined
+    out.push(JSON.parse(match.groups?.name ?? '""') as string)
+    rest = rest.slice(match[0].length)
+  }
+  return out
 }
 
 /** Marks the value at `path` (segments after the root) as non-null inside `type`. */
@@ -247,7 +341,7 @@ function refinePath(type: Type, path: readonly string[]): Type {
   const [head, ...rest] = path as [string, ...string[]]
   const field = fieldOf(type, head) ?? type.rest
   if (field === undefined) return type
-  return { ...type, fields: { ...type.fields, [head]: refinePath(field, rest) } }
+  return withFields(type, { ...type.fields, [head]: refinePath(field, rest) })
 }
 
 const ANY = t.any()
@@ -256,8 +350,63 @@ const STRING = t.string()
 const BOOLEAN = t.boolean()
 const NULL = t.null()
 const OPTIONAL_BOOLEAN = t.optional(BOOLEAN)
+const NUMBER_OR_DURATION = t.union(NUMBER, t.duration())
+/** Re-checks of a lambda whose parameter types depend on its own result. */
+const MAX_LAMBDA_ROUNDS = 4
 
+/** The element type of a list, or of a union of lists; undefined for anything else. */
+function elementOf(type: Type | undefined): Type | undefined {
+  if (type === undefined) return undefined
+  if (type.kind === 'any' || type.kind === 'var') return ANY
+  if (type.kind === 'list') return type.element
+  if (type.kind !== 'union') return undefined
+  const elements: Type[] = []
+  for (const member of type.types) {
+    const element = elementOf(member)
+    if (element === undefined) return undefined
+    elements.push(element)
+  }
+  return unionOf(elements)
+}
+
+/**
+ * A map type, or a union of map types merged into one: keys every member has
+ * keep their (joined) types, keys only some members have move to `rest`.
+ */
+function mapOf(type: Type): MapType | undefined {
+  if (type.kind === 'map') return type
+  if (type.kind !== 'union' || !type.types.every((m) => m.kind === 'map')) return undefined
+  const members = type.types as readonly MapType[]
+  const fields: Record<string, Type> = {}
+  const partial: Type[] = []
+  const keys = new Set(members.flatMap((m) => Object.keys(m.fields)))
+  for (const key of keys) {
+    const found = members.map((m) => fieldOf(m, key) ?? m.rest)
+    const present = found.filter((f): f is Type => f !== undefined)
+    if (present.length === members.length) fields[key] = unionOf(present)
+    else partial.push(...present)
+  }
+  for (const m of members) if (m.rest !== undefined) partial.push(m.rest)
+  if (partial.length > 0) return { kind: 'map', fields, rest: unionOf(partial) }
+  return members.every(isExact) ? exactObject(fields) : t.object(fields)
+}
+
+/**
+ * Checks a parsed expression. Checking time is bounded: a source that would
+ * need too much type work fails with a TOO_MANY_NODES limit error.
+ */
 export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): Analysis {
+  try {
+    return withTypeBudget(CHECK_BUDGET, () => analyzeWithin(root, env, options))
+  } catch (error) {
+    if (!(error instanceof TypeBudgetExceeded)) throw error
+    throw new BonsaiLimitError('TOO_MANY_NODES', 'Expression is too complex to check', {
+      span: { start: root.start, end: root.end },
+    })
+  }
+}
+
+function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analysis {
   const diagnostics: Diagnostic[] = []
   const calls = new Map<CallNode, CallPlan>()
   const types = new Map<Node, Type>()
@@ -266,20 +415,39 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
   const functions = new Set<string>()
   let probeScope: ProbeScope | undefined
 
+  const reported = new Set<string>()
   const report = (
     code: DiagnosticCode,
     message: string,
     at: { start: number; end: number },
     severity: 'error' | 'warning' = 'error',
   ): void => {
-    if (
-      diagnostics.some(
-        (d) => d.start === at.start && d.end === at.end && d.code === code && d.message === message,
-      )
-    )
-      return
+    const key = `${at.start}:${at.end}:${code}:${message}`
+    if (reported.has(key)) return
+    reported.add(key)
     diagnostics.push({ code, message, severity, start: at.start, end: at.end })
   }
+  /** Drops diagnostics after `mark` (a re-check or a speculative check). */
+  const truncate = (mark: number): void => {
+    for (let i = mark; i < diagnostics.length; i++) {
+      const d = diagnostics[i]
+      reported.delete(`${d.start}:${d.end}:${d.code}:${d.message}`)
+    }
+    diagnostics.length = mark
+  }
+
+  /**
+   * The last result of each call that takes a lambda, by the types of the
+   * outer locals it reads. Re-checking an outer lambda (reduce's accumulator)
+   * then reuses inner calls that do not depend on what changed, instead of
+   * redoing their own re-checks (which would multiply with nesting depth).
+   * One entry per node keeps `types` and `calls` consistent: only computing
+   * this node writes the entries for its subtree.
+   */
+  const callMemo = new WeakMap<
+    CallNode,
+    { inputs: readonly Type[]; type: Type; diagnostics: readonly Diagnostic[] }
+  >()
 
   // === pass 1: bind the implicit parameter ===
 
@@ -457,18 +625,24 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
   // === pass 2: types ===
 
   const rootScope: Scope = { locals: new Map(), it: undefined }
-  let type = check(bound.node, rootScope)
-  type = widen(type)
+  const raw = check(bound.node, rootScope, options.expected)
+  // The expectation sees literal types (a plan enum accepts "pro"); the result shows base kinds.
   if (options.expected !== undefined) {
-    const problem = expectationProblem(type, options.expected)
+    const problem = expectationProblem(raw, options.expected)
     if (problem !== undefined) report('EXPECTED_TYPE', problem, resultSpan(bound.node))
   }
+  const type = widen(raw)
 
-  function check(node: Node, scope: Scope): Type {
-    let result = checkNode(node, scope)
-    if (scope.nonNull !== undefined && scope.nonNull.size > 0) {
+  /**
+   * The type of `node`. `expected` is the type the context wants, so a literal
+   * that fits it (`"pro"` for a plan enum) keeps its literal type in lists and maps.
+   */
+  function check(node: Node, scope: Scope, expected?: Type): Type {
+    chargeTypeWork(1)
+    let result = checkNode(node, scope, expected)
+    if (scope.nonNull !== undefined) {
       const key = pathKey(node)
-      if (key !== undefined && scope.nonNull.has(key)) result = nonNull(result)
+      if (key !== undefined && hasFact(scope.nonNull, key)) result = nonNull(result)
     }
     types.set(node, result)
     return result
@@ -478,7 +652,17 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
     if (asyncNodes.has(child)) asyncNodes.add(node)
   }
 
-  function checkNode(node: Node, scope: Scope): Type {
+  /** The literal type when it satisfies the expected type, otherwise its base kind. */
+  function fit(actual: Type, expected: Type | undefined): Type {
+    return expected !== undefined &&
+      expected.kind !== 'any' &&
+      expected.kind !== 'var' &&
+      isAssignable(actual, expected)
+      ? actual
+      : widen(actual)
+  }
+
+  function checkNode(node: Node, scope: Scope, expected: Type | undefined): Type {
     switch (node.type) {
       case 'Literal':
         return node.value === null ? NULL : t.literal(node.value)
@@ -542,67 +726,88 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
           expectLogic(operand, node.operand, '!')
           return BOOLEAN
         }
+        // Negation takes numbers and durations; an unknown operand may be either.
+        if (operand.kind === 'any' || operand.kind === 'var') return NUMBER_OR_DURATION
+        if (operand.kind === 'never') return operand
         if (isAssignable(operand, NUMBER)) return NUMBER
         if (isAssignable(operand, t.duration())) return t.duration()
+        if (isAssignable(operand, NUMBER_OR_DURATION)) return widen(operand)
         report('TYPE_ERROR', `Cannot negate ${formatType(operand)}`, node)
         return ANY
       }
       case 'Binary':
-        return checkBinary(node, scope)
+        return checkBinary(node, scope, expected)
       case 'Conditional': {
         const test = check(node.test, scope)
         expectLogic(test, node.test, 'A condition')
-        const a = check(node.then, withFacts(scope, nonNullFacts(node.test, true)))
-        const b = check(node.otherwise, withFacts(scope, nonNullFacts(node.test, false)))
+        const a = check(node.then, withFacts(scope, nonNullFacts(node.test, true)), expected)
+        const b = check(node.otherwise, withFacts(scope, nonNullFacts(node.test, false)), expected)
         markAsync(node, node.test)
         markAsync(node, node.then)
         markAsync(node, node.otherwise)
         return unionOf([a, b])
       }
       case 'List': {
+        const expectedItem = elementOf(expected)
         const elements: Type[] = []
         for (const item of node.items) {
           if (item.type === 'Spread') {
             const spread = check(item.argument, scope)
             markAsync(node, item.argument)
-            const listed = nonNull(spread)
-            if (listed.kind === 'list') elements.push(listed.element)
-            else if (listed.kind === 'never') continue
-            else if (listed.kind !== 'any')
+            const element = elementOf(nonNull(spread))
+            if (element !== undefined) elements.push(element)
+            else if (nonNull(spread).kind !== 'never')
               report(
                 'TYPE_ERROR',
                 `Only a list can be spread into a list, not ${formatType(spread)}`,
                 item,
               )
-            else elements.push(ANY)
           } else {
-            elements.push(widen(check(item, scope)))
+            elements.push(fit(check(item, scope, expectedItem), expectedItem))
             markAsync(node, item)
           }
         }
         return t.list(elements.length === 0 ? t.never() : unionOf(elements))
       }
       case 'Map': {
+        const expectedMap = expected === undefined ? undefined : mapOf(nonNull(expected))
         const fields: Record<string, Type> = {}
         let rest: Type | undefined
+        // A literal holds exactly its keys, unless a spread may add unknown ones.
+        let exact = true
         for (const entry of node.entries) {
           if (entry.type === 'Spread') {
             const spread = check(entry.argument, scope)
             markAsync(node, entry.argument)
-            const mapped = nonNull(spread)
-            if (mapped.kind === 'map') {
-              // Host maps can carry keys their type does not declare, so a
-              // spread may overwrite any earlier field.
-              for (const key of Object.keys(fields)) {
-                if (!Object.hasOwn(mapped.fields, key))
-                  fields[key] =
-                    mapped.rest === undefined ? ANY : unionOf([fields[key], mapped.rest])
+            const mapped = mapOf(nonNull(spread))
+            if (mapped !== undefined) {
+              // A spread may overwrite any earlier field it does not declare,
+              // unless it is exact (a literal) and lists every key it has.
+              const spreadExact = isExact(mapped)
+              if (!spreadExact || mapped.rest !== undefined) {
+                const keys = Object.keys(fields)
+                chargeTypeWork(keys.length)
+                for (const key of keys) {
+                  if (!Object.hasOwn(mapped.fields, key)) {
+                    if (mapped.rest !== undefined) fields[key] = unionOf([fields[key], mapped.rest])
+                    else fields[key] = ANY
+                  }
+                }
               }
-              Object.assign(fields, mapped.fields)
+              chargeTypeWork(Object.keys(mapped.fields).length)
+              if (mayBeNull(spread)) {
+                // A null spread adds nothing: its keys may be absent.
+                for (const [key, field] of Object.entries(mapped.fields)) {
+                  fields[key] = Object.hasOwn(fields, key)
+                    ? unionOf([fields[key], field])
+                    : t.optional(field)
+                }
+              } else Object.assign(fields, mapped.fields)
               if (mapped.rest !== undefined)
                 rest = rest === undefined ? mapped.rest : unionOf([rest, mapped.rest])
-            } else if (mapped.kind === 'any') rest = ANY
-            else if (mapped.kind === 'never') continue
+              else if (!spreadExact) exact = false
+            } else if (nonNull(spread).kind === 'any') rest = ANY
+            else if (nonNull(spread).kind === 'never') continue
             else
               report(
                 'TYPE_ERROR',
@@ -611,7 +816,11 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
               )
             continue
           }
-          const valueType = widen(check(entry.value, scope))
+          const expectedField =
+            expectedMap === undefined || typeof entry.key !== 'string'
+              ? undefined
+              : (fieldOf(expectedMap, entry.key) ?? expectedMap.rest)
+          const valueType = fit(check(entry.value, scope, expectedField), expectedField)
           markAsync(node, entry.value)
           if (typeof entry.key === 'string') fields[entry.key] = valueType
           else {
@@ -627,7 +836,8 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
             rest = rest === undefined ? valueType : unionOf([rest, valueType])
           }
         }
-        return rest === undefined ? t.object(fields) : { kind: 'map', fields, rest }
+        if (rest !== undefined) return { kind: 'map', fields, rest }
+        return exact ? exactObject(fields) : t.object(fields)
       }
       case 'Lambda':
         report('INVALID_LAMBDA', 'A lambda can only be passed to a function that takes one', node)
@@ -635,20 +845,27 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
       case 'Let': {
         const valueType = check(node.value, scope)
         markAsync(node, node.value)
+        chargeTypeWork(scope.locals.size)
         const locals = new Map(scope.locals)
         locals.set(node.name, valueType)
-        const bodyType = check(node.body, { ...scope, locals })
+        const bodyType = check(node.body, { ...scope, locals }, expected)
         markAsync(node, node.body)
         return bodyType
       }
       case 'Has': {
-        check(node.target, scope)
+        // has() may probe a key a declared object does not list: it can still exist.
+        const target = node.target
+        if (target.type === 'Member') {
+          const objectType = check(target.object, scope)
+          markAsync(node, target.object)
+          types.set(target, memberType(objectType, target.name, target, true))
+        } else check(target, scope)
         markAsync(node, node.target)
         return BOOLEAN
       }
       case 'Try': {
-        const a = check(node.body, scope)
-        const b = check(node.fallback, scope)
+        const a = check(node.body, scope, expected)
+        const b = check(node.fallback, scope, expected)
         markAsync(node, node.body)
         markAsync(node, node.fallback)
         return unionOf([a, b])
@@ -663,17 +880,35 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
     }
   }
 
-  function memberType(objectType: Type, name: string, at: Node): Type {
+  /**
+   * The type of `object.name`. A key a declared object does not list may still
+   * exist with any value (declared objects are open); `quiet` (for has()) and
+   * unions where another member has the key read it as unknown instead of failing.
+   */
+  function memberType(objectType: Type, name: string, at: Node, quiet = false): Type {
     if (objectType.kind === 'any' || objectType.kind === 'var') return ANY
     if (objectType.kind === 'never') return t.never()
     if (objectType.kind === 'null') return NULL
     if (objectType.kind === 'union') {
-      return unionOf(objectType.types.map((member) => memberType(member, name, at)))
+      // Another member has the key (null has none: a?.x on a missing key still fails).
+      const somewhere = objectType.types.some(
+        (member) =>
+          member.kind !== 'null' &&
+          member.kind !== 'never' &&
+          (member.kind !== 'map' ||
+            fieldOf(member, name) !== undefined ||
+            member.rest !== undefined),
+      )
+      return unionOf(
+        objectType.types.map((member) => memberType(member, name, at, quiet || somewhere)),
+      )
     }
     if (objectType.kind === 'map') {
       const field = fieldOf(objectType, name)
       if (field !== undefined) return field
       if (objectType.rest !== undefined) return t.optional(objectType.rest)
+      // A map literal holds no other keys; a declared object may.
+      if (quiet) return isExact(objectType) ? NULL : ANY
       report(
         'UNKNOWN_PROPERTY',
         `Property "${name}" does not exist on ${formatType(objectType)}${suggest(name, Object.keys(objectType.fields))}`,
@@ -719,6 +954,8 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
         return ANY
       }
       if (indexType.kind === 'literal') return memberType(objectType, String(indexType.value), at)
+      // Any key may exist on a declared object, with any value.
+      if (objectType.rest === undefined && !isExact(objectType)) return ANY
       const members = Object.values(objectType.fields)
       if (objectType.rest !== undefined) members.push(objectType.rest)
       return t.optional(unionOf(members))
@@ -727,12 +964,21 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
     return ANY
   }
 
-  function checkBinary(node: Extract<Node, { type: 'Binary' }>, scope: Scope): Type {
-    const left = check(node.left, scope)
+  function checkBinary(
+    node: Extract<Node, { type: 'Binary' }>,
+    scope: Scope,
+    expected: Type | undefined,
+  ): Type {
+    const nullish = node.operator === '??'
+    const left = check(
+      node.left,
+      scope,
+      nullish && expected !== undefined ? t.optional(expected) : undefined,
+    )
     let rightScope = scope
     if (node.operator === '&&') rightScope = withFacts(scope, nonNullFacts(node.left, true))
     else if (node.operator === '||') rightScope = withFacts(scope, nonNullFacts(node.left, false))
-    const right = check(node.right, rightScope)
+    const right = check(node.right, rightScope, nullish ? expected : undefined)
     markAsync(node, node.left)
     markAsync(node, node.right)
     const op = node.operator
@@ -794,7 +1040,15 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
       }
       case 'in':
       case 'not in': {
-        const containers = nonNull(right)
+        // A list literal's items keep their literal types: `plan in ["gold"]` can be always false.
+        const literalItems =
+          node.right.type === 'List' && node.right.items.every((item) => item.type !== 'Spread')
+            ? node.right.items.map((item) => types.get(item) ?? ANY)
+            : undefined
+        const containers =
+          literalItems === undefined
+            ? nonNull(right)
+            : t.list(literalItems.length === 0 ? t.never() : unionOf(literalItems))
         for (const container of containers.kind === 'union' ? containers.types : [containers]) {
           checkMembership(container, left, right, node)
         }
@@ -834,7 +1088,7 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
       if (!overlaps(left, container.element) && container.element.kind !== 'never') {
         report(
           'ALWAYS_FALSE',
-          `${formatType(left)} can never be in ${formatType(right)}`,
+          `${formatType(left)} can never be in ${formatType(container)}`,
           node,
           'warning',
         )
@@ -879,8 +1133,28 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
     }
     const known = table[kinds]
     if (known !== undefined) return known
-    if (op === '+' && a.kind === 'list' && b.kind === 'list')
-      return t.list(unionOf([a.element, b.element]))
+    if (op === '+') {
+      // Lists (or unions of lists) concatenate.
+      const x = a.kind === 'list' || a.kind === 'union' ? elementOf(a) : undefined
+      const y = b.kind === 'list' || b.kind === 'union' ? elementOf(b) : undefined
+      if (x !== undefined && y !== undefined) return t.list(unionOf([x, y]))
+    }
+    if (a.kind === 'union' || b.kind === 'union') {
+      // Each combination of members must be valid; the result joins them.
+      const results: Type[] = []
+      for (const x of a.kind === 'union' ? a.types : [a]) {
+        for (const y of b.kind === 'union' ? b.types : [b]) {
+          const r = x.kind === 'null' || y.kind === 'null' ? undefined : arithmeticQuiet(op, x, y)
+          if (r === undefined) {
+            results.length = 0
+            break
+          }
+          results.push(r)
+        }
+        if (results.length === 0) break
+      }
+      if (results.length > 0) return unionOf(results)
+    }
     const nullable = isNullable(a) || isNullable(b)
     if (nullable) {
       const retry = arithmeticQuiet(op, nonNull(a), nonNull(b))
@@ -909,34 +1183,77 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
     const saved = diagnostics.length
     const result = arithmetic(op, a, b, { type: 'Literal', value: null, start: 0, end: 0 })
     const failed = diagnostics.length > saved
-    diagnostics.length = saved
+    truncate(saved)
     return failed ? undefined : result
   }
 
   // === calls ===
 
   function checkCall(node: CallNode, scope: Scope): Type {
+    if (!node.args.some((arg) => arg.type === 'Lambda')) return checkCallNow(node, scope)
+    const free = freeLocals(node)
+    const inputs = free.names.map((name) => scope.locals.get(name) ?? ANY)
+    if (free.it) inputs.push(scope.it ?? ANY)
+    const last = callMemo.get(node)
+    if (
+      last !== undefined &&
+      last.inputs.length === inputs.length &&
+      last.inputs.every((input, i) => sameType(input, inputs[i] ?? ANY))
+    ) {
+      for (const d of last.diagnostics) report(d.code, d.message, d, d.severity)
+      return last.type
+    }
+    const mark = diagnostics.length
+    const result = checkCallNow(node, scope)
+    callMemo.set(node, { inputs, type: result, diagnostics: diagnostics.slice(mark) })
+    return result
+  }
+
+  function checkCallNow(node: CallNode, scope: Scope): Type {
     functions.add(node.name)
     const receiver = node.args[0]
+    // Math.max(...) and friends. In an open environment the context may really
+    // hold a variable with that name, so the hint is a warning there.
     if (
       node.style === 'method' &&
       receiver?.type === 'Variable' &&
       Object.hasOwn(JS_GLOBALS, receiver.name) &&
       (env.variables === undefined || !Object.hasOwn(env.variables, receiver.name))
     ) {
+      const open = !env.strict && env.variables === undefined
       report(
         'UNKNOWN_VARIABLE',
         `There is no ${receiver.name} object; ${JS_GLOBALS[receiver.name] ?? ''}`,
         receiver,
+        open ? 'warning' : 'error',
       )
-      return ANY
+      if (!open) return ANY
     }
     const def = env.lookup(node.name)
+    // With one signature, a parameter type is the context for its argument, so
+    // setPlans(["pro"]) keeps the literal a plan enum needs.
+    const only = def?.overloads.length === 1 ? def.overloads[0] : undefined
+    const contextFor = (index: number): Type | undefined => {
+      const param = only?.params[index] ?? only?.rest
+      return param === undefined || param.kind === 'function' || hasVar(param) ? undefined : param
+    }
     // Argument types, except lambdas (checked once parameter types are known).
-    const argTypes: (Type | undefined)[] = node.args.map((arg) => {
+    const argTypes: (Type | undefined)[] = node.args.map((arg, index) => {
       if (arg.type === 'Lambda') return undefined
-      const argType = check(arg.type === 'Spread' ? arg.argument : arg, scope)
-      markAsync(node, arg.type === 'Spread' ? arg.argument : arg)
+      if (arg.type === 'Spread') {
+        const spread = check(arg.argument, scope)
+        markAsync(node, arg.argument)
+        if (elementOf(nonNull(spread)) === undefined && nonNull(spread).kind !== 'never') {
+          report(
+            'TYPE_ERROR',
+            `Only a list can be spread into arguments, not ${formatType(spread)}`,
+            arg,
+          )
+        }
+        return spread
+      }
+      const argType = check(arg, scope, contextFor(index))
+      markAsync(node, arg)
       return argType
     })
     if (def === undefined) {
@@ -988,6 +1305,21 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
       }
     })
 
+    if (candidates.length === 0 && !node.args.some((arg) => arg.type === 'Lambda')) {
+      // A union argument (number | duration) is fine when every member has an
+      // overload: the call dispatches on the value at run time.
+      const distributed = distribute(def, node, argTypes, hasSpread)
+      if (distributed !== undefined) {
+        calls.set(node, {
+          def,
+          candidates: distributed.candidates,
+          direct: false,
+          asyncLambda: false,
+        })
+        return receiverNull ? t.optional(distributed.result) : distributed.result
+      }
+    }
+
     if (candidates.length === 0) {
       reportNoOverload(node, def, argTypes, hasSpread)
       for (const arg of node.args) if (arg.type === 'Lambda') checkLambda(arg, [], scope)
@@ -1016,10 +1348,25 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
         checkLambda(arg, [], scope)
         return
       }
-      const paramTypes = param.params.map((p) => substitute(p, firstBindings))
-      const bodyType = checkLambda(arg, paramTypes, scope)
-      if (asyncNodes.has(arg.body)) asyncLambda = true
+      let paramTypes = param.params.map((p) => substitute(p, firstBindings))
+      const mark = diagnostics.length
+      let bodyType = checkLambda(arg, paramTypes, scope)
       unify(param.result, bodyType, firstBindings)
+      // A parameter that takes the lambda's own result (reduce's accumulator)
+      // widens with it: re-check until the parameter types are stable.
+      for (let round = 1; ; round++) {
+        let next = param.params.map((p) => substitute(p, firstBindings))
+        const changed = changedAt(next, paramTypes)
+        if (changed.length === 0) break
+        const last = round >= MAX_LAMBDA_ROUNDS
+        if (last) next = next.map((p, i) => (changed.includes(i) ? ANY : p))
+        truncate(mark)
+        paramTypes = next
+        bodyType = checkLambda(arg, paramTypes, scope)
+        unify(param.result, bodyType, firstBindings)
+        if (last) break
+      }
+      if (asyncNodes.has(arg.body)) asyncLambda = true
       if (
         !hasVar(param.result) &&
         param.result.kind !== 'any' &&
@@ -1052,21 +1399,15 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
         for (const key of nonNullFacts(lambda.body, true)) {
           if (itemPath === undefined || (key !== itemPath && !key.startsWith(`${itemPath}.`)))
             continue
-          refined = refinePath(
-            refined,
-            key === itemPath ? [] : key.slice(itemPath.length + 1).split('.'),
-          )
+          const path = pathSegments(key.slice(itemPath.length))
+          if (path !== undefined) refined = refinePath(refined, path)
         }
         firstBindings.set('T', refined)
       }
     }
     for (const name of first.ordered ?? []) {
       const boundType = firstBindings.get(name)
-      if (boundType === undefined) continue
-      const kind = widen(nonNull(boundType))
-      if (
-        !['any', 'never', 'var', 'number', 'string', 'timestamp', 'duration'].includes(kind.kind)
-      ) {
+      if (boundType !== undefined && !orderable(boundType)) {
         report(
           'TYPE_ERROR',
           `${node.name}() can only order numbers, text, timestamps, or durations (one kind at a time), not ${formatType(boundType)}`,
@@ -1080,7 +1421,10 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
       const refined =
         def.host === true || !Object.hasOwn(RESULT_REFINERS, def.name)
           ? undefined
-          : RESULT_REFINERS[def.name]?.(argTypes.map((a) => a ?? ANY))
+          : refine(
+              RESULT_REFINERS[def.name],
+              argTypes.map((a) => a ?? ANY),
+            )
       return refined ?? substitute(candidate.result, bindings[i])
     })
     const proven =
@@ -1103,13 +1447,14 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
   function checkLambda(node: LambdaNode, params: readonly Type[], scope: Scope): Type {
     let inner: Scope
     // Facts about an outer item do not apply to the new item.
-    const outer =
+    const outer: Facts | undefined =
       scope.nonNull === undefined
         ? undefined
-        : new Set([...scope.nonNull].filter((key) => !key.startsWith('it')))
+        : { keys: new Set(), parent: scope.nonNull, hidesIt: true }
     if (node.implicit) {
       inner = { locals: scope.locals, it: params[0] ?? ANY, nonNull: outer }
     } else {
+      chargeTypeWork(scope.locals.size)
       const locals = new Map(scope.locals)
       node.params.forEach((name, index) => {
         locals.set(name, params[index] ?? ANY)
@@ -1139,9 +1484,14 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
       const param = candidate.params[i] ?? candidate.rest
       if (param === undefined) return hasSpread
       if (arg.type === 'Spread') {
-        const spread = argTypes[i]
-        const element = spread?.kind === 'list' ? spread.element : ANY
-        if (!unify(param, element, b)) return false
+        // Its items may fill this and every later position (how many is only
+        // known at run time), so each must fit all of them.
+        const element = elementOf(nonNull(argTypes[i] ?? ANY)) ?? ANY
+        if (element.kind === 'never') continue
+        const positions = [...candidate.params.slice(i), candidate.rest]
+        for (const position of positions) {
+          if (position !== undefined && !unify(position, element, b)) return false
+        }
         continue
       }
       if (arg.type === 'Lambda') {
@@ -1149,9 +1499,52 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
         continue
       }
       if (param.kind === 'function') return false
-      if (!unify(param, argTypes[i] as Type, b)) return false
+      let argType = argTypes[i] as Type
+      if (!hasSpread && i >= required && i < candidate.params.length) {
+        // A null optional argument is omitted: the default is used.
+        argType = nonNull(argType)
+        if (argType.kind === 'never') continue
+      }
+      if (!unify(param, argType, b)) return false
     }
     return true
+  }
+
+  /** Overloads per member of the first union argument; undefined unless every member has one. */
+  function distribute(
+    def: FunctionDef,
+    node: CallNode,
+    argTypes: readonly (Type | undefined)[],
+    hasSpread: boolean,
+  ): { candidates: number[]; result: Type } | undefined {
+    const index = argTypes.findIndex(
+      (argType, i) =>
+        argType !== undefined &&
+        node.args[i]?.type !== 'Spread' &&
+        !mayBeNull(argType) &&
+        widen(argType).kind === 'union',
+    )
+    if (index < 0) return undefined
+    const members = (widen(argTypes[index] as Type) as Extract<Type, { kind: 'union' }>).types
+    const chosen = new Set<number>()
+    const results: Type[] = []
+    for (const member of members) {
+      const args = argTypes.map((argType, i) => (i === index ? member : argType))
+      let matched = false
+      def.overloads.forEach((candidate, i) => {
+        const b = new Map<string, Type>()
+        if (
+          matchOverload(candidate, node, args, b, hasSpread) &&
+          (candidate.ordered ?? []).every((name) => orderable(b.get(name) ?? ANY))
+        ) {
+          matched = true
+          chosen.add(i)
+          results.push(substitute(candidate.result, b))
+        }
+      })
+      if (!matched) return undefined
+    }
+    return { candidates: [...chosen].sort((a, b) => a - b), result: unionOf(results) }
   }
 
   function reportNoOverload(
@@ -1166,8 +1559,9 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
       matchOverload(candidate, node, relaxed, new Map(), hasSpread),
     )
     if (nullableFix) {
+      // `any` could be anything, not specifically null: blame an argument that may be null.
       const receiverIsNullable =
-        node.style === 'method' && argTypes[0] !== undefined && isNullable(argTypes[0])
+        node.style === 'method' && argTypes[0] !== undefined && mayBeNull(argTypes[0])
       const nullableIndex = argTypes.findIndex(
         (argType) => argType !== undefined && mayBeNull(argType),
       )
@@ -1208,13 +1602,108 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
 
 // === helpers ===
 
+/** Whether values of a type can be ordered (one kind: numbers, text, timestamps, durations). */
+function orderable(type: Type): boolean {
+  const kind = widen(nonNull(type)).kind
+  return ['any', 'never', 'var', 'number', 'string', 'timestamp', 'duration'].includes(kind)
+}
+
+/** A result refiner, applied per member when the first argument is a union (flat() of `a[] | b[]`). */
+function refine(
+  refiner: ((args: readonly Type[]) => Type | undefined) | undefined,
+  args: readonly Type[],
+): Type | undefined {
+  if (refiner === undefined) return undefined
+  const direct = refiner(args)
+  const first = args[0]
+  if (direct !== undefined || first?.kind !== 'union') return direct
+  const results: Type[] = []
+  for (const member of first.types) {
+    const result = refiner([member, ...args.slice(1)])
+    if (result === undefined) return undefined
+    results.push(result)
+  }
+  return unionOf(results)
+}
+
+const freeMemo = new WeakMap<Node, { names: readonly string[]; it: boolean }>()
+
+/** The outer locals (and whether the outer `.`) a node reads. */
+function freeLocals(root: Node): { names: readonly string[]; it: boolean } {
+  const cached = freeMemo.get(root)
+  if (cached !== undefined) return cached
+  const names = new Set<string>()
+  let it = false
+  const visit = (node: Node, bound: ReadonlySet<string>, itBound: boolean): void => {
+    switch (node.type) {
+      case 'Local':
+        if (!bound.has(node.name)) names.add(node.name)
+        return
+      case 'It':
+        if (!itBound) it = true
+        return
+      case 'Lambda':
+        if (node.implicit) visit(node.body, bound, true)
+        else visit(node.body, new Set([...bound, ...node.params]), itBound)
+        return
+      case 'Let':
+        visit(node.value, bound, itBound)
+        visit(node.body, new Set([...bound, node.name]), itBound)
+        return
+      case 'Binary':
+      case 'Call':
+      case 'Conditional':
+      case 'Has':
+      case 'Index':
+      case 'List':
+      case 'Literal':
+      case 'Map':
+      case 'Member':
+      case 'Template':
+      case 'Try':
+      case 'Unary':
+      case 'Variable':
+      default:
+        forEachChild(node, (child) => {
+          visit(child, bound, itBound)
+        })
+    }
+  }
+  visit(root, new Set(), false)
+  const result = { names: [...names].sort(), it }
+  freeMemo.set(root, result)
+  return result
+}
+
+/** Indices where two parameter-type lists differ. */
+function changedAt(next: readonly Type[], previous: readonly Type[]): number[] {
+  const out: number[] = []
+  next.forEach((type, i) => {
+    if (!sameType(type, previous[i] ?? ANY)) out.push(i)
+  })
+  return out
+}
+
 function isProven(argType: Type, param: Type): boolean {
   if (param.kind === 'any' || param.kind === 'var') return argType.kind !== 'never'
   if (containsAny(argType)) return false
   return isAssignable(argType, param)
 }
 
+const containsAnyMemo = new WeakMap<Type, boolean>()
+
 function containsAny(type: Type): boolean {
+  if (type.kind !== 'list' && type.kind !== 'map' && type.kind !== 'union')
+    return type.kind === 'any' || type.kind === 'var'
+  let result = containsAnyMemo.get(type)
+  if (result === undefined) {
+    result = computeContainsAny(type)
+    containsAnyMemo.set(type, result)
+  }
+  return result
+}
+
+function computeContainsAny(type: Type): boolean {
   switch (type.kind) {
     case 'any':
     case 'var':
@@ -1276,24 +1765,32 @@ function unify(param: Type, arg: Type, b: Map<string, Type>): boolean {
     case 'map': {
       if (arg.kind === 'union') return arg.types.every((member) => unify(param, member, b))
       if (arg.kind !== 'map') return false
+      if (!hasVar(param)) return isAssignable(arg, param)
       if (param.rest !== undefined && Object.keys(param.fields).length === 0) {
         const members = Object.values(arg.fields)
         if (arg.rest !== undefined) members.push(arg.rest)
+        // A declared object may hold unlisted keys, of any type.
+        else if (!isExact(arg)) members.push(ANY)
         return members.length === 0 || unify(param.rest, unionOf(members), b)
       }
       return isAssignable(arg, param)
     }
     case 'union': {
       if (!hasVar(param)) return isAssignable(arg, param)
-      // e.g. `list<U> | U`: prefer the structured member.
+      // e.g. `list<U> | U` (flatMap): each member of the argument binds on its
+      // own, so lists give their elements and other values (null too) bind U.
       const members = param.types
       const listMember = members.find((m) => m.kind === 'list')
-      if (listMember !== undefined && arg.kind === 'list') return unify(listMember, arg, b)
-      const concrete = members.filter((m) => !hasVar(m))
-      if (concrete.some((m) => isAssignable(arg, m))) return true
       const variable = members.find((m) => m.kind === 'var')
-      if (variable !== undefined) return unify(variable, nonNull(arg), b)
-      return false
+      const concrete = members.filter((m) => !hasVar(m))
+      for (const member of arg.kind === 'union' ? arg.types : [arg]) {
+        if (listMember !== undefined && member.kind === 'list') {
+          if (!unify(listMember, member, b)) return false
+        } else if (!concrete.some((m) => isAssignable(member, m))) {
+          if (variable === undefined || !unify(variable, member, b)) return false
+        }
+      }
+      return true
     }
     case 'any':
     case 'boolean':

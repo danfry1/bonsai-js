@@ -24,8 +24,8 @@ Offsets are UTF-16 code unit offsets into `source`, the same unit as JavaScript 
 <!-- no-run -->
 ```ts
 interface CompletionResult {
-  from: number // start of the range to replace (the partially typed name)
-  to: number // end of that range
+  start: number // start of the range to replace (the partially typed name)
+  end: number // end of that range
   items: readonly Completion[]
 }
 
@@ -58,7 +58,7 @@ const env = bonsai({
 const service = createLanguageService(env)
 
 const inLambda = service.complete('items.filter(.q', 15)
-inLambda.from // => 14
+inLambda.start // => 14
 inLambda.items[0].label // => "qty"
 inLambda.items[0].detail // => "number"
 
