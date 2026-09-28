@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bonsai, t } from '../src/index.js'
+import { bonsai, formatType, t } from '../src/index.js'
 
 describe('expect is enforced at run time when the checker cannot prove it', () => {
   it('rejects a result that does not match an expected type the checker could not verify', () => {
@@ -51,5 +51,20 @@ describe('opaque host values are never read into', () => {
   it('still reads own fields of plain objects and class instances', () => {
     expect(env.evaluateSync('a.balance', { a: new Account(5) })).toBe(5)
     expect(env.evaluateSync('a.missing', { a: { x: 1 } })).toBeNull()
+  })
+})
+
+describe('any absorbs the type variables it flows into', () => {
+  const env = bonsai({ variables: { xs: t.list(t.number()), anything: t.any() } })
+
+  it('types reduce over an empty list from an unknown initial value as any', () => {
+    const source = 'reduce([], (acc, x) => [acc, x], anything)'
+    expect(formatType(env.check(source).type ?? t.never())).toBe('any')
+    expect(env.evaluateSync(source, { xs: [], anything: null })).toBeNull()
+  })
+
+  it('keeps reduce errors found while the accumulator widens', () => {
+    const typed = bonsai({ variables: { ss: t.list(t.string()) } })
+    expect(typed.check('reduce(ss, (acc, x) => acc.toFixed(1), 0)').ok).toBe(false)
   })
 })

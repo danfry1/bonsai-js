@@ -113,7 +113,7 @@ const OBJECT_PROTOTYPE: object = Object.prototype
  * data. (A non-enumerable own property, like a class's hidden field, is not.)
  */
 // oxlint-disable-next-line typescript/unbound-method -- always invoked with .call
-export const isEnumerable = Object.prototype.propertyIsEnumerable
+const isEnumerable = Object.prototype.propertyIsEnumerable
 export const BLOCKED_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype'])
 
 /**
@@ -255,9 +255,7 @@ export function truth(value: unknown, s: State, at: Span, what: string): boolean
 /** Reads a member. Plain objects, the common case, take the short path first. */
 export function readMember(object: unknown, name: string, s: State, at: Span): unknown {
   if (typeof object === 'object' && object !== null && isPlainData(object)) {
-    return isEnumerable.call(object, name)
-      ? ((object as Record<string, unknown>)[name] ?? null)
-      : null
+    return hasOwn(object, name) ? ((object as Record<string, unknown>)[name] ?? null) : null
   }
   return readOtherMember(object, name, s, at)
 }
@@ -268,7 +266,7 @@ function readOtherMember(object: unknown, name: string, s: State, at: Span): unk
     if (Array.isArray(object)) {
       if (name === 'length') return object.length
     } else if (isMap(object)) {
-      if (!isEnumerable.call(object, name)) return null
+      if (!hasOwn(object, name)) return null
       const value = object[name]
       return value === undefined ? null : value
     }
@@ -298,7 +296,7 @@ export function readIndex(object: unknown, key: unknown, s: State, at: Span): un
   }
   if (isMap(object)) {
     const name = mapKey(key, s, at)
-    if (!isEnumerable.call(object, name)) return null
+    if (!hasOwn(object, name)) return null
     const value = object[name]
     return value === undefined ? null : value
   }
@@ -334,7 +332,7 @@ export function hasKey(object: unknown, key: unknown, s: State): boolean {
     const name = typeof key === 'number' ? String(key) : key
     if (typeof name !== 'string') return false
     chargeKey(s, name)
-    return !BLOCKED_KEYS.has(name) && isEnumerable.call(object, name)
+    return !BLOCKED_KEYS.has(name) && hasOwn(object, name)
   }
   return false
 }
@@ -567,7 +565,7 @@ export function contains(container: unknown, item: unknown, s: State, at: Span):
     }
     const key = String(item)
     chargeKey(s, key)
-    return !BLOCKED_KEYS.has(key) && isEnumerable.call(container, key)
+    return !BLOCKED_KEYS.has(key) && hasOwn(container, key)
   }
   throw s.error(
     'TYPE_ERROR',

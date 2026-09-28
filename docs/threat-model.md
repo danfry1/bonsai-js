@@ -44,9 +44,10 @@ declared functions, never on `x`.
 
 ### Navigation is data-only
 
-- A property read returns an **own enumerable** property of a plain object or
-  class instance. Inherited members, class methods, prototype getters, and
-  non-enumerable properties never resolve. Built-in host objects (`Map`,
+- A property read returns an **own** property of a plain object or class
+  instance (enumeration, as in `keys()` or spread, sees only enumerable ones).
+  Inherited members, class methods, and prototype getters never resolve; keep
+  secrets in private class fields (`#field`), which are not properties. Built-in host objects (`Map`,
   `Set`, `WeakMap`, `WeakSet`, `RegExp`, promises and thenables,
   `ArrayBuffer` and typed arrays, errors, boxed primitives, functions),
   including ones from another realm, are opaque: reading into them is a type

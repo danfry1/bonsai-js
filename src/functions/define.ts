@@ -1,6 +1,6 @@
 import type { Span } from '../errors.js'
 import type { State } from '../runtime/state.js'
-import { BLOCKED_KEYS, Duration, isEnumerable, isMap } from '../runtime/values.js'
+import { BLOCKED_KEYS, Duration, isMap } from '../runtime/values.js'
 import { formatType, type FunctionType, type Type, type TypeVar } from '../types.js'
 
 /** A lambda as seen by a built-in: called with the item and its index. */
@@ -123,9 +123,7 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
       const fields = Object.entries(type.fields)
       state.charge(1 + fields.length)
       for (const [key, fieldType] of fields) {
-        if (
-          !conforms(isEnumerable.call(value, key) ? value[key] : null, fieldType, state, depth + 1)
-        )
+        if (!conforms(Object.hasOwn(value, key) ? value[key] : null, fieldType, state, depth + 1))
           return false
       }
       if (type.rest !== undefined && type.rest.kind !== 'any') {
@@ -215,7 +213,7 @@ export function describeMismatch(
   }
   if (type.kind === 'map' && isMap(actual)) {
     for (const [key, fieldType] of Object.entries(type.fields)) {
-      const field = isEnumerable.call(actual, key) ? actual[key] : null
+      const field = Object.hasOwn(actual, key) ? actual[key] : null
       const problem = describeMismatch(field, fieldType, `${path}.${key}`, budget, depth + 1)
       if (problem !== undefined) return problem
     }

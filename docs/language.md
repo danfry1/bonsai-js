@@ -38,7 +38,7 @@ put in the context (see §10).
 | number | IEEE-754 double. Operations never produce `NaN` or `±Infinity`: a computation that would is a `NON_FINITE` error. A non-finite host value can be read, compared with `==`, and passed to host functions; arithmetic, ordering (`sort`, `min`, `max`), and numeric built-ins on it are `NON_FINITE` errors. |
 | string | UTF-16 text. `length` and indices count UTF-16 code units. |
 | list | A host array or a produced list. Lists are never mutated. |
-| map | A plain object or class instance, read through its **own** enumerable properties; object literals. A value may have more keys than its declared type lists. |
+| map | A plain object or class instance, read through its **own** properties; object literals. A value may have more keys than its declared type lists. |
 | timestamp | A valid host `Date`, or one produced by `timestamp()`/`now()`. An invalid `Date` is an error when used. |
 | duration | A span of time, produced by `days(3)`, `hours(1)`, `t1 - t2`, ... |
 
@@ -50,9 +50,10 @@ context, an iframe). An opaque value can be compared with `==` (by identity or
 primitive equality) and passed to host functions, and `type()` returns
 `"opaque"` for it, but reading a property of one is a `TYPE_ERROR`.
 
-A map's non-enumerable own properties are not part of it: they cannot be read,
-tested with `in` or `has()`, or listed by `keys()`, and they do not take part
-in `==`.
+As in JavaScript, a read (`m.k`, `m[k]`, `in`, `has()`) sees any own property,
+while `keys()`, `values()`, `entries()`, spread, and `==` see only enumerable
+ones. Inherited properties are never visible, and private class fields
+(`#field`) are not properties at all.
 
 <!-- context: { lookup: new Map([["a", 1]]), big: Number.POSITIVE_INFINITY } -->
 ```bonsai

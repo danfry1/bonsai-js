@@ -243,7 +243,8 @@ describe('sorting', () => {
   })
 })
 
-describe('non-enumerable own properties are not data', () => {
+describe('non-enumerable own properties: read like JavaScript, never enumerated', () => {
+  // As in JavaScript: reads see own properties; keys, spread, and == see enumerable ones.
   const hidden = Object.defineProperty({ a: 1 }, 'secret', { value: 's', enumerable: false })
   class Account {
     readonly balance = 5
@@ -253,10 +254,10 @@ describe('non-enumerable own properties are not data', () => {
   }
 
   it.each([
-    ['x.secret', null],
-    ['x["secret"]', null],
-    ['"secret" in x', false],
-    ['has(x.secret)', false],
+    ['x.secret', 's'],
+    ['x["secret"]', 's'],
+    ['"secret" in x', true],
+    ['has(x.secret)', true],
     ['x == {a: 1}', true],
     ['keys(x)', ['a']],
     ['{...x}', { a: 1 }],
@@ -265,19 +266,19 @@ describe('non-enumerable own properties are not data', () => {
   })
 
   it('applies to class instances and the context itself', () => {
-    expect(run('a.token', { a: new Account() })).toEqual({ value: null })
+    expect(run('a.token', { a: new Account() })).toEqual({ value: 't' })
     expect(run('a.balance', { a: new Account() })).toEqual({ value: 5 })
     const ctx = Object.defineProperty({}, 'hiddenVar', { value: 1, enumerable: false })
-    expect(run('hiddenVar', ctx)).toEqual({ value: null })
+    expect(run('hiddenVar', ctx)).toEqual({ value: 1 })
   })
 
-  it('applies to host argument checks and context validation', () => {
+  it('agrees with host argument checks and context validation', () => {
     const typed = bonsai({
       variables: { x: t.object({ secret: t.string() }) },
       validateContext: true,
     })
     const ctx = { x: hidden } as unknown as { x: { secret: string } }
-    expect(outcome(() => typed.evaluateSync('x.secret', ctx))).toEqual({ code: 'INVALID_CONTEXT' })
+    expect(outcome(() => typed.evaluateSync('x.secret', ctx))).toEqual({ value: 's' })
     const hosted = bonsai({
       functions: {
         read: fn({
@@ -287,17 +288,19 @@ describe('non-enumerable own properties are not data', () => {
         }),
       },
     })
-    expect(outcome(() => hosted.evaluateSync('read(x)', { x: hidden }))).toEqual({
-      code: 'NO_OVERLOAD',
-    })
+    expect(outcome(() => hosted.evaluateSync('read(x)', { x: hidden }))).toEqual({ value: 's' })
   })
 
-  it('hides the length of an arguments object', () => {
-    const args = (function argumentsObject(): IArguments {
-      // oxlint-disable-next-line prefer-rest-params -- an arguments object is the point
-      return arguments
-    })()
-    expect(run('a.length', { a: args })).toEqual({ value: null })
+  it('never reaches private class fields', () => {
+    class Vault {
+      readonly #secret = 'p'
+      readonly label = 'v'
+      reveal(): string {
+        return this.#secret
+      }
+    }
+    expect(run('v.secret', { v: new Vault() })).toEqual({ value: null })
+    expect(run('keys(v)', { v: new Vault() })).toEqual({ value: ['label'] })
   })
 })
 

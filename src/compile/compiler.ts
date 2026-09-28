@@ -17,7 +17,6 @@ import {
   divide,
   equals,
   hasKey,
-  isEnumerable,
   isMap,
   mapKey,
   multiply,
@@ -117,7 +116,7 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
         const name = node.name
         return sync((s) => {
           const ctx = s.ctx
-          if (!isEnumerable.call(ctx, name)) return null
+          if (!Object.hasOwn(ctx, name)) return null
           const value = ctx[name]
           return value === undefined ? null : value
         })

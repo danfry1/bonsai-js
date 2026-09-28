@@ -129,7 +129,7 @@ name || "Anonymous" // error: TYPE_ERROR
 
 **Lambdas are type-directed.** `.` binds to the nearest enclosing argument whose parameter is a function, so an expression such as `items.filter(.price > max(.bonus, 10))` now works: `.bonus` belongs to the item. In 0.x the shorthand could not be passed into another call.
 
-**Only plain data is navigable.** Plain objects and class instances are read through their own enumerable properties. In 0.x, built-in objects were also read through their prototypes (`m.size`, `re.source`). Now `Map`, `Set`, `RegExp`, promises and other thenables, typed arrays, errors, and boxed primitives are opaque: they can be compared and passed to host functions, but reading a property of one is a `TYPE_ERROR`. Convert them to plain objects and arrays before evaluating.
+**Only plain data is navigable.** Plain objects and class instances are read through their own properties. In 0.x, built-in objects were also read through their prototypes (`m.size`, `re.source`). Now `Map`, `Set`, `RegExp`, promises and other thenables, typed arrays, errors, and boxed primitives are opaque: they can be compared and passed to host functions, but reading a property of one is a `TYPE_ERROR`. Convert them to plain objects and arrays before evaluating.
 
 ## API
 

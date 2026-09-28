@@ -18,7 +18,6 @@ import {
   type ValidationBudget,
 } from './functions/define.js'
 import { DEFAULT_RUNTIME_LIMITS, State, type RuntimeLimits } from './runtime/state.js'
-import { isEnumerable } from './runtime/values.js'
 import type { Node } from './syntax/ast.js'
 import { DEFAULT_PARSE_LIMITS, parse, type ParseLimits } from './syntax/parser.js'
 import {
@@ -656,7 +655,7 @@ function validateContext(
     },
   }
   for (const [name, type] of Object.entries(variables)) {
-    const value = isEnumerable.call(ctx, name) ? ctx[name] : undefined
+    const value = Object.hasOwn(ctx, name) ? ctx[name] : undefined
     const problem = describeMismatch(value, type, name, budget)
     if (problem !== undefined) {
       throw new BonsaiRuntimeError('INVALID_CONTEXT', `Invalid context: ${problem}`, { source })
@@ -729,14 +728,15 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     const asyncProgram = (): CompiledProgram =>
       (asyncCode ??= analysis.async ? compileProgram(analysis, 'async') : syncProgram())
 
+    // Options and the context's shape are the caller's own mistakes (TypeError,
+    // RangeError, INVALID_ARGUMENT), so they are checked before anything reads
+    // host data and are never reported as host failures.
     function prepare(
       state: State,
-      context: unknown,
-      options: EvaluateOptions | undefined,
+      ctx: Record<string, unknown>,
+      limits: EvaluationLimits,
       locals: number,
     ): void {
-      const limits = evaluationLimits(options, settings)
-      const ctx = contextOf(context)
       if (settings.validateContext && settings.variables !== undefined) {
         validateContext(ctx, settings.variables, source, {
           maxDepth: settings.runtimeLimits.maxValueDepth,
@@ -756,6 +756,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         )
       }
       const code = syncProgram()
+      const limits = evaluationLimits(options, settings)
+      const ctx = contextOf(context)
       let state: State
       const reuse = !pooledInUse
       if (reuse) {
@@ -766,7 +768,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         state = new State(settings.runtimeLimits, settings.clock)
       }
       try {
-        prepare(state, context, options, code.localCount)
+        prepare(state, ctx, limits, code.localCount)
         const result = code.run(state)
         checked(result, state)
         state.checkTime()
@@ -789,9 +791,11 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         }
       }
       const code = asyncProgram()
+      const limits = evaluationLimits(options, settings)
+      const ctx = contextOf(context)
       const state = new State(settings.runtimeLimits, settings.clock)
       try {
-        prepare(state, context, options, code.localCount)
+        prepare(state, ctx, limits, code.localCount)
         const result = await code.run(state)
         checked(result, state)
         state.checkTime()

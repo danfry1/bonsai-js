@@ -115,7 +115,7 @@ await typed.evaluate('a * b', { a: 3, b: 4 }) // => 12
 await typed.evaluate('a *', { a: 3, b: 4 }) // throws: SYNTAX
 ```
 
-The context must be an object (or omitted when no variable is required). Its own enumerable properties are the variables. In an open environment the context's TypeScript type is `object`, so a value typed by an interface is accepted as is. `options` are per-evaluation overrides, validated like `limits` (an unknown key or invalid value throws a `TypeError` or `RangeError`):
+The context must be an object (or omitted when no variable is required). Its own properties are the variables. In an open environment the context's TypeScript type is `object`, so a value typed by an interface is accepted as is. `options` are per-evaluation overrides, validated like `limits` (an unknown key or invalid value throws a `TypeError` or `RangeError`):
 
 | Option | Type | Description |
 | --- | --- | --- |

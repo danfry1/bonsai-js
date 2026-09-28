@@ -1399,6 +1399,9 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       // A parameter that takes the lambda's own result (reduce's accumulator)
       // widens with it: re-check until the parameter types are stable.
       for (let round = 1; ; round++) {
+        // An error stands: its recovery type (`any`) would make the next round
+        // clean and hide it.
+        if (diagnostics.slice(mark).some((d) => d.severity === 'error')) break
         let next = param.params.map((p) => substitute(p, firstBindings))
         const changed = changedAt(next, paramTypes)
         if (changed.length === 0) break
@@ -1808,7 +1811,13 @@ export function acceptsArgument(param: Type, arg: Type): boolean {
 
 /** Binds type variables in `param` from `arg`; false when they cannot match. */
 function unify(param: Type, arg: Type, b: Map<string, Type>): boolean {
-  if (arg.kind === 'any') return true
+  if (arg.kind === 'any') {
+    // Anything may flow into every type variable here: `any` absorbs them, so
+    // e.g. reduce's result is not typed from its lambda alone when the initial
+    // value is unknown.
+    for (const name of varNames(param)) b.set(name, ANY)
+    return true
+  }
   if (arg.kind === 'never') {
     bindNever(param, b)
     return true
@@ -1818,6 +1827,7 @@ function unify(param: Type, arg: Type, b: Map<string, Type>): boolean {
       // Bound as given: a declared enum stays an enum through first(), sort(),
       // reduce(); literals from the source widen when a list or map holds them.
       const existing = b.get(param.name)
+      if (existing?.kind === 'any') return true
       if (existing === undefined || existing.kind === 'never') {
         b.set(param.name, arg)
         return true

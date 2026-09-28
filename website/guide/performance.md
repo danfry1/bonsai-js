@@ -73,9 +73,9 @@ The step budget (`maxSteps`, default 1,000,000) is charged in proportion to the 
 | A template per record | about 10 per record | about 99,000 records |
 | `formatNumber`, `formatCurrency` | about 20 per call | about 50,000 calls |
 | A host function call | its `cost` (default 32) | about 31,000 calls |
-| `matches` | TODO(runtime2) steps per character of text | TODO(runtime2) |
-| Calendar functions in a time zone (`startOfDay(t, zone)`) | TODO(runtime2) per call | TODO(runtime2) calls |
+| `matches` | about 2 to 6 steps per character searched (alternations cost the most; a pattern anchored with `^` stops early) | roughly 150,000 to 500,000 characters of text |
+| Calendar functions in a time zone (`startOfDay(t, zone)`) | about 20 per call over nearby instants | about 50,000 calls |
 
 If a legitimate workload needs more, raise `maxSteps` for that environment or that evaluation; the budget then bounds proportionally more time. Lower a pure helper function's `cost` so its calls do not dominate.
 
-The compiled regular expressions, number formats, and time zone data that these functions use are cached process-wide, with a fixed memory bound (TODO(runtime2) size), and shared by every environment. Step charges do not depend on whether something was already cached, so the same evaluation uses the same steps every time.
+The compiled regular expressions, number formats, and time zone data that these functions use are cached process-wide, with a fixed bound (at most 256 compiled patterns, about 100,000 compiled instructions in total), and shared by every environment. Step charges do not depend on whether something was already cached, so the same evaluation uses the same steps every time.
