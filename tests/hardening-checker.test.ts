@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { bonsai, fn, formatType, t, type Type } from '../src/index.js'
+import { lastTypeWork } from '../src/types.js'
 import { createLanguageService } from '../src/service/index.js'
 
 const plan = t.enum('free', 'pro')
@@ -75,16 +76,12 @@ describe('checking time is bounded', () => {
     return performance.now() - start
   }
 
-  /**
-   * Growth from n to 4n: about 4x when linear, 16x when quadratic. The fastest
-   * of five runs discards time lost to other load, so the ratio stays stable
-   * where a wall-clock bound would not.
-   */
-  function growth(check: (n: number) => unknown, n: number): number {
-    const fastest = (size: number): number =>
-      Math.max(Math.min(...[0, 1, 2, 3, 4].map(() => timed(() => check(size)))), 0.5)
-    check(n) // warm up
-    return fastest(4 * n) / fastest(n)
+  /** Checker work units at n and 4n: deterministic, so no timing noise. */
+  function workGrowth(check: (n: number) => unknown, n: number): number {
+    check(n)
+    const small = lastTypeWork()
+    check(4 * n)
+    return lastTypeWork() / Math.max(small, 1)
   }
 
   it('does not expand shared types (let-bound maps nested in maps)', () => {
@@ -100,18 +97,21 @@ describe('checking time is bounded', () => {
     expect(failed.diagnostics[0]?.message).toContain('…')
   })
 
-  it('checks long chains in near-linear time', () => {
-    // Large inputs (tens of milliseconds) keep a single GC pause from skewing the ratio.
+  it('does near-linear checker work on long chains', () => {
     const plain = bonsai({ limits: { maxSourceLength: 2_000_000, maxNodes: 1_000_000 } })
     const and = (n: number): string => Array.from({ length: n }, (_, i) => `x${i}`).join(' && ')
     const nullish = (n: number): string =>
       Array.from({ length: n }, (_, i) => String(i)).join(' ?? ')
     const maps = (n: number): string =>
       `[${Array.from({ length: n }, (_, i) => `{k${i}: ${i}}`).join(', ')}]`
-    expect(growth((n) => plain.check(and(n)), 8000)).toBeLessThan(10)
-    expect(growth((n) => plain.compile(and(n)), 8000)).toBeLessThan(10)
-    expect(growth((n) => plain.check(nullish(n)), 6000)).toBeLessThan(10)
-    expect(growth((n) => plain.check(maps(n)), 5000)).toBeLessThan(10)
+    for (const [make, n] of [
+      [and, 8000],
+      [nullish, 6000],
+      [maps, 5000],
+    ] as const) {
+      // About 4 when linear, 16 when quadratic.
+      expect(workGrowth((size) => plain.check(make(size)), n)).toBeLessThan(5)
+    }
   })
 
   it('handles wide enums without quadratic unions', () => {
@@ -129,7 +129,7 @@ describe('checking time is bounded', () => {
       bonsai({
         variables: { a: t.optional(t.number()), e: enumOf(n, 'a'), f: enumOf(n, 'b') },
       }).check('a == null ? e : f')
-    expect(growth(join, 1250)).toBeLessThan(10)
+    expect(workGrowth(join, 1250)).toBeLessThan(5)
     const compared = wide.check('e == f')
     expect(compared.diagnostics.map((d) => d.code)).toEqual(['ALWAYS_FALSE'])
     expect(compared.diagnostics[0]?.message.length).toBeLessThan(2500)

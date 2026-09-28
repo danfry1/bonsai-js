@@ -226,6 +226,27 @@ describe('the check budget bounds time', () => {
     // A generous bound: unbudgeted, this shape takes minutes.
     expect(performance.now() - start).toBeLessThan(5000)
   })
+
+  it('reports TOO_COMPLEX with the source when the budget runs out', () => {
+    const zones = t.enum(...Array.from({ length: 5000 }, (_, i) => `Zone/${i}`))
+    const zoned = bonsai({
+      variables: { users: t.list(t.object({ home: t.optional(zones) })), tz: zones },
+    })
+    const clause = 'reduce(users, (acc, u) => u.home ?? acc, tz) != "Zone/1"'
+    const source = Array.from({ length: 800 }, () => clause).join(' && ')
+    let error: unknown
+    try {
+      zoned.compile(source)
+    } catch (caught) {
+      error = caught
+    }
+    expect(error).toMatchObject({ code: 'TOO_COMPLEX', source })
+    expect((error as { formatted: string }).formatted).toContain('^')
+    // check() reports it as a diagnostic instead of throwing.
+    expect(zoned.check(source).diagnostics.map((d) => d.code)).toEqual(['LIMIT'])
+    // The same clause, repeated reasonably, checks.
+    expect(zoned.check(Array.from({ length: 50 }, () => clause).join(' && ')).ok).toBe(true)
+  })
 })
 
 describe('language service', () => {

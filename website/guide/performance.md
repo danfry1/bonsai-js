@@ -69,11 +69,11 @@ The step budget (`maxSteps`, default 1,000,000) is charged in proportion to the 
 | `map` to a number | about 6 per record | the list limit |
 | `filter`, `map`, and `sum` together | about 11 per record | about 94,000 records |
 | `sortBy` | about 12 per record | about 56,000 records |
-| `unique` over 10-field records | about 17 per record | about 58,000 records |
+| `unique` over 10-field records | about 15 per record | about 66,000 records |
 | A template per record | about 10 per record | about 99,000 records |
 | `formatNumber`, `formatCurrency` | about 20 per call | about 50,000 calls |
-| A host function call | its `cost` (default 32) | about 31,000 calls |
-| `matches` | about 2 to 6 steps per character searched (alternations cost the most; a pattern anchored with `^` stops early) | roughly 150,000 to 500,000 characters of text |
+| A host function call | its `cost` (default 32), plus the call around it | about 31,000 bare calls; about 28,000 inside `map` over records |
+| `matches` | about 2 to 12 steps per character searched (alternations cost the most; a pattern anchored with `^` stops early) | roughly 80,000 to 500,000 characters of text |
 | Calendar functions in a time zone (`startOfDay(t, zone)`) | about 20 per call over nearby instants | about 50,000 calls |
 
 If a legitimate workload needs more, raise `maxSteps` for that environment or that evaluation; the budget then bounds proportionally more time. Lower a pure helper function's `cost` so its calls do not dominate.

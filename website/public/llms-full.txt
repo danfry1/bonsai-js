@@ -30,7 +30,7 @@ env.evaluateSync('customer.email ?? "no email"', ctx) // one-off evaluation, com
 - boolean, number (IEEE-754 double; NaN/Infinity results are errors), string (UTF-16; `length` counts code units).
 - list (host arrays, read by index, never mutated), map (plain objects and class instances via own properties; object literals). A value may have more keys than its declared type lists. Keys follow JavaScript property order: integer-like keys first, ascending, then insertion order.
 - timestamp (a host `Date`, `now()`, `timestamp("2026-01-01T00:00:00Z")`), duration (`days(3)`, `t1 - t2`).
-- Opaque: functions, symbols, bigints, and built-in host objects (`Map`, `Set`, `WeakMap`, `WeakSet`, `RegExp`, promises and thenables, `ArrayBuffer` and typed arrays, errors, boxed primitives). Comparable with `==` and passable to host functions; reading a property is a `TYPE_ERROR`.
+- Opaque: functions, symbols, bigints, and built-in host objects (`Map`, `Set`, `WeakMap`, `WeakSet`, `RegExp`, promises, `ArrayBuffer` and typed arrays, errors, boxed primitives). Comparable with `==` and passable to host functions; reading a property is a `TYPE_ERROR`.
 - `type(x)` returns "null", "boolean", "number", "string", "list", "map", "timestamp", "duration", or "opaque".
 
 ## Syntax

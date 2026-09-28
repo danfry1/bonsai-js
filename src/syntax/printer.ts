@@ -1,4 +1,10 @@
-import type { BinaryOperator, MapEntry, Node, SpreadNode } from './ast.js'
+import {
+  forEachChild,
+  type BinaryOperator,
+  type MapEntry,
+  type Node,
+  type SpreadNode,
+} from './ast.js'
 
 export interface PrintOptions {
   /**
@@ -6,7 +12,7 @@ export interface PrintOptions {
    * `method` writes `x.f(a)` wherever a call has a first argument; `function`
    * writes `f(x, a)` everywhere. All three mean the same call.
    */
-  readonly calls?: 'preserve' | 'method' | 'function'
+  readonly calls?: 'preserve' | 'method' | 'function' | undefined
 }
 
 // Binding strength of each printed form; higher binds tighter.
@@ -57,7 +63,44 @@ const isName = (name: unknown): name is string =>
  * print as source meaning something else (or not parse at all). Trees from
  * `parse()` and `Program.ast` always pass.
  */
+/** Deeper than any tree the parser accepts at practical limits, and still stack-safe. */
+const MAX_PRINT_DEPTH = 2000
+const PRINT_OPTION_KEYS: ReadonlySet<string> = new Set(['calls'])
+
+/**
+ * Rejects cycles and excessive depth without recursing, so a hostile or broken
+ * tree fails with a clear error instead of overflowing the stack.
+ */
+function assertShape(root: Node): void {
+  const onPath = new Set<object>()
+  const stack: { node: Node; depth: number; exit: boolean }[] = [
+    { node: root, depth: 1, exit: false },
+  ]
+  for (let frame = stack.pop(); frame !== undefined; frame = stack.pop()) {
+    const n = frame.node
+    if (frame.exit) {
+      onPath.delete(n)
+      continue
+    }
+    if (typeof n !== 'object' || n === null) continue
+    if (onPath.has(n)) invalid('the tree contains a cycle')
+    if (frame.depth > MAX_PRINT_DEPTH)
+      invalid(`the tree nests deeper than ${MAX_PRINT_DEPTH} levels`)
+    onPath.add(n)
+    stack.push({ node: n, depth: frame.depth, exit: true })
+    const depth = frame.depth + 1
+    try {
+      forEachChild(n, (child) => {
+        stack.push({ node: child, depth, exit: false })
+      })
+    } catch {
+      // A malformed node: the full validation below reports it precisely.
+    }
+  }
+}
+
 function assertPrintable(root: Node): void {
+  assertShape(root)
   // Names bound by enclosing `let`s and explicit lambdas.
   const scope: string[] = []
   const bind = (name: unknown, what: string): void => {
@@ -184,6 +227,12 @@ function assertPrintable(root: Node): void {
  * original spacing are not part of the tree and are not reproduced.
  */
 export function print(node: Node, options: PrintOptions = {}): string {
+  if (typeof options !== 'object' || options === null)
+    throw new TypeError('print() options must be an object')
+  for (const key of Object.keys(options)) {
+    if (!PRINT_OPTION_KEYS.has(key))
+      throw new TypeError(`Unknown print() option "${key}" (expected: calls)`)
+  }
   const style = options.calls ?? 'preserve'
   if (style !== 'preserve' && style !== 'method' && style !== 'function')
     throw new TypeError('calls must be "preserve", "method", or "function"')

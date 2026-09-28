@@ -195,7 +195,7 @@ The service never evaluates expressions or calls host functions.
 
 ## Errors
 
-Every error thrown while checking or evaluating an expression is a `BonsaiError` with a stable `code`, the `source`, a `span` (`{ start, end }`), a 1-based `position`, and a `formatted` message with a code frame. That includes failures in your own code: a host function that throws, or a getter or Proxy in the context that throws when read, becomes a `HOST_ERROR` with the original error as its `cause`. Invalid configuration passed to `bonsai()` or `fn()`, invalid per-evaluation options, and a syntax tree `print()` cannot print faithfully throw a `TypeError` or `RangeError` immediately.
+Every error thrown while checking or evaluating an expression is a `BonsaiError` with a stable `code`, the `source`, a `span` (`{ start, end }`), a 1-based `position`, and a `formatted` message with a code frame. That includes failures in your own code: a host function that throws, or a getter or Proxy in the context that throws when read, becomes a `HOST_ERROR` with the original error as its `cause`. Invalid configuration passed to `bonsai()` or `fn()`, and a syntax tree `print()` cannot print faithfully, throw a `TypeError` or `RangeError` immediately; invalid per-evaluation options do too from `evaluateSync()`, and make `evaluate()` reject.
 
 | Class | Codes |
 |---|---|

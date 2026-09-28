@@ -51,7 +51,10 @@ The step budget is the main guarantee against expensive expressions. Every opera
 - regular expressions, charged for compiling the pattern and for every step of the match;
 - sorting, charged per comparison and by the size of what is compared;
 - calendar and time zone functions (`startOfDay`, `addMonths`, `formatDate`, ...), which cost more than arithmetic;
-- the size of lists and maps an expression builds.
+- the size of lists and maps an expression builds;
+- the length of every string an expression produces (concatenation, templates, `repeat`, `padStart`, `replace`, `formatDate`, ...), at TODO(runtime3: rate) steps per character, so the text an evaluation builds is bounded by its budget;
+- every runtime error, at TODO(runtime3: error cost) steps, so errors caught by `try()` are not free;
+- resources such as a compiled pattern or a time zone, charged before they are created, whether or not creating them succeeds.
 
 No single operation can do unbounded work between checks, so the budget bounds time as well as work. At the default budget of 1,000,000 steps, ordinary expressions finish in about 40 ms of work per million steps on Node, and the slowest expressions we know of finish or fail within about 100 ms (measured on Node 24).
 

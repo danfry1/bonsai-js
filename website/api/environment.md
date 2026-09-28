@@ -19,10 +19,10 @@ const env = bonsai(options?)
 | `libraries` | `Library[]` | none | Bundles of host functions and variables. A function name defined twice is an error. |
 | `limits` | `Limits` | all on | Resource limits. See [Limits](/api/limits). |
 | `cacheSize` | `number` | `256` | Compiled programs kept for `env.evaluate*(source)`, by source text. `0` disables the cache. |
-| `clock` | `() => Date` | system clock | The source of `now()`, read once per evaluation. |
+| `clock` | `() => Date` | system clock | The source of `now()`, read once per evaluation. A result that is not a valid `Date` fails the evaluation with `HOST_CONTRACT`; a clock that throws gives `HOST_ERROR`. |
 | `validateContext` | `boolean` | `false` | Check the context against the declared variable types before every evaluation. |
 
-Without `variables` an environment is **open**: every identifier reads the context and is typed `any`. With `variables` (even `variables: {}`), the environment is **strict**: the checker knows the declared types and rejects any other name. Set `strict: false` to declare some variables and still let undeclared names read the context as `any`. Variable names must be identifiers other than the keywords `true`, `false`, `null`, `let`, `in`, and `not`, and other than `__proto__`, `constructor`, and `prototype`; declaring the same variable in two libraries, or in a library and `variables`, throws a `TypeError`, as does listing a library twice.
+Without `variables` an environment is **open**: every identifier reads the context and is typed `any`. With `variables` (even `variables: {}`), or with a library that declares variables, the environment is **strict**: the checker knows the declared types and rejects any other name. A library that adds a variable therefore changes what its users may write, so adding one is a breaking change for that library. Set `strict: false` to declare some variables and still let undeclared names read the context as `any`. Variable names must be identifiers other than the keywords `true`, `false`, `null`, `let`, `in`, and `not`, and other than `__proto__`, `constructor`, and `prototype`; declaring the same variable in two libraries, or in a library and `variables`, throws a `TypeError`, as does listing a library twice.
 
 Unknown option names and invalid values (a limit out of range, a type that is not a `t` type, a malformed host function) make `bonsai()` throw a `TypeError` or `RangeError` immediately.
 
@@ -115,7 +115,7 @@ await typed.evaluate('a * b', { a: 3, b: 4 }) // => 12
 await typed.evaluate('a *', { a: 3, b: 4 }) // throws: SYNTAX
 ```
 
-The context must be an object (or omitted when no variable is required). Its own properties are the variables. In an open environment the context's TypeScript type is `object`, so a value typed by an interface is accepted as is. `options` are per-evaluation overrides, validated like `limits` (an unknown key or invalid value throws a `TypeError` or `RangeError`):
+The context must be a plain object or class instance (or omitted when no variable is required); anything else, such as a `Map` or an array, is an `INVALID_ARGUMENT` error. Its own properties are the variables. In an open environment the context's TypeScript type is `object`, so a value typed by an interface is accepted as is. A function that takes any environment, whatever its context type, can declare its parameter as `Environment<never>`. `options` are per-evaluation overrides, validated like `limits` (an unknown key or invalid value makes `evaluateSync()` throw a `TypeError` or `RangeError`, and `evaluate()` reject with one):
 
 | Option | Type | Description |
 | --- | --- | --- |

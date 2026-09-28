@@ -404,6 +404,8 @@ export function parse(source: string, limits: ParseLimits = DEFAULT_PARSE_LIMITS
     if (style !== 'function' && (nameToken.value === 'has' || nameToken.value === 'try')) {
       fail(`${nameToken.value}(...) cannot be called as a method`, nameToken.start, nameToken.end)
     }
+    if (BLOCKED_NAMES.has(nameToken.value))
+      fail(`"${nameToken.value}" cannot be called`, nameToken.start, nameToken.end)
     return node({
       type: 'Call',
       name: nameToken.value,

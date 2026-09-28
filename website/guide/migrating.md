@@ -34,6 +34,9 @@ Most expressions need small, mechanical changes, and the checker finds most of t
 | `with(i, v)` | `xs.slice(0, i) + [v] + xs.slice(i + 1)` | |
 | `charCodeAt(i)` | none | Declare a host function if you need code points. |
 | `+x` (unary plus) | `toNumber(x)` | There is no unary plus. |
+| `indexOf(s, from)`, `includes(s, from)`, `startsWith(s, from)` | `slice(from).indexOf(s)` (add `from` back), `slice(from).includes(s)`, `slice(from).startsWith(s)` | The position argument is gone; the checker reports the extra argument. |
+| `toString(16)`, `split()` with no separator | a host function; `[s]` | Radix and whole-string split are gone; the checker reports both. |
+| `slice()`, `at()`, `toFixed()` with no argument | `slice(0)`, `at(0)`, `toFixed(0)` | The argument is required; the checker reports the call. |
 
 <!-- context: { a: 1767484800000, b: 1767229200000, xs: [1, 2, 3], flags: [false, true], items: [1, null, 2] } -->
 ```bonsai
@@ -46,7 +49,7 @@ items.filter(. != null) // => [1, 2]
 
 ## Results that changed
 
-These expressions run in both versions but give different results. The checker cannot flag them, so search stored expressions for the functions involved.
+These expressions give different results in the two versions. Most run without any error in 1.x, so the checker cannot flag them; search stored expressions for the functions involved. Rows whose 1.x column is a check error are the exception, and `env.check()` finds them.
 
 | Expression | 0.x | 1.x | To keep the old result |
 | --- | --- | --- | --- |
@@ -62,7 +65,7 @@ These expressions run in both versions but give different results. The checker c
 | `` `${list}` ``, `` `${map}` `` | `"1,2"`, `"[object Object]"` | `TYPE_ERROR` | `join(list, ",")` |
 | `toString(null)` | `"null"` | `""` | |
 | `toNumber("")` | `0` | `INVALID_ARGUMENT` | `try(toNumber(s), 0)` |
-| `toNumber("abc")` | `null` | `INVALID_ARGUMENT` | `try(toNumber(s), null)` |
+| `toNumber("abc")` | `NaN` | `INVALID_ARGUMENT` | `try(toNumber(s), null)` |
 | `toNumber(true)`, `toNumber(null)` | `1`, `0` | check error | `b ? 1 : 0`, `x ?? 0` |
 | `sort` on a list mixing numbers and text | sorted numbers first | `TYPE_ERROR` (a check error when the types are known) | Sort one kind at a time. |
 | `x / 0`, `x % 0` | `Infinity`, `NaN` | `DIVISION_BY_ZERO` | `try(x / y, 0)` |
@@ -129,7 +132,7 @@ name || "Anonymous" // error: TYPE_ERROR
 
 **Lambdas are type-directed.** `.` binds to the nearest enclosing argument whose parameter is a function, so an expression such as `items.filter(.price > max(.bonus, 10))` now works: `.bonus` belongs to the item. In 0.x the shorthand could not be passed into another call.
 
-**Only plain data is navigable.** Plain objects and class instances are read through their own properties. In 0.x, built-in objects were also read through their prototypes (`m.size`, `re.source`). Now `Map`, `Set`, `RegExp`, promises and other thenables, typed arrays, errors, and boxed primitives are opaque: they can be compared and passed to host functions, but reading a property of one is a `TYPE_ERROR`. Convert them to plain objects and arrays before evaluating.
+**Only plain data is navigable.** Plain objects and class instances are read through their own properties. In 0.x, built-in objects were also read through their prototypes (`m.size`, `re.source`). Now `Map`, `Set`, `RegExp`, promises, typed arrays, errors, and boxed primitives are opaque: they can be compared and passed to host functions, but reading a property of one is a `TYPE_ERROR`. Convert them to plain objects and arrays before evaluating.
 
 ## API
 
