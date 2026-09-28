@@ -2,57 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-
-## 1.0.0
-
-A redesign of the language and the engine. Expressions written for 0.x need
-migrating; the website has an old-to-new table.
-
-### Language
-
-- Every function is callable as `f(x, a)` or `x.f(a)`; the pipe operator `|>`
-  is removed and its token reserved.
-- The standard library is built in, with JavaScript names (`toUpperCase`,
-  `includes`, `filter`) plus additions such as `sum`, `sortBy`, `groupBy`,
-  `unique`, `keys`, `round(x, digits)`, and calendar functions with time zones.
-- Lambdas: `x => ...` and `(acc, x) => ...` alongside `.field`. The implicit
-  `.` binds to the nearest argument whose parameter takes a function, so
-  `items.filter(.score > max(.a, .b))` reads naturally.
-- New: `let` bindings, `try(expr, fallback)`, `has(a.b)`, comments, timestamps
-  and durations (`now() - t > days(30)`), deep `==` on lists and maps.
-- `null` is the single absent value: missing properties read as `null` and
-  `x == null` holds for missing and null alike. Ordering comparisons with
-  `null` are `false`.
-- `&&`, `||`, `!`, and `?:` take booleans (`null` counts as false). Division by
-  zero and non-finite results are errors. Chained comparisons are parse errors.
-
-### API
-
-- `bonsai({ variables, strict, functions, libraries, limits, clock })` creates
-  an immutable environment; `extend()` derives one. Host functions are declared
-  with `fn({ params, returns, run })`, validated on every call, and must be
-  marked `async` to be awaited.
-- `env.compile(source, { expect })` type-checks and returns a program whose
-  result and context types are inferred from the schema; `env.check()` returns
-  every diagnostic without throwing.
-- `bonsai-js/service` provides completions, hover, and diagnostics from the
-  checker.
-- `print(tree, { calls })` turns a syntax tree back into source, round-tripping
-  with `env.parse` so visual editors can edit rules as trees. The `stdlib`, `checker`, and `autocomplete` subpaths are removed.
-
-### Engine
-
-- Expressions compile to closures. Async code is generated only for subtrees
-  that reach an async host function, so `evaluate()` on ordinary expressions
-  runs at synchronous speed.
-- Every limit is on by default: source size, depth, node count, steps
-  (charged by lambda body size and data size), produced string and list sizes,
-  value depth, plus optional timeout and `AbortSignal`.
-
-## [Unreleased]
+This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+From 1.0.0, entries are generated at release time from the bump files in
+[`.bumpy/`](./.bumpy/); entries up to 0.5.0 follow
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.5.0] - 2026-06-02
 

@@ -66,12 +66,17 @@ let name = "Ada"; { name, admin: true } // => { name: "Ada", admin: true }
 - A duplicate static key is a syntax error. With computed keys and spread, later keys win.
 - `__proto__`, `constructor`, and `prototype` are never valid keys, and maps an expression produces never contain them, even when spread from host data.
 - Reserved words are valid keys and property names: `{ in: 1 }.in` is `1`.
+- Keys keep JavaScript property order: integer-like keys (`"1"`, `"42"`) first in ascending order, then the other keys in the order they were added. `keys()`, `values()`, and `entries()` follow this order.
 
 ```bonsai
 { a: 1, a: 2 } // error: SYNTAX
 { [true]: 1 } // error: TYPE_ERROR
 { __proto__: 1 } // error: SYNTAX
 { in: 1 }.in // => 1
+```
+
+```bonsai
+keys({ b: 1, "2": 2, "1": 3 }) // => ["1", "2", "b"]
 ```
 
 A map literal has a closed static type, so reading a key it does not define is a check error rather than `null`:

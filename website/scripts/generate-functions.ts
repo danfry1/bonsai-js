@@ -59,7 +59,7 @@ const AREAS: Area[] = [
   {
     file: 'maps',
     title: 'Maps and Values',
-    intro: 'Functions over maps, and functions that inspect any value.',
+    intro: 'Functions over maps, and functions that inspect any value. Keys are listed in JavaScript property order: integer-like keys first, ascending, then the other keys in the order they were added.',
     names: ['keys', 'values', 'entries', 'isEmpty', 'type', 'toString'],
   },
   {

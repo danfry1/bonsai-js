@@ -44,16 +44,25 @@ declared functions, never on `x`.
 
 ### Navigation is data-only
 
-- A property read returns an **own** property of a map. Inherited members,
-  class methods, and prototype getters never resolve.
+- A property read returns an **own** property of a plain object or class
+  instance. Inherited members, class methods, and prototype getters never
+  resolve. Built-in host objects (`Map`, `Set`, `WeakMap`, `WeakSet`,
+  `RegExp`, promises and thenables, `ArrayBuffer` and typed arrays, errors,
+  boxed primitives, functions) are opaque: reading into them is a type error.
 - `__proto__`, `constructor`, and `prototype` are rejected wherever they appear:
   as syntax, as computed keys, and in keys spread from host data.
 - Produced maps never contain `__proto__`, `constructor`, or `prototype` keys, even when spread from host data parsed with `JSON.parse`.
-- `matches()` uses a linear-time regular expression engine, so a user-written pattern cannot cause catastrophic backtracking.
+- `matches()` uses a linear-time regular expression engine (JavaScript syntax
+  without backreferences or lookaround), so a user-written pattern cannot
+  cause catastrophic backtracking. Pattern length is limited by
+  `maxPatternLength`, compiling and matching are charged to the step budget,
+  and compiled patterns are cached per environment within a bounded total
+  size, so one tenant's patterns cannot exhaust another's memory.
 - Templates, comparisons, keys, and arithmetic never call `valueOf`,
   `toString`, `toJSON`, or `Symbol.toPrimitive`.
-- Built-ins use their own loops, never the receiver's methods, iterators, or
-  `Symbol.species`, and never mutate their inputs.
+- Built-ins read host lists by index into their own copy and use their own
+  loops. They never call the receiver's methods, iterators, or
+  `Symbol.species`, even for an array subclass, and never mutate their inputs.
 
 ### Resource limits
 
@@ -62,27 +71,47 @@ Every limit is on by default (see the README for defaults):
 | Stage | Limits |
 |---|---|
 | Parsing | source length, nesting depth, node count |
-| Evaluation | step budget, produced string and list sizes, value nesting depth, optional timeout, `AbortSignal` |
+| Checking and compiling | bounded by the parse limits; close to linear in the source |
+| Evaluation | step budget, produced string and list sizes, value nesting depth, regular expression pattern length, optional timeout, `AbortSignal` |
 
-Every expression terminates. There are no loops or recursion, straight-line
-code is bounded by the node limit, and anything proportional to data charges
-steps: lambda calls, equality, membership, concatenation, spread, templates,
-and built-ins. Sizes are checked before allocation. Cyclic data fails closed on
-the depth limit.
+Every expression terminates. There are no loops or recursion, and straight-line
+code is bounded by the node limit. Every operation charges the step budget for
+its real worst-case cost before it runs: lambda calls, equality, membership,
+concatenation, spread, templates, characters scanned by text search and
+comparison, regular expression compilation and matching, sorting, calendar and
+time zone calculations, and the size of lists and maps an expression builds. A
+single native operation never runs unbounded between budget checks, so the
+budget bounds wall-clock time as well as work: at the default budget, any
+expression finishes or fails within about TODO(D1: worst-case ms) on Node.
+Sizes are checked before allocation. Values an expression builds are limited to
+`maxValueDepth` levels, so a result is bounded in size and safe for the host to
+serialize. Cyclic data fails closed on the depth limit.
 
 ### Async isolation
 
 - A host function must be declared `async` to be awaited.
 - `evaluateSync` rejects an expression that calls one before any host code runs.
 - A promise from an undeclared function is an error.
-- A thenable in the context is inert data. It is never awaited, and
+- A thenable in the context is opaque data. It is never awaited, and
   `evaluate()` refuses to return one.
+- A host function whose result does not match its declaration (checked
+  deeply) or that returns a promise without `async: true` fails with
+  `HOST_CONTRACT`, which `try()` cannot catch.
 - Waiting on an async host function honors the timeout and abort signal.
+
+### Error hygiene
+
+- Checking and evaluating only ever throw `BonsaiError`s with stable codes.
+- Exceptions from host code (a host function, a getter or Proxy trap in the
+  context, a `then` or species hook) are wrapped as `HOST_ERROR`, with the
+  original error as `cause`. `HOST_ERROR` messages include the host error's
+  message; do not show them to expression authors if your host errors carry
+  sensitive detail.
 
 ### Determinism
 
 - Given the same context, host functions, and clock, an expression's result is
-  deterministic.
+  deterministic, and so is the number of steps it uses.
 - `now()` is read once per evaluation from the environment clock, which you can
   inject.
 - Calendar functions default to UTC.
@@ -97,8 +126,11 @@ the depth limit.
 - Bonsai is not a process, memory, or CPU isolation boundary. If your host
   functions or context are themselves untrusted, run evaluation in a worker or
   separate process.
-- Set a `timeout` for interactive paths. The step budget bounds work
-  deterministically but not wall-clock time spent inside host functions.
+- Set a `timeout` when expressions call slow host functions. The step budget
+  bounds Bonsai's own work deterministically, but not wall-clock time spent
+  inside host functions. Each host call costs one step, so an expression can
+  call a host function many times; batch or rate-limit expensive calls in the
+  host.
 
 ## Assurance
 

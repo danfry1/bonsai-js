@@ -32,7 +32,10 @@ const rule = env.compile(
   { expect: t.boolean() },
 )
 
-rule.evaluateSync(context) // boolean, checked before it ever runs
+rule.evaluateSync({
+  user: { age: 36, plan: 'pro', tags: [] },
+  orders: [{ total: 150, paid: true, created: new Date() }],
+}) // => true
 ```
 
 ## Install
@@ -41,11 +44,13 @@ rule.evaluateSync(context) // boolean, checked before it ever runs
 npm install bonsai-js
 ```
 
+Requires Node.js 22 or newer, current Bun, or a modern browser. The package is ESM; `require('bonsai-js')` works where Node can load ES modules synchronously (22.12 and newer).
+
 ## Why Bonsai
 
 - **Familiar.** JavaScript syntax and JavaScript names: `a.b`, `?.`, `??`, templates, `filter`, `map`, `includes`, `toUpperCase`. Every function also works as a method, so `sum(xs)` and `xs.sum()` are the same call.
 - **Checked.** Declare your data once with `t` and get errors for typos, wrong types, and possible nulls before an expression is saved, with "did you mean" suggestions and exact source ranges. TypeScript types for the context and result are inferred from the same declaration.
-- **Safe by construction.** No prototype access, no globals, no calling functions found in data, no conversion hooks, no mutation. Every evaluation terminates and is bounded by a step budget, size limits, an optional timeout, and an `AbortSignal`.
+- **Safe by construction.** No prototype access, no globals, no calling functions found in data, no conversion hooks, no mutation. Every evaluation terminates: a deterministic step budget charges each operation for the work it does (including text search, regular expressions, sorting, and time zone math), and produced strings, lists, and nested values are size-limited. A timeout and an `AbortSignal` bound time spent waiting on your own host functions.
 - **Fast.** Expressions compile to closures once (no `eval`, CSP-safe). A typical rule evaluates about 10 million times per second on Node, 1.3x to 2x faster than `@marcbachmann/cel-js` on the same workloads (`bun run bench` reproduces this with `benchmarks/vs-cel.bench.ts`).
 - **Editor-ready.** A language service provides completions (including methods applicable to each type), hover, and diagnostics without evaluating anything.
 
@@ -78,30 +83,37 @@ The full reference is [docs/language.md](./docs/language.md). The rules that mat
 ## Evaluating
 
 ```ts
+import { bonsai } from 'bonsai-js'
+
 const env = bonsai()
 
-env.evaluateSync('price * qty', { price: 3, qty: 4 }) // 12, compiled once and cached
-await env.evaluate('price * qty', { price: 3, qty: 4 }) // async, needed for async functions
+env.evaluateSync('price * qty', { price: 3, qty: 4 }) // => 12
+await env.evaluate('price * qty', { price: 3, qty: 4 }) // => 12
 
 const program = env.compile('items.filter(.active).length')
-program.evaluateSync({ items })
-program.evaluateSync({ items }, { timeout: 50, maxSteps: 10_000, signal })
+const items = [{ active: true }, { active: false }]
+program.evaluateSync({ items }) // => 1
+program.evaluateSync({ items }, { timeout: 50, maxSteps: 10_000, signal: AbortSignal.timeout(1_000) }) // => 1
 ```
 
-Without declared variables an environment is open: unknown identifiers read the context and are typed `any`. With `variables`, the checker knows their types; add `strict: true` to reject undeclared variables too.
+`evaluateSync` compiles the source once and caches the program; `evaluate` is needed only for expressions that call async host functions.
+
+Without declared variables an environment is open: unknown identifiers read the context and are typed `any`. With `variables`, the environment is strict: the checker knows their types and rejects any other name. Pass `strict: false` to let undeclared names read the context as `any`.
 
 ## Checking
 
 ```ts
-const env = bonsai({ variables: { user: t.object({ age: t.number(), nick: t.optional(t.string()) }) }, strict: true })
+import { bonsai, t } from 'bonsai-js'
+
+const env = bonsai({ variables: { user: t.object({ age: t.number(), nick: t.optional(t.string()) }) } })
 
 env.check('user.agee > 18')
-// { ok: false, diagnostics: [{ code: 'UNKNOWN_PROPERTY', message: 'Property "agee" does not exist on { age: number, nick: string | null }; did you mean "age"?', start: 5, end: 14, severity: 'error' }] }
+// { ok: false, diagnostics: [{ code: 'UNKNOWN_PROPERTY', message: 'Property "agee" does not exist on { age: number, nick: string | null }; did you mean "age"?', severity: 'error', start: 0, end: 9 }] }
 
 env.check('user.nick.toUpperCase()')
 // NULLABLE_RECEIVER: The value before .toUpperCase() may be null; use ?.toUpperCase() or ?? to supply a default
 
-env.compile('user.age + 1', { expect: t.boolean() }) // throws BonsaiCheckError: Expected ... boolean ...
+env.compile('user.age + 1', { expect: t.boolean() }) // throws: CHECK
 ```
 
 Types: `t.string()`, `t.number()`, `t.boolean()`, `t.null()`, `t.timestamp()`, `t.duration()`, `t.literal(v)`, `t.enum(...values)`, `t.list(T)`, `t.object({...})`, `t.record(V)`, `t.optional(T)`, `t.union(...)`, `t.any()`. `Infer<typeof type>` gives the TypeScript type.
@@ -111,24 +123,29 @@ Types: `t.string()`, `t.number()`, `t.boolean()`, `t.null()`, `t.timestamp()`, `
 ```ts
 import { bonsai, fn, t } from 'bonsai-js'
 
+const rates = new Map([['EUR', 1.1], ['GBP', 1.3]])
+
 const env = bonsai({
   functions: {
-    hasRole: fn({ params: [t.string()], returns: t.boolean(), context: true, run: (ctx, role) => roles(ctx).includes(role) }),
-    fxRate: fn({ params: [t.string()], returns: t.number(), async: true, run: (currency) => rates.get(currency) }),
+    hasRole: fn({ params: [t.string()], returns: t.boolean(), context: true, run: (ctx, role) => (ctx.roles as string[]).includes(role) }),
+    fxRate: fn({ params: [t.string()], returns: t.number(), async: true, run: async (currency) => rates.get(currency) ?? 1 }),
   },
 })
 
-await env.evaluate('hasRole("admin") || orders.map(fxRate(.currency) * .amount).sum() < 1000', ctx)
+await env.evaluate('hasRole("admin") || orders.map(fxRate(.currency) * .amount).sum() < 1000', {
+  roles: ['editor'],
+  orders: [{ currency: 'EUR', amount: 100 }],
+}) // => true
 ```
 
-- Parameter and result types are declared with `t`; `run`'s argument types are inferred from them. Arguments are validated before your code runs and results are checked against the declared type.
-- `async: true` functions are awaited by `evaluate()`. `evaluateSync()` rejects expressions that call them before any host code runs.
+- Parameter and result types are declared with `t`; `run`'s argument types are inferred from them. Arguments are validated before your code runs, and results are checked deeply against the declared type: a mismatch is a `HOST_CONTRACT` error, which `try()` in an expression cannot catch. An exception thrown by your function is a `HOST_ERROR`, which `try()` can recover from.
+- `async: true` functions are awaited by `evaluate()`, one call at a time. `evaluateSync()` rejects expressions that call them before any host code runs. A function not declared `async` that returns a promise is a `HOST_CONTRACT` error.
 - A host function with the same name as a built-in replaces it for that environment, so new built-ins in future releases never change the meaning of your expressions.
 - `withContext<AppContext>()` returns a version of `fn` whose `run` receives the typed context first: `withContext<Ctx>()({ params: [], returns: t.string(), run: (ctx) => ctx.tenant.id })`.
 - Optional parameters (after `required`) arrive as `null` when omitted, so declare them with `t.optional(...)`.
 - Bundle functions into a `Library` (`{ name, functions }`) and pass `libraries: [a, b]`; a name defined twice is an error. `env.extend({...})` derives a new environment.
 
-Context data is not validated against the declared types by default (it is your data, and validation costs time proportional to it). Pass `validateContext: true` to check it before every evaluation; a mismatch fails with `INVALID_CONTEXT` and the exact path, e.g. `user.created should be timestamp, got string "2026-01-01"`.
+Context data is not validated against the declared types by default (it is your data, and validation costs time proportional to it). Pass `validateContext: true` to check it before every evaluation; a mismatch fails with `INVALID_CONTEXT` and the exact path, e.g. `user.created should be timestamp, got string "2026-01-01"`. Objects may carry more keys than their declared type lists (a database row with extra columns is fine); the checker accounts for that.
 
 ## Built-in functions
 
@@ -142,7 +159,7 @@ All callable as `f(x, ...)` or `x.f(...)`.
 | Maps | `keys` `values` `entries` `type` |
 | Time | `now` `timestamp` `weeks` `days` `hours` `minutes` `seconds` `milliseconds` `inDays` `inHours` `inMinutes` `inSeconds` `inMilliseconds` `year` `month` `day` `hour` `minute` `second` `dayOfWeek` `startOfDay` `startOfMonth` `startOfYear` `addDays` `addMonths` `addYears` `formatDate` |
 
-`matches(text, pattern)` uses RE2 syntax and runs in linear time, so a user-written pattern cannot hang evaluation; backreferences and lookaround are rejected. `formatDate` understands `yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS` and rejects unknown letters; constant patterns are checked when the expression is compiled.
+`matches(text, pattern)` uses JavaScript regular expression syntax (as with the `u` flag) and runs in linear time, so a user-written pattern cannot hang evaluation; backreferences and lookaround are rejected, a leading `(?i)` ignores ASCII case, and patterns are limited to `maxPatternLength` characters. `formatDate` understands `yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS` and rejects unknown letters; constant patterns are checked when the expression is compiled.
 
 `env.listFunctions()` returns every signature and description, for documentation or tooling.
 
@@ -163,12 +180,13 @@ print(tree, { calls: 'function' }) // 'toUpperCase(trim(name))'
 
 ## Editor support
 
+<!-- no-run -->
 ```ts
 import { createLanguageService } from 'bonsai-js/service'
 
-const service = createLanguageService(env)
-service.complete('orders.filter(.', 15) // id, total, paid, ... then methods such as map, sum
-service.hover('orders.map(.total)', 2)  // { detail: '{ total: number, ... }[]' }
+const service = createLanguageService(env) // env from the first example
+service.complete('orders.filter(.', 15) // { start: 15, end: 15, items: created, paid, total, then map methods: entries, isEmpty, keys, type, values }
+service.hover('orders.map(.total)', 2)  // { start: 0, end: 6, detail: '{ total: number, paid: boolean, created: timestamp }[]' }
 service.diagnostics('user.agee')        // same diagnostics as env.check
 ```
 
@@ -176,31 +194,34 @@ The service never evaluates expressions or calls host functions.
 
 ## Errors
 
-Every error is a `BonsaiError` with a stable `code`, the `source`, a `span`, a 1-based `position`, and a `formatted` message with a code frame.
+Every error thrown while checking or evaluating an expression is a `BonsaiError` with a stable `code`, the `source`, a `span` (`{ start, end }`), a 1-based `position`, and a `formatted` message with a code frame. That includes failures in your own code: a host function that throws, or a getter or Proxy in the context that throws when read, becomes a `HOST_ERROR` with the original error as its `cause`. Invalid configuration passed to `bonsai()` or `fn()` throws a `TypeError` or `RangeError` immediately.
 
 | Class | Codes |
 |---|---|
 | `BonsaiSyntaxError` | `SYNTAX` |
 | `BonsaiCheckError` | `CHECK` (see `.diagnostics`) |
 | `BonsaiLimitError` | `SOURCE_TOO_LONG` `TOO_DEEP` `TOO_MANY_NODES` `STEP_LIMIT` `STRING_LIMIT` `LIST_LIMIT` `TIMEOUT` `ABORTED` |
-| `BonsaiRuntimeError` | `TYPE_ERROR` `NO_OVERLOAD` `NULL_RECEIVER` `DIVISION_BY_ZERO` `NON_FINITE` `BLOCKED_PROPERTY` `INVALID_ARGUMENT` `INVALID_CONTEXT` `ASYNC_IN_SYNC` `HOST_ERROR` |
+| `BonsaiRuntimeError` | `TYPE_ERROR` `NO_OVERLOAD` `NULL_RECEIVER` `DIVISION_BY_ZERO` `NON_FINITE` `BLOCKED_PROPERTY` `INVALID_ARGUMENT` `INVALID_CONTEXT` `ASYNC_IN_SYNC` `HOST_ERROR` `HOST_CONTRACT` |
+
+`try(expr, fallback)` in an expression catches runtime errors except `HOST_CONTRACT`; it never catches syntax, check, or limit errors.
 
 ## Limits
 
-All limits are on by default; `limits` changes the budget. `0` disables `maxSteps` and `timeout`; the other limits must be at least 1.
+All limits are on by default; `limits` changes the budget. `0` disables `maxSteps` and `timeout`; the other limits must be positive integers.
 
 | Limit | Default | Bounds |
 |---|---|---|
 | `maxSourceLength` | 100,000 | expression length |
-| `maxDepth` | 128 | syntax tree depth |
-| `maxNodes` | 20,000 | syntax tree size |
-| `maxSteps` | 1,000,000 | work per evaluation (lambda calls and every element touched) |
+| `maxDepth` | 128 | syntax nesting depth |
+| `maxNodes` | 20,000 | syntax tree size, and the work of checking and compiling |
+| `maxSteps` | 1,000,000 | work per evaluation, charged by the real cost of each operation |
 | `maxStringLength` | 100,000 | strings an expression produces |
 | `maxListLength` | 100,000 | lists an expression produces |
-| `maxValueDepth` | 64 | nesting walked by equality (cyclic data fails closed) |
+| `maxValueDepth` | 64 | nesting of values an expression builds or walks (cyclic data fails closed) |
+| `maxPatternLength` | 4,096 | regular expression patterns passed to `matches` |
 | `timeout` | none | wall-clock milliseconds per evaluation |
 
-Host functions are trusted code: limits cannot interrupt a synchronous host function that is already running, and a getter or Proxy you put in the context runs when it is read. See [SECURITY.md](./SECURITY.md) and [docs/threat-model.md](./docs/threat-model.md).
+The step budget is deterministic: the same expression over the same data uses the same steps on every machine, and at the default budget any expression finishes or fails within about TODO(D1: worst-case ms) on Node. Host functions are trusted code: limits cannot interrupt a synchronous host function that is already running, and a getter or Proxy you put in the context runs when it is read. Set a `timeout` when expressions call slow host functions. See [SECURITY.md](./SECURITY.md) and [docs/threat-model.md](./docs/threat-model.md).
 
 ## License
 

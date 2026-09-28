@@ -1,4 +1,5 @@
-// Verifies the code examples in the documentation site.
+// Verifies the code examples in the documentation site, the README, and
+// docs/*.md (the language reference and policies).
 //
 //   bun website/scripts/check-examples.ts
 //
@@ -17,6 +18,8 @@
 // `code // throws: CODE` asserts the error code. A block preceded by
 // <!-- continue --> runs after the previous ts block on the page.
 // <!-- no-run --> skips the next block (use sparingly: fragments only).
+// <!-- no-run: reason --> skips it too and lists it with its reason, for
+// examples of behavior that is documented ahead of the code.
 import { readdirSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -28,6 +31,7 @@ import { CLOCK, display, normalize } from './format.ts'
 
 
 const websiteDir = fileURLToPath(new URL('..', import.meta.url))
+const repoDir = fileURLToPath(new URL('../../', import.meta.url))
 const srcDir = fileURLToPath(new URL('../../src/', import.meta.url))
 const formatModule = fileURLToPath(new URL('./format.ts', import.meta.url))
 
@@ -49,6 +53,8 @@ interface Block {
   context: string | undefined
   env: string | undefined
   noRun: boolean
+  /** Why the block is skipped, for `<!-- no-run: reason -->`. */
+  pending: string | undefined
   continues: boolean
 }
 
@@ -58,6 +64,7 @@ function blocksOf(text: string): Block[] {
   let context: string | undefined
   let env: string | undefined
   let noRun = false
+  let pending: string | undefined
   let continues = false
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
@@ -67,15 +74,20 @@ function blocksOf(text: string): Block[] {
       else env = directive[2].trim()
       continue
     }
-    if (/^<!--\s*no-run\s*-->/u.test(line)) noRun = true
+    const skip = /^<!--\s*no-run\s*(?::\s*(?<reason>.*?))?\s*-->/u.exec(line)
+    if (skip) {
+      noRun = true
+      pending = skip.groups?.reason
+    }
     if (/^<!--\s*continue\s*-->/u.test(line)) continues = true
     const fence = /^```(\w+)/u.exec(line)
     if (!fence) continue
     const start = i + 1
     const body: string[] = []
     for (i = i + 1; i < lines.length && !lines[i].startsWith('```'); i++) body.push(lines[i])
-    blocks.push({ lang: fence[1], code: body.join('\n'), line: start, context, env, noRun, continues })
+    blocks.push({ lang: fence[1], code: body.join('\n'), line: start, context, env, noRun, pending, continues })
     noRun = false
+    pending = undefined
     continues = false
   }
   return blocks
@@ -85,6 +97,7 @@ let failures = 0
 let checkedExpressions = 0
 let checkedTs = 0
 let skipped = 0
+const pendingBlocks: string[] = []
 
 function fail(where: string, message: string): void {
   failures++
@@ -215,15 +228,23 @@ function checkTs(file: string, blocks: Block[], tmp: string): void {
   }
 }
 
+const documents = [
+  ...markdownFiles(websiteDir).map((path) => ({ path, file: relative(websiteDir, path) })),
+  ...[join(repoDir, 'README.md'), ...markdownFiles(join(repoDir, 'docs'))].map((path) => ({
+    path,
+    file: relative(repoDir, path),
+  })),
+]
+
 const tmp = mkdtempSync(join(tmpdir(), 'bonsai-examples-'))
 try {
-  for (const path of markdownFiles(websiteDir)) {
-    const file = relative(websiteDir, path)
+  for (const { path, file } of documents) {
     const blocks = blocksOf(readFileSync(path, 'utf8'))
     let chain: Block[] = []
     for (const block of blocks) {
       if (block.noRun) {
         skipped++
+        if (block.pending !== undefined) pendingBlocks.push(`${file}:${block.line} (${block.pending})`)
         continue
       }
       if (block.lang === 'bonsai') checkBonsai(file, block)
@@ -237,6 +258,7 @@ try {
   rmSync(tmp, { recursive: true, force: true })
 }
 
+if (pendingBlocks.length > 0) console.log(`Not run, pending:\n  ${pendingBlocks.join('\n  ')}`)
 console.log(
   `${checkedExpressions} expressions and ${checkedTs} TypeScript blocks checked, ${skipped} blocks marked no-run, ${failures} failures`,
 )

@@ -50,11 +50,11 @@ formatType(Customer) // => '{ id: string, tier: "standard" | "gold", email: stri
 
 ## Closed and open records
 
-`t.object` is closed: reading a field it does not declare is a check error (`UNKNOWN_PROPERTY`), which catches typos. `t.record` is open: any key may be read, and the result is `V | null` because the key may be missing.
+`t.object` is closed: reading a field it does not declare is a check error (`UNKNOWN_PROPERTY`), which catches typos. Closed describes what expressions may name, not what the value holds: at run time the object may have more keys (a database row with extra columns), so `values()`, `entries()`, and computed-key reads on it include values of unknown type, and a closed object is not accepted where a `t.record` is expected. `t.record` is open: any key may be read, and the result is `V | null` because the key may be missing.
 
 <!-- continue -->
 ```ts
-const env = bonsai({ variables: { customer: Customer }, strict: true })
+const env = bonsai({ variables: { customer: Customer } })
 env.check('customer.tier').ok // => true
 env.check('customer.teir').ok // => false
 formatType(env.check('customer.attributes.region').type!) // => "string | null"
@@ -76,7 +76,7 @@ Optional parameters of host functions must also be declared with `t.optional`.
 
 ## Opaque values
 
-`t.opaque(name)` declares a host value that expressions may hold, compare with `==`, and pass to host functions, but not read properties of. Use it for handles such as a database client or a class instance you pass through to your own functions. The restriction is static: at run time a class instance is still a map of its own properties.
+`t.opaque(name)` declares a host value that expressions may hold, compare with `==`, and pass to host functions, but not read properties of. Use it for handles such as a database client or a class instance you pass through to your own functions. For a class instance the restriction is static: at run time it is still read as a map of its own properties. Built-in host objects such as `Map`, `Set`, `RegExp`, and promises are opaque at run time too, whatever their declared type.
 
 ## Helpers
 

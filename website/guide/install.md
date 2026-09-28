@@ -26,7 +26,7 @@ yarn add bonsai-js
 
 ## Runtimes
 
-Node.js 24 and newer, current Bun, and modern browsers with ES2022 and `Intl.DateTimeFormat` time zone support. The same code runs everywhere: there are no Node-specific APIs and no generated code, so Bonsai works under a Content Security Policy that forbids `eval`.
+Node.js 22 and newer, current Bun, and modern browsers with ES2022 and `Intl.DateTimeFormat` time zone support. The package is ESM; on Node, `require('bonsai-js')` also works from CommonJS where Node can load ES modules synchronously (22.12 and newer). The same code runs everywhere: there are no Node-specific APIs and no generated code, so Bonsai works under a Content Security Policy that forbids `eval`.
 
 ## First evaluation
 

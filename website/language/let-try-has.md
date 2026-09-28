@@ -34,7 +34,7 @@ order.items.map(let line = .price * .qty; line > 50 ? "large" : "small") // => [
 
 ## try
 
-`try(expr, fallback)` evaluates `expr` and, if it fails with an evaluation error, evaluates `fallback` instead. Evaluation errors are type errors, invalid arguments, division by zero, non-finite results, null receivers, and host function failures.
+`try(expr, fallback)` evaluates `expr` and, if it fails with an evaluation error, evaluates `fallback` instead. Evaluation errors are type errors, invalid arguments, division by zero, non-finite results, null receivers, and host functions that throw (`HOST_ERROR`).
 
 ```bonsai
 try(stats.visits / stats.days, 0) // => 0
@@ -46,7 +46,8 @@ try(timestamp("not a date"), now()) // => 2026-01-15T10:30:00.000Z
 `try` does not catch:
 
 - **syntax and check errors**, which are reported before evaluation starts;
-- **limit errors** (step budget, string and list sizes, timeout, cancellation), so a hostile expression cannot use `try` to keep running past its budget.
+- **limit errors** (step budget, string and list sizes, timeout, cancellation), so a hostile expression cannot use `try` to keep running past its budget;
+- **`HOST_CONTRACT` errors**, raised when a host function returns a value that does not match its declared type or returns a promise without `async: true`. They are bugs in host code, so they surface instead of being hidden by a fallback.
 
 ```bonsai
 try(1 + "a", 0) // error: TYPE_ERROR

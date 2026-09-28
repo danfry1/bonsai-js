@@ -21,11 +21,10 @@ const env = bonsai({
       items: t.list(t.object({ sku: t.string(), price: t.number(), qty: t.number() })),
     }),
   },
-  strict: true,
 })
 ```
 
-`t.optional(T)` means the value may be `null` or missing. `strict: true` makes any variable you did not declare an error.
+`t.optional(T)` means the value may be `null` or missing. Because variables are declared, the environment is strict: any variable you did not declare is an error.
 
 ## 2. Check expressions before saving them
 

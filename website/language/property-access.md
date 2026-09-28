@@ -4,7 +4,7 @@
 
 ## Variables
 
-A name reads a variable from the context. In an open environment (no declared variables), an unknown name reads as `null`; in a strict environment it is a check error. Variables and functions are separate namespaces: `sum` as a variable and `sum(...)` as a call do not conflict.
+A name reads a variable from the context. In an open environment (no declared variables), an unknown name reads as `null`; in a strict environment (the default once variables are declared) it is a check error. Variables and functions are separate namespaces: `sum` as a variable and `sum(...)` as a call do not conflict.
 
 ## Members: `a.b`
 

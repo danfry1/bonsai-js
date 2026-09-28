@@ -11,7 +11,7 @@ Bonsai follows Semantic Versioning for its two package entrypoints:
   `tests/conformance.test.ts`. Changing the result of an expression that
   evaluates successfully, or making it fail, requires a major release.
 - **The API.** Exported functions, classes, types, options, and error codes.
-- **Runtimes.** Node.js 24 and newer, current Bun, and modern ESM browsers with
+- **Runtimes.** Node.js 22 and newer, current Bun, and modern ESM browsers with
   ES2022 and `Intl.DateTimeFormat` time zone support.
 
 ## What may change in a minor release
@@ -35,6 +35,10 @@ Bonsai follows Semantic Versioning for its two package entrypoints:
   successfully.
 - **Messages and performance.** Error and diagnostic wording, benchmark
   numbers, and internal modules under `src/`.
+- **Step costs.** The number of steps an operation charges may be adjusted to
+  follow its real cost, so an expression close to its `maxSteps` budget may
+  start or stop hitting it. Leave headroom in the budgets you set. Within one
+  release the count is deterministic.
 
 ## Release discipline
 

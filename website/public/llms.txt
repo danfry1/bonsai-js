@@ -3,7 +3,7 @@
 > A small, safe, typed expression language for JavaScript: rules, filters, formulas, and templates written by people other than your developers. JavaScript-like syntax, static checking against declared data types, bounded evaluation, zero dependencies.
 
 - Package: `bonsai-js` (ESM, TypeScript types included). Entry points: `bonsai-js` and `bonsai-js/service`.
-- Runtimes: Node.js 24+, current Bun, modern ESM browsers. No eval, no generated code.
+- Runtimes: Node.js 22+, current Bun, modern ESM browsers. No eval, no generated code.
 
 ## Example
 
@@ -15,7 +15,6 @@ const env = bonsai({
     user: t.object({ age: t.number(), plan: t.enum('free', 'pro') }),
     orders: t.list(t.object({ total: t.number(), paid: t.boolean(), created: t.timestamp() })),
   },
-  strict: true,
 })
 
 env.check('user.agee > 18') // { ok: false, diagnostics: [{ code: 'UNKNOWN_PROPERTY', ... did you mean "age"? }] }
@@ -24,7 +23,7 @@ const rule = env.compile(
   'user.plan == "pro" && orders.filter(.paid && now() - .created < days(30)).map(.total).sum() > 100',
   { expect: t.boolean() },
 )
-rule.evaluateSync(context) // boolean
+rule.evaluateSync(context) // a boolean
 ```
 
 ## Language essentials
@@ -41,12 +40,12 @@ rule.evaluateSync(context) // boolean
 
 ## API essentials
 
-- `bonsai({ variables, strict, functions, libraries, limits, clock, validateContext })` returns an immutable environment.
+- `bonsai({ variables, strict, functions, libraries, limits, cacheSize, clock, validateContext })` returns an immutable environment. Declaring `variables` makes it strict (undeclared names are errors) unless `strict: false`.
 - `env.check(src)` returns `{ ok, type, diagnostics }` and never throws. `env.compile(src, { expect })` returns a program with `evaluate`, `evaluateSync`, `type`, `references`, `warnings`.
 - `env.evaluateSync(src, ctx)` and `await env.evaluate(src, ctx)` compile through a cache. Options: `{ timeout, maxSteps, signal }`.
 - Host functions: `fn({ params: [t.string()], returns: t.boolean(), run, async?, context?, required?, rest? })`.
 - Types: `t.string() number() boolean() null() timestamp() duration() literal() enum() list() object() record() optional() union() opaque() any()`; `Infer<typeof T>`.
-- Errors: `BonsaiSyntaxError`, `BonsaiCheckError` (`.diagnostics`), `BonsaiLimitError`, `BonsaiRuntimeError`; each has a stable `code`.
+- Errors: `BonsaiSyntaxError`, `BonsaiCheckError` (`.diagnostics`), `BonsaiLimitError`, `BonsaiRuntimeError`; each has a stable `code`. Host functions that throw give `HOST_ERROR`; results that break the declared type give `HOST_CONTRACT`, which `try()` does not catch.
 - Editor features: `createLanguageService(env)` from `bonsai-js/service` with `complete`, `hover`, `diagnostics`.
 
 ## Documentation

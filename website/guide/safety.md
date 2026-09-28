@@ -15,7 +15,7 @@ Bonsai is designed to evaluate expression text written by people you do not full
 
 **Run code.** There is no `eval`, `new Function`, or generated code. The only callable things are built-in functions and the host functions you declared. A function value found in data can be compared but never called, and `x.f()` always resolves `f` among the declared functions, never on `x`.
 
-**Reach prototypes or globals.** A property read returns an own property of a plain map. Inherited members, class methods, and prototype getters never resolve. `__proto__`, `constructor`, and `prototype` are rejected as syntax, as computed keys, and in keys spread from host data. Maps created by expressions have a null prototype.
+**Reach prototypes or globals.** A property read returns an own property of a plain object or class instance. Inherited members, class methods, and prototype getters never resolve. Host collections and other built-in objects (`Map`, `Set`, `RegExp`, promises, typed arrays, errors) are opaque: an expression can compare them and pass them to host functions but not read into them. `__proto__`, `constructor`, and `prototype` are rejected as syntax, as computed keys, and in keys spread from host data. Maps created by expressions are ordinary objects that never contain those keys.
 
 <!-- context: { user: { name: "Ada" } } -->
 ```bonsai
@@ -24,20 +24,22 @@ user["constructor"] // error: BLOCKED_PROPERTY
 user.toString // => null
 ```
 
-**Trigger conversion hooks.** Templates, comparisons, keys, and arithmetic never call `valueOf`, `toString`, `toJSON`, or `Symbol.toPrimitive`. Built-ins use their own loops, never the receiver's methods, iterators, or `Symbol.species`.
+**Trigger conversion hooks.** Templates, comparisons, keys, and arithmetic never call `valueOf`, `toString`, `toJSON`, or `Symbol.toPrimitive`. Built-ins read host lists by index into their own copy and use their own loops, never the receiver's methods, iterators, or `Symbol.species`, even for an array subclass.
 
 **Mutate your data.** No operator or built-in modifies its input. `sort` and `reverse` return new lists.
 
-**Exhaust resources.** Every expression terminates. Straight-line code is bounded by the parse limits, and anything proportional to data (lambda calls, equality, membership, concatenation, spread, templates, built-ins) charges a step budget. Produced strings and lists are size-checked before they are allocated, and cyclic data fails closed on the depth limit. See [Limits](/api/limits).
+**Exhaust resources.** Every expression terminates. Straight-line code is bounded by the parse limits, which also bound the work of checking and compiling. Every operation charges the step budget for its real worst-case cost before it runs, including text search, regular expressions, sorting, and time zone calculations, so no single operation can run long. Produced strings and lists are size-checked before they are allocated, lists and maps an expression builds are limited in depth and charged for their size, and cyclic data fails closed on the depth limit. See [Limits](/api/limits).
 
-**Escape into async work.** A host function must be declared `async: true` to be awaited. `evaluateSync()` rejects an expression that calls one before any host code runs. A promise returned from a function not declared async is an error, a thenable in the context is inert data, and `evaluate()` refuses to return a promise-like value.
+**Escape into async work.** A host function must be declared `async: true` to be awaited. `evaluateSync()` rejects an expression that calls one before any host code runs. A promise returned from a function not declared async is a `HOST_CONTRACT` error, a thenable in the context is opaque data that is never awaited, and `evaluate()` refuses to return a promise-like value.
+
+**Hide failures.** Every failure surfaces as a `BonsaiError` with a stable code. A host function that throws, or a getter or Proxy in the context that throws, becomes a `HOST_ERROR`. A host function that breaks its declared contract is a `HOST_CONTRACT` error, which `try()` cannot catch.
 
 ## What remains your responsibility
 
 - **Host functions are your code.** Validate their inputs if they reach sensitive systems and give them their own timeouts. A synchronous host function that is already running cannot be interrupted.
 - **Getters and Proxies run when read.** Pass plain data when the context contains anything sensitive or expensive to compute.
 - **Only put in the context what expressions may see.** Every own property of the context is readable. Build a dedicated context object rather than passing a whole database row or request.
-- **Set a timeout on interactive paths.** The step budget bounds work deterministically but not wall-clock time spent inside host functions.
+- **Set a timeout when expressions call slow host functions.** The step budget bounds the work Bonsai does deterministically, but not wall-clock time spent inside your host functions, and each host call costs only one step.
 - **Bonsai is not a process boundary.** If your host functions or context data are themselves untrusted, evaluate in a worker or a separate process.
 
 ## A hardened setup
@@ -49,7 +51,6 @@ const env = bonsai({
   variables: {
     account: t.object({ plan: t.enum('free', 'pro'), seats: t.number() }),
   },
-  strict: true, // undeclared variables are errors
   limits: { maxSourceLength: 2_000, maxSteps: 50_000, timeout: 50 },
 })
 

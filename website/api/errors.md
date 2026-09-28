@@ -33,9 +33,9 @@ try {
 | `span` | `{ start, end } \| undefined` | UTF-16 offsets of the offending part of the source. |
 | `position` | `{ line, column } \| undefined` | 1-based position of `span.start`. |
 | `formatted` | `string` | The message followed by a code frame, when a span is known. |
-| `cause` | `unknown` | For `HOST_ERROR`, the error your host function threw. |
+| `cause` | `unknown` | For `HOST_ERROR`, the error your host function (or a getter or Proxy in the context) threw. |
 
-`isBonsaiError(value)` is a type guard for `BonsaiError`. Any error that is not a `BonsaiError` escaping from Bonsai is a bug, apart from `TypeError`s thrown synchronously by `bonsai()` and `fn()` for invalid configuration (an invalid limit, a duplicate function name).
+`isBonsaiError(value)` is a type guard for `BonsaiError`. Checking and evaluating an expression only ever throw `BonsaiError`s, including when your own code fails: a host function that throws, or a getter, Proxy trap, or `then` hook in the context that throws when read, becomes a `HOST_ERROR` with the original error as its `cause`. Any other error escaping from Bonsai is a bug. Invalid configuration is reported differently, as a `TypeError` or `RangeError` thrown synchronously by `bonsai()`, `extend()`, or `fn()` (an unknown option or limit, a limit out of range, a malformed parameter list, a duplicate function name).
 
 ## Classes and codes
 
@@ -58,11 +58,12 @@ try {
 | | `NON_FINITE` | A result would be `NaN` or infinite. |
 | | `BLOCKED_PROPERTY` | A computed key is `__proto__`, `constructor`, or `prototype`. |
 | | `INVALID_ARGUMENT` | An argument has the right type but an invalid value (an unparsable timestamp, an unknown time zone, a non-integer count), or the context is not an object. |
-| | `ASYNC_IN_SYNC` | `evaluateSync()` on an expression that calls an async host function, or a host function not declared async returned a promise. |
-| | `HOST_ERROR` | A host function threw, or returned a value that does not match its declared result type. |
+| | `ASYNC_IN_SYNC` | `evaluateSync()` on an expression that calls a host function declared `async: true`. |
+| | `HOST_ERROR` | A host function threw, or reading the context ran host code (a getter or Proxy) that threw. |
+| | `HOST_CONTRACT` | A host function broke its declaration: it returned a value that does not match `returns` (checked deeply), or returned a promise without `async: true`. |
 | | `INVALID_CONTEXT` | With `validateContext`, the context does not match the declared variable types. |
 
-`try(expr, fallback)` in an expression catches `BonsaiRuntimeError`s. It never catches syntax, check, or limit errors.
+`try(expr, fallback)` in an expression catches `BonsaiRuntimeError`s except `HOST_CONTRACT`, which is a bug in host code rather than a condition an expression should recover from. It never catches syntax, check, or limit errors.
 
 ## Diagnostics
 
@@ -79,21 +80,25 @@ interface Diagnostic {
 }
 ```
 
-| Diagnostic code | Meaning |
-| --- | --- |
-| `SYNTAX` | A syntax error, reported by `check()` instead of thrown. |
-| `LIMIT` | A parse limit, reported by `check()` instead of thrown. |
-| `UNKNOWN_VARIABLE` | An undeclared variable in a strict environment. |
-| `UNKNOWN_PROPERTY` | A field a closed record or map literal does not have. |
-| `UNKNOWN_FUNCTION` | A call to a function that does not exist. |
-| `NO_OVERLOAD` | Arguments that match no signature. |
-| `TYPE_ERROR` | Operands of incompatible types. Also the code of every warning. |
-| `NULLABLE_RECEIVER` | A possibly-null value where `null` is not accepted. |
-| `INVALID_LAMBDA` | A misplaced `.` or lambda. |
-| `BLOCKED_PROPERTY` | A blocked key used as a static key. |
-| `EXPECTED_TYPE` | The result does not match `expect`. |
-| `INVALID_ARGUMENT` | A literal argument with an invalid value, such as an unknown `formatDate` pattern letter. |
-| `DUPLICATE_BINDING` | Reserved. Rebinding a name currently fails as a syntax error. |
+Errors have `severity: "error"` and make `check()` return `ok: false`. Warnings (`severity: "warning"`) point at expressions that are valid but probably wrong; they appear in `check().diagnostics` and in `program.warnings` without stopping compilation.
+
+| Diagnostic code | Severity | Meaning |
+| --- | --- | --- |
+| `SYNTAX` | error | A syntax error, reported by `check()` instead of thrown. |
+| `LIMIT` | error | A parse or checking limit, reported by `check()` instead of thrown. |
+| `UNKNOWN_VARIABLE` | error | An undeclared variable in a strict environment. |
+| `UNKNOWN_PROPERTY` | error | A field a declared object type or map literal does not have. |
+| `UNKNOWN_FUNCTION` | error | A call to a function that does not exist. |
+| `NO_OVERLOAD` | error | Arguments that match no signature. |
+| `TYPE_ERROR` | error | Operands of incompatible types. |
+| `NULLABLE_RECEIVER` | error | A possibly-null value where `null` is not accepted. |
+| `INVALID_LAMBDA` | error | A misplaced `.` or lambda. |
+| `BLOCKED_PROPERTY` | error | A blocked key used as a static key. |
+| `EXPECTED_TYPE` | error | The result does not match `expect`. |
+| `INVALID_ARGUMENT` | error | A literal argument with an invalid value, such as an unknown `formatDate` pattern letter. |
+| `ALWAYS_FALSE` | warning | A comparison or membership test that can never hold, such as `plan == "premium"` when `plan` is `"free" \| "pro"`. |
+| `NEVER_NULL` | warning | `??` applied to a value that is never `null`. |
+| `MAYBE_NULL` | warning | An ordering comparison on a value that may be `null` (it is `false` when it is), or a lambda that may return `null` where a boolean is expected. |
 
 The same mistake can surface statically or at run time depending on what the checker knows. With declared types, `"a" + price` is a `TYPE_ERROR` diagnostic and the expression does not compile. With an untyped `price`, it compiles and fails at run time with `TYPE_ERROR`.
 
