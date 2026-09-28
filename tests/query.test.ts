@@ -3,8 +3,14 @@ import { PGlite } from '@electric-sql/pglite'
 import { fc, test } from '@fast-check/vitest'
 import { Query } from 'mingo'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { BonsaiError, bonsai } from '../src/index.js'
-import { BonsaiTranslationError, toMongo, toSQL, type Columns } from '../src/query/index.js'
+import { BonsaiError, bonsai, fn, t } from '../src/index.js'
+import {
+  BonsaiTranslationError,
+  toMongo,
+  toSQL,
+  type Columns,
+  type SQLOptions,
+} from '../src/query/index.js'
 
 const columns: Columns = {
   name: 'text',
@@ -27,6 +33,18 @@ interface Row {
 
 const env = bonsai()
 const known = {
+  // A hole reads as null.
+  // oxlint-disable-next-line no-sparse-arrays
+  sparse: [1, , 'a'],
+  dates: [new Date(-1), new Date(0), null],
+  nums: [-0, 2 ** 53, 0.1, null],
+  strs: ['e\u0301', '%', '\\', 'a\n'],
+  mixed: [1, 'a', true, null, new Date(0)],
+  empty: [],
+  flag: true,
+  nothing: null,
+  d0: new Date(0),
+  dm1: new Date(-1),
   limit: 10,
   word: 'apple pie',
   words: ['a', 'apple', 'É', null],
@@ -53,14 +71,47 @@ const STRINGS = [
   'ap',
   '😀',
   '😀a',
+  'e\u0301',
+  '\u00e9',
+  'a\n',
+  '\n',
+  '\r\n',
+  '%a',
+  '_a',
+  'a_',
+  '\u{1F600}\u{1F601}',
+  '\uFFFF',
+  '\u{10FFFF}',
+  'ab\\',
+  '\\%',
+  ' ',
 ]
 // Extremes overflow or underflow in arithmetic.
-const NUMBERS = [0, -1, 1, 2.5, 10, 100, -0.5, 1e10, 1e308, -1e308, 1e-300]
-const DATES = [
-  '2025-06-01T00:00:00.000Z',
-  '2026-01-01T00:00:00.000Z',
-  '2026-03-15T12:30:45.123Z',
-].map((d) => new Date(d))
+const NUMBERS = [
+  0,
+  -0,
+  -1,
+  1,
+  2.5,
+  10,
+  100,
+  -0.5,
+  1e10,
+  1e308,
+  -1e308,
+  1e-300,
+  2 ** 53,
+  2 ** 53 + 2,
+  5e-324,
+  0.1,
+  0.2,
+  0.30000000000000004,
+  2 ** 31,
+  -(2 ** 63),
+]
+const DATES = ['2025-06-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-03-15T12:30:45.123Z']
+  .map((d) => new Date(d))
+  .concat([new Date(-1), new Date(0), new Date(1), new Date(-2208988800001)])
 
 const text = fc.oneof(fc.constantFrom(...STRINGS), fc.constant(null))
 const num = fc.oneof(fc.constantFrom(...NUMBERS), fc.constant(null))
@@ -143,6 +194,102 @@ const atom: fc.Arbitrary<string> = fc.oneof(
     .tuple(fc.constantFrom('>=', '<'), fc.constantFrom('since'))
     .map(([op, k]) => `order.placed ${op} ${k}`),
   fc.constantFrom('true', 'false'),
+  fc
+    .tuple(
+      anyCol,
+      fc.constantFrom('in', 'not in'),
+      fc.constantFrom(
+        'sparse',
+        'dates',
+        'nums',
+        'strs',
+        'mixed',
+        'empty',
+        '[null]',
+        '[d0, dm1]',
+        '[flag, nothing]',
+      ),
+    )
+    .map(([c, op, l]) => `${c} ${op} ${l}`),
+  fc.tuple(anyCol, fc.constantFrom('==', '!='), anyCol).map(([a, op, b]) => `${a} ${op} ${b}`),
+  fc
+    .tuple(
+      fc.constantFrom('order.placed'),
+      cmp,
+      fc.constantFrom('order.placed', 'd0', 'dm1', 'nothing'),
+    )
+    .map(([a, op, b]) => `${a} ${op} ${b}`),
+  fc
+    .tuple(
+      anyCol,
+      fc.constantFrom('==', '!='),
+      fc.constantFrom(
+        'd0',
+        'dm1',
+        'nothing',
+        'flag',
+        'limit',
+        'word',
+        '-0',
+        '0.1 + 0.2',
+        '9007199254740993',
+      ),
+    )
+    .map(([a, op, b]) => `${a} ${op} ${b}`),
+  fc
+    .tuple(
+      fc.constantFrom('flag', 'limit > 5', 'nothing == null', 'false'),
+      numCol,
+      numCol,
+      cmp,
+      numConst,
+    )
+    .map(([cond, a, b, op, k]) => `(${cond} ? ${a} : ${b}) ${op} ${k}`),
+  fc
+    .tuple(
+      numCol,
+      cmp,
+      fc.constantFrom(
+        '(nothing ?? limit)',
+        '(limit ?? 0)',
+        '(let x = limit; x)',
+        'try(limit, 0)',
+        'nums[1]',
+        'strs.length',
+      ),
+    )
+    .map(([a, op, b]) => `${a} ${op} ${b}`),
+  fc
+    .tuple(
+      textCol,
+      fc.constantFrom('==', '!=', 'in'),
+      fc.constantFrom('`${word}`', '`a${limit}`', 'strs[0]', 'word.toUpperCase()', 'strs'),
+    )
+    .map(([a, op, b]) => `${a} ${op} ${b}`),
+  fc
+    .tuple(strConst, fc.constantFrom('in', 'not in'), textCol)
+    .map(([k, op, c]) => `${k} ${op} ${c}`),
+  fc
+    .tuple(
+      textCol,
+      fc.constantFrom('in', 'not in'),
+      fc.constantFrom('"apple pie"', 'word', '"😀a%_\\n"'),
+    )
+    .map(([c, op, k]) => `${c} ${op} ${k}`),
+  fc
+    .tuple(
+      fc.constantFrom('flag', 'nothing == null', 'limit < 0', 'true', 'nothing'),
+      fc.constantFrom('&&', '||'),
+      fc.constantFrom('order.active', 'order.name.startsWith("a")', 'order.total * 2 > 1'),
+    )
+    .map(([a, op, b]) => `(${a} ${op} ${b})`),
+  fc
+    .tuple(
+      fc.constantFrom('order.active', 'order.name.startsWith("a")', 'order.total * 2 > 1'),
+      fc.constantFrom('&&', '||'),
+      fc.constantFrom('flag', 'true', 'false', 'nothing', 'nothing == null'),
+    )
+    .map(([a, op, b]) => `(${a} ${op} ${b})`),
 )
 
 const predicate: fc.Arbitrary<string> = fc.letrec<{ p: string }>((tie) => ({
@@ -231,7 +378,14 @@ async function agree(
   const want = expected(source, rows)
   await load(rows, targets.postgres ?? true)
 
-  const sqlite = toSQL(program, { row: 'order', columns, dialect: 'sqlite', known })
+  let sqlite: ReturnType<typeof toSQL>
+  try {
+    sqlite = toSQL(program, { row: 'order', columns, dialect: 'sqlite', known })
+  } catch (error) {
+    // Untranslatable is allowed; exactness is required of whatever translates.
+    if (error instanceof BonsaiTranslationError) return want
+    throw error
+  }
   const liteIds = lite
     .prepare(`select id from t where ${sqlite.sql} order by id`)
     .all(...(sqlite.params as (string | number | null)[]))
@@ -370,7 +524,8 @@ describe('edge cases', () => {
     expect(() => toSQL(program, { ...options, dialect: 'sqlite' })).toThrow(
       /more than 32766 parameters/u,
     )
-    expect(toSQL(program, { ...options, dialect: 'postgres' }).params).toHaveLength(40_000)
+    // Postgres takes a list as one array parameter.
+    expect(toSQL(program, { ...options, dialect: 'postgres' }).params).toHaveLength(1)
     for (const paramOffset of [-1, 1.5, Number.NaN, 1e21]) {
       expect(() =>
         toSQL(env.compile('order.total > 1'), {
@@ -400,7 +555,7 @@ describe('edge cases', () => {
     for (const name of ['$where', 'a..b', '']) {
       expect(() =>
         toMongo(program, { row: 'order', fields: { city: { type: 'text', name } } }),
-      ).toThrow(BonsaiTranslationError)
+      ).toThrow(TypeError)
     }
     expect(() =>
       toSQL(program, {
@@ -408,7 +563,145 @@ describe('edge cases', () => {
         columns: { city: { type: 'text', name: 'a\0b' } },
         dialect: 'postgres',
       }),
-    ).toThrow(BonsaiTranslationError)
+    ).toThrow(TypeError)
+  })
+})
+
+describe('production hardening', () => {
+  it('rejects calls to host functions that replace a built-in', () => {
+    const custom = bonsai({
+      functions: {
+        startsWith: fn({
+          params: [t.string(), t.string()],
+          returns: t.boolean(),
+          run: (a: string, b: string) => a.toLowerCase().startsWith(b.toLowerCase()),
+        }),
+      },
+    })
+    const program = custom.compile('order.name.startsWith("A")')
+    expect(() => toSQL(program, { row: 'order', columns, dialect: 'sqlite' })).toThrow(
+      /host function/u,
+    )
+    expect(() => toMongo(program, { row: 'order', fields: columns })).toThrow(/host function/u)
+  })
+
+  it('reads holes in known lists as null', async () => {
+    const rows = [row(1, {}), row(2, { total: 1 }), row(3, { total: 7 })]
+    expect(await agree('order.total in sparse', rows)).toEqual([1, 2])
+    expect(await agree('order.total not in sparse', rows)).toEqual([3])
+  })
+
+  it('rejects variables that are neither the row nor known', () => {
+    const program = env.compile('!(order.total > 1)')
+    expect(() => toSQL(program, { row: 'orders', columns, dialect: 'postgres' })).toThrow(
+      /order is neither the row \(orders\) nor a known value/u,
+    )
+    expect(() =>
+      toMongo(env.compile('order.name != user'), { row: 'order', fields: columns }),
+    ).toThrow(/user is neither/u)
+  })
+
+  it('validates configuration', () => {
+    const program = env.compile('order.name == "a"')
+    const bad: unknown[] = [
+      { row: 'order', columns, dialect: 'postgresql' },
+      { row: 'order', columns: { name: 'string' }, dialect: 'postgres' },
+      { row: 'order', columns: null, dialect: 'postgres' },
+      { row: 'order', columns: { name: null }, dialect: 'postgres' },
+      { row: '', columns, dialect: 'postgres' },
+      {
+        row: 'order',
+        columns: { name: { type: 'text', name: 'x'.repeat(64) } },
+        dialect: 'postgres',
+      },
+    ]
+    for (const options of bad) {
+      expect(() => toSQL(program, options as SQLOptions), JSON.stringify(options)).toThrow(
+        TypeError,
+      )
+    }
+    expect(() =>
+      toMongo(program, { row: 'order', fields: { name: { type: 'text', name: 'a.$where' } } }),
+    ).toThrow(TypeError)
+  })
+
+  it('gives every untranslatable part a span', () => {
+    for (const source of [
+      'order.total + 1 > 2',
+      'order.total == order.qty',
+      'order.name in word',
+    ]) {
+      let error: unknown
+      try {
+        toMongo(env.compile(source), { row: 'order', fields: columns, known })
+      } catch (caught) {
+        error = caught
+      }
+      expect(error, source).toBeInstanceOf(BonsaiTranslationError)
+      expect((error as BonsaiTranslationError).span, source).toBeDefined()
+    }
+  })
+
+  it('produces conditions Postgres can answer from an index', async () => {
+    const db = new PGlite()
+    await db.exec(`
+      create table idx (id int, name text, total float8, placed timestamptz);
+      insert into idx select i, 'n' || i, i, now() from generate_series(1, 20000) i;
+      create index on idx ((name collate "C"));
+      create index on idx (total);
+      create index on idx (placed);
+      analyze idx;
+    `)
+    const cols: Columns = { name: 'text', total: 'number', placed: 'timestamp' }
+    for (const source of [
+      'order.total == 5',
+      'order.total > 19990',
+      'order.total in [1, 2, 3]',
+      'order.name == "n5"',
+      'order.name in ["n5", "n6"]',
+      'order.name.startsWith("n1999")',
+      'order.placed > since && order.total < 3',
+    ]) {
+      const q = toSQL(env.compile(source), {
+        row: 'order',
+        columns: cols,
+        dialect: 'postgres',
+        known,
+      })
+      const plan = await db.query<{ 'QUERY PLAN': string }>(
+        `explain select id from idx where ${q.sql}`,
+        [...q.params],
+      )
+      const planText = plan.rows.map((r) => r['QUERY PLAN']).join('\n')
+      expect(planText, `${source}: ${q.sql}`).toMatch(/Index|Bitmap/u)
+    }
+    await db.close()
+  })
+
+  it('produces conditions SQLite can answer from an index', () => {
+    const db = new DatabaseSync(':memory:')
+    db.exec(`
+      create table idx (id integer, name text, total real, placed integer) strict;
+      create index idx_name on idx (name);
+      create index idx_total on idx (total);
+    `)
+    const cols: Columns = { name: 'text', total: 'number', placed: 'timestamp' }
+    for (const source of [
+      'order.total == 5',
+      'order.total > 100',
+      'order.total in [1, 2, 3]',
+      'order.name == "n5"',
+      'order.name.startsWith("n1999")',
+    ]) {
+      const q = toSQL(env.compile(source), { row: 'order', columns: cols, dialect: 'sqlite' })
+      const plan = db
+        .prepare(`explain query plan select id from idx where ${q.sql}`)
+        .all(...(q.params as (string | number)[]))
+        .map((r) => (r as { detail: string }).detail)
+        .join('\n')
+      expect(plan, `${source}: ${q.sql}`).toMatch(/USING INDEX/u)
+    }
+    db.close()
   })
 })
 
@@ -416,8 +709,8 @@ describe('toSQL', () => {
   it('produces parameterized, typed Postgres', () => {
     const program = env.compile('order.total > limit && order.name.startsWith("ap")')
     expect(toSQL(program, { row: 'order', columns, dialect: 'postgres', known })).toEqual({
-      sql: '(COALESCE("total"::float8 > $1::float8, FALSE) AND (("name" IS NOT NULL) AND COALESCE(left("name", char_length($2::text)) = ($2::text COLLATE "C"), FALSE)))',
-      params: [10, 'ap'],
+      sql: '(("total"::float8 > $1::float8) AND (("name" COLLATE "C") >= ($2::text COLLATE "C") AND ("name" COLLATE "C") < ($3::text COLLATE "C") AND left("name", char_length($2::text)) = ($2::text COLLATE "C")))',
+      params: [10, 'ap', 'aq'],
     })
   })
 

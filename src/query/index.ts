@@ -17,6 +17,7 @@ import type { Node, SpreadNode } from '../syntax/ast.js'
 /** A compiled program (from `env.compile`) whose predicate is translated. */
 export interface Translatable {
   readonly source: string
+  readonly references: { readonly variables: readonly string[] }
   partial: (known: never, options?: PartialOptions) => PartialResult<unknown>
 }
 
@@ -49,7 +50,11 @@ export interface SQLOptions extends CommonOptions {
 }
 
 export interface SQLQuery {
-  /** A boolean SQL expression for a WHERE clause. */
+  /**
+   * A boolean SQL expression for a WHERE clause. It is true for exactly the
+   * selected records, and may be NULL (not false) for others: negate a
+   * filter by translating `!(filter)`, not by wrapping this in NOT.
+   */
   readonly sql: string
   readonly params: readonly unknown[]
 }
@@ -74,9 +79,11 @@ export class BonsaiTranslationError extends BonsaiError {
 
 // === a small predicate language both targets are generated from ===
 
+type Primitive = string | number | boolean | Date | null
+
 type Value =
   | { readonly kind: 'column'; readonly field: string; readonly type: ColumnType }
-  | { readonly kind: 'const'; readonly value: string | number | boolean | Date | null }
+  | { readonly kind: 'const'; readonly value: Primitive }
   | {
       readonly kind: 'arith'
       readonly op: '+' | '-' | '*'
@@ -96,23 +103,33 @@ type Pred =
       readonly right: Value
     }
   | { readonly kind: 'null'; readonly value: Value }
-  | {
-      readonly kind: 'in'
-      readonly value: Value
-      readonly list: readonly (string | number | boolean | Date | null)[]
-    }
+  | { readonly kind: 'in'; readonly value: Value; readonly list: readonly Primitive[] }
   | {
       readonly kind: 'text'
       readonly op: 'startsWith' | 'endsWith' | 'includes'
       readonly column: Value
       readonly text: string
-      /** Method calls fail on a null column; `"x" in column` is false instead. */
+      /** Method calls fail on a null column; `"x" in column` and `?.` calls are false instead. */
       readonly nullFails: boolean
     }
   | { readonly kind: 'within'; readonly column: Value; readonly text: string }
   | { readonly kind: 'truthy'; readonly column: Value }
 
-type Primitive = string | number | boolean | Date | null
+/** What a target database can express, so untranslatable parts fail with their span. */
+interface Target {
+  readonly name: string
+  readonly arithmetic: boolean
+  /** Comparing a column with another column (or arithmetic). */
+  readonly columnPairs: boolean
+  /** `column in "text"`. */
+  readonly within: boolean
+  /** Why a column or field name is invalid, if it is. */
+  readonly checkName: (name: string) => string | undefined
+  /** Why a constant cannot be sent, if it cannot. */
+  readonly checkConstant: (value: Primitive) => string | undefined
+  /** Why a text-function argument cannot be sent, if it cannot. */
+  readonly checkPattern: (text: string) => string | undefined
+}
 
 const FLIP: Readonly<Record<'<' | '<=' | '>' | '>=', '<' | '<=' | '>' | '>='>> = {
   '<': '>',
@@ -120,6 +137,8 @@ const FLIP: Readonly<Record<'<' | '<=' | '>' | '>=', '<' | '<=' | '>' | '>='>> =
   '>': '<',
   '>=': '<=',
 }
+
+const COLUMN_TYPES: ReadonlySet<string> = new Set(['text', 'number', 'boolean', 'timestamp'])
 
 function kindOf(value: Value): ColumnType | 'null' {
   if (value.kind === 'column') return value.type
@@ -141,12 +160,59 @@ function isPrimitive(value: unknown): value is Primitive {
     typeof value === 'string' ||
     typeof value === 'boolean' ||
     (typeof value === 'number' && Number.isFinite(value)) ||
-    (value instanceof Date && !Number.isNaN(value.getTime()))
+    (value instanceof Date && !Number.isNaN(Date.prototype.getTime.call(value)))
   )
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+interface Declared {
+  readonly field: string
+  readonly type: ColumnType
+}
+
+/** Validates options that come from configuration; mistakes there are programming errors. */
+function declare(
+  options: CommonOptions,
+  columns: unknown,
+  what: string,
+  target: Target,
+): ReadonlyMap<string, Declared> {
+  if (!isRecord(options)) throw new TypeError('Options must be an object')
+  if (typeof options.row !== 'string' || options.row === '')
+    throw new TypeError('row must name the record variable')
+  if (options.known !== undefined && !isRecord(options.known))
+    throw new TypeError('known must be an object')
+  if (
+    options.now !== undefined &&
+    (!(options.now instanceof Date) || Number.isNaN(Date.prototype.getTime.call(options.now)))
+  )
+    throw new TypeError('now must be a valid Date')
+  if (!isRecord(columns)) throw new TypeError(`${what} must be an object`)
+  const declared = new Map<string, Declared>()
+  for (const [key, column] of Object.entries(columns)) {
+    const spec: unknown = typeof column === 'string' ? { type: column } : column
+    if (!isRecord(spec) || typeof spec.type !== 'string' || !COLUMN_TYPES.has(spec.type))
+      throw new TypeError(`${what}.${key} must be one of text, number, boolean, timestamp`)
+    if (spec.name !== undefined && typeof spec.name !== 'string')
+      throw new TypeError(`${what}.${key}.name must be a string`)
+    const field = spec.name ?? key
+    const problem = field === '' ? 'is empty' : target.checkName(field)
+    if (problem !== undefined)
+      throw new TypeError(`The ${target.name} name for ${key} (${field}) ${problem}`)
+    declared.set(key, { field, type: spec.type as ColumnType })
+  }
+  return declared
+}
+
 /** Partially evaluates the program and lowers the residual to a predicate. */
-function lower(program: Translatable, options: CommonOptions, columns: Columns): Pred {
+function lower(
+  program: Translatable,
+  options: CommonOptions,
+  columns: ReadonlyMap<string, Declared>,
+  target: Target,
+): Pred {
   const source = program.source
   const fail = (message: string, at?: Span): never => {
     throw new BonsaiTranslationError(
@@ -155,7 +221,13 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
       at === undefined ? undefined : { start: at.start, end: at.end },
     )
   }
-  const result = program.partial((options.known ?? {}) as never, {
+  const knownData = options.known ?? {}
+  // A misspelled row (or a missing known value) would otherwise read as null.
+  for (const name of program.references.variables) {
+    if (name !== options.row && !Object.hasOwn(knownData, name))
+      fail(`${name} is neither the row (${options.row}) nor a known value`)
+  }
+  const result = program.partial(knownData as never, {
     unknown: [options.row],
     ...(options.now === undefined ? {} : { now: options.now }),
   })
@@ -165,7 +237,7 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
       fail('The predicate does not produce a boolean')
     return { kind: 'const', value: result.value === true }
   }
-  const bindings = result.bindings
+  const { bindings, hostFunctions } = result
 
   const columnOf = (node: Node): Value | undefined => {
     const path: string[] = []
@@ -181,14 +253,9 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
         node,
       )
     const key = path.join('.')
-    if (!Object.hasOwn(columns, key)) {
-      return fail(`${options.row}.${key} is not a declared column`, node)
-    }
-    const column = columns[key]
-    const declared = typeof column === 'string' ? { type: column } : column
-    const field = declared.name ?? key
-    if (field === '' || field.includes('\0')) return fail(`The column name for ${key} is not valid`)
-    return { kind: 'column', field, type: declared.type }
+    const declared = columns.get(key)
+    if (declared === undefined) return fail(`${options.row}.${key} is not a declared column`, node)
+    return { kind: 'column', field: declared.field, type: declared.type }
   }
 
   /** Checks a constant the database must see exactly as Bonsai does. */
@@ -196,12 +263,14 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
     if (typeof constant === 'string' && LONE_SURROGATE.test(constant))
       return fail('Text containing a lone surrogate cannot be sent to the database', at)
     // Read Date subclasses the way Bonsai compares them: by time.
-    return constant instanceof Date ? new Date(Date.prototype.getTime.call(constant)) : constant
+    const value =
+      constant instanceof Date ? new Date(Date.prototype.getTime.call(constant)) : constant
+    const problem = target.checkConstant(value)
+    return problem === undefined ? value : fail(problem, at)
   }
 
   const knownValue = (name: string): unknown => {
     if (Object.hasOwn(bindings, name)) return bindings[name]
-    const knownData = options.known ?? {}
     return name !== options.row && Object.hasOwn(knownData, name) ? knownData[name] : undefined
   }
   const constOf = (node: Node): Primitive | undefined => {
@@ -214,7 +283,6 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
   }
 
   const listOf = (node: Node): readonly Primitive[] | undefined => {
-    let items: unknown
     if (node.type === 'List') {
       const out: Primitive[] = []
       for (const item of node.items) {
@@ -224,9 +292,17 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
       }
       return out
     }
-    if (node.type === 'Variable') items = knownValue(node.name)
-    if (!Array.isArray(items) || !items.every(isPrimitive)) return undefined
-    return items.map((item) => exact(item, node))
+    const items = node.type === 'Variable' ? knownValue(node.name) : undefined
+    if (!Array.isArray(items)) return undefined
+    const out: Primitive[] = []
+    // Iterated (not filtered or tested with every()), which visits holes: Bonsai reads a
+    // hole, or undefined, as null.
+    for (const entry of items as unknown[]) {
+      const item: unknown = entry ?? null
+      if (!isPrimitive(item)) return undefined
+      out.push(exact(item, node))
+    }
+    return out
   }
 
   const value = (node: Node): Value => {
@@ -238,6 +314,7 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
       node.type === 'Binary' &&
       (node.operator === '+' || node.operator === '-' || node.operator === '*')
     ) {
+      if (!target.arithmetic) return fail(`Arithmetic is not translated for ${target.name}`, node)
       const left = value(node.left)
       const right = value(node.right)
       if (kindOf(left) !== 'number' || kindOf(right) !== 'number') {
@@ -248,12 +325,18 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
     return fail('This expression has no exact database equivalent', node)
   }
 
+  const pair = (left: Value, right: Value, at: Node): void => {
+    if (!target.columnPairs && left.kind !== 'const' && right.kind !== 'const')
+      fail(`${target.name} queries compare a field with a known value`, at)
+  }
+
   const textArgument = (args: readonly (Node | SpreadNode)[], at: Node): string => {
     const arg = args[1]
     const text = arg === undefined || arg.type === 'Spread' ? undefined : constOf(arg)
     if (typeof text !== 'string' || args.length !== 2)
       return fail('Expected a known string argument', at)
-    return text
+    const problem = target.checkPattern(text)
+    return problem === undefined ? text : fail(problem, at)
   }
 
   const pred = (node: Node): Pred => {
@@ -275,7 +358,7 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
             }
           case '==':
           case '!=': {
-            const eq = equality(value(node.left), value(node.right))
+            const eq = equality(value(node.left), value(node.right), node)
             return node.operator === '==' ? eq : { kind: 'not', item: eq }
           }
           case '<':
@@ -297,6 +380,7 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
               return { kind: 'in', value: kinds[0] === 'null' ? right : left, list: [] }
             if (kinds[0] !== kinds[1])
               return fail('Both sides of an ordering must be numbers or both timestamps', node)
+            pair(left, right, node)
             return left.kind === 'const'
               ? { kind: 'order', op: FLIP[node.operator], left: right, right: left }
               : { kind: 'order', op: node.operator, left, right }
@@ -323,6 +407,8 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
         return fail('Only boolean columns can be used as conditions', node)
       }
       case 'Call': {
+        if (hostFunctions.includes(node.name))
+          return fail(`${node.name}() is a host function, which has no database equivalent`, node)
         const receiver = node.args[0]
         const column =
           receiver === undefined || receiver.type === 'Spread' ? undefined : columnOf(receiver)
@@ -359,7 +445,7 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
     }
   }
 
-  const equality = (left: Value, right: Value): Pred => {
+  const equality = (left: Value, right: Value, at: Node): Pred => {
     const [a, b] = left.kind === 'const' && right.kind !== 'const' ? [right, left] : [left, right]
     const ka = kindOf(a)
     const kb = kindOf(b)
@@ -367,15 +453,12 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
       return ka === 'null' ? { kind: 'const', value: true } : { kind: 'null', value: a }
     if (ka === 'null') return { kind: 'null', value: b }
     if (ka !== kb) {
-      // Different kinds are equal only when both are null.
-      return {
-        kind: 'and',
-        items: [
-          { kind: 'null', value: a },
-          { kind: 'null', value: b },
-        ],
-      }
+      // Different kinds are equal only when both are null (b is non-null if constant).
+      const isNull = (v: Value): Pred =>
+        v.kind === 'const' ? { kind: 'const', value: false } : { kind: 'null', value: v }
+      return { kind: 'and', items: [isNull(a), isNull(b)] }
     }
+    pair(a, b, at)
     return { kind: 'eq', left: a, right: b }
   }
 
@@ -392,6 +475,7 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
     }
     const container = constOf(containerNode)
     if (typeof container === 'string' && item.kind === 'column' && item.type === 'text') {
+      if (!target.within) return fail(`"field in text" is not translated for ${target.name}`, at)
       return { kind: 'within', column: item, text: container }
     }
     const containerColumn = columnOf(containerNode)
@@ -401,6 +485,8 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
       item.kind === 'const' &&
       typeof item.value === 'string'
     ) {
+      const problem = target.checkPattern(item.value)
+      if (problem !== undefined) return fail(problem, at)
       return {
         kind: 'text',
         op: 'includes',
@@ -418,9 +504,12 @@ function lower(program: Translatable, options: CommonOptions, columns: Columns):
 // === three-valued lowering ===
 
 /**
- * A predicate as two queries: `t` selects records where it is true, `f` where
- * it is false. Records where evaluation would fail match neither. `safe`
- * predicates cannot fail, so `f` is simply the negation of `t`.
+ * A predicate as two conditions: `t` holds for records where it is true, `f`
+ * where it is false. Records where evaluation would fail match neither.
+ * `safe` predicates cannot fail, so `f` is exactly the complement of `t`.
+ *
+ * Both are only ever combined with AND and OR, never negated, so a leaf may
+ * leave NULL for "not selected": this keeps plain comparisons that can use an index.
  */
 interface Dual<S> {
   readonly t: S
@@ -428,19 +517,16 @@ interface Dual<S> {
   readonly safe: boolean
 }
 
+type Leaf = Exclude<Pred, { kind: 'const' | 'and' | 'or' | 'not' }>
+
 interface Algebra<S> {
   readonly TRUE: S
   readonly FALSE: S
   readonly and: (items: readonly S[]) => S
   readonly or: (items: readonly S[]) => S
-  readonly not: (item: S) => S
   /** Rejects a query that has grown too large (a failing `&&` or `||` repeats its left side). */
   readonly guard: (item: S) => S
-  readonly leaf: (p: Exclude<Pred, { kind: 'const' | 'and' | 'or' | 'not' }>) => {
-    t: S
-    safe: boolean
-    f?: S
-  }
+  readonly leaf: (p: Leaf) => Dual<S>
 }
 
 function dual<S>(p: Pred, algebra: Algebra<S>): Dual<S> {
@@ -491,10 +577,8 @@ function dual<S>(p: Pred, algebra: Algebra<S>): Dual<S> {
     case 'text':
     case 'truthy':
     case 'within':
-    default: {
-      const leaf = algebra.leaf(p)
-      return { t: leaf.t, f: leaf.f ?? algebra.not(leaf.t), safe: leaf.safe }
-    }
+    default:
+      return algebra.leaf(p)
   }
 }
 
@@ -504,7 +588,10 @@ function failable(value: Value): boolean {
 }
 
 const tooLarge = (source: string): BonsaiTranslationError =>
-  new BonsaiTranslationError('The translated query is too large', source)
+  new BonsaiTranslationError('The translated query is too large', source, {
+    start: 0,
+    end: source.length,
+  })
 
 /** SQL text length, and MongoDB filter nodes, above which a translation is rejected. */
 const MAX_SQL_LENGTH = 1_000_000
@@ -513,6 +600,27 @@ const MAX_MONGO_NODES = 100_000
 const MAX_PARAMS = { postgres: 65_535, sqlite: 32_766 } as const
 /** The last year Postgres reads from an ISO timestamp (years with more digits use `+YYYYYY`). */
 const MAX_PG_YEAR = 9999
+/** Postgres truncates longer identifiers, which could name a different column. */
+const MAX_PG_IDENTIFIER_BYTES = 63
+const MAX_CODE_POINT = 0x10_ff_ff
+const LAST_BEFORE_SURROGATES = 0xd7_ff
+const FIRST_AFTER_SURROGATES = 0xe0_00
+
+const utf8Length = (text: string): number => new TextEncoder().encode(text).length
+
+/** The least string greater than every string that starts with `prefix`, by code point. */
+function prefixEnd(prefix: string): string | undefined {
+  // By code point: the prefix is well-formed, so no surrogate is split.
+  const chars = Array.from(prefix)
+  while (chars.length > 0) {
+    const cp = chars.pop()?.codePointAt(0) ?? MAX_CODE_POINT
+    if (cp !== MAX_CODE_POINT) {
+      const next = cp === LAST_BEFORE_SURROGATES ? FIRST_AFTER_SURROGATES : cp + 1
+      return chars.join('') + String.fromCodePoint(next)
+    }
+  }
+  return undefined
+}
 
 // === SQL ===
 
@@ -527,92 +635,137 @@ const PG_CASTS: Readonly<Record<ColumnType, string>> = {
  * Translates a predicate to a SQL WHERE expression.
  *
  * Postgres: columns hold `text`, a numeric type, `boolean`, or `timestamptz`;
- * text comparisons use the C collation. SQLite: columns hold TEXT, REAL or
- * INTEGER numbers, booleans as 0/1, and timestamps as epoch milliseconds, and
- * should be declared STRICT so they cannot hold other types.
+ * text comparisons use the C collation. SQLite (UTF-8 databases): columns
+ * hold TEXT, REAL or INTEGER numbers, booleans as 0/1, and timestamps as
+ * epoch milliseconds, and should be declared STRICT so they cannot hold
+ * other types.
  */
 export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
-  const predicate = lower(program, options, options.columns)
-  const pg = options.dialect === 'postgres'
-  const params: unknown[] = []
+  const dialect = isRecord(options) ? options.dialect : undefined
+  if (dialect !== 'postgres' && dialect !== 'sqlite')
+    throw new TypeError(`dialect must be 'postgres' or 'sqlite'`)
+  const pg = dialect === 'postgres'
   const offset = options.paramOffset ?? 0
   if (!Number.isSafeInteger(offset) || offset < 0)
     throw new RangeError('paramOffset must be a non-negative integer')
+  const target: Target = {
+    name: pg ? 'Postgres' : 'SQLite',
+    arithmetic: true,
+    columnPairs: true,
+    within: true,
+    checkName: (name) => {
+      if (name.includes('\0')) return 'contains a NUL character'
+      if (pg && utf8Length(name) > MAX_PG_IDENTIFIER_BYTES) return 'is longer than 63 bytes'
+      return undefined
+    },
+    checkConstant: (value) => {
+      if (typeof value === 'string' && value.includes('\0'))
+        return 'Text containing a NUL character cannot be sent to the database'
+      if (pg && value instanceof Date) {
+        const year = value.getUTCFullYear()
+        if (year < 1 || year > MAX_PG_YEAR)
+          return 'Postgres timestamps are translated for the years 0001 to 9999'
+      }
+      return undefined
+    },
+    checkPattern: () => undefined,
+  }
+  const predicate = lower(
+    program,
+    options,
+    declare(options, options.columns, 'columns', target),
+    target,
+  )
+  const params: unknown[] = []
 
   const quote = (name: string): string =>
     pg ? `"${name.replaceAll('"', '""')}"` : `\`${name.replaceAll('`', '``')}\``
-  const param = (value: Primitive, type: ColumnType): string => {
-    if (typeof value === 'string' && value.includes('\0')) {
-      throw new BonsaiTranslationError(
-        'Text containing a NUL character cannot be sent to the database',
-        program.source,
-      )
-    }
-    let encoded: unknown = value
-    if (value instanceof Date) {
-      const year = value.getUTCFullYear()
-      if (pg && (year < 1 || year > MAX_PG_YEAR)) {
-        throw new BonsaiTranslationError(
-          'Postgres timestamps are translated for the years 0001 to 9999',
-          program.source,
-        )
-      }
-      encoded = pg ? value.toISOString() : value.getTime()
-    } else if (typeof value === 'boolean' && !pg) encoded = value ? 1 : 0
-    params.push(encoded)
-    // Numbered placeholders: a translated condition may repeat a sub-expression.
-    return pg ? `$${offset + params.length}::${PG_CASTS[type]}` : `?${offset + params.length}`
+  const encode = (value: Exclude<Primitive, null>): unknown => {
+    if (value instanceof Date) return pg ? value.toISOString() : value.getTime()
+    if (typeof value === 'boolean' && !pg) return value ? 1 : 0
+    return value
   }
+  // Numbered placeholders, so a repeated sub-expression reuses its parameter.
+  const placeholder = (encoded: unknown, cast: string): string => {
+    params.push(encoded)
+    return pg ? `$${offset + params.length}::${cast}` : `?${offset + params.length}`
+  }
+  const param = (value: Exclude<Primitive, null>, type: ColumnType): string =>
+    placeholder(encode(value), PG_CASTS[type])
   const text = (sql: string): string => (pg ? `(${sql} COLLATE "C")` : sql)
   const TRUE = pg ? 'TRUE' : '1'
   const FALSE = pg ? 'FALSE' : '0'
-  const two = (sql: string): string => `COALESCE(${sql}, ${FALSE})`
+  /** True when the condition is false or NULL. */
+  const negate = (condition: string): string => `(NOT COALESCE(${condition}, ${FALSE}))`
 
+  const rendered = new Map<Value, string>()
   const val = (value: Value): string => {
+    let sql = rendered.get(value)
+    if (sql !== undefined) return sql
     switch (value.kind) {
       case 'column':
-        return pg && value.type === 'number' ? `${quote(value.field)}::float8` : quote(value.field)
+        sql = pg && value.type === 'number' ? `${quote(value.field)}::float8` : quote(value.field)
+        break
       case 'const': {
         const kind = kindOf(value)
-        return value.value === null ? 'NULL' : param(value.value, kind === 'null' ? 'text' : kind)
+        sql = value.value === null ? 'NULL' : param(value.value, kind === 'null' ? 'text' : kind)
+        break
       }
       case 'arith':
       default:
-        return `(${operand(value.left)} ${value.op} ${operand(value.right)})`
+        sql = `(${operand(value.left)} ${value.op} ${operand(value.right)})`
     }
+    rendered.set(value, sql)
+    return sql
   }
   // SQLite INTEGER arithmetic is exact past 2^53; Bonsai's (and REAL's) is double.
   const operand = (value: Value): string =>
     !pg && value.kind === 'column' ? `CAST(${val(value)} AS REAL)` : val(value)
+  const typed = (value: Value): string => (kindOf(value) === 'text' ? text(val(value)) : val(value))
   /** Byte-wise SQLite text, so text holding NUL is read whole. UTF-8 matches by code point. */
   const bytes = (sql: string): string => `CAST(${sql} AS BLOB)`
   const INFINITY = pg ? `'Infinity'::float8` : '9e999'
-  const typed = (value: Value): string => (kindOf(value) === 'text' ? text(val(value)) : val(value))
 
   /**
    * SQL that is true when evaluating arithmetic in the values would fail: a
    * null operand makes the result null, and a non-finite result stays
    * non-finite (or NaN, which SQLite reads as null) through later operations.
    */
-  const fails = (...values: Value[]): string | undefined => {
+  const fails = (values: readonly Value[]): string | undefined => {
     const parts = values
       .filter(failable)
       .map((value) => `COALESCE(NOT (abs(${val(value)}) < ${INFINITY}), ${TRUE})`)
     return parts.length === 0 ? undefined : `(${parts.join(' OR ')})`
   }
   /** A comparison leaf: false when a plain operand is null, failing when arithmetic would fail. */
-  const compare = (
-    condition: string,
-    ...values: Value[]
-  ): { t: string; f: string; safe: boolean } => {
-    const failure = values.some(failable) ? fails(...values) : undefined
-    if (failure === undefined)
-      return { t: two(condition), f: `(NOT ${two(condition)})`, safe: true }
-    return {
-      t: `((NOT ${failure}) AND ${two(condition)})`,
-      f: `((NOT ${failure}) AND NOT ${two(condition)})`,
-      safe: false,
+  const compare = (condition: string, ...values: Value[]): Dual<string> => {
+    const failure = fails(values)
+    if (failure === undefined) return { t: condition, f: negate(condition), safe: true }
+    const ok = `(NOT ${failure})`
+    return { t: `(${ok} AND ${condition})`, f: `(${ok} AND ${negate(condition)})`, safe: false }
+  }
+
+  const textCondition = (
+    op: 'startsWith' | 'endsWith' | 'includes',
+    column: string,
+    needle: string,
+  ): string => {
+    if (pg) {
+      const pattern = placeholder(needle, 'text')
+      if (op === 'includes') return `(strpos(${text(column)}, ${pattern}) > 0)`
+      if (op === 'endsWith') return `(right(${column}, char_length(${pattern})) = ${text(pattern)})`
+      // A prefix range an index can use, alongside the exact test.
+      const end = prefixEnd(needle)
+      const range = `${text(column)} >= ${text(pattern)}${end === undefined ? '' : ` AND ${text(column)} < ${text(placeholder(end, 'text'))}`}`
+      return `(${range} AND left(${column}, char_length(${pattern})) = ${text(pattern)})`
     }
+    const pattern = placeholder(needle, 'text')
+    const blob = bytes(pattern)
+    if (op === 'includes') return `(instr(${bytes(column)}, ${blob}) > 0)`
+    if (op === 'endsWith') return `(substr(${bytes(column)}, -length(${blob})) = ${blob})`
+    const end = prefixEnd(needle)
+    const range = `${column} >= ${pattern}${end === undefined ? '' : ` AND ${column} < ${placeholder(end, 'text')}`}`
+    return `(${range} AND substr(${bytes(column)}, 1, length(${blob})) = ${blob})`
   }
 
   const algebra: Algebra<string> = {
@@ -620,7 +773,6 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     FALSE,
     and: (items) => `(${items.join(' AND ')})`,
     or: (items) => `(${items.join(' OR ')})`,
-    not: (item) => `(NOT ${item})`,
     guard: (item) => {
       if (item.length > MAX_SQL_LENGTH) throw tooLarge(program.source)
       return item
@@ -628,72 +780,61 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     leaf: (p) => {
       switch (p.kind) {
         case 'null':
-          return compare(`${val(p.value)} IS NULL`, p.value)
+          return compare(`(${val(p.value)} IS NULL)`, p.value)
         case 'eq':
           if (p.right.kind === 'const' || p.left.kind === 'const') {
-            return compare(`${typed(p.left)} = ${typed(p.right)}`, p.left, p.right)
+            return compare(`(${typed(p.left)} = ${typed(p.right)})`, p.left, p.right)
           }
           return compare(
             pg
-              ? `${typed(p.left)} IS NOT DISTINCT FROM ${typed(p.right)}`
-              : `${typed(p.left)} IS ${typed(p.right)}`,
+              ? `(${typed(p.left)} IS NOT DISTINCT FROM ${typed(p.right)})`
+              : `(${typed(p.left)} IS ${typed(p.right)})`,
             p.left,
             p.right,
           )
         case 'order':
-          return compare(`${val(p.left)} ${p.op} ${val(p.right)}`, p.left, p.right)
+          return compare(`(${val(p.left)} ${p.op} ${val(p.right)})`, p.left, p.right)
         case 'in': {
           const kind = kindOf(p.value)
           const nonNull = p.list.filter((entry) => entry !== null)
           const parts: string[] = []
           if (nonNull.length > 0) {
-            const entries = nonNull.map((entry) => {
-              const placeholder = param(entry, kind === 'null' ? 'text' : kind)
-              return kind === 'text' ? text(placeholder) : placeholder
-            })
-            parts.push(`${typed(p.value)} IN (${entries.join(', ')})`)
+            if (pg) {
+              // One array parameter, whatever the list's length.
+              const type = kind === 'null' ? 'text' : kind
+              const array = placeholder(nonNull.map(encode), `${PG_CASTS[type]}[]`)
+              parts.push(`${typed(p.value)} = ANY(${array})`)
+            } else {
+              const entries = nonNull.map((entry) => param(entry, kind === 'null' ? 'text' : kind))
+              parts.push(`${val(p.value)} IN (${entries.join(', ')})`)
+            }
           }
           if (nonNull.length !== p.list.length) parts.push(`${val(p.value)} IS NULL`)
           return compare(parts.length === 0 ? FALSE : `(${parts.join(' OR ')})`, p.value)
         }
-        case 'truthy':
-          return { t: two(pg ? val(p.column) : `${val(p.column)} = 1`), safe: true }
+        case 'truthy': {
+          const condition = pg ? val(p.column) : `(${val(p.column)} = 1)`
+          return { t: condition, f: negate(condition), safe: true }
+        }
         case 'text': {
-          // Calling a text function on null fails, so null matches neither side.
           const column = val(p.column)
-          let condition: string
-          if (p.text === '') condition = TRUE
-          else if (pg) {
-            const needle = param(p.text, 'text')
-            if (p.op === 'includes') condition = `strpos(${text(column)}, ${needle}) > 0`
-            else {
-              const cut = p.op === 'startsWith' ? 'left' : 'right'
-              condition = `${cut}(${column}, char_length(${needle})) = ${text(needle)}`
-            }
-          } else {
-            const needle = bytes(param(p.text, 'text'))
-            if (p.op === 'includes') condition = `instr(${bytes(column)}, ${needle}) > 0`
-            else {
-              condition =
-                p.op === 'startsWith'
-                  ? `substr(${bytes(column)}, 1, length(${needle})) = ${needle}`
-                  : `substr(${bytes(column)}, -length(${needle})) = ${needle}`
-            }
-          }
-          const t = `((${column} IS NOT NULL) AND ${two(condition)})`
-          if (!p.nullFails) return { t, safe: true }
-          return { t, f: `((${column} IS NOT NULL) AND NOT ${two(condition)})`, safe: false }
+          const condition =
+            p.text === '' ? `(${column} IS NOT NULL)` : textCondition(p.op, column, p.text)
+          // Calling a text function on null fails, so null matches neither side.
+          return p.nullFails
+            ? { t: condition, f: `((${column} IS NOT NULL) AND ${negate(condition)})`, safe: false }
+            : { t: condition, f: negate(condition), safe: true }
         }
         case 'within':
         default: {
           const column = val(p.column)
-          const haystack = param(p.text, 'text')
+          const haystack = placeholder(p.text, 'text')
           const condition = pg
-            ? `strpos(${text(haystack)}, ${text(column)}) > 0`
-            : `instr(${bytes(haystack)}, ${bytes(column)}) > 0`
+            ? `(strpos(${text(haystack)}, ${text(column)}) > 0)`
+            : `(instr(${bytes(haystack)}, ${bytes(column)}) > 0)`
           return {
-            t: `((${column} IS NOT NULL) AND ${two(condition)})`,
-            f: `((${column} IS NOT NULL) AND NOT ${two(condition)})`,
+            t: condition,
+            f: `((${column} IS NOT NULL) AND ${negate(condition)})`,
             safe: false,
           }
         }
@@ -701,11 +842,12 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     },
   }
 
-  const sql = dual(predicate, algebra).t
-  if (offset + params.length > MAX_PARAMS[options.dialect]) {
+  const sql = algebra.guard(dual(predicate, algebra).t)
+  if (offset + params.length > MAX_PARAMS[dialect]) {
     throw new BonsaiTranslationError(
-      `The translated query needs more than ${MAX_PARAMS[options.dialect]} parameters`,
+      `The translated query needs more than ${MAX_PARAMS[dialect]} parameters`,
       program.source,
+      { start: 0, end: program.source.length },
     )
   }
   return { sql, params }
@@ -725,21 +867,32 @@ function escapeRegex(text: string): string {
  * is binary whatever the collection's default collation.
  */
 export function toMongo(program: Translatable, options: MongoOptions): MongoQuery {
-  const predicate = lower(program, options, options.fields)
-  const fail = (message: string): never => {
-    throw new BonsaiTranslationError(message, program.source)
+  const target: Target = {
+    name: 'MongoDB',
+    arithmetic: false,
+    columnPairs: false,
+    within: false,
+    checkName: (name) => {
+      if (name.includes('\0')) return 'contains a NUL character'
+      if (name.split('.').some((segment) => segment === '' || segment.startsWith('$')))
+        return 'is not a valid field path'
+      return undefined
+    },
+    checkConstant: () => undefined,
+    checkPattern: (text) =>
+      text.includes('\0') ? 'MongoDB patterns cannot contain a NUL character' : undefined,
   }
-  const field = (value: Value): string => {
-    if (value.kind !== 'column') return fail('MongoDB queries compare a field with a known value')
-    if (value.field.startsWith('$') || value.field.split('.').includes(''))
-      return fail(`${value.field} is not a valid MongoDB field path`)
-    return value.field
-  }
-  const constant = (value: Value): Primitive =>
-    value.kind === 'const'
-      ? value.value
-      : fail('MongoDB queries compare a field with a known value')
+  const predicate = lower(
+    program,
+    options,
+    declare(options, isRecord(options) ? options.fields : undefined, 'fields', target),
+    target,
+  )
   type Filter = Record<string, unknown>
+  // lower() only leaves field-versus-constant comparisons for MongoDB.
+  const field = (value: Value): string => (value as { field: string }).field
+  const constant = (value: Value): Primitive => (value as { value: Primitive }).value
+
   const sizes = new WeakMap<object, number>()
   /** Filter nodes counted with repeats: what the driver serializes. */
   const size = (item: unknown): number => {
@@ -752,49 +905,47 @@ export function toMongo(program: Translatable, options: MongoOptions): MongoQuer
     }
     return total
   }
+  const not = (item: Filter): Filter => ({ $nor: [item] })
+  const safe = (t: Filter): Dual<Filter> => ({ t, f: not(t), safe: true })
 
   const algebra: Algebra<Filter> = {
     TRUE: {},
     FALSE: { $expr: false },
     and: (items) => ({ $and: [...items] }),
     or: (items) => ({ $or: [...items] }),
-    not: (item) => ({ $nor: [item] }),
     guard: (item) => {
       if (size(item) > MAX_MONGO_NODES) throw tooLarge(program.source)
       return item
     },
     leaf: (p) => {
-      const values =
-        p.kind === 'eq' || p.kind === 'order'
-          ? [p.left, p.right]
-          : [p.kind === 'null' || p.kind === 'in' ? p.value : p.column]
-      if (values.some(failable)) return fail('Arithmetic is not translated for MongoDB')
       switch (p.kind) {
         case 'null':
-          return { t: { [field(p.value)]: { $eq: null } }, safe: true }
+          return safe({ [field(p.value)]: { $eq: null } })
         case 'eq':
-          return { t: { [field(p.left)]: { $eq: constant(p.right) } }, safe: true }
+          return safe({ [field(p.left)]: { $eq: constant(p.right) } })
         case 'order': {
           const op = { '<': '$lt', '<=': '$lte', '>': '$gt', '>=': '$gte' }[p.op]
-          return { t: { [field(p.left)]: { [op]: constant(p.right) } }, safe: true }
+          return safe({ [field(p.left)]: { [op]: constant(p.right) } })
         }
         case 'in':
-          return p.list.length === 0
-            ? { t: { $expr: false }, safe: true }
-            : { t: { [field(p.value)]: { $in: [...p.list] } }, safe: true }
+          return safe(
+            p.list.length === 0 ? { $expr: false } : { [field(p.value)]: { $in: [...p.list] } },
+          )
         case 'truthy':
-          return { t: { [field(p.column)]: { $eq: true } }, safe: true }
-        case 'text': {
-          if (p.text.includes('\0')) return fail('MongoDB patterns cannot contain a NUL character')
-          const body = escapeRegex(p.text)
+          return safe({ [field(p.column)]: { $eq: true } })
+        case 'text':
+        case 'within':
+        default: {
+          const { op, text, nullFails } = p as Extract<Leaf, { kind: 'text' }>
+          const body = escapeRegex(text)
           // `$` alone also matches before a final newline; the lookahead does not.
           let pattern = body
-          if (p.op === 'startsWith') pattern = `^${body}`
-          else if (p.op === 'endsWith') pattern = `${body}$(?![\\s\\S])`
-          const name = field(p.column)
+          if (op === 'startsWith') pattern = `^${body}`
+          else if (op === 'endsWith') pattern = `${body}$(?![\\s\\S])`
+          const name = field((p as Extract<Leaf, { kind: 'text' }>).column)
           // Calling a text function on null fails, so null matches neither side.
           const t = { [name]: { $regex: pattern } }
-          if (!p.nullFails) return { t, safe: true }
+          if (!nullFails) return safe(t)
           return {
             t,
             f: {
@@ -803,12 +954,12 @@ export function toMongo(program: Translatable, options: MongoOptions): MongoQuer
             safe: false,
           }
         }
-        case 'within':
-        default:
-          return fail('"field in text" is not translated for MongoDB')
       }
     },
   }
 
-  return { filter: dual(predicate, algebra).t, options: { collation: { locale: 'simple' } } }
+  return {
+    filter: algebra.guard(dual(predicate, algebra).t),
+    options: { collation: { locale: 'simple' } },
+  }
 }
