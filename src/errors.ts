@@ -57,7 +57,8 @@ function codeFrame(source: string, span: Span): string {
   return `${gutter} | ${text}\n${' '.repeat(gutter.length)} | ${' '.repeat(column - 1)}${'^'.repeat(width)}`
 }
 
-interface ErrorInit {
+/** Options for constructing a {@link BonsaiError}. */
+export interface ErrorInit {
   readonly source?: string | undefined
   readonly span?: Span | undefined
   readonly cause?: unknown

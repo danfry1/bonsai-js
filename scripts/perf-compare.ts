@@ -70,7 +70,7 @@ function baseApiCompatible(cwd: string): boolean {
     `const m = await import(${JSON.stringify(entry)})`,
     `const required = ${JSON.stringify(REQUIRED_EXPORTS)}`,
     'if (required.some((name) => !(name in m))) process.exit(3)',
-    'const env = m.bonsai({ limits: { cacheSize: 0 } })',
+    'const env = m.bonsai()',
     "if (typeof env.compile !== 'function' || typeof env.evaluateSync !== 'function') process.exit(3)",
   ].join('\n')
   try {

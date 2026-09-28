@@ -17,10 +17,12 @@ describe('environment', () => {
     expect(env.evaluateSync('missing')).toBe(null)
   })
 
-  it('reports unknown variables only in strict mode', () => {
+  it('reports unknown variables in strict mode, the default with declared variables', () => {
     const variables = { user: t.object({ age: t.number() }) }
-    expect(bonsai({ variables }).check('usr.age').ok).toBe(true)
-    const strict = bonsai({ variables, strict: true })
+    expect(bonsai({ variables, strict: false }).check('usr.age').ok).toBe(true)
+    expect(bonsai().check('usr.age').ok).toBe(true)
+    const strict = bonsai({ variables })
+    expect(strict.strict).toBe(true)
     const result = strict.check('usr.age')
     expect(result.ok).toBe(false)
     expect(result.diagnostics[0]?.code).toBe('UNKNOWN_VARIABLE')
@@ -92,7 +94,7 @@ describe('environment', () => {
   })
 
   it('exposes type, references, and warnings', () => {
-    const env = bonsai({ variables: { xs: t.list(t.number()) } })
+    const env = bonsai({ variables: { xs: t.list(t.number()) }, strict: false })
     const program = env.compile('xs.map(. * 2).sum() > limit')
     expect(program.type).toEqual(t.boolean())
     expect(program.references.variables).toEqual(['xs', 'limit'])

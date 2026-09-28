@@ -45,10 +45,16 @@ const CH_BACKTICK = 96
 const CH_LOWER_A = 97
 const CH_LOWER_Z = 122
 const CH_PIPE = 124
+const CH_BOM = 0xfeff
+const HEX_WIDTH = 4
+/** Characters that cannot be seen in an error message; they are shown as code points. */
+const INVISIBLE = /[\p{Z}\p{Cc}\p{Cf}]/u
 
 const HEX_RADIX = 16
 const OCTAL_RADIX = 8
 const MAX_CODE_POINT = 0x10ffff
+/** Hex digits in the longest `\\u{...}` escape. */
+const MAX_CODE_POINT_DIGITS = 6
 /** Length of a `uXXXX` escape body, counted from the `u`. */
 const UNICODE_ESCAPE_END = 5
 
@@ -115,11 +121,13 @@ export function tokenize(source: string, options: LexOptions): Token[] {
     )
   }
   const tokens: Token[] = []
-  let i = 0
+  // A leading byte order mark (from a file) is not part of the expression.
+  let i = source.charCodeAt(0) === CH_BOM ? 1 : 0
   const n = source.length
 
   const fail = (message: string, start: number, end = start + 1): never => {
-    throw new BonsaiSyntaxError(message, { source, span: { start, end } })
+    const to = Math.min(end, n)
+    throw new BonsaiSyntaxError(message, { source, span: { start: Math.min(start, to), end: to } })
   }
 
   const push = (token: Token): void => {
@@ -194,7 +202,12 @@ export function tokenize(source: string, options: LexOptions): Token[] {
       else if (c === CH_HASH) hint = '; comments start with //'
       else if (previous?.kind === 'punct' && previous.value === '/')
         hint = '; patterns are strings, e.g. matches(text, "^a.*z$")'
-      fail(`Unexpected character ${JSON.stringify(source[i])}${hint}`, i)
+      const code = source.codePointAt(i) as number
+      const ch = String.fromCodePoint(code)
+      const shown = INVISIBLE.test(ch)
+        ? `U+${code.toString(HEX_RADIX).toUpperCase().padStart(HEX_WIDTH, '0')}`
+        : JSON.stringify(ch)
+      fail(`Unexpected character ${shown}${hint}`, i, i + ch.length)
     }
     push({ kind: 'punct', value: punct as string, start, end: i + (punct as string).length })
     i += (punct as string).length
@@ -221,7 +234,8 @@ function readNumber(source: string, start: number, fail: Fail): { value: number;
     const digitsStart = i
     while (i < n && /[0-9a-fA-F_]/u.test(source[i])) i++
     const raw = source.slice(digitsStart, i)
-    checkSeparators(raw, start, fail)
+    // Only digit adjacency applies: `e` is a hex digit, not an exponent.
+    if (/(?:^_|_$|__)/u.test(raw)) fail('Invalid numeric separator', start, i)
     const digits = raw.replaceAll('_', '')
     let valid = /^[0-7]+$/u
     if (radix === HEX_RADIX) valid = /^[0-9a-f]+$/iu
@@ -278,10 +292,14 @@ function readEscape(source: string, i: number, fail: Fail): { text: string; end:
     }
     case 'u': {
       if (source[i + 1] === '{') {
-        const close = source.indexOf('}', i + 2)
-        const hex = close === -1 ? '' : source.slice(i + 2, close)
-        const code = /^[0-9a-fA-F]{1,6}$/u.test(hex) ? parseInt(hex, 16) : -1
-        if (code < 0 || code > MAX_CODE_POINT) fail('Invalid \\u{...} escape', i - 1, close + 1)
+        let close = i + 2
+        while (close < source.length && /[0-9a-fA-F]/u.test(source[close])) close++
+        const hex = source.slice(i + 2, close)
+        const code =
+          hex.length >= 1 && hex.length <= MAX_CODE_POINT_DIGITS ? parseInt(hex, HEX_RADIX) : -1
+        if (source[close] !== '}' || code < 0 || code > MAX_CODE_POINT) {
+          fail('Invalid \\u{...} escape', i - 1, Math.min(close + 1, source.length))
+        }
         return { text: String.fromCodePoint(code), end: close + 1 }
       }
       const hex = source.slice(i + 1, i + UNICODE_ESCAPE_END)

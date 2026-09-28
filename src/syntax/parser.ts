@@ -76,25 +76,34 @@ export function parse(source: string, limits: ParseLimits = DEFAULT_PARSE_LIMITS
     return token.kind === 'keyword' && token.value === value
   }
   const fail = (message: string, start: number, end: number): never => {
-    throw new BonsaiSyntaxError(message, { source, span: { start, end } })
+    // Spans always lie within the source.
+    const to = Math.min(end, source.length)
+    throw new BonsaiSyntaxError(message, { source, span: { start: Math.min(start, to), end: to } })
   }
+  /** Where to point for `token`: the end of input points at the last token before it. */
+  const spanOf = (token: Token): readonly [number, number] => {
+    if (token.kind === 'eof') {
+      const last = tokens[tokens.length - 2]
+      return last === undefined ? [token.start, token.end] : [last.start, last.end]
+    }
+    return [token.start, Math.max(token.end, token.start + 1)]
+  }
+  const failAt = (message: string, token: Token): never => fail(message, ...spanOf(token))
   const unexpected = (token: Token = peek()): never =>
-    fail(
+    failAt(
       token.kind === 'eof'
         ? 'Unexpected end of expression'
         : `Unexpected ${describe(token)}${hintFor(token, tokens[tokens.indexOf(token) - 1])}`,
-      token.start,
-      Math.max(token.end, token.start + 1),
+      token,
     )
   const expectPunct = (value: string): Token => {
     if (!isPunct(value)) {
       const token = peek()
-      fail(
+      failAt(
         token.kind === 'eof'
           ? `Expected "${value}" but the expression ended`
           : `Expected "${value}" but found ${describe(token)}`,
-        token.start,
-        Math.max(token.end, token.start + 1),
+        token,
       )
     }
     return next()
@@ -183,8 +192,7 @@ export function parse(source: string, limits: ParseLimits = DEFAULT_PARSE_LIMITS
   function parseLet(): Node {
     const letToken = next()
     const nameToken = next()
-    if (nameToken.kind !== 'name')
-      fail('Expected a name after "let"', nameToken.start, nameToken.end)
+    if (nameToken.kind !== 'name') failAt('Expected a name after "let"', nameToken)
     bindLocal(nameToken.value, nameToken)
     expectPunct('=')
     const value = parseExpression()
@@ -339,11 +347,7 @@ export function parse(source: string, limits: ParseLimits = DEFAULT_PARSE_LIMITS
         }
         const nameToken = next()
         if (nameToken.kind !== 'name' && nameToken.kind !== 'keyword') {
-          fail(
-            `Expected a property or method name after "${token.value}"`,
-            nameToken.start,
-            Math.max(nameToken.end, nameToken.start + 1),
-          )
+          failAt(`Expected a property or method name after "${token.value}"`, nameToken)
         }
         current = memberOrMethod(current, nameToken, optional)
         continue
