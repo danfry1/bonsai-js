@@ -1,10 +1,10 @@
-import { analyze, signatureText, type Analysis } from '../check/checker.js'
+import { acceptsArgument, analyze, signatureText, type Analysis } from '../check/checker.js'
 import { internalsOf, type Environment } from '../environment.js'
 import { BonsaiError, type Diagnostic } from '../errors.js'
 import type { FunctionDef } from '../functions/define.js'
 import { forEachChild, type Node } from '../syntax/ast.js'
 import { parse } from '../syntax/parser.js'
-import { formatType, isAssignable, nonNull, widen, type Type } from '../types.js'
+import { formatType, nonNull, unionMembers, widen, type Type } from '../types.js'
 
 export type CompletionKind =
   | 'value'
@@ -122,9 +122,10 @@ export function createLanguageService(env: Environment<never>): LanguageService 
     if (scan.inString || scan.inComment) return empty
     if (from > 0 && /[0-9]/u.test(source[from - 1])) return empty
 
-    const before = prefix.trimEnd()
+    // Whitespace and comments may sit between a `.` and the cursor.
+    const before = withoutTrailingTrivia(prefix)
     const afterDot = before.endsWith('?.') || (before.endsWith('.') && !before.endsWith('...'))
-    const probeText = afterDot ? `${prefix.trimEnd()}${PROBE}` : `${prefix}${PROBE}`
+    const probeText = afterDot ? `${before}${PROBE}` : `${prefix}${PROBE}`
 
     let analysis: Analysis | undefined
     for (const suffix of [
@@ -179,8 +180,9 @@ export function createLanguageService(env: Environment<never>): LanguageService 
     }
     find(analysis.root)
     if (other === undefined) return []
-    const members = other.kind === 'union' ? other.types : [other]
-    return members.flatMap((member) => (member.kind === 'literal' ? [member.value] : []))
+    return unionMembers(other).flatMap((member) =>
+      member.kind === 'literal' ? [member.value] : [],
+    )
   }
 
   /** Completions after `receiver.`; `dot` is the range of the `.` and the typed name. */
@@ -189,10 +191,13 @@ export function createLanguageService(env: Environment<never>): LanguageService 
     dot: { start: number; end: number } | undefined,
   ): Completion[] {
     let receiver: Type | undefined
+    // `.name` directly after an implicit-lambda `.` (xs.map(.name)).
+    let onItem = false
     const find = (node: Node): void => {
       if (receiver !== undefined) return
       if (node.type === 'Member' && node.name === PROBE) {
         receiver = analysis.types.get(node.object)
+        onItem = node.object.type === 'It'
         return
       }
       forEachChild(node, find)
@@ -201,7 +206,7 @@ export function createLanguageService(env: Environment<never>): LanguageService 
     if (receiver === undefined) return []
     const target = nonNull(receiver)
     const items: Completion[] = []
-    const members = target.kind === 'union' ? target.types : [target]
+    const members = unionMembers(target)
     // Fields of every map member (a union of records offers each one's keys).
     const fields = new Map<string, Type[]>()
     for (const member of members) {
@@ -215,12 +220,13 @@ export function createLanguageService(env: Environment<never>): LanguageService 
       if (IDENTIFIER.test(name)) {
         items.push({ label: name, kind: 'property', detail, insertText: name })
       } else {
-        // `user.first-name` would subtract: index it instead.
+        // `user.first-name` would subtract: index it instead. The item's own
+        // `.` stays: xs.map(.["first-name"]).
         items.push({
           label: name,
           kind: 'property',
           detail,
-          insertText: `[${JSON.stringify(name)}]`,
+          insertText: `${onItem ? '.' : ''}[${JSON.stringify(name)}]`,
           ...(dot === undefined ? {} : { range: dot }),
         })
       }
@@ -235,18 +241,25 @@ export function createLanguageService(env: Environment<never>): LanguageService 
     ) {
       items.push({ label: 'length', kind: 'property', detail: 'number', insertText: 'length' })
     }
-    // Functions whose first parameter accepts the receiver can be called as methods.
+    // Functions whose first parameter accepts the receiver can be called as
+    // methods; for a union, every member must be accepted by some signature.
+    const receivers = unionMembers(widen(target))
     for (const name of checkEnv.functionNames()) {
       const def = checkEnv.lookup(name) as FunctionDef
-      const applicable = def.overloads.filter((o) => {
+      const firstOf = (o: (typeof def.overloads)[number]): Type | undefined => {
         const first = o.params[0] ?? o.rest
-        return (
-          first !== undefined &&
-          first.kind !== 'function' &&
-          (target.kind === 'any' || isAssignable(widen(target), first))
-        )
-      })
-      if (applicable.length === 0) continue
+        return first === undefined || first.kind === 'function' ? undefined : first
+      }
+      const accepts = (o: (typeof def.overloads)[number], member: Type): boolean => {
+        const first = firstOf(o)
+        return first !== undefined && (member.kind === 'any' || acceptsArgument(first, member))
+      }
+      const applicable = def.overloads.filter((o) => receivers.some((member) => accepts(o, member)))
+      if (
+        applicable.length === 0 ||
+        !receivers.every((member) => applicable.some((o) => accepts(o, member)))
+      )
+        continue
       items.push({
         label: name,
         kind: 'method',
@@ -378,6 +391,53 @@ function rank(items: readonly Completion[], typed: string): Completion[] {
   return scored
     .map((entry) => entry.item)
     .filter((item) => !seen.has(item.label) && (seen.add(item.label), true))
+}
+
+/** `text` without the whitespace and comments at its end. */
+function withoutTrailingTrivia(text: string): string {
+  const startOf = new Map(commentSpans(text).map((span) => [span.end, span.start]))
+  let end = text.length
+  for (;;) {
+    while (end > 0 && /\s/u.test(text[end - 1])) end--
+    const start = startOf.get(end)
+    if (start === undefined) break
+    end = start
+  }
+  return text.slice(0, end)
+}
+
+/** The comments in `text` (outside strings and templates), as [start, end) spans. */
+function commentSpans(text: string): { start: number; end: number }[] {
+  const spans: { start: number; end: number }[] = []
+  let i = 0
+  let template = 0
+  while (i < text.length) {
+    const ch = text[i]
+    if (template > 0 && ch === '`') {
+      template--
+      i++
+    } else if (template > 0) {
+      i += ch === '\\' ? 2 : 1
+    } else if (ch === '`') {
+      template++
+      i++
+    } else if (ch === '/' && text[i + 1] === '/') {
+      let end = text.indexOf('\n', i)
+      if (end === -1) end = text.length
+      spans.push({ start: i, end })
+      i = end
+    } else if (ch === '/' && text[i + 1] === '*') {
+      const close = text.indexOf('*/', i + 2)
+      const end = close === -1 ? text.length : close + 2
+      spans.push({ start: i, end })
+      i = end
+    } else if (ch === '"' || ch === "'") {
+      let j = i + 1
+      while (j < text.length && text[j] !== ch) j += text[j] === '\\' ? 2 : 1
+      i = j + 1
+    } else i++
+  }
+  return spans
 }
 
 /** Tracks open brackets, strings, and templates in a prefix to synthesize closers. */

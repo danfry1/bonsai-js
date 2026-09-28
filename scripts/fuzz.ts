@@ -30,9 +30,21 @@
 import { performance } from 'node:perf_hooks'
 import { deepStrictEqual } from 'node:assert/strict'
 import fc from 'fast-check'
+import { analyze } from '../src/check/checker.js'
+import { internalsOf } from '../src/environment.js'
 import { describeMismatch, type ValidationBudget } from '../src/functions/define.js'
-import { print, type Node, bonsai, fn, isBonsaiError, t, type Type } from '../src/index.js'
+import {
+  print,
+  type Diagnostic,
+  type Node,
+  bonsai,
+  fn,
+  isBonsaiError,
+  t,
+  type Type,
+} from '../src/index.js'
 import { createLanguageService } from '../src/service/index.js'
+import { parse } from '../src/syntax/parser.js'
 
 const DEFAULT_BUDGET_MS = 20_000
 const RUNS_PER_BATCH = 150
@@ -41,6 +53,7 @@ const DIFFERENTIAL_SEED_SALT = 0x55
 const JUNK_SEED_SALT = 0xaa
 const MS_PER_SECOND = 1000
 const MAX_SMALL_INT = 100
+const MAX_LIST_LENGTH = 8
 const MAX_DOUBLE = 1e6
 const FIXED_CLOCK = new Date('2026-01-01T00:00:00.000Z')
 const MIN_DATE = new Date('1990-01-01T00:00:00.000Z')
@@ -137,7 +150,8 @@ function valueFor(desc: Desc): fc.Arbitrary<unknown> {
     case 'optional':
       return fc.option(valueFor(desc.inner), { nil: null })
     case 'list':
-      return fc.array(valueFor(desc.element), { maxLength: 4 })
+      // Longer than reduce's re-check limit, so an accumulator can outgrow it.
+      return fc.array(valueFor(desc.element), { maxLength: MAX_LIST_LENGTH })
     case 'object':
       // Declared objects are open: records carry keys their type does not list.
       return fc
@@ -176,6 +190,8 @@ const FIXED_VARIABLES: readonly (readonly [string, Desc])[] = [
   ['xs', { kind: 'list', element: { kind: 'number' } }],
   ['when', { kind: 'timestamp' }],
   ['plan', { kind: 'enum' }],
+  ['oplan', { kind: 'optional', inner: { kind: 'enum' } }],
+  ['ps', { kind: 'list', element: { kind: 'enum' } }],
   [
     'items',
     {
@@ -217,6 +233,12 @@ const FUNCTIONS = {
     run: (m) => Object.keys(m).length,
   }),
   plans: fn({ params: [t.list(PLAN)], returns: t.number(), run: (l) => l.length }),
+  onePlan: fn({ params: [PLAN], returns: t.number(), run: () => 1 }),
+  optA: fn({
+    params: [t.object({ id: t.number(), extra: t.optional(t.number()) })],
+    returns: t.number(),
+    run: (m) => (m.extra ?? 0) + 1,
+  }),
 }
 
 const EXPECTS: readonly Type[] = [
@@ -229,6 +251,9 @@ const EXPECTS: readonly Type[] = [
   t.object({ id: t.number() }),
   t.record(t.number()),
   t.optional(t.string()),
+  t.object({ id: t.number(), extra: t.optional(t.number()) }),
+  t.list(t.optional(PLAN)),
+  t.optional(PLAN),
 ]
 
 // === Expression grammar ===
@@ -334,6 +359,10 @@ const REDUCERS = [
   '{ a: acc, b: x }',
   'acc + 1 > 0 ? x : acc',
   'acc.toString() + x',
+  '{ v: acc }',
+  '[acc]',
+  'flag ? x : acc',
+  '{ ...acc, id: 1 }',
 ] as const
 const SPREADS = [
   ['[...', ']'],
@@ -348,6 +377,11 @@ const HOST_CALLS = [
   ['needA({ a: ', ' })'],
   ['tags(', ')'],
   ['plans([', '])'],
+  ['plans(', ')'],
+  ['onePlan(', ')'],
+  ['optA(', ')'],
+  ['reduce(items, (acc, x) => flag ? x : acc, ', ')'],
+  ['values(', ')'],
 ] as const
 const ITEM_OPERATORS = ['+', '*', '>', '>=', '==', '!=', '&&', '??'] as const
 const LET_NAMES = ['q', 'r'] as const
@@ -379,6 +413,9 @@ function expressionFor(paths: readonly string[]): fc.Arbitrary<string> {
         'now() - when > days(30)',
         'pick()',
         'nums()',
+        '{}',
+        '{ id: 0 }',
+        'items[0]',
       ),
     },
   )
@@ -502,7 +539,9 @@ const scenarioArbitrary: fc.Arbitrary<Scenario> = fc
 
 // === Properties ===
 
-type Outcome = { ok: true; value: unknown } | { ok: false; code: string; message: string }
+type Outcome =
+  | { ok: true; value: unknown }
+  | { ok: false; code: string; message: string; span?: { start: number; end: number } }
 
 class FuzzViolation extends Error {}
 
@@ -511,7 +550,7 @@ function classify(error: unknown, label: string): Outcome {
     const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
     throw new FuzzViolation(`${label} threw a non-Bonsai error: ${detail}`)
   }
-  return { ok: false, code: error.code, message: error.message }
+  return { ok: false, code: error.code, message: error.message, span: error.span }
 }
 
 function capture(label: string, run: () => unknown): Outcome {
@@ -610,12 +649,60 @@ function recordFinding(scenario: Scenario, outcome: Outcome & { ok: false }): vo
 
 let soundnessChecked = 0
 
+/** Whether a type has `any` inside it (types can share parts, so visit each once). */
+function hasAny(type: Type, seen = new Set<Type>()): boolean {
+  if (seen.has(type)) return false
+  seen.add(type)
+  switch (type.kind) {
+    case 'any':
+      return true
+    case 'list':
+      return hasAny(type.element, seen)
+    case 'map':
+      return (
+        (type.rest !== undefined && hasAny(type.rest, seen)) ||
+        Object.values(type.fields).some((field) => hasAny(field, seen))
+      )
+    case 'union':
+      return type.types.some((member) => hasAny(member, seen))
+    case 'boolean':
+    case 'duration':
+    case 'function':
+    case 'literal':
+    case 'never':
+    case 'null':
+    case 'number':
+    case 'opaque':
+    case 'string':
+    case 'timestamp':
+    case 'var':
+    default:
+      return false
+  }
+}
+
+/**
+ * Whether a failure inside `span` is gradual typing: some expression there has
+ * a type the checker only knew as `any`, or a call there took an argument it
+ * could only check at run time (an open object for an optional field).
+ */
+function isGradual(
+  env: ReturnType<typeof bonsai>,
+  source: string,
+  span: { start: number; end: number } | undefined,
+): boolean {
+  if (span === undefined) return false
+  const { checkEnv, parseLimits } = internalsOf(env)
+  const analysis = analyze(parse(source, parseLimits), checkEnv)
+  const inside = (node: { start: number; end: number }): boolean =>
+    node.start >= span.start && node.end <= span.end
+  for (const [node, type] of analysis.types) if (inside(node) && hasAny(type)) return true
+  for (const [node, plan] of analysis.calls) if (inside(node) && plan.gradual === true) return true
+  return false
+}
+
 const MISMATCH_STEPS = 1_000_000
 const MISMATCH_DEPTH = 200
-
-function mentionsAny(type: Type): boolean {
-  return JSON.stringify(type).includes('"kind":"any"')
-}
 
 function mismatch(value: unknown, type: Type): string | undefined {
   const budget: ValidationBudget = {
@@ -660,9 +747,9 @@ async function scenarioHolds(scenario: Scenario): Promise<boolean> {
     const result = checked.value as { ok: boolean; type?: Type }
     if (env !== openEnv && result.ok) {
       soundnessChecked++
-      // A computed key on a declared object reads as any (the object may hold
-      // keys its type does not list), so a failure after one is gradual typing.
-      const gradual = source.includes(')[')
+      // A failure where the checker saw `any` (a computed key on a declared
+      // object, a reduce accumulator that kept growing) is gradual typing.
+      const gradual = !sync.ok && isGradual(env, source, sync.span)
       // How many items a spread argument holds is only known at run time.
       const arity = sync.ok || (sync.code === 'NO_OVERLOAD' && source.includes('(...'))
       if (!sync.ok && SOUNDNESS_CODES.has(sync.code) && !gradual && !arity)
@@ -671,11 +758,23 @@ async function scenarioHolds(scenario: Scenario): Promise<boolean> {
         const problem = mismatch(sync.value, result.type)
         if (problem !== undefined)
           recordFinding(scenario, { ok: false, code: 'UNSOUND_TYPE', message: problem })
-        // `expect` is a static check: an any-typed result is not verified at run time.
-        if (!mentionsAny(result.type) && env.check(source, { expect: scenario.expect }).ok) {
-          const expected = mismatch(sync.value, scenario.expect)
-          if (expected !== undefined)
-            recordFinding(scenario, { ok: false, code: 'UNSOUND_EXPECT', message: expected })
+        // A program compiled with `expect` returns a value of that type: proven
+        // statically, or checked at run time (a TYPE_ERROR) when it cannot be.
+        if (env.check(source, { expect: scenario.expect }).ok) {
+          const run = capture('compile(expect)', () =>
+            env.compile(source, { expect: scenario.expect }).evaluateSync(context),
+          )
+          const wrong = run.ok ? mismatch(run.value, scenario.expect) : undefined
+          if (wrong !== undefined)
+            recordFinding(scenario, { ok: false, code: 'UNSOUND_EXPECT', message: wrong })
+        }
+        // A warning that the whole comparison is always false (or true) must hold.
+        for (const d of (checked.value as { diagnostics: readonly Diagnostic[] }).diagnostics) {
+          if (d.code !== 'ALWAYS_FALSE' || d.start !== 0 || d.end !== source.length) continue
+          if (!d.message.startsWith('This comparison is always')) continue
+          const claimed = d.message.includes('always true')
+          if (typeof sync.value === 'boolean' && sync.value !== claimed)
+            recordFinding(scenario, { ok: false, code: 'FALSE_WARNING', message: d.message })
         }
       }
     }

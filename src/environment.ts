@@ -1,4 +1,4 @@
-import { analyze, containsAny, type Analysis, type CheckEnv } from './check/checker.js'
+import { analyze, type Analysis, type CheckEnv } from './check/checker.js'
 import { compileProgram, type CompiledProgram } from './compile/compiler.js'
 import {
   BonsaiCheckError,
@@ -531,10 +531,14 @@ const EMPTY_CONTEXT: Record<string, unknown> = Object.freeze({})
 
 /** Freezes a syntax tree (or any tree of plain objects and arrays) in place, without recursion. */
 function deepFreeze<T>(root: T): T {
+  // Visits frozen objects too: a frozen type can hold a type the checker built
+  // unfrozen (and shares between analyses).
+  const seen = new Set<object>()
   const pending: unknown[] = [root]
   while (pending.length > 0) {
     const value = pending.pop()
-    if (typeof value !== 'object' || value === null || Object.isFrozen(value)) continue
+    if (typeof value !== 'object' || value === null || seen.has(value)) continue
+    seen.add(value)
     Object.freeze(value)
     for (const child of Object.values(value)) pending.push(child)
   }
@@ -603,9 +607,10 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
   }
 
   function makeProgram<R>(source: string, analysis: Analysis, expect?: Type): Program<Ctx, R> {
-    // The checker proved the result matches `expect` unless its type is partly `any`;
-    // then the result is checked at run time, so the declared result type holds.
-    const guard = expect !== undefined && containsAny(analysis.type) ? expect : undefined
+    // When the checker cannot prove the result matches `expect` (part of it is
+    // `any`, or an open object may hold an unlisted key), it is checked at run
+    // time, so the declared result type holds.
+    const guard = expect !== undefined && analysis.checkResult ? expect : undefined
     const checked = (result: unknown, state: State): void => {
       if (guard !== undefined && !conforms(result, guard, state)) {
         throw new BonsaiRuntimeError(
@@ -780,8 +785,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       }
       const ok = !analysis.diagnostics.some((d) => d.severity === 'error')
       return ok
-        ? { ok: true, type: analysis.type, diagnostics: analysis.diagnostics }
-        : { ok: false, type: analysis.type, diagnostics: analysis.diagnostics }
+        ? { ok: true, type: deepFreeze(analysis.type), diagnostics: analysis.diagnostics }
+        : { ok: false, type: deepFreeze(analysis.type), diagnostics: analysis.diagnostics }
     },
     compile: <E extends Type = AnyType>(source: string, options?: CompileOptions<E>) =>
       compile<Infer<E>>(source, options?.expect),

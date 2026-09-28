@@ -12,18 +12,22 @@ import {
 import {
   chargeTypeWork,
   exactObject,
+  freshLiteral,
   fieldOf,
   formatType,
   isAssignable,
   isExact,
+  isProvenAssignable,
   isNullable,
   nonNull,
   overlaps,
   sameType,
   t,
   TypeBudgetExceeded,
+  unionMembers,
   unionOf,
   widen,
+  widenFresh,
   withFields,
   withTypeBudget,
   type MapType,
@@ -49,6 +53,11 @@ export interface CallPlan {
   readonly direct: boolean
   /** Some lambda argument's body calls an async host function. */
   readonly asyncLambda: boolean
+  /**
+   * An argument was accepted gradually: an open object that may hold an
+   * optional key of the parameter with another type. Checked at run time.
+   */
+  readonly gradual?: boolean
 }
 
 export interface Analysis {
@@ -60,6 +69,12 @@ export interface Analysis {
   readonly types: ReadonlyMap<Node, Type>
   /** Whether evaluation may call an async host function. */
   readonly async: boolean
+  /**
+   * The checker could not prove the result matches the expected type (part of
+   * it is `any`, or an open object may hold an unlisted key): check the result
+   * at run time.
+   */
+  readonly checkResult: boolean
   readonly references: {
     readonly variables: readonly string[]
     readonly functions: readonly string[]
@@ -290,9 +305,20 @@ function computeFacts(condition: Node, positive: boolean): ReadonlySet<string> {
       }
       return out
     }
+    case 'Has': {
+      // has(a.b.c) is true only when a.b is a map (so a and a.b are not null);
+      // the value at a.b.c itself may be null.
+      if (!positive) return out
+      for (let node: Node = condition.target.object; ;) {
+        const key = pathKey(node)
+        if (key !== undefined) out.add(key)
+        if (node.type !== 'Member' && node.type !== 'Index') break
+        node = node.object
+      }
+      return out
+    }
     case 'Call':
     case 'Conditional':
-    case 'Has':
     case 'Index':
     case 'It':
     case 'Lambda':
@@ -375,8 +401,9 @@ function elementOf(type: Type | undefined): Type | undefined {
  */
 function mapOf(type: Type): MapType | undefined {
   if (type.kind === 'map') return type
-  if (type.kind !== 'union' || !type.types.every((m) => m.kind === 'map')) return undefined
-  const members = type.types as readonly MapType[]
+  if (type.kind !== 'union') return undefined
+  const members = unionMembers(type)
+  if (!members.every((m): m is MapType => m.kind === 'map')) return undefined
   const fields: Record<string, Type> = {}
   const partial: Type[] = []
   const keys = new Set(members.flatMap((m) => Object.keys(m.fields)))
@@ -387,7 +414,11 @@ function mapOf(type: Type): MapType | undefined {
     else partial.push(...present)
   }
   for (const m of members) if (m.rest !== undefined) partial.push(m.rest)
-  if (partial.length > 0) return { kind: 'map', fields, rest: unionOf(partial) }
+  if (partial.length > 0) {
+    // A declared object may hold any other key, with any value.
+    if (members.some((m) => m.rest === undefined && !isExact(m))) partial.push(ANY)
+    return { kind: 'map', fields, rest: unionOf(partial) }
+  }
   return members.every(isExact) ? exactObject(fields) : t.object(fields)
 }
 
@@ -627,9 +658,11 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
   const rootScope: Scope = { locals: new Map(), it: undefined }
   const raw = check(bound.node, rootScope, options.expected)
   // The expectation sees literal types (a plan enum accepts "pro"); the result shows base kinds.
+  let checkResult = false
   if (options.expected !== undefined) {
     const problem = expectationProblem(raw, options.expected)
     if (problem !== undefined) report('EXPECTED_TYPE', problem, resultSpan(bound.node))
+    checkResult = containsAny(raw) || !isProvenAssignable(raw, options.expected)
   }
   const type = widen(raw)
 
@@ -665,7 +698,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
   function checkNode(node: Node, scope: Scope, expected: Type | undefined): Type {
     switch (node.type) {
       case 'Literal':
-        return node.value === null ? NULL : t.literal(node.value)
+        return node.value === null ? NULL : freshLiteral(node.value)
       case 'Template':
         for (const part of node.parts) {
           if (typeof part === 'string') continue
@@ -937,8 +970,12 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     if (objectType.kind === 'any' || objectType.kind === 'var') return ANY
     if (objectType.kind === 'never') return t.never()
     if (objectType.kind === 'null') return NULL
-    if (objectType.kind === 'union')
+    if (objectType.kind === 'union') {
+      // A literal key reads like a member: m["b"] on a union is m.b.
+      if (indexType.kind === 'literal' && typeof indexType.value === 'string')
+        return memberType(objectType, indexType.value, at)
       return unionOf(objectType.types.map((member) => indexedType(member, indexType, at)))
+    }
     if (
       objectType.kind === 'list' ||
       objectType.kind === 'string' ||
@@ -970,15 +1007,22 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     expected: Type | undefined,
   ): Type {
     const nullish = node.operator === '??'
-    const left = check(
-      node.left,
-      scope,
-      nullish && expected !== undefined ? t.optional(expected) : undefined,
-    )
+    // Joining lists: an expected list type (or the other operand's) is the
+    // context for list literals, so plans + ["free"] stays a list of plans.
+    const listContext =
+      node.operator === '+' && expected !== undefined && elementOf(nonNull(expected)) !== undefined
+        ? expected
+        : undefined
+    let leftExpected = listContext
+    if (nullish && expected !== undefined) leftExpected = t.optional(expected)
+    const left = check(node.left, scope, leftExpected)
     let rightScope = scope
     if (node.operator === '&&') rightScope = withFacts(scope, nonNullFacts(node.left, true))
     else if (node.operator === '||') rightScope = withFacts(scope, nonNullFacts(node.left, false))
-    const right = check(node.right, rightScope, nullish ? expected : undefined)
+    let rightExpected: Type | undefined = nullish ? expected : undefined
+    if (node.operator === '+')
+      rightExpected = listContext ?? (left.kind === 'list' ? left : undefined)
+    const right = check(node.right, rightScope, rightExpected)
     markAsync(node, node.left)
     markAsync(node, node.right)
     const op = node.operator
@@ -1364,7 +1408,12 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         paramTypes = next
         bodyType = checkLambda(arg, paramTypes, scope)
         unify(param.result, bodyType, firstBindings)
-        if (last) break
+        if (last) {
+          // Still growing: what the lambda returns (and so the call's result) is
+          // unknown, and checked at run time where it matters.
+          for (const name of varNames(param.result)) firstBindings.set(name, ANY)
+          break
+        }
       }
       if (asyncNodes.has(arg.body)) asyncLambda = true
       if (
@@ -1425,16 +1474,34 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
               RESULT_REFINERS[def.name],
               argTypes.map((a) => a ?? ANY),
             )
-      return refined ?? substitute(candidate.result, bindings[i])
+      return refined ?? widenFresh(substitute(candidate.result, bindings[i]))
     })
+    const gradual =
+      candidates.length === 1 &&
+      argTypes.some((argType, index) => {
+        const param = first.params[index] ?? first.rest
+        return (
+          argType !== undefined &&
+          param !== undefined &&
+          !containsAny(argType) &&
+          !isProvenAssignable(argType, param)
+        )
+      })
     const proven =
       candidates.length === 1 &&
       !hasSpread &&
+      !gradual &&
       argTypes.every(
         (argType, index) =>
           argType === undefined || isProven(argType, first.params[index] ?? first.rest ?? ANY),
       )
-    calls.set(node, { def, candidates, direct: proven, asyncLambda })
+    calls.set(node, {
+      def,
+      candidates,
+      direct: proven,
+      asyncLambda,
+      ...(gradual ? { gradual } : {}),
+    })
     // Several overloads can only match when argument types are unknown; the
     // result is then unknown too, unless every candidate agrees.
     const merged = unionOf(results)
@@ -1539,7 +1606,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         ) {
           matched = true
           chosen.add(i)
-          results.push(substitute(candidate.result, b))
+          results.push(widenFresh(substitute(candidate.result, b)))
         }
       })
       if (!matched) return undefined
@@ -1595,6 +1662,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     calls,
     types,
     async: asyncNodes.has(bound.node),
+    checkResult,
     references: { variables: [...variables], functions: [...functions] },
     probeScope,
   }
@@ -1693,7 +1761,7 @@ function isProven(argType: Type, param: Type): boolean {
 const containsAnyMemo = new WeakMap<Type, boolean>()
 
 /** Whether a type is only partly known statically (`any` somewhere inside). */
-export function containsAny(type: Type): boolean {
+function containsAny(type: Type): boolean {
   if (type.kind !== 'list' && type.kind !== 'map' && type.kind !== 'union')
     return type.kind === 'any' || type.kind === 'var'
   let result = containsAnyMemo.get(type)
@@ -1733,6 +1801,11 @@ function computeContainsAny(type: Type): boolean {
   }
 }
 
+/** Whether a value of type `arg` can be passed for parameter `param` (tooling). */
+export function acceptsArgument(param: Type, arg: Type): boolean {
+  return unify(param, arg, new Map())
+}
+
 /** Binds type variables in `param` from `arg`; false when they cannot match. */
 function unify(param: Type, arg: Type, b: Map<string, Type>): boolean {
   if (arg.kind === 'any') return true
@@ -1742,21 +1815,19 @@ function unify(param: Type, arg: Type, b: Map<string, Type>): boolean {
   }
   switch (param.kind) {
     case 'var': {
+      // Bound as given: a declared enum stays an enum through first(), sort(),
+      // reduce(); literals from the source widen when a list or map holds them.
       const existing = b.get(param.name)
-      if (existing?.kind === 'never') {
-        b.set(param.name, widen(arg))
-        return true
-      }
-      if (existing === undefined) {
-        b.set(param.name, widen(arg))
+      if (existing === undefined || existing.kind === 'never') {
+        b.set(param.name, arg)
         return true
       }
       if (isAssignable(arg, existing)) return true
-      if (isAssignable(existing, widen(arg))) {
-        b.set(param.name, widen(arg))
+      if (isAssignable(existing, arg)) {
+        b.set(param.name, arg)
         return true
       }
-      b.set(param.name, unionOf([existing, widen(arg)]))
+      b.set(param.name, unionOf([existing, arg]))
       return true
     }
     case 'list':
@@ -1837,6 +1908,37 @@ function bindNever(param: Type, b: Map<string, Type>): void {
     case 'string':
     case 'timestamp':
       break
+  }
+}
+
+/** The names of the type variables in a type. */
+function varNames(type: Type): string[] {
+  switch (type.kind) {
+    case 'var':
+      return [type.name]
+    case 'list':
+      return varNames(type.element)
+    case 'map':
+      return [
+        ...Object.values(type.fields).flatMap(varNames),
+        ...(type.rest === undefined ? [] : varNames(type.rest)),
+      ]
+    case 'union':
+      return type.types.flatMap(varNames)
+    case 'function':
+      return [...type.params.flatMap(varNames), ...varNames(type.result)]
+    case 'any':
+    case 'boolean':
+    case 'duration':
+    case 'literal':
+    case 'never':
+    case 'null':
+    case 'number':
+    case 'opaque':
+    case 'string':
+    case 'timestamp':
+    default:
+      return []
   }
 }
 
