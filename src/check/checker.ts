@@ -399,14 +399,28 @@ function elementOf(type: Type | undefined): Type | undefined {
  * A map type, or a union of map types merged into one: keys every member has
  * keep their (joined) types, keys only some members have move to `rest`.
  */
+const mapOfMemo = new WeakMap<Type, MapType | null>()
+
 function mapOf(type: Type): MapType | undefined {
   if (type.kind === 'map') return type
   if (type.kind !== 'union') return undefined
+  const memo = mapOfMemo.get(type)
+  if (memo !== undefined) return memo ?? undefined
+  const merged = mergeMaps(type)
+  mapOfMemo.set(type, merged ?? null)
+  return merged
+}
+
+/** The map a union of maps reads as: fields every member has, the rest optional. */
+function mergeMaps(type: Type & { kind: 'union' }): MapType | undefined {
   const members = unionMembers(type)
+  chargeTypeWork(members.length)
   if (!members.every((m): m is MapType => m.kind === 'map')) return undefined
   const fields: Record<string, Type> = {}
   const partial: Type[] = []
   const keys = new Set(members.flatMap((m) => Object.keys(m.fields)))
+  // Every key is looked up in every member.
+  chargeTypeWork(keys.size * members.length)
   for (const key of keys) {
     const found = members.map((m) => fieldOf(m, key) ?? m.rest)
     const present = found.filter((f): f is Type => f !== undefined)

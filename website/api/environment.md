@@ -18,7 +18,7 @@ const env = bonsai(options?)
 | `functions` | `Record<string, HostFunction>` | none | [Host functions](/api/host-functions) by name, created with `fn()`. A host function replaces a built-in of the same name. |
 | `libraries` | `Library[]` | none | Bundles of host functions and variables. A function name defined twice is an error. |
 | `limits` | `Limits` | all on | Resource limits. See [Limits](/api/limits). |
-| `cacheSize` | `number` | `256` | Compiled programs kept for `env.evaluate*(source)`, by source text. `0` disables the cache. |
+| `cacheSize` | `number` | `256` | Compiled programs kept for `env.evaluate*(source)`, by source text. `0` disables the cache. The cache also holds at most 256K characters of source in total and never caches a source longer than 16K characters, so its memory stays bounded. |
 | `clock` | `() => Date` | system clock | The source of `now()`, read once per evaluation. A result that is not a valid `Date` fails the evaluation with `HOST_CONTRACT`; a clock that throws gives `HOST_ERROR`. |
 | `validateContext` | `boolean` | `false` | Check the context against the declared variable types before every evaluation. |
 

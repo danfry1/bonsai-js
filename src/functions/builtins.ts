@@ -18,6 +18,7 @@ import {
 import {
   BLOCKED_KEYS,
   Duration,
+  chargeIndexKey,
   chargeKey,
   chargeSearch,
   isMap,
@@ -433,6 +434,7 @@ function groupKey(key: unknown, site: CallSite): string {
     )
   if (BLOCKED_KEYS.has(name))
     throw site.state.error('BLOCKED_PROPERTY', `"${name}" cannot be used as a key`, site.span)
+  chargeIndexKey(site.state, name)
   return name
 }
 
@@ -630,7 +632,8 @@ function extreme(items: readonly unknown[], sign: 1 | -1, site: CallSite): unkno
 
 function entryList(map: Record<string, unknown>, site: CallSite): string[] {
   const keys = Object.keys(map).filter((key) => !BLOCKED_KEYS.has(key))
-  site.state.charge(keys.length)
+  // Two per key: integer-like keys make the engine sort and stringify them.
+  site.state.charge(2 * keys.length)
   site.state.listLimit(keys.length, site.span)
   return keys
 }
@@ -1136,7 +1139,7 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     'Sorts by a key; pass "desc" to reverse. Nulls sort first ("asc") or last ("desc").',
     listT,
     (items, fn, site, [direction]) => {
-      const keys = new Array<unknown>(items.length)
+      const keys = newList(items.length, site)
       for (let i = 0; i < items.length; i++) keys[i] = fn(items[i], i)
       return sortKeyed(items, keys, direction, site)
     },
@@ -1227,7 +1230,7 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     overload([listT], listT, ([l], site) => {
       const items = list(l)
       site.state.charge(items.length)
-      const out = new Array<unknown>(items.length)
+      const out = newList(items.length, site)
       for (let i = 0; i < items.length; i++) out[i] = items[items.length - 1 - i]
       return made(out, site)
     }),
@@ -1263,7 +1266,7 @@ const LIST_FUNCTIONS: FunctionDef[] = [
       if (Array.isArray(v) || typeof v === 'string') return v.length === 0
       // Listing a map's keys is linear in how many it has.
       const keys = Object.keys(v)
-      site.state.charge(keys.length)
+      site.state.charge(2 * keys.length)
       return keys.length === 0
     }),
   ]),

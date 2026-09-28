@@ -464,7 +464,8 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
             step.at,
           )
         const keys = Object.keys(value)
-        s.charge(keys.length)
+        // Two per key: integer-like keys make the engine sort and stringify them.
+        s.charge(2 * keys.length)
         for (const k of keys) {
           chargeKey(s, k)
           if (!BLOCKED_KEYS.has(k)) out[k] = value[k] === undefined ? null : value[k]

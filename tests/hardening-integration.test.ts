@@ -68,3 +68,30 @@ describe('any absorbs the type variables it flows into', () => {
     expect(typed.check('reduce(ss, (acc, x) => acc.toFixed(1), 0)').ok).toBe(false)
   })
 })
+
+describe('last resource-bound holes', () => {
+  const env = bonsai()
+
+  it('charges both key lists before comparing map sizes', () => {
+    const source =
+      'let m = "a".repeat(50000).split("").groupBy((x, i) => i); "a".repeat(100000).split("").map(x => m == {} || m == {}).length'
+    expect(() => env.evaluateSync(source)).toThrow(expect.objectContaining({ code: 'STEP_LIMIT' }))
+    // A modest map still compares.
+    expect(env.evaluateSync('{a: 1, b: 2} == {a: 1}')).toBe(false)
+    expect(env.evaluateSync('{a: 1} in [{a: 1}]')).toBe(true)
+  })
+
+  it('merges a union of maps once, within the check budget', () => {
+    const members = Array.from({ length: 2000 }, (_, i) => `{k${i}: 1}`).join(' ?? ')
+    const spreads = Array.from({ length: 200 }, () => '{...u}').join(', ')
+    const big = bonsai({ limits: { maxSourceLength: 1_000_000, maxNodes: 1_000_000 } })
+    const start = performance.now()
+    try {
+      big.check(`let u = ${members}; [${spreads}]`)
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe('TOO_COMPLEX')
+    }
+    // Unbudgeted this took eight seconds; bounded work takes well under one.
+    expect(performance.now() - start).toBeLessThan(5000)
+  })
+})

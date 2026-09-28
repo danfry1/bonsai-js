@@ -320,6 +320,16 @@ export function chargeKey(s: State, key: string): void {
 }
 
 /** Converts a computed key to a property name, rejecting blocked keys. */
+const INDEX_KEY = /^-?\d{1,16}$/u
+const INDEX_KEY_MAX_LENGTH = 17
+/** Extra steps for an integer-like key, which the engine stores and hashes more slowly. */
+const INDEX_KEY_COST = 3
+
+/** Charges storing `name` as a key when it is integer-like (see {@link INDEX_KEY_COST}). */
+export function chargeIndexKey(s: State, name: string): void {
+  if (name.length <= INDEX_KEY_MAX_LENGTH && INDEX_KEY.test(name)) s.charge(INDEX_KEY_COST)
+}
+
 export function mapKey(key: unknown, s: State, at: Span): string {
   let name: string
   if (typeof key === 'string') {
@@ -329,6 +339,7 @@ export function mapKey(key: unknown, s: State, at: Span): string {
   else throw s.error('TYPE_ERROR', `A map key must be a string, not ${describeKind(key)}`, at)
   if (BLOCKED_KEYS.has(name))
     throw s.error('BLOCKED_PROPERTY', `Property "${name}" is not accessible`, at)
+  chargeIndexKey(s, name)
   return name
 }
 
@@ -484,10 +495,15 @@ export function equals(a: unknown, b: unknown, s: State, depth = 0, at?: Span): 
   if (b instanceof Date || b instanceof Duration) return false
   if (!isMap(a) || !isMap(b)) return false
   const visible = (key: string): boolean => !BLOCKED_KEYS.has(key)
-  const keys = Object.keys(a).filter(visible)
-  if (keys.length !== Object.keys(b).filter(visible).length) return false
-  s.charge(keys.length)
+  // Listing keys costs work per key, so each side is charged as it is listed,
+  // before the counts can differ and end the comparison early.
+  const keys = Object.keys(a)
+  s.charge(1 + 2 * keys.length)
+  const other = Object.keys(b)
+  s.charge(1 + 2 * other.length)
+  if (keys.filter(visible).length !== other.filter(visible).length) return false
   for (const key of keys) {
+    if (!visible(key)) continue
     // An own enumerable key, as Object.keys(b) lists: a non-enumerable key is not data.
     if (!isEnumerable.call(b, key)) return false
     if (!equals(a[key], b[key], s, depth + 1, at)) return false
@@ -709,6 +725,8 @@ export function negate(a: unknown, s: State, at: Span): unknown {
 // === Text ===
 
 const MAX_SHOWN = 40
+/** Steps for rendering a timestamp or duration as text. */
+const TIME_TEXT_COST = 2
 
 /** Input text quoted in an error message, shortened so messages stay small. */
 export function shown(text: string): string {
@@ -730,8 +748,15 @@ export function toText(value: unknown, s: State, at: Span): string {
     case 'symbol':
     case 'undefined':
     default:
-      if (value instanceof Date) return new Date(timeOf(value, s, at)).toISOString()
-      if (value instanceof Duration) return value.toString()
+      // Formatting a timestamp or duration costs far more than its short text.
+      if (value instanceof Date) {
+        s.charge(TIME_TEXT_COST)
+        return new Date(timeOf(value, s, at)).toISOString()
+      }
+      if (value instanceof Duration) {
+        s.charge(TIME_TEXT_COST)
+        return value.toString()
+      }
       throw s.error(
         'TYPE_ERROR',
         `Cannot render ${describeKind(value)} in a template${Array.isArray(value) ? '; use join(list, ", ")' : ''}`,

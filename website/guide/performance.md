@@ -9,7 +9,7 @@ Bonsai parses and checks an expression once, compiles it to a tree of closures, 
 | Create one environment and reuse it | The environment owns the program cache. Creating one per request throws the cache away. |
 | `compile()` expressions that run repeatedly | Parsing and checking happen once. Keep the `Program` next to the data it evaluates. |
 | Prefer `evaluateSync()` | The synchronous path avoids promise overhead. Use `evaluate()` only when an expression calls an async host function. |
-| Size the cache for your workload | `env.evaluateSync(source, ...)` caches up to `cacheSize` programs (default 256) by source text. Raise it if you evaluate thousands of distinct sources; set `0` to disable caching. |
+| Size the cache for your workload | `env.evaluateSync(source, ...)` caches up to `cacheSize` programs (default 256) by source text. Raise it if you evaluate thousands of distinct sources; set `0` to disable caching. Sources longer than 16K characters are not cached, and the cache holds at most 256K characters of source in total. |
 | Keep compiled programs | Checking and compiling cost more than evaluating: a 10-term rule compiles in about 10 microseconds and then evaluates in about a quarter of a microsecond. Compile once and keep the `Program`, or let the cache do it. |
 
 ```ts

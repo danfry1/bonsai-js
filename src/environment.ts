@@ -192,7 +192,11 @@ export interface EnvironmentOptions<
   /** Libraries of host functions and variables; a name defined twice is an error. */
   readonly libraries?: readonly Library[] | undefined
   readonly limits?: Limits | undefined
-  /** Compiled programs kept for `evaluate(source)` and `evaluateSync(source)`. Default 256; 0 disables the cache. */
+  /**
+   * Compiled programs kept for `evaluate(source)` and `evaluateSync(source)`. Default 256; 0
+   * disables the cache. The cache also holds at most 256K characters of source in total, and
+   * never a source longer than 16K characters.
+   */
   readonly cacheSize?: number | undefined
   /** Source of now(). Default: the system clock. */
   readonly clock?: (() => Date) | undefined
@@ -551,9 +555,18 @@ function settingsFrom(base: Settings | undefined, options: unknown): Settings {
   }
 }
 
+/**
+ * Source characters the program cache holds in total, and the longest source it
+ * keeps. A compiled program can retain a hundred times its source in memory, so
+ * the cache is bounded by size as well as by count.
+ */
+const CACHE_CHARS = 262_144
+const CACHE_MAX_SOURCE = 16_384
+
 class ProgramCache<V> {
   private readonly map = new Map<string, V>()
   private readonly size: number
+  private chars = 0
 
   constructor(size: number) {
     this.size = size
@@ -569,10 +582,15 @@ class ProgramCache<V> {
   }
 
   set(key: string, value: V): void {
-    if (this.size === 0) return
-    this.map.delete(key)
+    if (this.size === 0 || key.length > CACHE_MAX_SOURCE) return
+    if (this.map.delete(key)) this.chars -= key.length
     this.map.set(key, value)
-    if (this.map.size > this.size) this.map.delete(this.map.keys().next().value as string)
+    this.chars += key.length
+    while (this.map.size > this.size || this.chars > CACHE_CHARS) {
+      const oldest = this.map.keys().next().value as string
+      this.map.delete(oldest)
+      this.chars -= oldest.length
+    }
   }
 }
 
