@@ -210,7 +210,7 @@ describe('editor support', () => {
         .map((i) => i.insertText),
     ).toEqual(['"free"', '"pro"'])
     const inString = service.complete('user.plan == "p', 15)
-    expect(inString).toMatchObject({ from: 14, to: 15 })
+    expect(inString).toMatchObject({ start: 14, end: 15 })
     expect(inString.items.map((i) => i.label)).toEqual(['pro'])
   })
 

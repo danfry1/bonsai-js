@@ -13,6 +13,7 @@ const env = bonsai({
     user: t.object({ name: t.string(), email: t.optional(t.string()) }),
     orders: t.list(t.object({ id: t.string(), total: t.number(), paid: t.boolean() })),
   },
+  strict: true,
 })
 
 const service = createLanguageService(env)
@@ -22,7 +23,7 @@ The service reads the environment's variables, built-ins, and host functions, in
 
 ## Completions
 
-`complete(source, offset)` returns the items that fit at a cursor position (a UTF-16 offset) and the range `start`..`end` that accepting an item should replace. Items are ranked by how well they match what has been typed, and member completions are type-aware: after a list you get list functions, after a map its fields.
+`complete(source, offset)` returns the items that fit at a cursor position (a UTF-16 offset) and the range `start`..`end` that accepting an item should replace (an item with its own `range` replaces that instead). Items are ranked by how well they match what has been typed, and member completions are type-aware: after a list you get list functions, after a map its fields.
 
 <!-- continue -->
 ```ts
@@ -30,11 +31,12 @@ const afterDot = service.complete('orders.filter(.', 15)
 afterDot.items.map((item) => item.label).slice(0, 3) // => ["id", "paid", "total"]
 
 const partial = service.complete('user.na', 7)
+partial.start // => 5
 partial.items[0].label // => "name"
 partial.items[0].insertText // => "name"
 ```
 
-Here `partial.start` is 5 and `partial.end` is 7: accepting `name` replaces `na`. Each item has a `label`, a `kind` (`value`, `variable`, `local`, `property`, `function`, `method`, or `keyword`), a `detail` (a type or signature), an optional `documentation` string, and the `insertText` to insert. Functions insert an opening parenthesis, for example `sum()` or `filter(`.
+Each item has a `label`, a `kind` (`variable`, `local`, `property`, `function`, `method`, or `keyword`), a `detail` (a type or signature), an optional `documentation` string, and the `insertText` to insert. Functions insert an opening parenthesis, for example `sum()` or `filter(`.
 
 ## Hover
 
@@ -72,7 +74,9 @@ textarea.addEventListener('input', () => {
   const source = textarea.value
   const offset = textarea.selectionStart
   const { start, end, items } = service.complete(source, offset)
-  showMenu(items, (item) => replaceRange(start, end, item.insertText))
+  showMenu(items, (item) =>
+    replaceRange(item.range?.start ?? start, item.range?.end ?? end, item.insertText),
+  )
   showProblems(service.diagnostics(source))
 })
 ```

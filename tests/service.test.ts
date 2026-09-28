@@ -55,7 +55,7 @@ describe('completions', () => {
 
   it('replaces the partially typed name', () => {
     const result = service.complete('user.na + 1', 7)
-    expect(result).toMatchObject({ from: 5, to: 7 })
+    expect(result).toMatchObject({ start: 5, end: 7 })
     expect(result.items[0]?.label).toBe('name')
   })
 

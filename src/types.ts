@@ -187,6 +187,56 @@ export type InferVariables<V> = Simplify<
 
 // === Type operations ===
 
+/**
+ * The checker's work budget. Type operations charge it so a small source that
+ * builds huge types (unions of thousands of literals, maps nested by `let`)
+ * fails with a limit error instead of running long. Installed per analysis.
+ */
+let meter: { remaining: number } | undefined
+
+/** Raised when the installed type-work budget runs out. */
+export class TypeBudgetExceeded extends Error {}
+
+/** Runs `run` with a type-work budget; nested calls share the outer budget. */
+export function withTypeBudget<T>(budget: number, run: () => T): T {
+  if (meter !== undefined) return run()
+  meter = { remaining: budget }
+  try {
+    return run()
+  } finally {
+    meter = undefined
+  }
+}
+
+/** Charges `units` of type work against the installed budget. */
+export function chargeTypeWork(units: number): void {
+  if (meter !== undefined && (meter.remaining -= units) < 0) throw new TypeBudgetExceeded()
+}
+
+// Map literals are exact: they hold only the keys they list. Declared object
+// types are not: a record from a database carries columns the schema omits.
+const EXACT = new WeakSet<Type>()
+
+/** A closed map type known to hold no keys beyond `fields` (a map literal). */
+export function exactObject(fields: Readonly<Record<string, Type>>): MapType {
+  const type: MapType = Object.freeze({ kind: 'map', fields: Object.freeze({ ...fields }) })
+  EXACT.add(type)
+  return type
+}
+
+/** Whether a map type is known to hold no keys beyond its fields. */
+export function isExact(type: Type): boolean {
+  return EXACT.has(type)
+}
+
+/** A copy of a map type with new fields, keeping its exactness. */
+export function withFields(type: MapType, fields: Readonly<Record<string, Type>>): MapType {
+  if (isExact(type) && type.rest === undefined) return exactObject(fields)
+  return type.rest === undefined
+    ? { kind: 'map', fields }
+    : { kind: 'map', fields, rest: type.rest }
+}
+
 export function isNullable(type: Type): boolean {
   switch (type.kind) {
     case 'any':
@@ -216,12 +266,24 @@ export function fieldOf(type: MapType, key: string): Type | undefined {
   return Object.hasOwn(type.fields, key) ? type.fields[key] : undefined
 }
 
+const nonNullMemo = new WeakMap<Type, Type>()
+
 /** Removes `null` from a type. */
 export function nonNull(type: Type): Type {
   if (type.kind === 'null') return NEVER
-  if (type.kind === 'union') return unionOf(type.types.map(nonNull))
-  return type
+  if (type.kind !== 'union') return type
+  let result = nonNullMemo.get(type)
+  if (result === undefined) {
+    // Keeps every literal: narrowing an optional enum must not lose its values.
+    result = type.types.some((member) => member.kind === 'null' || member.kind === 'union')
+      ? unionOf(type.types.map(nonNull), false)
+      : type
+    nonNullMemo.set(type, result)
+  }
+  return result
 }
+
+const widenMemo = new WeakMap<Type, Type>()
 
 /** The base kind a literal widens to. */
 export function widen(type: Type): Type {
@@ -229,34 +291,76 @@ export function widen(type: Type): Type {
     if (typeof type.value === 'string') return STRING
     return typeof type.value === 'number' ? NUMBER : BOOLEAN
   }
-  if (type.kind === 'union') return unionOf(type.types.map(widen))
-  return type
+  if (type.kind !== 'union') return type
+  let result = widenMemo.get(type)
+  if (result === undefined) {
+    result = type.types.some((member) => member.kind === 'literal' || member.kind === 'union')
+      ? unionOf(type.types.map(widen))
+      : type
+    widenMemo.set(type, result)
+  }
+  return result
 }
 
-function sameType(a: Type, b: Type): boolean {
-  return a === b || typeKey(a) === typeKey(b)
+// === structural identity ===
+
+const hashMemo = new WeakMap<Type, number>()
+
+/** FNV-1a parameters. */
+const FNV_PRIME = 0x01_00_01_93
+const FNV_OFFSET = 0x81_1c_9d_c5
+/** Separates a map's `rest` from its fields in a hash. */
+const REST_MARK = 0x2a
+
+function mix(h: number, value: number): number {
+  return Math.imul(h ^ value, FNV_PRIME) >>> 0
 }
 
-/** A canonical string for de-duplication. */
-function typeKey(type: Type): string {
+function hashText(text: string): number {
+  let h = FNV_OFFSET
+  for (let i = 0; i < text.length; i++) h = mix(h, text.charCodeAt(i))
+  return h
+}
+
+/** A structural hash: equal types hash equally. Shared sub-types are hashed once. */
+function typeHash(type: Type): number {
+  const cached = hashMemo.get(type)
+  if (cached !== undefined) return cached
+  chargeTypeWork(1)
+  let h: number
   switch (type.kind) {
     case 'literal':
-      return `lit:${typeof type.value}:${String(type.value)}`
+      h = hashText(`lit:${typeof type.value}:${String(type.value)}`)
+      break
     case 'list':
-      return `list<${typeKey(type.element)}>`
-    case 'map':
-      return `map{${Object.keys(type.fields)
-        .sort()
-        .map((k) => `${k}:${typeKey(type.fields[k])}`)
-        .join(',')}}${type.rest ? `[${typeKey(type.rest)}]` : ''}`
-    case 'union':
-      return `(${type.types.map(typeKey).sort().join('|')})`
+      h = mix(hashText('list'), typeHash(type.element))
+      break
+    case 'map': {
+      h = hashText(isExact(type) ? 'map!' : 'map')
+      for (const key of Object.keys(type.fields).sort())
+        h = mix(mix(h, hashText(key)), typeHash(type.fields[key]))
+      if (type.rest !== undefined) h = mix(mix(h, REST_MARK), typeHash(type.rest))
+      break
+    }
+    case 'union': {
+      // Order-independent: members are compared as a set.
+      const members = type.types.map(typeHash).sort((a, b) => a - b)
+      h = hashText('union')
+      for (const member of members) h = mix(h, member)
+      break
+    }
     case 'opaque':
-      return `opaque:${type.name}`
+      h = hashText(`opaque:${type.name}`)
+      break
     case 'function':
-      return `fn(${type.params.map(typeKey).join(',')})=>${typeKey(type.result)}`
+      h = mix(
+        type.params.reduce((acc, param) => mix(acc, typeHash(param)), hashText('fn')),
+        typeHash(type.result),
+      )
+      break
     case 'var':
-      return `var:${type.name}`
+      h = hashText(`var:${type.name}`)
+      break
     case 'any':
     case 'boolean':
     case 'duration':
@@ -266,24 +370,135 @@ function typeKey(type: Type): string {
     case 'string':
     case 'timestamp':
     default:
-      return type.kind
+      h = hashText(type.kind)
   }
+  hashMemo.set(type, h)
+  return h
 }
 
-/** Flattens, de-duplicates, and simplifies a union. */
-export function unionOf(types: readonly Type[]): Type {
+const sameMemo = new WeakMap<Type, WeakSet<Type>>()
+
+/** Structural equality, linear in the size of the (shared) type graphs. */
+export function sameType(a: Type, b: Type): boolean {
+  if (a === b) return true
+  if (a.kind !== b.kind || typeHash(a) !== typeHash(b)) return false
+  if (sameMemo.get(a)?.has(b) === true) return true
+  chargeTypeWork(1)
+  let same: boolean
+  switch (a.kind) {
+    case 'literal':
+      same = a.value === (b as LiteralType).value
+      break
+    case 'list':
+      same = sameType(a.element, (b as ListType).element)
+      break
+    case 'map': {
+      const other = b as MapType
+      const keys = Object.keys(a.fields)
+      same =
+        isExact(a) === isExact(other) &&
+        keys.length === Object.keys(other.fields).length &&
+        keys.every((key) => {
+          const field = fieldOf(other, key)
+          return field !== undefined && sameType(a.fields[key], field)
+        }) &&
+        (a.rest === undefined
+          ? other.rest === undefined
+          : other.rest !== undefined && sameType(a.rest, other.rest))
+      break
+    }
+    case 'union': {
+      const other = b as UnionType
+      same =
+        a.types.length === other.types.length &&
+        a.types.every((member) => other.types.some((candidate) => sameType(member, candidate)))
+      break
+    }
+    case 'opaque':
+      same = a.name === (b as OpaqueType).name
+      break
+    case 'function': {
+      const other = b as FunctionType
+      same =
+        a.params.length === other.params.length &&
+        a.params.every((param, i) => sameType(param, other.params[i])) &&
+        sameType(a.result, other.result)
+      break
+    }
+    case 'var':
+      same = a.name === (b as TypeVar).name
+      break
+    case 'any':
+    case 'boolean':
+    case 'duration':
+    case 'never':
+    case 'null':
+    case 'number':
+    case 'string':
+    case 'timestamp':
+    default:
+      same = true
+  }
+  if (same) {
+    let set = sameMemo.get(a)
+    if (set === undefined) sameMemo.set(a, (set = new WeakSet()))
+    set.add(b)
+  }
+  return same
+}
+
+/**
+ * Unions with more literals of one kind than this (a thousand-branch
+ * `c ? "a" : c2 ? "b" : ...` ladder) widen them to the kind: always sound, and
+ * it keeps building such unions linear.
+ */
+const MAX_UNION_LITERALS = 256
+
+/**
+ * Flattens, de-duplicates, and simplifies a union, in time linear in its
+ * members. `collapse` widens very wide literal unions (see MAX_UNION_LITERALS).
+ */
+export function unionOf(types: readonly Type[], collapse = true): Type {
   const flat: Type[] = []
   const visit = (type: Type): void => {
     if (type.kind === 'union') type.types.forEach(visit)
     else if (type.kind !== 'never') flat.push(type)
   }
   types.forEach(visit)
+  chargeTypeWork(flat.length)
   if (flat.some((type) => type.kind === 'any')) return ANY
+  // A literal next to its own base kind is redundant.
+  const baseKinds = new Set<string>()
+  for (const type of flat) if (type.kind !== 'literal') baseKinds.add(type.kind)
+  if (collapse && flat.length > MAX_UNION_LITERALS) {
+    const counts = new Map<string, number>()
+    for (const type of flat) {
+      if (type.kind !== 'literal') continue
+      const kind = widen(type).kind
+      const count = (counts.get(kind) ?? 0) + 1
+      counts.set(kind, count)
+      if (count > MAX_UNION_LITERALS) baseKinds.add(kind)
+    }
+    const bases: Readonly<Record<string, Type>> = {
+      string: STRING,
+      number: NUMBER,
+      boolean: BOOLEAN,
+    }
+    for (const kind of counts.keys()) {
+      const base = bases[kind]
+      if (base !== undefined && baseKinds.has(kind) && !flat.some((type) => type.kind === kind))
+        flat.push(base)
+    }
+  }
   const out: Type[] = []
+  const seen = new Map<number, Type[]>()
   for (const type of flat) {
-    if (out.some((existing) => sameType(existing, type))) continue
-    // A literal next to its own base kind is redundant.
-    if (type.kind === 'literal' && flat.some((other) => other.kind === widen(type).kind)) continue
+    if (type.kind === 'literal' && baseKinds.has(widen(type).kind)) continue
+    const h = typeHash(type)
+    const bucket = seen.get(h)
+    if (bucket?.some((existing) => sameType(existing, type)) === true) continue
+    if (bucket === undefined) seen.set(h, [type])
+    else bucket.push(type)
     out.push(type)
   }
   if (out.length === 0) return NEVER
@@ -291,10 +506,27 @@ export function unionOf(types: readonly Type[]): Type {
   return Object.freeze({ kind: 'union', types: Object.freeze(out) })
 }
 
-/** Whether every value of `source` is a valid `target` (gradual: `any` both ways). */
+const assignableMemo = new WeakMap<Type, WeakMap<Type, boolean>>()
+
+/**
+ * Whether every value of `source` is a valid `target` (gradual: `any` both ways).
+ * Declared object types are open: a value may carry keys its type does not list.
+ */
 export function isAssignable(source: Type, target: Type): boolean {
+  if (source === target) return true
   if (source.kind === 'any' || target.kind === 'any' || source.kind === 'never') return true
   if (target.kind === 'var' || source.kind === 'var') return true
+  let memo = assignableMemo.get(source)
+  const cached = memo?.get(target)
+  if (cached !== undefined) return cached
+  chargeTypeWork(1)
+  const result = assignable(source, target)
+  if (memo === undefined) assignableMemo.set(source, (memo = new WeakMap()))
+  memo.set(target, result)
+  return result
+}
+
+function assignable(source: Type, target: Type): boolean {
   if (source.kind === 'union') return source.types.every((member) => isAssignable(member, target))
   if (target.kind === 'union') return target.types.some((member) => isAssignable(source, member))
   switch (target.kind) {
@@ -305,16 +537,23 @@ export function isAssignable(source: Type, target: Type): boolean {
     case 'map': {
       if (source.kind !== 'map') return false
       for (const [key, fieldType] of Object.entries(target.fields)) {
-        const sourceField = fieldOf(source, key) ?? source.rest
-        if (sourceField === undefined) {
-          if (!isNullable(fieldType)) return false
-        } else if (!isAssignable(sourceField, fieldType)) return false
+        const sourceField = fieldOf(source, key)
+        if (sourceField !== undefined) {
+          if (!isAssignable(sourceField, fieldType)) return false
+        } else if (!isNullable(fieldType)) {
+          // An absent key reads as null.
+          return false
+        } else if (source.rest !== undefined && !isAssignable(source.rest, fieldType)) {
+          return false
+        }
       }
       if (target.rest !== undefined) {
         for (const fieldType of Object.values(source.fields)) {
           if (!isAssignable(fieldType, target.rest)) return false
         }
-        if (source.rest !== undefined && !isAssignable(source.rest, target.rest)) return false
+        if (source.rest !== undefined) return isAssignable(source.rest, target.rest)
+        // A declared object may hold keys it does not list, of any type.
+        return isExact(source) || target.rest.kind === 'any'
       }
       return true
     }
@@ -322,6 +561,9 @@ export function isAssignable(source: Type, target: Type): boolean {
       return source.kind === 'opaque' && source.name === target.name
     case 'function':
       return source.kind === 'function'
+    case 'any':
+    case 'var':
+      return true
     case 'boolean':
     case 'duration':
     case 'never':
@@ -339,48 +581,118 @@ export function isAssignable(source: Type, target: Type): boolean {
 
 /** Whether two types can hold a common value (used for always-false comparisons). */
 export function overlaps(a: Type, b: Type): boolean {
-  if (a.kind === 'any' || b.kind === 'any' || a.kind === 'var' || b.kind === 'var') return true
-  if (a.kind === 'union') return a.types.some((member) => overlaps(member, b))
-  if (b.kind === 'union') return b.types.some((member) => overlaps(a, member))
-  if (a.kind === 'literal' && b.kind === 'literal') return a.value === b.value
-  return widen(a).kind === widen(b).kind
+  const left = a.kind === 'union' ? a.types : [a]
+  const right = b.kind === 'union' ? b.types : [b]
+  chargeTypeWork(left.length + right.length)
+  const open = (type: Type): boolean => type.kind === 'any' || type.kind === 'var'
+  if (left.some(open) || right.some(open)) return true
+  // Literals overlap equal literals or their base kind; other kinds overlap by kind.
+  const kinds = (members: readonly Type[]): Set<string> =>
+    new Set(members.filter((m) => m.kind !== 'literal').map((m) => m.kind))
+  const literals = (members: readonly Type[]): Set<string> =>
+    new Set(
+      members.flatMap((m) =>
+        m.kind === 'literal' ? [`${typeof m.value}:${String(m.value)}`] : [],
+      ),
+    )
+  const leftKinds = kinds(left)
+  const rightKinds = kinds(right)
+  for (const kind of leftKinds) if (rightKinds.has(kind)) return true
+  for (const member of left)
+    if (member.kind === 'literal' && rightKinds.has(widen(member).kind)) return true
+  for (const member of right)
+    if (member.kind === 'literal' && leftKinds.has(widen(member).kind)) return true
+  const rightLiterals = literals(right)
+  for (const literal of literals(left)) if (rightLiterals.has(literal)) return true
+  return false
 }
 
+/** Longest type text shown in messages and hovers; longer text ends in an ellipsis. */
+const MAX_TYPE_TEXT = 1000
+
 /** Human-readable type text, e.g. `{ name: string, tags: string[] } | null`. */
-export function formatType(type: Type): string {
-  switch (type.kind) {
-    case 'literal':
-      return JSON.stringify(type.value)
-    case 'list': {
-      const inner = formatType(type.element)
-      return type.element.kind === 'union' || type.element.kind === 'function'
-        ? `(${inner})[]`
-        : `${inner}[]`
+export function formatType(type: Type, maxLength = MAX_TYPE_TEXT): string {
+  let out = ''
+  let full = false
+  const emit = (text: string): boolean => {
+    if (full) return false
+    if (out.length + text.length > maxLength) {
+      out += `${text.slice(0, Math.max(0, maxLength - out.length))}…`
+      full = true
+      return false
     }
-    case 'map': {
-      const entries = Object.entries(type.fields).map(
-        ([k, v]) => `${/^[A-Za-z_$][\w$]*$/u.test(k) ? k : JSON.stringify(k)}: ${formatType(v)}`,
-      )
-      if (type.rest !== undefined) entries.push(`[key: string]: ${formatType(type.rest)}`)
-      return entries.length === 0 ? '{}' : `{ ${entries.join(', ')} }`
-    }
-    case 'union':
-      return type.types.map(formatType).join(' | ')
-    case 'opaque':
-      return type.name
-    case 'function':
-      return `(${type.params.map(formatType).join(', ')}) => ${formatType(type.result)}`
-    case 'var':
-      return type.name
-    case 'any':
-    case 'boolean':
-    case 'duration':
-    case 'never':
-    case 'null':
-    case 'number':
-    case 'string':
-    case 'timestamp':
-    default:
-      return type.kind
+    out += text
+    return true
   }
+  const write = (node: Type): void => {
+    if (full) return
+    switch (node.kind) {
+      case 'literal':
+        emit(JSON.stringify(node.value))
+        return
+      case 'list': {
+        const wrap = node.element.kind === 'union' || node.element.kind === 'function'
+        if (wrap) emit('(')
+        write(node.element)
+        emit(wrap ? ')[]' : '[]')
+        return
+      }
+      case 'map': {
+        const keys = Object.keys(node.fields)
+        if (keys.length === 0 && node.rest === undefined) {
+          emit('{}')
+          return
+        }
+        emit('{ ')
+        keys.forEach((k, i) => {
+          if (full) return
+          if (i > 0) emit(', ')
+          emit(`${/^[A-Za-z_$][\w$]*$/u.test(k) ? k : JSON.stringify(k)}: `)
+          write(node.fields[k])
+        })
+        if (node.rest !== undefined) {
+          if (keys.length > 0) emit(', ')
+          emit('[key: string]: ')
+          write(node.rest)
+        }
+        emit(' }')
+        return
+      }
+      case 'union':
+        node.types.forEach((member, i) => {
+          if (full) return
+          if (i > 0) emit(' | ')
+          write(member)
+        })
+        return
+      case 'opaque':
+        emit(node.name)
+        return
+      case 'function':
+        emit('(')
+        node.params.forEach((param, i) => {
+          if (full) return
+          if (i > 0) emit(', ')
+          write(param)
+        })
+        emit(') => ')
+        write(node.result)
+        return
+      case 'var':
+        emit(node.name)
+        return
+      case 'any':
+      case 'boolean':
+      case 'duration':
+      case 'never':
+      case 'null':
+      case 'number':
+      case 'string':
+      case 'timestamp':
+      default:
+        emit(node.kind)
+    }
+  }
+  write(type)
+  return out
 }

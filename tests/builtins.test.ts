@@ -640,7 +640,12 @@ describe('map functions', () => {
       },
       strict: false,
     })
-    expect(typed.compile('values(m)').type).toEqual(t.list(t.union(t.number(), t.string())))
+    // A declared object may hold keys it does not list: its values are unknown.
+    expect(typed.compile('values(m)').type).toEqual(t.list(t.any()))
+    // A map literal holds exactly its keys.
+    expect(typed.compile('values({a: 1, b: "x"})').type).toEqual(
+      t.list(t.union(t.number(), t.string())),
+    )
     expect(typed.compile('entries(r)').type).toEqual(
       t.list(t.object({ key: t.string(), value: t.boolean() })),
     )

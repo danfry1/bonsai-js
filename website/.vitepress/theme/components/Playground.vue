@@ -501,8 +501,11 @@ onMounted(() => {
     const item = acItems[acIndex]
     if (!item) return
     const text = exprInput.value
-    exprInput.value = text.slice(0, acFrom) + item.insertText + text.slice(acTo)
-    const caret = acFrom + item.insertText.length
+    // Some items (a field inserted as ["first-name"]) replace their own range.
+    const start = item.range?.start ?? acFrom
+    const end = item.range?.end ?? acTo
+    exprInput.value = text.slice(0, start) + item.insertText + text.slice(end)
+    const caret = start + item.insertText.length
     exprInput.setSelectionRange(caret, caret)
     closeAutocomplete()
     onExpressionChanged()

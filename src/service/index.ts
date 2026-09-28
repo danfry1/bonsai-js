@@ -23,12 +23,18 @@ export interface Completion {
   readonly documentation?: string
   /** Text to insert (e.g. `trim()` for a method). */
   readonly insertText: string
+  /**
+   * The range this item replaces, when it differs from the result's range: a
+   * field that is not a plain name is inserted as `["first-name"]` in place of
+   * the `.` before it.
+   */
+  readonly range?: { readonly start: number; readonly end: number }
 }
 
 export interface CompletionResult {
   /** The range the completion replaces (the partially typed name). */
-  readonly from: number
-  readonly to: number
+  readonly start: number
+  readonly end: number
   readonly items: readonly Completion[]
 }
 
@@ -54,6 +60,13 @@ const PROBE = '__bonsai_probe__'
 const CLOSER: Readonly<Record<string, string>> = { '(': ')', '[': ']', '{': '}', '${': '}' }
 const KEYWORDS = ['true', 'false', 'null', 'let', 'has', 'try', 'not in', 'in']
 const IDENT_CHAR = /[A-Za-z0-9_$]/u
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/u
+
+/** A UTF-16 offset inside `source` (an out-of-range or non-numeric offset means the end). */
+function clampOffset(source: string, offset: number): number {
+  if (!Number.isFinite(offset)) return source.length
+  return Math.max(0, Math.min(Math.trunc(offset), source.length))
+}
 
 /**
  * Editor features over an environment. Nothing here evaluates an expression or
@@ -72,18 +85,22 @@ export function createLanguageService(env: Environment<never>): LanguageService 
   }
 
   function complete(source: string, offset: number): CompletionResult {
-    const cursor = Math.max(0, Math.min(offset, source.length))
+    const cursor = clampOffset(source, offset)
     let from = cursor
     while (from > 0 && IDENT_CHAR.test(source[from - 1])) from--
     let to = cursor
     while (to < source.length && IDENT_CHAR.test(source[to])) to++
     const typed = source.slice(from, cursor)
-    const empty: CompletionResult = { from, to, items: [] }
+    const empty: CompletionResult = { start: from, end: to, items: [] }
 
     const prefix = source.slice(0, from)
     const scan = scanOpen(prefix)
-    // Inside a string after == or != (user.plan == "p|): offer the enum values.
-    const quoted = /(?:==|!=)\s*(?<quote>["'])(?<typed>[^"'\\]*)$/u.exec(source.slice(0, cursor))
+    // Inside a string after == or != (user.plan == "p|), or in a list after
+    // `in` (user.plan in ["pro", "f|): offer the enum values.
+    const quoted =
+      /(?:==|!=|\bin\s*\[(?:\s*(?:"[^"\\]*"|'[^'\\]*')\s*,)*)\s*(?<quote>["'])(?<typed>[^"'\\]*)$/u.exec(
+        source.slice(0, cursor),
+      )
     if (quoted !== null && scan.inString) {
       const enumPrefix = quoted.groups?.typed ?? ''
       const quoteAt = cursor - enumPrefix.length
@@ -100,7 +117,7 @@ export function createLanguageService(env: Environment<never>): LanguageService 
       }))
       let end = cursor
       while (end < source.length && source[end] !== quoted.groups?.quote) end++
-      return { from: quoteAt, to: end, items: rank(items, enumPrefix) }
+      return { start: quoteAt, end, items: rank(items, enumPrefix) }
     }
     if (scan.inString || scan.inComment) return empty
     if (from > 0 && /[0-9]/u.test(source[from - 1])) return empty
@@ -121,7 +138,10 @@ export function createLanguageService(env: Environment<never>): LanguageService 
     }
     if (analysis === undefined) return empty
 
-    const items = afterDot ? memberCompletions(analysis) : nameCompletions(analysis)
+    const dotAt = afterDot && !before.endsWith('?.') ? before.length - 1 : undefined
+    const items = afterDot
+      ? memberCompletions(analysis, dotAt === undefined ? undefined : { start: dotAt, end: to })
+      : nameCompletions(analysis)
     if (!afterDot && /(?:==|!=)\s*$/u.test(prefix)) {
       for (const value of literalValues(analysis)) {
         items.unshift({
@@ -132,19 +152,27 @@ export function createLanguageService(env: Environment<never>): LanguageService 
         })
       }
     }
-    return { from, to, items: rank(items, typed) }
+    return { start: from, end: to, items: rank(items, typed) }
   }
 
-  /** Literal members of the type on the other side of `== probe`. */
+  /** Literal members of the type on the other side of `== probe` or `in [..., probe]`. */
   function literalValues(analysis: Analysis): (string | number | boolean)[] {
     let other: Type | undefined
+    const isProbe = (node: Node): boolean => node.type === 'Variable' && node.name === PROBE
     const find = (node: Node): void => {
       if (other !== undefined) return
       if (node.type === 'Binary' && (node.operator === '==' || node.operator === '!=')) {
-        if (node.right.type === 'Variable' && node.right.name === PROBE)
-          other = analysis.types.get(node.left)
-        else if (node.left.type === 'Variable' && node.left.name === PROBE)
-          other = analysis.types.get(node.right)
+        if (isProbe(node.right)) other = analysis.types.get(node.left)
+        else if (isProbe(node.left)) other = analysis.types.get(node.right)
+        if (other !== undefined) return
+      }
+      if (
+        node.type === 'Binary' &&
+        (node.operator === 'in' || node.operator === 'not in') &&
+        node.right.type === 'List' &&
+        node.right.items.some((item) => item.type !== 'Spread' && isProbe(item))
+      ) {
+        other = analysis.types.get(node.left)
         if (other !== undefined) return
       }
       forEachChild(node, find)
@@ -155,7 +183,11 @@ export function createLanguageService(env: Environment<never>): LanguageService 
     return members.flatMap((member) => (member.kind === 'literal' ? [member.value] : []))
   }
 
-  function memberCompletions(analysis: Analysis): Completion[] {
+  /** Completions after `receiver.`; `dot` is the range of the `.` and the typed name. */
+  function memberCompletions(
+    analysis: Analysis,
+    dot: { start: number; end: number } | undefined,
+  ): Completion[] {
     let receiver: Type | undefined
     const find = (node: Node): void => {
       if (receiver !== undefined) return
@@ -169,15 +201,37 @@ export function createLanguageService(env: Environment<never>): LanguageService 
     if (receiver === undefined) return []
     const target = nonNull(receiver)
     const items: Completion[] = []
-    if (target.kind === 'map') {
-      for (const [name, type] of Object.entries(target.fields)) {
-        items.push({ label: name, kind: 'property', detail: formatType(type), insertText: name })
+    const members = target.kind === 'union' ? target.types : [target]
+    // Fields of every map member (a union of records offers each one's keys).
+    const fields = new Map<string, Type[]>()
+    for (const member of members) {
+      if (member.kind !== 'map') continue
+      for (const [name, type] of Object.entries(member.fields)) {
+        fields.set(name, [...(fields.get(name) ?? []), type])
+      }
+    }
+    for (const [name, found] of fields) {
+      const detail = found.map((type) => formatType(type)).join(' | ')
+      if (IDENTIFIER.test(name)) {
+        items.push({ label: name, kind: 'property', detail, insertText: name })
+      } else {
+        // `user.first-name` would subtract: index it instead.
+        items.push({
+          label: name,
+          kind: 'property',
+          detail,
+          insertText: `[${JSON.stringify(name)}]`,
+          ...(dot === undefined ? {} : { range: dot }),
+        })
       }
     }
     if (
-      target.kind === 'list' ||
-      target.kind === 'string' ||
-      (target.kind === 'literal' && typeof target.value === 'string')
+      members.some(
+        (member) =>
+          member.kind === 'list' ||
+          member.kind === 'string' ||
+          (member.kind === 'literal' && typeof member.value === 'string'),
+      )
     ) {
       items.push({ label: 'length', kind: 'property', detail: 'number', insertText: 'length' })
     }
@@ -243,7 +297,9 @@ export function createLanguageService(env: Environment<never>): LanguageService 
     return items
   }
 
-  function hover(source: string, offset: number): HoverResult | undefined {
+  function hover(source: string, rawOffset: number): HoverResult | undefined {
+    if (!Number.isFinite(rawOffset)) return undefined
+    const offset = clampOffset(source, rawOffset)
     const analysis = tryAnalyze(source)
     if (analysis === undefined) return undefined
     let best: Node | undefined
@@ -276,7 +332,12 @@ export function createLanguageService(env: Environment<never>): LanguageService 
   }
 
   function diagnostics(source: string): readonly Diagnostic[] {
-    return env.check(source).diagnostics
+    // Spans stay inside the source (an error at the end is zero-width there).
+    return env.check(source).diagnostics.map((d) => {
+      const start = Math.min(Math.max(d.start, 0), source.length)
+      const end = Math.min(Math.max(d.end, start), source.length)
+      return start === d.start && end === d.end ? d : { ...d, start, end }
+    })
   }
 
   return Object.freeze({ complete, hover, diagnostics })

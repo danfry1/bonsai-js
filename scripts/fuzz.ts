@@ -15,9 +15,12 @@
  *       the same value, or an error with the same code.
  *   (c) Soundness probe: when an environment whose declared variable types
  *       match the context accepts the expression (`check(source).ok`),
- *       evaluation never fails with TYPE_ERROR, NO_OVERLOAD, or NULL_RECEIVER.
- *       Findings are collected, de-duplicated, and printed with the shortest
- *       source seen for each.
+ *       evaluation never fails with TYPE_ERROR, NO_OVERLOAD, or NULL_RECEIVER,
+ *       and the value conforms to the inferred type (and to an `expect` type
+ *       the expression was accepted against). Contexts may carry keys their
+ *       declared objects do not list, as database rows do. Findings are
+ *       collected, de-duplicated, and printed with the shortest source seen
+ *       for each.
  * A separate property feeds random junk to the parser, checker, and language
  * service to fuzz for crashes.
  *
@@ -27,7 +30,8 @@
 import { performance } from 'node:perf_hooks'
 import { deepStrictEqual } from 'node:assert/strict'
 import fc from 'fast-check'
-import { print, type Node, bonsai, isBonsaiError, t, type Type } from '../src/index.js'
+import { describeMismatch, type ValidationBudget } from '../src/functions/define.js'
+import { print, type Node, bonsai, fn, isBonsaiError, t, type Type } from '../src/index.js'
 import { createLanguageService } from '../src/service/index.js'
 
 const DEFAULT_BUDGET_MS = 20_000
@@ -46,12 +50,13 @@ const SOUNDNESS_CODES = new Set(['TYPE_ERROR', 'NO_OVERLOAD', 'NULL_RECEIVER'])
 // === Types of generated variables ===
 
 type Desc =
-  | { readonly kind: 'number' | 'string' | 'boolean' | 'timestamp' }
+  | { readonly kind: 'number' | 'string' | 'boolean' | 'timestamp' | 'enum' }
   | { readonly kind: 'optional'; readonly inner: Desc }
   | { readonly kind: 'list'; readonly element: Desc }
   | { readonly kind: 'object'; readonly fields: readonly (readonly [string, Desc])[] }
 
 const FIELD_NAMES = ['id', 'name', 'active', 'price', 'qty', 'tags', 'inner'] as const
+const PLAN = t.enum('free', 'pro')
 
 const { desc: descArbitrary } = fc.letrec<{ desc: Desc }>((tie) => ({
   desc: fc.oneof(
@@ -63,6 +68,7 @@ const { desc: descArbitrary } = fc.letrec<{ desc: Desc }>((tie) => ({
         { kind: 'string' },
         { kind: 'boolean' },
         { kind: 'timestamp' },
+        { kind: 'enum' },
       ),
     },
     { weight: 2, arbitrary: tie('desc').map((inner): Desc => ({ kind: 'optional', inner })) },
@@ -94,6 +100,8 @@ function toType(desc: Desc): Type {
       return t.boolean()
     case 'timestamp':
       return t.timestamp()
+    case 'enum':
+      return PLAN
     case 'optional':
       return t.optional(toType(desc.inner))
     case 'list':
@@ -124,14 +132,22 @@ function valueFor(desc: Desc): fc.Arbitrary<unknown> {
       return fc.boolean()
     case 'timestamp':
       return fc.date({ min: MIN_DATE, max: MAX_DATE, noInvalidDate: true })
+    case 'enum':
+      return fc.constantFrom('free', 'pro')
     case 'optional':
       return fc.option(valueFor(desc.inner), { nil: null })
     case 'list':
       return fc.array(valueFor(desc.element), { maxLength: 4 })
     case 'object':
-      return fc.record(
-        Object.fromEntries(desc.fields.map(([name, field]) => [name, valueFor(field)])),
-      )
+      // Declared objects are open: records carry keys their type does not list.
+      return fc
+        .tuple(
+          fc.record(
+            Object.fromEntries(desc.fields.map(([name, field]) => [name, valueFor(field)])),
+          ),
+          fc.option(fc.jsonValue({ maxDepth: 2 }), { nil: undefined }),
+        )
+        .map(([record, extra]) => (extra === undefined ? record : { ...record, extra }))
     default:
       return unreachable(desc)
   }
@@ -159,6 +175,7 @@ const FIXED_VARIABLES: readonly (readonly [string, Desc])[] = [
   ['maybe', { kind: 'optional', inner: { kind: 'number' } }],
   ['xs', { kind: 'list', element: { kind: 'number' } }],
   ['when', { kind: 'timestamp' }],
+  ['plan', { kind: 'enum' }],
   [
     'items',
     {
@@ -184,7 +201,35 @@ interface Scenario {
   /** Whether the context values match the declared types. */
   readonly typed: boolean
   readonly source: string
+  /** A result type to check the expression against, for the `expect` probe. */
+  readonly expect: Type
 }
+
+/** Honest host functions: each returns what it declares. */
+const FUNCTIONS = {
+  pick: fn({ params: [], returns: PLAN, run: () => 'pro' as const }),
+  nums: fn({ params: [], returns: t.list(t.number()), run: () => [1, 2] }),
+  half: fn({ params: [t.number()], returns: t.number(), run: (n: number) => n / 2 }),
+  needA: fn({ params: [t.object({ a: t.number() })], returns: t.number(), run: (m) => m.a }),
+  tags: fn({
+    params: [t.record(t.string())],
+    returns: t.number(),
+    run: (m) => Object.keys(m).length,
+  }),
+  plans: fn({ params: [t.list(PLAN)], returns: t.number(), run: (l) => l.length }),
+}
+
+const EXPECTS: readonly Type[] = [
+  t.number(),
+  t.string(),
+  t.boolean(),
+  PLAN,
+  t.list(t.number()),
+  t.list(PLAN),
+  t.object({ id: t.number() }),
+  t.record(t.number()),
+  t.optional(t.string()),
+]
 
 // === Expression grammar ===
 
@@ -216,6 +261,9 @@ const LITERALS = [
   '"a"',
   '"vip"',
   '""',
+  '"free"',
+  '"pro"',
+  '"gold"',
   'true',
   'false',
   'null',
@@ -254,8 +302,53 @@ const ARG_METHODS = [
   'sort("desc")',
   'padStart(3, "0")',
 ] as const
-const LAMBDA_METHODS = ['map', 'filter', 'some', 'every', 'find', 'count', 'sortBy'] as const
-const ITEM_ATOMS = ['.', '.id', '.name', '.active', '.price', '.tags', '.tag', '1', '"a"'] as const
+const LAMBDA_METHODS = [
+  'map',
+  'filter',
+  'some',
+  'every',
+  'find',
+  'count',
+  'sortBy',
+  'flatMap',
+] as const
+const ITEM_ATOMS = [
+  '.',
+  '.id',
+  '.name',
+  '.active',
+  '.price',
+  '.tags',
+  '.tag',
+  '.extra',
+  '[.]',
+  '1',
+  '"a"',
+] as const
+const REDUCERS = [
+  'acc + x',
+  'acc ?? x',
+  '[acc, x]',
+  'x',
+  'acc',
+  '{ a: acc, b: x }',
+  'acc + 1 > 0 ? x : acc',
+  'acc.toString() + x',
+] as const
+const SPREADS = [
+  ['[...', ']'],
+  ['{ id: 1, ...', ' }'],
+  ['max(1, ...', ')'],
+  ['max(...', ')'],
+  ['half(...', ')'],
+  ['join(...', ')'],
+] as const
+const HOST_CALLS = [
+  ['half(', ')'],
+  ['needA({ a: ', ' })'],
+  ['tags(', ')'],
+  ['plans([', '])'],
+] as const
 const ITEM_OPERATORS = ['+', '*', '>', '>=', '==', '!=', '&&', '??'] as const
 const LET_NAMES = ['q', 'r'] as const
 
@@ -284,6 +377,8 @@ function expressionFor(paths: readonly string[]): fc.Arbitrary<string> {
         'hours(n)',
         'when - now()',
         'now() - when > days(30)',
+        'pick()',
+        'nums()',
       ),
     },
   )
@@ -360,6 +455,24 @@ function expressionFor(paths: readonly string[]): fc.Arbitrary<string> {
           .tuple(tie('expr'), fc.constantFrom(...LAMBDA_METHODS), itemExpression)
           .map(([receiver, method, body]) => `(${receiver}).${method}(${body})`),
       },
+      {
+        weight: 1,
+        arbitrary: fc
+          .tuple(tie('expr'), fc.constantFrom(...REDUCERS), tie('expr'))
+          .map(([list, body, initial]) => `reduce(${list}, (acc, x) => ${body}, ${initial})`),
+      },
+      {
+        weight: 1,
+        arbitrary: fc
+          .tuple(fc.constantFrom(...SPREADS), tie('expr'))
+          .map(([[open, close], inner]) => `${open}(${inner})${close}`),
+      },
+      {
+        weight: 1,
+        arbitrary: fc
+          .tuple(fc.constantFrom(...HOST_CALLS), tie('expr'))
+          .map(([[open, close], arg]) => `${open}${arg}${close}`),
+      },
     ),
   }))
   return expr
@@ -383,8 +496,8 @@ const scenarioArbitrary: fc.Arbitrary<Scenario> = fc
           fc.jsonValue({ maxDepth: 3 }),
         )
     return fc
-      .tuple(context, expressionFor(paths))
-      .map(([ctx, source]) => ({ variables, context: ctx, typed, source }))
+      .tuple(context, expressionFor(paths), fc.constantFrom(...EXPECTS))
+      .map(([ctx, source, expect]) => ({ variables, context: ctx, typed, source, expect }))
   })
 
 // === Properties ===
@@ -401,17 +514,17 @@ function classify(error: unknown, label: string): Outcome {
   return { ok: false, code: error.code, message: error.message }
 }
 
-function capture(label: string, fn: () => unknown): Outcome {
+function capture(label: string, run: () => unknown): Outcome {
   try {
-    return { ok: true, value: fn() }
+    return { ok: true, value: run() }
   } catch (error) {
     return classify(error, label)
   }
 }
 
-async function captureAsync(label: string, fn: () => Promise<unknown>): Promise<Outcome> {
+async function captureAsync(label: string, run: () => Promise<unknown>): Promise<Outcome> {
   try {
-    return { ok: true, value: await fn() }
+    return { ok: true, value: await run() }
   } catch (error) {
     return classify(error, label)
   }
@@ -440,7 +553,7 @@ function sameOutcome(a: Outcome, b: Outcome): boolean {
 }
 
 const clock = (): Date => FIXED_CLOCK
-const openEnv = bonsai({ clock })
+const openEnv = bonsai({ clock, functions: FUNCTIONS })
 const typedEnvs = new Map<string, ReturnType<typeof bonsai>>()
 
 function typedEnvFor(variables: Scenario['variables']): ReturnType<typeof bonsai> {
@@ -449,6 +562,7 @@ function typedEnvFor(variables: Scenario['variables']): ReturnType<typeof bonsai
   if (env === undefined) {
     env = bonsai({
       clock,
+      functions: FUNCTIONS,
       strict: true,
       variables: Object.fromEntries(variables.map(([name, desc]) => [name, toType(desc)])),
     })
@@ -496,6 +610,25 @@ function recordFinding(scenario: Scenario, outcome: Outcome & { ok: false }): vo
 
 let soundnessChecked = 0
 
+const MISMATCH_STEPS = 1_000_000
+const MISMATCH_DEPTH = 200
+
+function mentionsAny(type: Type): boolean {
+  return JSON.stringify(type).includes('"kind":"any"')
+}
+
+function mismatch(value: unknown, type: Type): string | undefined {
+  const budget: ValidationBudget = {
+    maxDepth: MISMATCH_DEPTH,
+    remaining: MISMATCH_STEPS,
+    deadline: 0,
+    onExhausted: () => {
+      throw new FuzzViolation('value too large to compare with its type')
+    },
+  }
+  return describeMismatch(value, type, 'result', budget)
+}
+
 async function scenarioHolds(scenario: Scenario): Promise<boolean> {
   const { source, context } = scenario
   const envs = scenario.typed ? [openEnv, typedEnvFor(scenario.variables)] : [openEnv]
@@ -522,10 +655,29 @@ async function scenarioHolds(scenario: Scenario): Promise<boolean> {
       )
     }
 
-    // (c) a typed environment that accepted the source must not hit a type failure.
-    if (env !== openEnv && (checked.value as { ok: boolean }).ok) {
+    // (c) a typed environment that accepted the source must not hit a type
+    // failure, and its value must have the inferred (and any expected) type.
+    const result = checked.value as { ok: boolean; type?: Type }
+    if (env !== openEnv && result.ok) {
       soundnessChecked++
-      if (!sync.ok && SOUNDNESS_CODES.has(sync.code)) recordFinding(scenario, sync)
+      // A computed key on a declared object reads as any (the object may hold
+      // keys its type does not list), so a failure after one is gradual typing.
+      const gradual = source.includes(')[')
+      // How many items a spread argument holds is only known at run time.
+      const arity = sync.ok || (sync.code === 'NO_OVERLOAD' && source.includes('(...'))
+      if (!sync.ok && SOUNDNESS_CODES.has(sync.code) && !gradual && !arity)
+        recordFinding(scenario, sync)
+      if (sync.ok && result.type !== undefined) {
+        const problem = mismatch(sync.value, result.type)
+        if (problem !== undefined)
+          recordFinding(scenario, { ok: false, code: 'UNSOUND_TYPE', message: problem })
+        // `expect` is a static check: an any-typed result is not verified at run time.
+        if (!mentionsAny(result.type) && env.check(source, { expect: scenario.expect }).ok) {
+          const expected = mismatch(sync.value, scenario.expect)
+          if (expected !== undefined)
+            recordFinding(scenario, { ok: false, code: 'UNSOUND_EXPECT', message: expected })
+        }
+      }
     }
 
     // (d) printing is a faithful, idempotent round trip, in every call style.
