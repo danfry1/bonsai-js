@@ -8,8 +8,10 @@ export interface RuntimeLimits {
   readonly maxStringLength: number
   /** Longest list an expression may produce. Default 100,000. */
   readonly maxListLength: number
-  /** Deepest value nesting that equality and templates will walk. Default 64. */
+  /** Deepest value nesting an expression may build, or equality and templates will walk. Default 64. */
   readonly maxValueDepth: number
+  /** Longest regular expression pattern `matches` accepts. Default 4,096. */
+  readonly maxPatternLength: number
 }
 
 export const DEFAULT_RUNTIME_LIMITS: RuntimeLimits = Object.freeze({
@@ -17,7 +19,29 @@ export const DEFAULT_RUNTIME_LIMITS: RuntimeLimits = Object.freeze({
   maxStringLength: 100_000,
   maxListLength: 100_000,
   maxValueDepth: 64,
+  maxPatternLength: 4096,
 })
+
+/**
+ * Caches of compiled patterns and formats. One set per environment (keyed by
+ * its limits object), so one tenant's patterns never evict or bloat another's.
+ */
+export interface RuntimeCaches {
+  readonly regex: Map<string, { readonly program: unknown; readonly size: number }>
+  regexSize: number
+  readonly numberFormats: Map<string, Intl.NumberFormat>
+}
+
+const cachesByLimits = new WeakMap<RuntimeLimits, RuntimeCaches>()
+
+function cachesFor(limits: RuntimeLimits): RuntimeCaches {
+  let caches = cachesByLimits.get(limits)
+  if (caches === undefined) {
+    caches = { regex: new Map(), regexSize: 0, numberFormats: new Map() }
+    cachesByLimits.set(limits, caches)
+  }
+  return caches
+}
 
 const CLOCK_SAMPLE = 1024
 const NO_CONTEXT: Record<string, unknown> = Object.freeze({})
@@ -33,11 +57,17 @@ export class State {
   signal: AbortSignal | undefined = undefined
   nextSample = CLOCK_SAMPLE
   nowValue: Date | undefined = undefined
+  /** Containers this evaluation has recorded a shape for (see `track`). */
+  recorded = 0
+  /** Expensive resources (patterns, formatters) first used in this evaluation; created on demand. */
+  private used: Set<string> | undefined = undefined
   readonly limits: RuntimeLimits
   readonly clock: () => Date
+  readonly caches: RuntimeCaches
 
   constructor(limits: RuntimeLimits, clock: () => Date) {
     this.limits = limits
+    this.caches = cachesFor(limits)
     this.maxSteps = limits.maxSteps
     this.clock = clock
   }
@@ -59,11 +89,14 @@ export class State {
     this.signal = signal
     this.scheduleSample()
     this.nowValue = undefined
+    this.used = undefined
+    this.recorded = 0
     if (signal?.aborted === true) throw abortError(this)
   }
 
   release(): void {
     this.ctx = NO_CONTEXT
+    this.used = undefined
     this.locals.fill(undefined)
     this.signal = undefined
   }
@@ -104,6 +137,18 @@ export class State {
       throw new BonsaiLimitError('TIMEOUT', 'Evaluation timed out', { source: this.source })
     }
     if (this.signal?.aborted === true) throw abortError(this)
+  }
+
+  /**
+   * Charges `cost` the first time `key` is used in this evaluation. Creating a
+   * pattern or formatter is charged as if it were never cached, so step counts
+   * never depend on what earlier evaluations left in a cache.
+   */
+  chargeFirstUse(key: string, cost: number): void {
+    this.used ??= new Set()
+    if (this.used.has(key)) return
+    this.used.add(key)
+    this.charge(cost)
   }
 
   now(): Date {

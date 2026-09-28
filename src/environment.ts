@@ -395,6 +395,11 @@ function settingsFrom(
       ),
       maxListLength: positiveInt('maxListLength', limits.maxListLength, runtimeBase.maxListLength),
       maxValueDepth: positiveInt('maxValueDepth', limits.maxValueDepth, runtimeBase.maxValueDepth),
+      maxPatternLength: positiveInt(
+        'maxPatternLength',
+        limits.maxPatternLength,
+        runtimeBase.maxPatternLength,
+      ),
     }),
     timeout: positiveInt('timeout', limits.timeout, base?.timeout ?? 0),
     cacheSize: positiveInt('cacheSize', limits.cacheSize, base?.cacheSize ?? DEFAULT_CACHE_SIZE),

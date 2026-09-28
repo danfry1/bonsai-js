@@ -118,7 +118,9 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
     }
     case 'map': {
       if (!isMap(value)) return false
-      for (const [key, fieldType] of Object.entries(type.fields)) {
+      const fields = Object.entries(type.fields)
+      state.charge(1 + fields.length)
+      for (const [key, fieldType] of fields) {
         if (!conforms(Object.hasOwn(value, key) ? value[key] : null, fieldType, state, depth + 1))
           return false
       }
@@ -137,6 +139,9 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
     }
     case 'union':
       return type.types.some((member) => conforms(value, member, state, depth))
+    case 'timestamp':
+      // An invalid Date is an opaque host value, not a timestamp.
+      return value instanceof Date && !Number.isNaN(value.getTime())
     case 'any':
     case 'boolean':
     case 'duration':
@@ -147,7 +152,6 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
     case 'number':
     case 'opaque':
     case 'string':
-    case 'timestamp':
     case 'var':
     default:
       return matchesKind(value, type)

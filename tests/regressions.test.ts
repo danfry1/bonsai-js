@@ -42,14 +42,14 @@ describe('context that does not match its declared types', () => {
     )
   })
 
-  it('does not trust host results beyond their kind', () => {
+  it('checks host results deeply against their declared type', () => {
     const host = bonsai({
       functions: {
         lst: fn({ params: [], returns: t.list(t.string()), run: () => [1] as unknown as string[] }),
       },
     })
     expect(outcome(() => host.evaluateSync('lst().map(.toUpperCase())'))).toEqual({
-      code: 'NO_OVERLOAD',
+      code: 'HOST_CONTRACT',
     })
   })
 

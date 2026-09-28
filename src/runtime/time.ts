@@ -1,5 +1,5 @@
 import type { CallSite } from '../functions/define.js'
-import { MS_PER_DAY, MS_PER_MINUTE, MS_PER_SECOND, timeOf } from './values.js'
+import { MS_PER_DAY, MS_PER_MINUTE, MS_PER_SECOND, shown, timeOf } from './values.js'
 
 /** Calendar fields of an instant as seen on a wall clock in some time zone. */
 export interface WallClock {
@@ -42,8 +42,16 @@ function utc({
 
 const formatters = new Map<string, Intl.DateTimeFormat>()
 const MAX_CACHED_ZONES = 64
+/** Steps charged for creating a time zone formatter (about 20 microseconds of work). */
+const ZONE_FORMAT_COST = 1024
+/** Steps charged for reading a wall clock in a time zone (about 2 microseconds). */
+const ZONE_READ_COST = 64
+/** Recently read wall clocks by zone and instant; reads repeat in loops. */
+const clocks = new Map<string, WallClock>()
+const MAX_CACHED_CLOCKS = 4096
 
 function formatterFor(zone: string, site: CallSite): Intl.DateTimeFormat {
+  site.state.chargeFirstUse(`z${zone}`, ZONE_FORMAT_COST)
   let formatter = formatters.get(zone)
   if (formatter !== undefined) return formatter
   try {
@@ -59,7 +67,7 @@ function formatterFor(zone: string, site: CallSite): Intl.DateTimeFormat {
       second: 'numeric',
     })
   } catch {
-    throw site.state.error('INVALID_ARGUMENT', `Unknown time zone "${zone}"`, site.span)
+    throw site.state.error('INVALID_ARGUMENT', `Unknown time zone ${shown(zone)}`, site.span)
   }
   if (formatters.size >= MAX_CACHED_ZONES) formatters.clear()
   formatters.set(zone, formatter)
@@ -79,11 +87,17 @@ export function wallClock(date: Date, zone: string | null | undefined, site: Cal
       millisecond: date.getUTCMilliseconds(),
     }
   }
-  const parts = formatterFor(zone, site).formatToParts(date)
+  // Charged whether or not the read is cached, so step counts are deterministic.
+  site.state.charge(ZONE_READ_COST)
+  const formatter = formatterFor(zone, site)
+  const key = `${zone}\u0000${ms}`
+  const cached = clocks.get(key)
+  if (cached !== undefined) return { ...cached }
+  const parts = formatter.formatToParts(date)
   const get = (type: string): number => Number(parts.find((part) => part.type === type)?.value ?? 0)
   const era = parts.find((part) => part.type === 'era')?.value
   const year = get('year')
-  return {
+  const clock: WallClock = {
     year: era !== undefined && /^B/iu.test(era) ? 1 - year : year,
     month: get('month'),
     day: get('day'),
@@ -92,6 +106,9 @@ export function wallClock(date: Date, zone: string | null | undefined, site: Cal
     second: get('second'),
     millisecond: ((ms % MS_PER_SECOND) + MS_PER_SECOND) % MS_PER_SECOND,
   }
+  if (clocks.size >= MAX_CACHED_CLOCKS) clocks.clear()
+  clocks.set(key, clock)
+  return { ...clock }
 }
 
 /**
@@ -220,7 +237,7 @@ export function parseTimestamp(text: string, site: CallSite): Date {
   if (groups === undefined) {
     throw site.state.error(
       'INVALID_ARGUMENT',
-      `Cannot parse "${text}" as an ISO-8601 timestamp`,
+      `Cannot parse ${shown(text)} as an ISO-8601 timestamp`,
       site.span,
     )
   }
@@ -237,7 +254,11 @@ export function parseTimestamp(text: string, site: CallSite): Date {
     Number(mi) > MAX_MINUTE ||
     Number(sec) > MAX_SECOND
   ) {
-    throw site.state.error('INVALID_ARGUMENT', `"${text}" is not a valid date and time`, site.span)
+    throw site.state.error(
+      'INVALID_ARGUMENT',
+      `${shown(text)} is not a valid date and time`,
+      site.span,
+    )
   }
   let ms = utc({
     year,
@@ -254,7 +275,11 @@ export function parseTimestamp(text: string, site: CallSite): Date {
     const offsetHours = Number(digits.slice(0, 2))
     const offsetMinutes = Number(digits.slice(2))
     if (offsetHours > MAX_HOUR || offsetMinutes > MAX_MINUTE) {
-      throw site.state.error('INVALID_ARGUMENT', `"${text}" has an invalid UTC offset`, site.span)
+      throw site.state.error(
+        'INVALID_ARGUMENT',
+        `${shown(text)} has an invalid UTC offset`,
+        site.span,
+      )
     }
     ms -= sign * (offsetHours * MINUTES_PER_HOUR + offsetMinutes) * MS_PER_MINUTE
   }

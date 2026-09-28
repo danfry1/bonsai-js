@@ -1,10 +1,10 @@
+import { BonsaiLimitError } from '../errors.js'
 import {
   RegexSyntaxError,
   compileRegex,
   searchRegex,
   type Program as RegexProgram,
 } from '../runtime/regex.js'
-import type { State } from '../runtime/state.js'
 import {
   checkDatePattern,
   addDays,
@@ -18,6 +18,9 @@ import {
 import {
   BLOCKED_KEYS,
   Duration,
+  chargeSearch,
+  isMap,
+  shown,
   MS_PER_DAY,
   MS_PER_HOUR,
   MS_PER_MINUTE,
@@ -31,6 +34,7 @@ import {
   sortOrder,
   timeOf,
   toText,
+  track,
 } from '../runtime/values.js'
 import { t, unionOf, widen, type Type } from '../types.js'
 import {
@@ -89,6 +93,12 @@ function finite(value: number, site: CallSite): number {
   return value
 }
 
+/** Accounts for a list or map a built-in built (see `track`), and returns it. */
+function made<V extends unknown[] | Record<string, unknown>>(out: V, site: CallSite): V {
+  track(out, site.state, site.span)
+  return out
+}
+
 function newList(length: number, site: CallSite): unknown[] {
   site.state.listLimit(length, site.span)
   return new Array<unknown>(length)
@@ -103,7 +113,9 @@ function push(out: unknown[], value: unknown, site: CallSite): void {
 function numbersOf(items: readonly unknown[], what: string, site: CallSite): number[] {
   site.state.charge(items.length)
   const out: number[] = []
-  for (const value of items) {
+  // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+  for (let i = 0; i < items.length; i++) {
+    const value = items[i]
     if (value === null || value === undefined) continue
     if (typeof value !== 'number') {
       throw site.state.error(
@@ -112,9 +124,27 @@ function numbersOf(items: readonly unknown[], what: string, site: CallSite): num
         site.span,
       )
     }
+    if (!Number.isFinite(value)) {
+      throw site.state.error('NON_FINITE', `${what} found a non-finite number`, site.span)
+    }
     out.push(value)
   }
   return out
+}
+
+/** Copies a list by index: never runs a host list's iterator, species, or methods. */
+function copyOf(items: readonly unknown[], from = 0, to = items.length): unknown[] {
+  const out = new Array<unknown>(Math.max(0, to - from))
+  for (let i = from; i < to; i++) out[i - from] = items[i]
+  return out
+}
+
+/** Array.prototype.slice position semantics, without calling the list's own slice. */
+function slicePositions(length: number, start: number, end: number | undefined): [number, number] {
+  const clamp = (n: number): number => (n < 0 ? Math.max(0, length + n) : Math.min(n, length))
+  const from = clamp(start)
+  const to = end === undefined ? length : clamp(end)
+  return [from, Math.max(from, to)]
 }
 
 function textOf(value: unknown, site: CallSite): string {
@@ -143,29 +173,49 @@ function list(value: unknown): readonly unknown[] {
   return value as readonly unknown[]
 }
 
-function stateOf(site: CallSite): State {
-  return site.state
-}
-
 // === patterns and number formats ===
 
 const MAX_CACHED = 256
 const MAX_INTL_DIGITS = 20
-const regexCache = new Map<string, RegexProgram>()
-const numberFormats = new Map<string, Intl.NumberFormat>()
+/** Total compiled size (instructions plus class ranges) one environment keeps cached. */
+const REGEX_CACHE_BUDGET = 200_000
+/** Steps charged for creating a number formatter (about 6 microseconds of work). */
+const NUMBER_FORMAT_COST = 256
+/** Steps charged for formatting one number with Intl (about half a microsecond). */
+const FORMAT_COST = 16
+/** Steps charged for parsing a timestamp (a pattern match and calendar arithmetic). */
+const PARSE_COST = 16
 
 function regexFor(pattern: string, site: CallSite): RegexProgram {
-  let program = regexCache.get(pattern)
-  if (program !== undefined) return program
+  const s = site.state
+  if (pattern.length > s.limits.maxPatternLength) {
+    throw s.error(
+      'INVALID_ARGUMENT',
+      `Pattern of length ${pattern.length} exceeds the limit of ${s.limits.maxPatternLength}`,
+      site.span,
+    )
+  }
+  // Compiling is near-linear in the pattern (classes sort their ranges).
+  s.chargeFirstUse(`r${pattern}`, 1 + pattern.length)
+  const cache = s.caches.regex
+  const cached = cache.get(pattern)
+  if (cached !== undefined) return cached.program as RegexProgram
+  let program: RegexProgram
   try {
     program = compileRegex(pattern)
   } catch (error) {
     if (error instanceof RegexSyntaxError)
-      throw site.state.error('INVALID_ARGUMENT', error.message, site.span)
+      throw s.error('INVALID_ARGUMENT', error.message, site.span)
     throw error
   }
-  if (regexCache.size >= MAX_CACHED) regexCache.clear()
-  regexCache.set(pattern, program)
+  if (cache.size >= MAX_CACHED || s.caches.regexSize + program.size > REGEX_CACHE_BUDGET) {
+    cache.clear()
+    s.caches.regexSize = 0
+  }
+  if (program.size <= REGEX_CACHE_BUDGET) {
+    cache.set(pattern, { program, size: program.size })
+    s.caches.regexSize += program.size
+  }
   return program
 }
 
@@ -174,7 +224,10 @@ function numberFormat(
   options: Intl.NumberFormatOptions,
   site: CallSite,
 ): Intl.NumberFormat {
+  const numberFormats = site.state.caches.numberFormats
   const key = `${locale}\u0000${JSON.stringify(options)}`
+  site.state.chargeFirstUse(`n${key}`, NUMBER_FORMAT_COST)
+  site.state.charge(FORMAT_COST)
   let format = numberFormats.get(key)
   if (format !== undefined) return format
   try {
@@ -203,13 +256,16 @@ function replaceText(
       return replacement + text
     }
     site.state.stringLimit(text.length + replacement.length * (text.length + 1), site.span)
+    site.state.charge(text.length)
     return text === '' ? replacement : replacement + text.split('').join(replacement) + replacement
   }
+  chargeSearch(site.state, text.length, find.length)
   let out = ''
   let from = 0
   for (;;) {
     const at = text.indexOf(find, from)
     if (at === -1) break
+    site.state.charge(1)
     out += text.slice(from, at) + replacement
     site.state.stringLimit(out.length + text.length - at - find.length, site.span)
     from = at + find.length
@@ -273,13 +329,18 @@ function sortKeyed(
     throw site.state.error('INVALID_ARGUMENT', 'Sort direction must be "asc" or "desc"', site.span)
   }
   const n = items.length
-  site.state.charge(n === 0 ? 1 : Math.ceil(n * Math.log2(n + 1)))
+  const s = site.state
+  s.charge(n === 0 ? 1 : Math.ceil(n * Math.log2(n + 1)))
   const indices = Array.from({ length: n }, (_, i) => i)
+  // Each comparison charges for string length (sortOrder), so a long sort is
+  // accounted, and interrupted by the step limit or timeout, as it runs.
   indices.sort((a, b) => {
-    const result = sortOrder(keys[a], keys[b], site.state, site.span)
+    const result = sortOrder(keys[a], keys[b], s, site.span)
     return descending ? -result : result
   })
-  return indices.map((i) => items[i])
+  const out = new Array<unknown>(n)
+  for (let i = 0; i < n; i++) out[i] = items[indices[i]]
+  return made(out, site)
 }
 
 function groupKey(key: unknown, site: CallSite): string {
@@ -305,40 +366,114 @@ function bucket(groups: Record<string, unknown[]>, key: string): unknown[] {
   return created
 }
 
-function uniqueOf(items: readonly unknown[], site: CallSite): unknown[] {
-  const s = stateOf(site)
-  s.charge(items.length)
-  const seen = new Set<unknown>()
-  const objects: unknown[] = []
-  const out: unknown[] = []
-  for (const item of items) {
-    const value = item === undefined ? null : item
-    if (value !== null && typeof value === 'object') {
-      s.charge(objects.length)
-      if (objects.some((other) => equals(other, value, s))) continue
-      objects.push(value)
-    } else {
-      if (seen.has(value)) continue
-      seen.add(value)
+function madeGroups(groups: Record<string, unknown[]>, site: CallSite): Record<string, unknown[]> {
+  for (const key in groups) if (Object.hasOwn(groups, key)) made(groups[key], site)
+  return made(groups, site)
+}
+
+/** Identity numbers for opaque values in canonical keys. */
+const opaqueIds = new WeakMap<object, number>()
+let nextOpaqueId = 0
+
+/**
+ * A string that is equal for two values exactly when `equals` says they are:
+ * maps by sorted keys, timestamps by time, opaque values by identity. Charged
+ * by the size of the value.
+ */
+function canonicalKey(value: unknown, site: CallSite, depth: number): string {
+  const s = site.state
+  if (value === null || value === undefined) return 'n'
+  switch (typeof value) {
+    case 'boolean':
+      return value ? 'T' : 'F'
+    case 'number':
+      return `d${value === 0 ? 0 : value}`
+    case 'string':
+      s.charge(value.length >>> CHARS_PER_STEP_SHIFT)
+      return `s${value.length}:${value}`
+    case 'bigint':
+    case 'function':
+    case 'object':
+    case 'symbol':
+    case 'undefined':
+    default:
+      break
+  }
+  if (depth > s.limits.maxValueDepth) {
+    throw new BonsaiLimitError(
+      'TOO_DEEP',
+      `Values nest deeper than ${s.limits.maxValueDepth} (is the data cyclic?)`,
+      { source: s.source },
+    )
+  }
+  s.charge(1)
+  if (Array.isArray(value)) {
+    s.charge(value.length)
+    let key = '['
+    for (let i = 0; i < value.length; i++)
+      key += (i === 0 ? '' : ',') + canonicalKey(value[i], site, depth + 1)
+    return charged(`${key}]`, site)
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return `t${value.getTime()}`
+  if (value instanceof Duration) return `u${value.ms}`
+  if (isMap(value)) {
+    const keys = Object.keys(value)
+    if (keys.length > 1) keys.sort()
+    s.charge(keys.length)
+    let key = '{'
+    let first = true
+    for (const name of keys) {
+      if (BLOCKED_KEYS.has(name)) continue
+      key += `${first ? '' : ','}${name.length}:${name}=${canonicalKey(value[name], site, depth + 1)}`
+      first = false
     }
+    return charged(`${key}}`, site)
+  }
+  let id = opaqueIds.get(value)
+  if (id === undefined) {
+    id = nextOpaqueId++
+    opaqueIds.set(value, id)
+  }
+  return `o${id}`
+}
+
+/** A key built at each nesting level copies its children's keys: charge the copy. */
+function charged(key: string, site: CallSite): string {
+  site.state.charge(key.length >>> CHARS_PER_STEP_SHIFT)
+  return key
+}
+
+function uniqueOf(items: readonly unknown[], site: CallSite): unknown[] {
+  site.state.charge(items.length)
+  const seen = new Set<string>()
+  const out: unknown[] = []
+  // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+  for (let i = 0; i < items.length; i++) {
+    const value = items[i] ?? null
+    const key = canonicalKey(value, site, 0)
+    if (seen.has(key)) continue
+    seen.add(key)
     out.push(value)
   }
-  return out
+  return made(out, site)
 }
 
 function flatten(items: readonly unknown[], site: CallSite): unknown[] {
   site.state.charge(items.length)
   const out: unknown[] = []
-  for (const item of items) {
-    if (Array.isArray(item)) {
-      site.state.listLimit(out.length + item.length, site.span)
-      site.state.charge(item.length)
-      for (const inner of item) out.push(inner)
-    } else {
-      push(out, item, site)
-    }
-  }
-  return out
+  // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+  for (let i = 0; i < items.length; i++) appendFlat(out, items[i], site)
+  return made(out, site)
+}
+
+/** Appends a list's items (or a single value) to `out`, by index. */
+function appendFlat(out: unknown[], value: unknown, site: CallSite): void {
+  if (Array.isArray(value)) {
+    site.state.listLimit(out.length + value.length, site.span)
+    site.state.charge(value.length)
+    // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+    for (let i = 0; i < value.length; i++) out.push(value[i])
+  } else push(out, value, site)
 }
 
 function joinText(items: readonly unknown[], separator: unknown, site: CallSite): string {
@@ -370,8 +505,12 @@ function joinText(items: readonly unknown[], separator: unknown, site: CallSite)
 function extreme(items: readonly unknown[], sign: 1 | -1, site: CallSite): unknown {
   site.state.charge(items.length)
   let best: unknown = null
-  for (const item of items) {
+  // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
     if (item === null || item === undefined) continue
+    if (typeof item === 'number' && !Number.isFinite(item))
+      throw site.state.error('NON_FINITE', 'Cannot order a non-finite number', site.span)
     if (best === null) {
       best = item
       continue
@@ -422,11 +561,17 @@ const STRING_FUNCTIONS: FunctionDef[] = [
     overload([str, str], bool, ([s, p]) => (s as string).endsWith(p as string)),
   ]),
   define('includes', 'Whether text contains a substring, or a list contains a value.', [
-    overload([str, str], bool, ([s, p]) => (s as string).includes(p as string)),
+    overload([str, str], bool, ([s, p], site) => {
+      chargeSearch(site.state, (s as string).length, (p as string).length)
+      return (s as string).includes(p as string)
+    }),
     overload([listT, any], bool, ([l, v], site) => contains(l, v, site.state, site.span)),
   ]),
   define('indexOf', 'Position of the first match, or -1.', [
-    overload([str, str], num, ([s, p]) => (s as string).indexOf(p as string)),
+    overload([str, str], num, ([s, p], site) => {
+      chargeSearch(site.state, (s as string).length, (p as string).length)
+      return (s as string).indexOf(p as string)
+    }),
     overload([listT, any], num, ([l, v], site) => {
       const items = list(l)
       site.state.charge(items.length)
@@ -435,7 +580,10 @@ const STRING_FUNCTIONS: FunctionDef[] = [
     }),
   ]),
   define('lastIndexOf', 'Position of the last match, or -1.', [
-    overload([str, str], num, ([s, p]) => (s as string).lastIndexOf(p as string)),
+    overload([str, str], num, ([s, p], site) => {
+      chargeSearch(site.state, (s as string).length, (p as string).length)
+      return (s as string).lastIndexOf(p as string)
+    }),
     overload([listT, any], num, ([l, v], site) => {
       const items = list(l)
       site.state.charge(items.length)
@@ -459,12 +607,13 @@ const STRING_FUNCTIONS: FunctionDef[] = [
       listT,
       ([l, a, b], site) => {
         const items = list(l)
-        const out = items.slice(
+        const [from, to] = slicePositions(
+          items.length,
           integer(a, 'Start', site),
           b === undefined || b === null ? undefined : integer(b, 'End', site),
         )
-        site.state.charge(out.length)
-        return out
+        site.state.charge(to - from)
+        return made(copyOf(items, from, to), site)
       },
       { required: 2 },
     ),
@@ -476,6 +625,7 @@ const STRING_FUNCTIONS: FunctionDef[] = [
       ([s, sep, limit], site) => {
         const text = s as string
         site.state.charge(1 + (text.length >>> 4))
+        chargeSearch(site.state, text.length, (sep as string).length)
         const max =
           limit === undefined || limit === null
             ? undefined
@@ -484,6 +634,7 @@ const STRING_FUNCTIONS: FunctionDef[] = [
         const cap = site.state.limits.maxListLength + 1
         const parts = text.split(sep as string, max === undefined ? cap : Math.min(max, cap))
         site.state.listLimit(parts.length, site.span)
+        site.state.charge(parts.length)
         return parts
       },
       { required: 2 },
@@ -524,11 +675,16 @@ const STRING_FUNCTIONS: FunctionDef[] = [
       optStr,
       ([s, i], site) => (s as string).at(integer(i, 'Index', site)) ?? null,
     ),
-    overload([listT, num], optT, ([l, i], site) => list(l).at(integer(i, 'Index', site)) ?? null),
+    overload([listT, num], optT, ([l, i], site) => {
+      const items = list(l)
+      const index = integer(i, 'Index', site)
+      const position = index < 0 ? items.length + index : index
+      return position < 0 || position >= items.length ? null : (items[position] ?? null)
+    }),
   ]),
   define(
     'matches',
-    'Whether text contains a match for a regular expression (RE2 syntax, linear time; anchor with ^ and $; prefix (?i) to ignore case).',
+    'Whether text contains a match for a regular expression (JavaScript syntax without backreferences or lookaround, linear time; anchor with ^ and $; prefix (?i) to ignore case).',
     [
       overload(
         [str, str],
@@ -564,7 +720,7 @@ const STRING_FUNCTIONS: FunctionDef[] = [
       if (!Number.isFinite(value)) {
         throw site.state.error(
           'INVALID_ARGUMENT',
-          `Cannot convert ${JSON.stringify(v)} to a number`,
+          `Cannot convert ${shown(v as string)} to a number`,
           site.span,
         )
       }
@@ -583,13 +739,17 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
       { required: 1 },
     ),
   ]),
-  define('floor', 'Rounds down.', [overload([num], num, ([n]) => Math.floor(n as number))]),
-  define('ceil', 'Rounds up.', [overload([num], num, ([n]) => Math.ceil(n as number))]),
+  define('floor', 'Rounds down.', [
+    overload([num], num, ([n], site) => finite(Math.floor(n as number), site)),
+  ]),
+  define('ceil', 'Rounds up.', [
+    overload([num], num, ([n], site) => finite(Math.ceil(n as number), site)),
+  ]),
   define('trunc', 'Drops the fractional part.', [
-    overload([num], num, ([n]) => Math.trunc(n as number)),
+    overload([num], num, ([n], site) => finite(Math.trunc(n as number), site)),
   ]),
   define('abs', 'Absolute value.', [
-    overload([num], num, ([n]) => Math.abs(n as number)),
+    overload([num], num, ([n], site) => finite(Math.abs(n as number), site)),
     overload([dur], dur, ([d]) => new Duration(Math.abs((d as Duration).ms))),
   ]),
   define('sqrt', 'Square root.', [
@@ -599,7 +759,10 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
     overload([num, num, num], num, ([n, lo, hi], site) => {
       if ((lo as number) > (hi as number))
         throw site.state.error('INVALID_ARGUMENT', 'clamp: min is greater than max', site.span)
-      return Math.min(Math.max(n as number, lo as number), hi as number)
+      finite(n as number, site)
+      finite(lo as number, site)
+      finite(hi as number, site)
+      return finite(Math.min(Math.max(n as number, lo as number), hi as number), site)
     }),
   ]),
   define('toFixed', 'Formats a number with a fixed number of decimals.', [
@@ -607,7 +770,9 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
       const digits = nonNegativeInteger(d, 'Digits', site)
       if (digits > MAX_FIXED_DIGITS)
         throw site.state.error('INVALID_ARGUMENT', 'Digits must be at most 100', site.span)
+      site.state.charge(digits >>> 2)
       // Round half away from zero first, so toFixed(1.005, 2) agrees with round(1.005, 2).
+      finite(n as number, site)
       const value = digits <= MAX_ROUND_DIGITS ? roundTo(n as number, digits, site) : (n as number)
       return value.toFixed(digits)
     }),
@@ -633,6 +798,7 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
             digits === undefined
               ? { maximumFractionDigits: MAX_INTL_DIGITS }
               : { minimumFractionDigits: digits, maximumFractionDigits: digits }
+          finite(n as number, site)
           const value =
             digits === undefined || digits > MAX_ROUND_DIGITS
               ? (n as number)
@@ -657,7 +823,7 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
             typeof locale === 'string' ? locale : 'en-US',
             { style: 'currency', currency: currency as string },
             site,
-          ).format(n as number),
+          ).format(finite(n as number, site)),
         { required: 2 },
       ),
     ],
@@ -677,9 +843,14 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
       return finite(total, site)
     }),
     overload([t.list(t.optional(dur))], dur, ([l], site) => {
-      site.state.charge(list(l).length)
+      const items = list(l)
+      site.state.charge(items.length)
       let total = 0
-      for (const d of list(l)) if (d instanceof Duration) total += d.ms
+      // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+      for (let i = 0; i < items.length; i++) {
+        const d = items[i]
+        if (d instanceof Duration) total += d.ms
+      }
       return new Duration(finite(total, site))
     }),
   ]),
@@ -737,12 +908,12 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     (items, fn, site) => {
       const out = newList(items.length, site)
       for (let i = 0; i < items.length; i++) out[i] = fn(items[i], i)
-      return out
+      return made(out, site)
     },
     async (items, fn, site) => {
       const out = newList(items.length, site)
       for (let i = 0; i < items.length; i++) out[i] = await fn(items[i], i)
-      return out
+      return made(out, site)
     },
     { lambda: fnType([T, num], U) },
   ),
@@ -753,13 +924,13 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     (items, fn, site) => {
       const out: unknown[] = []
       for (let i = 0; i < items.length; i++) if (truthy(fn(items[i], i), site)) out.push(items[i])
-      return out
+      return made(out, site)
     },
     async (items, fn, site) => {
       const out: unknown[] = []
       for (let i = 0; i < items.length; i++)
         if (truthy(await fn(items[i], i), site)) out.push(items[i])
-      return out
+      return made(out, site)
     },
   ),
   hof(
@@ -836,40 +1007,28 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     (items, fn, site) => {
       const out: unknown[] = []
       for (let i = 0; i < items.length; i++) {
-        const value = fn(items[i], i)
-        if (Array.isArray(value)) {
-          site.state.listLimit(out.length + value.length, site.span)
-          site.state.charge(value.length)
-          for (const inner of value) out.push(inner)
-        } else push(out, value, site)
+        appendFlat(out, fn(items[i], i), site)
       }
-      return out
+      return made(out, site)
     },
     async (items, fn, site) => {
       const out: unknown[] = []
       for (let i = 0; i < items.length; i++) {
-        const value = await fn(items[i], i)
-        if (Array.isArray(value)) {
-          site.state.listLimit(out.length + value.length, site.span)
-          site.state.charge(value.length)
-          for (const inner of value) out.push(inner)
-        } else push(out, value, site)
+        appendFlat(out, await fn(items[i], i), site)
       }
-      return out
+      return made(out, site)
     },
     { lambda: fnType([T, num], t.union(t.list(U), U)) },
   ),
   hof(
     'sortBy',
-    'Sorts by a key; pass "desc" to reverse. Nulls sort first.',
+    'Sorts by a key; pass "desc" to reverse. Nulls sort first ("asc") or last ("desc").',
     listT,
-    (items, fn, site, [direction]) =>
-      sortKeyed(
-        items,
-        items.map((item, i) => fn(item, i)),
-        direction,
-        site,
-      ),
+    (items, fn, site, [direction]) => {
+      const keys = new Array<unknown>(items.length)
+      for (let i = 0; i < items.length; i++) keys[i] = fn(items[i], i)
+      return sortKeyed(items, keys, direction, site)
+    },
     async (items, fn, site, [direction]) => {
       const keys: unknown[] = []
       for (let i = 0; i < items.length; i++) keys.push(await fn(items[i], i))
@@ -885,13 +1044,13 @@ const LIST_FUNCTIONS: FunctionDef[] = [
       const out: Record<string, unknown[]> = {}
       for (let i = 0; i < items.length; i++)
         bucket(out, groupKey(fn(items[i], i), site)).push(items[i])
-      return out
+      return madeGroups(out, site)
     },
     async (items, fn, site) => {
       const out: Record<string, unknown[]> = {}
       for (let i = 0; i < items.length; i++)
         bucket(out, groupKey(await fn(items[i], i), site)).push(items[i])
-      return out
+      return madeGroups(out, site)
     },
     { lambda: fnType([T, num], t.union(str, num, bool)) },
   ),
@@ -926,7 +1085,8 @@ const LIST_FUNCTIONS: FunctionDef[] = [
         const items = list(l)
         const fn = f as (acc: unknown, item: unknown) => unknown
         let acc = initial
-        for (const item of items) acc = fn(acc, item)
+        // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+        for (let i = 0; i < items.length; i++) acc = fn(acc, items[i])
         return acc
       },
       {
@@ -934,7 +1094,8 @@ const LIST_FUNCTIONS: FunctionDef[] = [
           const items = list(l)
           const fn = f as (acc: unknown, item: unknown) => unknown
           let acc = initial
-          for (const item of items) acc = await fn(acc, item)
+          // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+          for (let i = 0; i < items.length; i++) acc = await fn(acc, items[i])
           return acc
         },
       },
@@ -953,8 +1114,11 @@ const LIST_FUNCTIONS: FunctionDef[] = [
   ]),
   define('reverse', 'The items in reverse order.', [
     overload([listT], listT, ([l], site) => {
-      site.state.charge(list(l).length)
-      return [...list(l)].reverse()
+      const items = list(l)
+      site.state.charge(items.length)
+      const out = new Array<unknown>(items.length)
+      for (let i = 0; i < items.length; i++) out[i] = items[items.length - 1 - i]
+      return made(out, site)
     }),
   ]),
   define('unique', 'The items without duplicates (by value), in first-seen order.', [
@@ -967,7 +1131,10 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     overload([listT], optT, ([l]) => list(l)[0] ?? null),
   ]),
   define('last', 'The last item, or null.', [
-    overload([listT], optT, ([l]) => list(l).at(-1) ?? null),
+    overload([listT], optT, ([l]) => {
+      const items = list(l)
+      return items.length === 0 ? null : (items[items.length - 1] ?? null)
+    }),
   ]),
   define('join', 'Joins items into text with a separator (default ",").', [
     overload(
@@ -997,13 +1164,21 @@ const MAP_FUNCTIONS: FunctionDef[] = [
   define('values', 'The values of a map.', [
     overload([t.record(T)], listT, ([m], site) => {
       const map = m as Record<string, unknown>
-      return entryList(map, site).map((key) => map[key] ?? null)
+      return made(
+        entryList(map, site).map((key) => map[key] ?? null),
+        site,
+      )
     }),
   ]),
   define('entries', 'The { key, value } pairs of a map.', [
     overload([t.record(T)], t.list(t.object({ key: str, value: T })), ([m], site) => {
       const map = m as Record<string, unknown>
-      return entryList(map, site).map((key) => ({ key, value: map[key] ?? null }))
+      const keys = entryList(map, site)
+      site.state.charge(keys.length)
+      return made(
+        keys.map((key) => made({ key, value: map[key] ?? null }, site)),
+        site,
+      )
     }),
   ]),
   define(
@@ -1046,14 +1221,20 @@ const TIME_FUNCTIONS: FunctionDef[] = [
     overload([], ts, (_, site) => site.state.now()),
   ]),
   define('timestamp', 'Parses ISO-8601 text or epoch milliseconds into a timestamp.', [
-    overload([str], ts, ([s], site) => parseTimestamp(s as string, site)),
+    overload([str], ts, ([s], site) => {
+      site.state.charge(PARSE_COST)
+      return parseTimestamp(s as string, site)
+    }),
     overload([num], ts, ([n], site) => {
       const date = new Date(n as number)
       if (Number.isNaN(date.getTime()))
         throw site.state.error('INVALID_ARGUMENT', 'Timestamp out of range', site.span)
       return date
     }),
-    overload([ts], ts, ([d]) => d),
+    overload([ts], ts, ([d], site) => {
+      timeOf(d as Date, site.state, site.span)
+      return d
+    }),
   ]),
   durationUnit('weeks', MS_PER_WEEK, 'A duration of n weeks.'),
   durationUnit('days', MS_PER_DAY, 'A duration of n days (24 hours each).'),

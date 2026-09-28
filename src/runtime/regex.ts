@@ -37,6 +37,20 @@ const MAX_REPEAT = 1000
 
 export interface Program {
   readonly insts: readonly Inst[]
+  /** Every match must start at position 0 (the pattern begins with ^ on all branches). */
+  readonly anchored: boolean
+  /** Instructions plus class ranges: what the compiled program costs to keep. */
+  readonly size: number
+  /** Scratch space reused across searches (one search runs at a time). */
+  scratch?: Scratch
+}
+
+interface Scratch {
+  current: Int32Array
+  next: Int32Array
+  seen: Int32Array
+  stack: number[]
+  generation: number
 }
 
 // Character codes the engine compares against.
@@ -58,8 +72,8 @@ const CH_PARAGRAPH_SEPARATOR = 0x2029
 const CH_BOM = 0xfeff
 /** Distance between an ASCII upper-case letter and its lower-case form. */
 const ASCII_CASE_OFFSET = 32
-/** One extra step is charged per 2^3 = 8 live NFA threads. */
-const THREAD_COST_SHIFT = 3
+/** Generation counters restart before they could overflow an Int32Array slot. */
+const MAX_GENERATION = 0x3fffffff
 
 const isDigit = (c: number): boolean => c >= CH_0 && c <= CH_9
 const isWord = (c: number): boolean =>
@@ -91,16 +105,95 @@ const SPACES = new Set(
     .map((c) => (typeof c === 'number' ? c : c.charCodeAt(0)))
     .concat([CH_LINE_SEPARATOR, CH_PARAGRAPH_SEPARATOR, CH_BOM]),
 )
-const isSpace = (c: number): boolean => (c >= CH_TAB && c <= CH_CR) || SPACES.has(c)
+const SPACE_RANGES: readonly number[] = normalize([
+  CH_TAB,
+  CH_CR,
+  ...[...SPACES].flatMap((c) => [c, c]),
+])
 
 function lower(c: number): number {
   return c >= CH_UPPER_A && c <= CH_UPPER_Z ? c + ASCII_CASE_OFFSET : c
 }
-function upper(c: number): number {
-  return c >= CH_LOWER_A && c <= CH_LOWER_Z ? c - ASCII_CASE_OFFSET : c
+
+type Atom =
+  | { readonly code: number }
+  | { readonly ranges: readonly number[] }
+  | { readonly assert: 'b' | 'B' }
+
+// === code point range sets: flat [lo0, hi0, lo1, hi1, ...], sorted and merged ===
+
+/** Sorts and merges overlapping or adjacent ranges. */
+function normalize(ranges: readonly number[]): number[] {
+  const pairs: [number, number][] = []
+  for (let k = 0; k < ranges.length; k += 2) pairs.push([ranges[k], ranges[k + 1]])
+  pairs.sort((a, b) => a[0] - b[0])
+  const out: number[] = []
+  for (const [lo, hi] of pairs) {
+    const last = out.length - 1
+    if (last > 0 && lo <= out[last] + 1) out[last] = Math.max(out[last], hi)
+    else out.push(lo, hi)
+  }
+  return out
 }
 
-type Atom = { readonly code: number } | { readonly test: CharTest } | { readonly assert: 'b' | 'B' }
+function complement(ranges: readonly number[]): number[] {
+  const set = normalize(ranges)
+  const out: number[] = []
+  let next = 0
+  for (let k = 0; k < set.length; k += 2) {
+    if (set[k] > next) out.push(next, set[k] - 1)
+    next = set[k + 1] + 1
+  }
+  if (next <= MAX_CODE_POINT) out.push(next, MAX_CODE_POINT)
+  return out
+}
+
+/** Adds the other ASCII case of every letter in the set. */
+function foldCase(ranges: readonly number[]): number[] {
+  const out = [...ranges]
+  for (let k = 0; k < ranges.length; k += 2) {
+    const upperLo = Math.max(ranges[k], CH_UPPER_A)
+    const upperHi = Math.min(ranges[k + 1], CH_UPPER_Z)
+    if (upperLo <= upperHi) out.push(upperLo + ASCII_CASE_OFFSET, upperHi + ASCII_CASE_OFFSET)
+    const lowerLo = Math.max(ranges[k], CH_LOWER_A)
+    const lowerHi = Math.min(ranges[k + 1], CH_LOWER_Z)
+    if (lowerLo <= lowerHi) out.push(lowerLo - ASCII_CASE_OFFSET, lowerHi - ASCII_CASE_OFFSET)
+  }
+  return out
+}
+
+/** A membership test over a normalized set: binary search, O(log ranges). */
+function rangeTest(ranges: readonly number[]): CharTest {
+  const set = Int32Array.from(ranges)
+  const pairs = set.length >>> 1
+  if (pairs === 1) {
+    const [lo, hi] = [set[0], set[1]]
+    return (c) => c >= lo && c <= hi
+  }
+  return (c) => {
+    let low = 0
+    let high = pairs - 1
+    while (low <= high) {
+      const mid = (low + high) >>> 1
+      if (c < set[mid * 2]) high = mid - 1
+      else if (c > set[mid * 2 + 1]) low = mid + 1
+      else return true
+    }
+    return false
+  }
+}
+
+const DIGIT_RANGES: readonly number[] = [CH_0, CH_9]
+const WORD_RANGES: readonly number[] = normalize([
+  CH_0,
+  CH_9,
+  CH_UPPER_A,
+  CH_UPPER_Z,
+  CH_UNDERSCORE,
+  CH_UNDERSCORE,
+  CH_LOWER_A,
+  CH_LOWER_Z,
+])
 
 const MAX_GROUP_DEPTH = 100
 const BMP_LIMIT = 0xffff
@@ -121,6 +214,8 @@ export function compileRegex(source: string): Program {
   }
   let i = 0
   let depth = 0
+  /** Class ranges kept by the program, counted toward its size. */
+  let rangeCount = 0
   const fail = (message: string): never => {
     throw new RegexSyntaxError(`${message} at position ${i + offset} in /${source}/`)
   }
@@ -216,7 +311,7 @@ export function compileRegex(source: string): Program {
       case '\\': {
         const atom = parseEscape(false)
         if ('assert' in atom) return { kind: 'assert', assert: atom.assert }
-        return { kind: 'char', test: 'code' in atom ? literal(atom.code) : atom.test }
+        return { kind: 'char', test: 'code' in atom ? literal(atom.code) : rangeTest(atom.ranges) }
       }
       case '*':
       case '+':
@@ -247,17 +342,17 @@ export function compileRegex(source: string): Program {
     i++
     switch (e) {
       case 'd':
-        return { test: isDigit }
+        return { ranges: DIGIT_RANGES }
       case 'D':
-        return { test: (c) => !isDigit(c) }
+        return { ranges: complement(DIGIT_RANGES) }
       case 'w':
-        return { test: isWord }
+        return { ranges: WORD_RANGES }
       case 'W':
-        return { test: (c) => !isWord(c) }
+        return { ranges: complement(WORD_RANGES) }
       case 's':
-        return { test: isSpace }
+        return { ranges: SPACE_RANGES }
       case 'S':
-        return { test: (c) => !isSpace(c) }
+        return { ranges: complement(SPACE_RANGES) }
       case 'b':
         return inClass ? { code: CH_BACKSPACE } : { assert: 'b' }
       case 'B':
@@ -308,7 +403,9 @@ export function compileRegex(source: string): Program {
       negated = true
       i++
     }
-    const tests: CharTest[] = []
+    // Literal characters and ranges (case-folded under (?i)), and class escapes (not folded).
+    const chars: number[] = []
+    const escapes: number[] = []
     while (i < pattern.length && pattern[i] !== ']') {
       const low = classAtom()
       if (pattern[i] === '-' && i + 1 < pattern.length && pattern[i + 1] !== ']') {
@@ -316,23 +413,18 @@ export function compileRegex(source: string): Program {
         const high = classAtom()
         if (!('code' in low) || !('code' in high) || high.code < low.code)
           fail('Invalid class range')
-        const a = (low as { code: number }).code
-        const b = (high as { code: number }).code
-        tests.push(
-          ignoreCase
-            ? (c) =>
-                (c >= a && c <= b) ||
-                (lower(c) >= a && lower(c) <= b) ||
-                (upper(c) >= a && upper(c) <= b)
-            : (c) => c >= a && c <= b,
-        )
-      } else if ('code' in low) tests.push(literal(low.code))
-      else if ('test' in low) tests.push(low.test)
+        chars.push((low as { code: number }).code, (high as { code: number }).code)
+      } else if ('code' in low) chars.push(low.code, low.code)
+      else if ('ranges' in low) escapes.push(...low.ranges)
     }
     if (pattern[i] !== ']') fail('Missing ]')
     i++
+    const members = normalize([...(ignoreCase ? foldCase(chars) : chars), ...escapes])
     // As in JavaScript, [] matches nothing and [^] matches any character.
-    return negated ? (c) => !tests.some((test) => test(c)) : (c) => tests.some((test) => test(c))
+    const set = negated ? complement(members) : members
+    rangeCount += set.length >>> 1
+    if (set.length === 0) return () => false
+    return rangeTest(set)
   }
 
   const ast = parseAlt()
@@ -396,7 +488,25 @@ export function compileRegex(source: string): Program {
 
   gen(ast)
   emit({ op: 'match' })
-  return { insts }
+  return { insts, anchored: anchoredAtStart(ast), size: insts.length + rangeCount }
+}
+
+/** Whether every match of `node` must begin at the start of the text. */
+function anchoredAtStart(node: Ast): boolean {
+  switch (node.kind) {
+    case 'assert':
+      return node.assert === '^'
+    case 'concat':
+      return node.items.length > 0 && anchoredAtStart(node.items[0])
+    case 'alt':
+      return node.items.every(anchoredAtStart)
+    case 'repeat':
+      return node.min > 0 && anchoredAtStart(node.item)
+    case 'char':
+    case 'empty':
+    default:
+      return false
+  }
 }
 
 /**
@@ -428,27 +538,42 @@ function sizeOf(node: Ast): number {
 }
 
 /**
- * Whether `program` matches anywhere in `text`. `charge(n)` is called with the
- * number of NFA threads advanced per character, so cost is accounted.
+ * Whether `program` matches anywhere in `text`. `charge(n)` is called once
+ * per character position with the number of NFA states visited there, so the
+ * work of a search is accounted as it happens.
  */
 export function searchRegex(program: Program, text: string, charge: (n: number) => void): boolean {
-  const { insts } = program
+  const { insts, anchored } = program
   const n = insts.length
-  let current = new Int32Array(n)
-  let next = new Int32Array(n)
+  program.scratch ??= {
+    current: new Int32Array(n),
+    next: new Int32Array(n),
+    seen: new Int32Array(n).fill(-1),
+    stack: [],
+    generation: 0,
+  }
+  const scratch = program.scratch
+  if (scratch.generation > MAX_GENERATION) {
+    scratch.seen.fill(-1)
+    scratch.generation = 0
+  }
+  let { current, next } = scratch
+  const { seen, stack } = scratch
   let currentCount = 0
   let nextCount = 0
-  const seen = new Int32Array(n).fill(-1)
-  let generation = 0
+  let generation = ++scratch.generation
+  let visited = 0
 
   // Adds a thread at `pc`, following jumps, splits, and assertions at position `at`.
   const add = (list: Int32Array, count: number, pc: number, at: number): number => {
-    const stack: number[] = [pc]
+    stack.length = 0
+    stack.push(pc)
     let size = count
     while (stack.length > 0) {
       const p = stack.pop() as number
       if (seen[p] === generation) continue
       seen[p] = generation
+      visited++
       const inst = insts[p]
       switch (inst.op) {
         case 'jmp':
@@ -469,32 +594,39 @@ export function searchRegex(program: Program, text: string, charge: (n: number) 
     return size
   }
 
-  // Matching steps over code points, so a character outside the BMP is one
-  // character (as in JavaScript's `u` mode and RE2).
-  for (let at = 0; ;) {
-    // Restart the search at every position (unanchored match). `seen` still
-    // holds this generation's marks from building `current`, so the start
-    // thread is not added twice.
-    currentCount = add(current, currentCount, 0, at)
-    charge(1 + (currentCount >>> THREAD_COST_SHIFT))
-    if (at >= text.length) {
-      for (let k = 0; k < currentCount; k++) if (insts[current[k]].op === 'match') return true
-      return false
+  try {
+    // Matching steps over code points, so a character outside the BMP is one
+    // character (as in JavaScript's `u` mode).
+    for (let at = 0; ;) {
+      // Restart the search at every position (unanchored match). `seen` still
+      // holds this generation's marks from building `current`, so the start
+      // thread is not added twice. An anchored pattern starts only at 0.
+      if (at === 0 || !anchored) currentCount = add(current, currentCount, 0, at)
+      charge(1 + visited)
+      visited = 0
+      if (currentCount === 0 && anchored) return false
+      if (at >= text.length) {
+        for (let k = 0; k < currentCount; k++) if (insts[current[k]].op === 'match') return true
+        return false
+      }
+      const code = text.codePointAt(at) as number
+      const width = code > BMP_LIMIT ? 2 : 1
+      generation = ++scratch.generation
+      nextCount = 0
+      for (let k = 0; k < currentCount; k++) {
+        const pc = current[k]
+        const inst = insts[pc]
+        if (inst.op === 'match') return true
+        if (inst.op === 'char' && inst.test(code))
+          nextCount = add(next, nextCount, pc + 1, at + width)
+      }
+      ;[current, next] = [next, current]
+      currentCount = nextCount
+      at += width
     }
-    const code = text.codePointAt(at) as number
-    const width = code > BMP_LIMIT ? 2 : 1
-    generation++
-    nextCount = 0
-    for (let k = 0; k < currentCount; k++) {
-      const pc = current[k]
-      const inst = insts[pc]
-      if (inst.op === 'match') return true
-      if (inst.op === 'char' && inst.test(code))
-        nextCount = add(next, nextCount, pc + 1, at + width)
-    }
-    ;[current, next] = [next, current]
-    currentCount = nextCount
-    at += width
+  } finally {
+    scratch.current = current
+    scratch.next = next
   }
 }
 

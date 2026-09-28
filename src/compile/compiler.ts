@@ -17,7 +17,9 @@ import {
   equals,
   hasKey,
   isMap,
+  isRecordLike,
   mapKey,
+  missingMember,
   multiply,
   negate,
   order,
@@ -27,6 +29,7 @@ import {
   remainder,
   subtract,
   toText,
+  track,
   truth,
 } from '../runtime/values.js'
 import {
@@ -62,6 +65,13 @@ const hasOwn = Object.hasOwn
 const TEXT_COST_SHIFT = 8
 /** Built-ins charge one extra step per 2^5 = 32 characters of string arguments. */
 const ARGUMENT_COST_SHIFT = 5
+/**
+ * Steps charged per host function call. Host calls often do real I/O, so one
+ * evaluation cannot make more than maxSteps / HOST_CALL_COST of them.
+ */
+const HOST_CALL_COST = 32
+/** Map literals with at most this many entries and no nested values skip value tracking. */
+const SMALL_MAP_ENTRIES = 8
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {
   return (
@@ -69,6 +79,22 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
     (typeof value === 'object' || typeof value === 'function') &&
     typeof (value as { then?: unknown }).then === 'function'
   )
+}
+
+/**
+ * Host data (getters, Proxy traps, species or `then` hooks) can throw while
+ * the engine reads it. Such failures surface as HOST_ERROR, never as a raw
+ * JavaScript error.
+ */
+function hostDataError(error: unknown, s: State): unknown {
+  if (error instanceof BonsaiError) return error
+  const message = error instanceof Error ? error.message : String(error)
+  return s.error('HOST_ERROR', `Reading host data failed: ${message}`, undefined, error)
+}
+
+/** Whether `try()` recovers from an error: runtime failures, not limits or host contract violations. */
+function recoverable(error: unknown): boolean {
+  return error instanceof BonsaiRuntimeError && error.code !== 'HOST_CONTRACT'
 }
 
 /**
@@ -119,7 +145,7 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
         if (node.operator === '!')
           return strict1(operand, (s, v) => !truth(v, s, node.operand, '"!"'))
         return strict1(operand, (s, v) => {
-          if (typeof v !== 'number') return negate(v, s, node)
+          if (typeof v !== 'number' || !Number.isFinite(v)) return negate(v, s, node)
           return v === 0 ? 0 : -v
         })
       }
@@ -189,8 +215,8 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
             try {
               return b(s)
             } catch (error) {
-              if (error instanceof BonsaiRuntimeError) return f(s)
-              throw error
+              if (recoverable(hostDataError(error, s))) return f(s)
+              throw hostDataError(error, s)
             }
           })
         }
@@ -198,8 +224,8 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
           try {
             return await body.fn(s)
           } catch (error) {
-            if (error instanceof BonsaiRuntimeError) return fallback.fn(s)
-            throw error
+            if (recoverable(hostDataError(error, s))) return fallback.fn(s)
+            throw hostDataError(error, s)
           }
         })
       }
@@ -240,8 +266,8 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
       const name = names[0]
       return sync((s) => {
         const o = s.locals[slot]
-        if (o !== null && typeof o === 'object' && isMap(o)) {
-          if (!hasOwn(o, name)) return null
+        if (isRecordLike(o)) {
+          if (!hasOwn(o, name)) return missingMember(o, name, s, node)
           const value = o[name]
           return value === undefined ? null : value
         }
@@ -252,8 +278,8 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
     if (names.length === 1) {
       const name = names[0]
       return strict1(object, (s, o) => {
-        if (o !== null && typeof o === 'object' && !Array.isArray(o) && isMap(o)) {
-          if (!hasOwn(o, name)) return null
+        if (isRecordLike(o)) {
+          if (!hasOwn(o, name)) return missingMember(o, name, s, node)
           const value = o[name]
           return value === undefined ? null : value
         }
@@ -389,6 +415,7 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
           // oxlint-disable-next-line typescript/prefer-for-of -- indexing never invokes a host array's own Symbol.iterator
           for (let j = 0; j < value.length; j++) out[k++] = value[j] === undefined ? null : value[j]
       }
+      track(out, s, at)
       return out
     }
     if (codes.every((code) => !code.async)) {
@@ -397,9 +424,11 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
         const n = fns.length
         return sync((s) => {
           s.listLimit(n, at)
-          s.charge(1 + n)
           const out = new Array<unknown>(n)
           for (let i = 0; i < n; i++) out[i] = fns[i](s)
+          // Charged after the items, as the general (spread and async) path does.
+          s.charge(1 + n)
+          track(out, s, at)
           return out
         })
       }
@@ -440,11 +469,12 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
       step: Step,
       key: unknown,
       value: unknown,
-    ): void => {
+    ): boolean => {
+      // Returns whether the map may now need tracking (a nested value, or copied keys).
       if (step.kind === 'static') out[step.key] = value
       else if (step.kind === 'computed') out[mapKey(key, s, step.at)] = value
       else {
-        if (value === null || value === undefined) return
+        if (value === null || value === undefined) return false
         if (!isMap(value))
           throw s.error(
             'TYPE_ERROR',
@@ -455,33 +485,45 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
         s.charge(keys.length)
         for (const k of keys)
           if (!BLOCKED_KEYS.has(k)) out[k] = value[k] === undefined ? null : value[k]
+        return true
       }
+      return value !== null && typeof value === 'object'
     }
+    // Small flat maps need no record (see `track`).
+    const large = steps.length > SMALL_MAP_ENTRIES
     const isAsync = steps.some(
       (step) => step.value.async || (step.kind === 'computed' && step.key.async),
     )
     if (!isAsync) {
+      const entryCost = 1 + steps.length
       return sync((s) => {
         const out = {}
-        s.charge(1)
+        s.charge(entryCost)
+        let nested = large
         for (const step of steps)
-          assign(
-            s,
-            out,
-            step,
-            step.kind === 'computed' ? step.key.fn(s) : undefined,
-            step.value.fn(s),
+          if (
+            assign(
+              s,
+              out,
+              step,
+              step.kind === 'computed' ? step.key.fn(s) : undefined,
+              step.value.fn(s),
+            )
           )
+            nested = true
+        if (nested) track(out, s, node)
         return out
       })
     }
     return asyncCode(async (s) => {
       const out = {}
-      s.charge(1)
+      s.charge(1 + steps.length)
+      let nested = large
       for (const step of steps) {
         const key = step.kind === 'computed' ? await step.key.fn(s) : undefined
-        assign(s, out, step, key, await step.value.fn(s))
+        if (assign(s, out, step, key, await step.value.fn(s))) nested = true
       }
+      if (nested) track(out, s, node)
       return out
     })
   }
@@ -575,7 +617,8 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
         if (kinds[i] !== 'spread') out.push(value)
         else if (Array.isArray(value)) {
           s.charge(value.length)
-          for (const item of value) out.push(item === undefined ? null : item)
+          // oxlint-disable-next-line typescript/prefer-for-of -- indexing never invokes a host array's own Symbol.iterator
+          for (let j = 0; j < value.length; j++) out.push(value[j] === undefined ? null : value[j])
         } else if (value !== null && value !== undefined) {
           throw s.error(
             'TYPE_ERROR',
@@ -635,23 +678,34 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
         }
         return checkProduced(s, overload.run(args, site), span)
       }
-      s.charge(1)
+      s.charge(HOST_CALL_COST)
       let result: unknown
+      let thenable: boolean
       try {
         result =
           def.context === true ? overload.run([s.ctx, ...args], site) : overload.run(args, site)
+        thenable = isThenable(result)
       } catch (error) {
         throw hostError(s, def, error, span)
       }
-      if (isThenable(result)) {
+      if (thenable) {
         if (!allowAsync || def.async !== true) {
           // Swallow the rejection of the orphaned promise; the call already failed.
-          Promise.resolve(result).then(undefined, () => undefined)
+          try {
+            Promise.resolve(result).then(undefined, () => undefined)
+          } catch {
+            // A hostile thenable; nothing more to clean up.
+          }
+          if (def.async === true) {
+            throw s.error(
+              'ASYNC_IN_SYNC',
+              `${def.name}() is async; use evaluate() instead of evaluateSync()`,
+              span,
+            )
+          }
           throw s.error(
-            'ASYNC_IN_SYNC',
-            def.async === true
-              ? `${def.name}() is async; use evaluate() instead of evaluateSync()`
-              : `${def.name}() returned a promise but is not declared async`,
+            'HOST_CONTRACT',
+            `${def.name}() returned a promise but is not declared async`,
             span,
           )
         }
@@ -679,7 +733,20 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
   }
 
   const root = compile(analysis.root, { locals: new Map(), it: undefined })
-  return { run: root.fn, async: root.async, localCount: slots }
+  const fn = root.fn
+  const run = root.async
+    ? (s: State): unknown =>
+        (fn(s) as Promise<unknown>).catch((error: unknown) => {
+          throw hostDataError(error, s)
+        })
+    : (s: State): unknown => {
+        try {
+          return fn(s)
+        } catch (error) {
+          throw hostDataError(error, s)
+        }
+      }
+  return { run, async: root.async, localCount: slots }
 }
 
 function matches(s: State, overload: Overload, args: unknown[], host: boolean): boolean {
@@ -757,7 +824,11 @@ function hostError(s: State, def: FunctionDef, error: unknown, span: Span): Bons
   return s.error('HOST_ERROR', `${def.name}() failed: ${message}`, span, error)
 }
 
-/** Host results must match the declared result kind; undefined reads as null. */
+/**
+ * Host results must conform, deeply, to the declared result type (checked
+ * against the step budget); undefined reads as null. A mismatch is a broken
+ * host contract, which `try()` does not recover from.
+ */
 function checkHostResult(
   s: State,
   def: FunctionDef,
@@ -766,10 +837,10 @@ function checkHostResult(
   span: Span,
 ): unknown {
   const value = result === undefined ? null : result
-  if (!matchesKind(value, overload.result)) {
+  if (!conforms(value, overload.result, s)) {
     throw s.error(
-      'HOST_ERROR',
-      `${def.name}() returned ${describeKind(value)}, but declares ${formatType(overload.result)}`,
+      'HOST_CONTRACT',
+      `${def.name}() returned ${describeKind(value)}, which does not match its declared type ${formatType(overload.result)}`,
       span,
     )
   }

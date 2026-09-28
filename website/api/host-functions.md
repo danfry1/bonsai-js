@@ -36,7 +36,7 @@ env.evaluateSync('(200).discount(0.25)') // => 150
 ## What Bonsai guarantees around your function
 
 - **Checked calls.** The checker rejects calls whose arguments do not match `params` (`NO_OVERLOAD`) before anything runs. At run time, arguments are validated before `run` is called, so `run` only ever receives values of the declared types.
-- **Checked results.** A result whose kind does not match `returns` is a `HOST_ERROR`, so a bug in your function cannot leak an unexpected value into the expression.
+- **Checked results.** A result that does not conform to `returns` (checked deeply, against the step budget) is a `HOST_CONTRACT` error, so a bug in your function cannot leak an unexpected value into the expression. `try(...)` does not recover from it: it is a bug in the host, not a condition the expression should handle.
 - **Wrapped failures.** An exception thrown by `run` becomes a `BonsaiRuntimeError` with code `HOST_ERROR` and the original error as its `cause`. Expressions can recover from it with `try(...)`.
 
 <!-- continue -->
@@ -49,7 +49,7 @@ const strict = bonsai({
     failing: fn({ params: [], returns: t.number(), run: () => { throw new Error('service down') } }),
   },
 })
-strict.evaluateSync('broken()') // throws: HOST_ERROR
+strict.evaluateSync('broken()') // throws: HOST_CONTRACT
 strict.evaluateSync('failing()') // throws: HOST_ERROR
 strict.evaluateSync('try(failing(), -1)') // => -1
 ```

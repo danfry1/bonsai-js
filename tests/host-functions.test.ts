@@ -120,11 +120,11 @@ describe('host results', () => {
     expect(returning(t.timestamp(), later).evaluateSync('g()')).toBe(later)
   })
 
-  it('rejects results of another kind with HOST_ERROR', () => {
-    expect(code(() => returning(t.number(), '1').evaluateSync('g()'))).toBe('HOST_ERROR')
-    expect(code(() => returning(t.string(), undefined).evaluateSync('g()'))).toBe('HOST_ERROR')
+  it('rejects results that break the declared type with HOST_CONTRACT', () => {
+    expect(code(() => returning(t.number(), '1').evaluateSync('g()'))).toBe('HOST_CONTRACT')
+    expect(code(() => returning(t.string(), undefined).evaluateSync('g()'))).toBe('HOST_CONTRACT')
     expect(() => returning(t.boolean(), 1).evaluateSync('g()')).toThrow(
-      /g\(\) returned a number, but declares boolean/u,
+      /g\(\) returned a number, which does not match its declared type boolean/u,
     )
   })
 

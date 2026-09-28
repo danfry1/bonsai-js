@@ -23,6 +23,7 @@ export type ErrorCode =
   | 'INVALID_ARGUMENT'
   | 'ASYNC_IN_SYNC'
   | 'HOST_ERROR'
+  | 'HOST_CONTRACT'
   | 'INVALID_CONTEXT'
 
 export interface Span {

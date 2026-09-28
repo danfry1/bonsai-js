@@ -272,7 +272,7 @@ describe('host call boundaries', () => {
       },
     })
     expect(() => env.evaluateSync('sneaky()')).toThrow(/not declared async/u)
-    await expect(env.evaluate('sneaky()')).rejects.toMatchObject({ code: 'ASYNC_IN_SYNC' })
+    await expect(env.evaluate('sneaky()')).rejects.toMatchObject({ code: 'HOST_CONTRACT' })
     // The orphaned rejection is swallowed rather than surfacing as unhandled.
     await new Promise((resolve) => {
       setTimeout(resolve, 0)
@@ -312,7 +312,9 @@ describe('host call boundaries', () => {
       code: 'HOST_ERROR',
       message: expect.stringMatching(/boom\(\) failed: down/u),
     })
-    await expect(env.evaluate('text()')).rejects.toMatchObject({ code: 'HOST_ERROR' })
+    await expect(env.evaluate('text()')).rejects.toMatchObject({ code: 'HOST_CONTRACT' })
+    // A broken host contract is not recoverable with try().
+    await expect(env.evaluate('try(text(), 7)')).rejects.toMatchObject({ code: 'HOST_CONTRACT' })
     await expect(env.evaluate('try(boom(), 7)')).resolves.toBe(7)
     await expect(env.evaluate('raw()')).rejects.toMatchObject({ code: 'HOST_ERROR' })
     // With a deadline, the rejection passes through the limit race unchanged.

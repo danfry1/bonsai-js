@@ -176,7 +176,9 @@ describe('host functions', () => {
         bad: fn({ params: [], returns: t.number(), run: () => 'nope' as unknown as number }),
       },
     })
-    expect(() => env.evaluateSync('bad()')).toThrow(expect.objectContaining({ code: 'HOST_ERROR' }))
+    expect(() => env.evaluateSync('bad()')).toThrow(
+      expect.objectContaining({ code: 'HOST_CONTRACT' }),
+    )
   })
 
   it('wraps host exceptions, which try() can catch', () => {
@@ -328,7 +330,7 @@ describe('async host functions', () => {
       },
     })
     expect(() => sneaky.evaluateSync('p()')).toThrow(
-      expect.objectContaining({ code: 'ASYNC_IN_SYNC' }),
+      expect.objectContaining({ code: 'HOST_CONTRACT' }),
     )
   })
 

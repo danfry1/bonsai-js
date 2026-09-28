@@ -248,7 +248,9 @@ describe('number functions', () => {
 
   it('reads non-finite host numbers without producing new ones', async () => {
     expect(await fails('round(x)', { x: Number.POSITIVE_INFINITY })).toBe('NON_FINITE')
-    expect(await ok('floor(x) == x', { x: Number.POSITIVE_INFINITY })).toBe(true)
+    // A non-finite input is an error, not passed through (spec: no operation yields NaN or infinity).
+    expect(await fails('floor(x)', { x: Number.POSITIVE_INFINITY })).toBe('NON_FINITE')
+    expect(await ok('x > 1', { x: Number.POSITIVE_INFINITY })).toBe(true)
   })
 
   it('floors, ceils, truncates, and takes absolute values', async () => {
