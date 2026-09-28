@@ -101,6 +101,7 @@ export default defineConfig({
           { text: 'Language Service', link: '/api/service' },
           { text: 'Explaining Results', link: '/api/explain' },
           { text: 'Partial Evaluation', link: '/api/partial' },
+          { text: 'Database Filters', link: '/api/query' },
           { text: 'Syntax Trees and print()', link: '/api/printer' },
         ],
       },

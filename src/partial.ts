@@ -405,7 +405,13 @@ export function partiallyEvaluate<R>(
       const leftTrue = value === true
       if (leftTrue !== isAnd) return { known: true, value: leftTrue } // false && x, true || x
       const right = peval(node.right, env)
-      if (right.known) return residual(withKnownLocals(node, env))
+      if (right.known) {
+        // true && y and false || y are truth(y): a boolean, false for null, or a failure.
+        if (right.value === true || right.value === false)
+          return { known: true, value: right.value }
+        if (right.value === null || right.value === undefined) return { known: true, value: false }
+        return residual(withKnownLocals(node, env))
+      }
       // true && x and false || x are x only when x always yields a boolean.
       return residual(
         alwaysBoolean(right.node) ? right.node : { ...node, left: asNode(left), right: right.node },
