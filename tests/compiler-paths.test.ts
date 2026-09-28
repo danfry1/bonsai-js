@@ -352,20 +352,21 @@ describe('host call boundaries', () => {
     release()
   })
 
-  it('passes through Bonsai errors thrown by host functions', () => {
+  it('wraps Bonsai errors thrown by host functions as HOST_ERROR', () => {
+    const cause = new BonsaiRuntimeError('INVALID_ARGUMENT', 'nope')
     const env = bonsai({
       functions: {
         reject: fn({
           params: [t.string()],
           returns: t.boolean(),
-          run: (reason) => {
-            throw new BonsaiRuntimeError('INVALID_ARGUMENT', reason)
+          run: () => {
+            throw cause
           },
         }),
       },
     })
     expect(() => env.evaluateSync('reject("nope")')).toThrow(
-      expect.objectContaining({ code: 'INVALID_ARGUMENT', message: 'nope' }),
+      expect.objectContaining({ code: 'HOST_ERROR', cause }),
     )
     expect(env.evaluateSync('try(reject("nope"), false)')).toBe(false)
   })

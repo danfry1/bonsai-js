@@ -49,7 +49,6 @@ interface Scratch {
   current: Int32Array
   next: Int32Array
   seen: Int32Array
-  stack: number[]
   generation: number
 }
 
@@ -197,6 +196,10 @@ const WORD_RANGES: readonly number[] = normalize([
 
 const MAX_GROUP_DEPTH = 100
 const BMP_LIMIT = 0xffff
+const HIGH_SURROGATE = 0xd800
+const LOW_SURROGATE = 0xdc00
+/** Code points per high surrogate. */
+const SURROGATE_BLOCK = 0x400
 const MAX_CODE_POINT = 0x10ffff
 const CH_FORM_FEED = 12
 const CH_VERTICAL_TAB = 11
@@ -380,7 +383,20 @@ export function compileRegex(source: string): Program {
           i = close + 1
           return { code }
         }
-        return { code: hexEscape(4, '\\u') }
+        const code = hexEscape(4, '\\u')
+        // As with the u flag, an escaped surrogate pair is one code point.
+        if (
+          code >= HIGH_SURROGATE &&
+          code < LOW_SURROGATE &&
+          /^\\u[dD][c-fC-F][0-9a-fA-F]{2}/u.test(pattern.slice(i))
+        ) {
+          i += 2
+          const low = hexEscape(4, '\\u')
+          return {
+            code: (code - HIGH_SURROGATE) * SURROGATE_BLOCK + (low - LOW_SURROGATE) + BMP_LIMIT + 1,
+          }
+        }
+        return { code }
       }
       case 'x':
         return { code: hexEscape(2, '\\x') }
@@ -549,7 +565,6 @@ export function searchRegex(program: Program, text: string, charge: (n: number) 
     current: new Int32Array(n),
     next: new Int32Array(n),
     seen: new Int32Array(n).fill(-1),
-    stack: [],
     generation: 0,
   }
   const scratch = program.scratch
@@ -558,16 +573,16 @@ export function searchRegex(program: Program, text: string, charge: (n: number) 
     scratch.generation = 0
   }
   let { current, next } = scratch
-  const { seen, stack } = scratch
+  const { seen } = scratch
   let currentCount = 0
   let nextCount = 0
   let generation = ++scratch.generation
   let visited = 0
 
   // Adds a thread at `pc`, following jumps, splits, and assertions at position `at`.
+  // A fresh stack each call keeps `add` small enough for the engine to inline.
   const add = (list: Int32Array, count: number, pc: number, at: number): number => {
-    stack.length = 0
-    stack.push(pc)
+    const stack = [pc]
     let size = count
     while (stack.length > 0) {
       const p = stack.pop() as number

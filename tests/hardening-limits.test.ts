@@ -64,7 +64,7 @@ function distinct(n: number): string {
 describe('regular expressions stay bounded', () => {
   it('rejects patterns over maxPatternLength', () => {
     const p = `[${'a'.repeat(5000)}]`
-    expect(run('"a".matches(p)', { p })).toEqual({ code: 'INVALID_ARGUMENT' })
+    expect(run('"a".matches(p)', { p })).toEqual({ code: 'PATTERN_LIMIT' })
     const roomy = bonsai({ limits: { maxPatternLength: 10_000 } })
     expect(roomy.evaluateSync('"a".matches(p)', { p })).toBe(true)
   })

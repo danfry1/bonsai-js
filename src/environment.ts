@@ -18,6 +18,7 @@ import {
   type ValidationBudget,
 } from './functions/define.js'
 import { DEFAULT_RUNTIME_LIMITS, State, type RuntimeLimits } from './runtime/state.js'
+import { isEnumerable } from './runtime/values.js'
 import type { Node } from './syntax/ast.js'
 import { DEFAULT_PARSE_LIMITS, parse, type ParseLimits } from './syntax/parser.js'
 import {
@@ -59,6 +60,8 @@ export interface HostFunction {
   readonly async?: boolean
   readonly context?: boolean
   readonly description?: string
+  /** Steps charged per call (default 32). */
+  readonly cost?: number
   readonly run: (...args: never[]) => unknown
 }
 
@@ -73,6 +76,12 @@ export interface FnSpec<P extends readonly Type[], R extends Type> {
   /** Type of further variadic arguments. */
   readonly rest?: Type
   readonly description?: string
+  /**
+   * Steps charged per call (default 32), so one evaluation makes at most
+   * maxSteps / cost calls. Lower it for cheap pure functions; raise it for
+   * expensive ones.
+   */
+  readonly cost?: number
 }
 
 /**
@@ -313,6 +322,7 @@ function toDef(name: string, host: HostFunction): FunctionDef {
     host: true,
     async: host.async === true,
     context: host.context === true,
+    ...(host.cost === undefined ? {} : { cost: host.cost }),
     overloads: [
       overload(
         host.params,
@@ -565,12 +575,25 @@ function validateContext(
     },
   }
   for (const [name, type] of Object.entries(variables)) {
-    const value = Object.hasOwn(ctx, name) ? ctx[name] : undefined
+    const value = isEnumerable.call(ctx, name) ? ctx[name] : undefined
     const problem = describeMismatch(value, type, name, budget)
     if (problem !== undefined) {
       throw new BonsaiRuntimeError('INVALID_CONTEXT', `Invalid context: ${problem}`, { source })
     }
   }
+}
+
+/**
+ * Reading host data (a getter, a Proxy trap, a `then` hook) can throw. Such a
+ * failure is a HOST_ERROR, never a raw JavaScript error.
+ */
+function hostDataFailure(error: unknown, source: string): unknown {
+  if (error instanceof BonsaiError) return error
+  const message = error instanceof Error ? error.message : String(error)
+  return new BonsaiRuntimeError('HOST_ERROR', `Reading host data failed: ${message}`, {
+    source,
+    cause: error,
+  })
 }
 
 function contextOf(value: unknown): Record<string, unknown> {
@@ -672,6 +695,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         checked(result, state)
         state.checkTime()
         return result as R
+      } catch (error) {
+        throw hostDataFailure(error, source)
       } finally {
         state.release()
         if (reuse) pooledInUse = false
@@ -679,7 +704,14 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     }
 
     async function runAsync(context: unknown, options: EvaluateOptions | undefined): Promise<R> {
-      if (!analysis.async) return settle(runSync(context, options))
+      if (!analysis.async) {
+        const result = runSync(context, options)
+        try {
+          return settle(result)
+        } catch (error) {
+          throw hostDataFailure(error, source)
+        }
+      }
       const code = asyncProgram()
       const state = new State(settings.runtimeLimits, settings.clock)
       try {
@@ -688,6 +720,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         checked(result, state)
         state.checkTime()
         return settle(result as R)
+      } catch (error) {
+        throw hostDataFailure(error, source)
       } finally {
         state.release()
       }

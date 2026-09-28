@@ -11,11 +11,13 @@ import type { State } from '../runtime/state.js'
 import {
   BLOCKED_KEYS,
   add,
+  chargeKey,
   contains,
   describeKind,
   divide,
   equals,
   hasKey,
+  isEnumerable,
   isMap,
   mapKey,
   multiply,
@@ -57,17 +59,16 @@ interface Scope {
   readonly it: number | undefined
 }
 
-const hasOwn = Object.hasOwn
-
 /** Template rendering charges one extra step per 2^8 = 256 characters. */
 const TEXT_COST_SHIFT = 8
 /** Built-ins charge one extra step per 2^5 = 32 characters of string arguments. */
 const ARGUMENT_COST_SHIFT = 5
 /**
- * Steps charged per host function call. Host calls often do real I/O, so one
- * evaluation cannot make more than maxSteps / HOST_CALL_COST of them.
+ * Steps charged per host function call unless the function declares its own
+ * `cost`. Host calls often do real I/O, so one evaluation cannot make more
+ * than maxSteps / cost of them.
  */
-const HOST_CALL_COST = 32
+const DEFAULT_HOST_CALL_COST = 32
 /** Map literals with at most this many entries and no nested values skip value tracking. */
 const SMALL_MAP_ENTRIES = 8
 
@@ -116,7 +117,7 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
         const name = node.name
         return sync((s) => {
           const ctx = s.ctx
-          if (!hasOwn(ctx, name)) return null
+          if (!isEnumerable.call(ctx, name)) return null
           const value = ctx[name]
           return value === undefined ? null : value
         })
@@ -199,10 +200,10 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
         const object = compile(target.object, scope)
         if (target.type === 'Member') {
           const name = target.name
-          return strict1(object, (_, o) => hasKey(o, name))
+          return strict1(object, (s, o) => hasKey(o, name, s))
         }
         const key = compile(target.index, scope)
-        return strict2(object, key, (_, o, k) => hasKey(o, k))
+        return strict2(object, key, (s, o, k) => hasKey(o, k, s))
       }
       case 'Try': {
         const body = compile(node.body, scope)
@@ -262,27 +263,12 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
     if (names.length === 1 && (base.type === 'It' || base.type === 'Local')) {
       const slot = (base.type === 'It' ? scope.it : scope.locals.get(base.name)) as number
       const name = names[0]
-      return sync((s) => {
-        const o = s.locals[slot]
-        if (isMap(o)) {
-          if (!hasOwn(o, name)) return null
-          const value = o[name]
-          return value === undefined ? null : value
-        }
-        return readMember(o, name, s, node)
-      })
+      return sync((s) => readMember(s.locals[slot], name, s, node))
     }
     const object = compile(base, scope)
     if (names.length === 1) {
       const name = names[0]
-      return strict1(object, (s, o) => {
-        if (isMap(o)) {
-          if (!hasOwn(o, name)) return null
-          const value = o[name]
-          return value === undefined ? null : value
-        }
-        return readMember(o, name, s, node)
-      })
+      return strict1(object, (s, o) => readMember(o, name, s, node))
     }
     return strict1(object, (s, o) => {
       let value = o
@@ -481,8 +467,10 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
           )
         const keys = Object.keys(value)
         s.charge(keys.length)
-        for (const k of keys)
+        for (const k of keys) {
+          chargeKey(s, k)
           if (!BLOCKED_KEYS.has(k)) out[k] = value[k] === undefined ? null : value[k]
+        }
         return true
       }
       return value !== null && typeof value === 'object'
@@ -647,7 +635,8 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
         if (i === 0 && optional && (values[0] === null || values[0] === undefined)) return null
       }
       const result = invoke(s, collect(s, values), lambdaAsync)
-      return isThenable(result) ? awaitHost(s, result, node, def) : result
+      // A built-in running async lambdas returns its own promise; only host promises are raced and checked.
+      return isThenable(result) && def.host === true ? awaitHost(s, result, node, def) : result
     })
   }
 
@@ -658,6 +647,7 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
     const def = plan.def
     const overloads = plan.candidates.map((index) => def.overloads[index])
     const host = def.host === true
+    const hostCost = def.cost ?? DEFAULT_HOST_CALL_COST
     const span: Span = node
 
     const callOverload = (
@@ -676,7 +666,7 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
         }
         return checkProduced(s, overload.run(args, site), span)
       }
-      s.charge(HOST_CALL_COST)
+      s.charge(hostCost)
       let result: unknown
       let thenable: boolean
       try {
@@ -684,7 +674,7 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
           def.context === true ? overload.run([s.ctx, ...args], site) : overload.run(args, site)
         thenable = isThenable(result)
       } catch (error) {
-        throw hostError(s, def, error, span)
+        throw hostError(s, def.name, error, span)
       }
       if (thenable) {
         if (!allowAsync || def.async !== true) {
@@ -816,10 +806,14 @@ function noOverload(
   )
 }
 
-function hostError(s: State, def: FunctionDef, error: unknown, span: Span): BonsaiError {
-  if (error instanceof BonsaiError) return error
+/**
+ * Whatever a host function throws is a HOST_ERROR with the original as its
+ * cause, even a Bonsai error (say, a limit hit by an evaluation the host ran
+ * itself): it failed in host code, not in this expression.
+ */
+function hostError(s: State, name: string, error: unknown, span: Span): BonsaiError {
   const message = error instanceof Error ? error.message : String(error)
-  return s.error('HOST_ERROR', `${def.name}() failed: ${message}`, span, error)
+  return s.error('HOST_ERROR', `${name}() failed: ${message}`, span, error)
 }
 
 /**
@@ -851,14 +845,11 @@ async function awaitHost(
   node: CallNode,
   def: FunctionDef,
 ): Promise<unknown> {
-  let result: unknown
-  try {
-    result = await raceLimits(s, promise)
-  } catch (error) {
-    if (error instanceof BonsaiError) throw error
-    const message = error instanceof Error ? error.message : String(error)
-    throw s.error('HOST_ERROR', `${node.name}() failed: ${message}`, node, error)
-  }
+  // A rejection from the host is a HOST_ERROR; the limit errors racing it are not.
+  const settled = Promise.resolve(promise).then(undefined, (error: unknown) => {
+    throw hostError(s, node.name, error, node)
+  })
+  const result = await raceLimits(s, settled)
   s.checkTime()
   return checkHostResult(s, def, def.overloads[0], result, node)
 }

@@ -22,27 +22,6 @@ export const DEFAULT_RUNTIME_LIMITS: RuntimeLimits = Object.freeze({
   maxPatternLength: 4096,
 })
 
-/**
- * Caches of compiled patterns and formats. One set per environment (keyed by
- * its limits object), so one tenant's patterns never evict or bloat another's.
- */
-export interface RuntimeCaches {
-  readonly regex: Map<string, { readonly program: unknown; readonly size: number }>
-  regexSize: number
-  readonly numberFormats: Map<string, Intl.NumberFormat>
-}
-
-const cachesByLimits = new WeakMap<RuntimeLimits, RuntimeCaches>()
-
-function cachesFor(limits: RuntimeLimits): RuntimeCaches {
-  let caches = cachesByLimits.get(limits)
-  if (caches === undefined) {
-    caches = { regex: new Map(), regexSize: 0, numberFormats: new Map() }
-    cachesByLimits.set(limits, caches)
-  }
-  return caches
-}
-
 const CLOCK_SAMPLE = 1024
 const NO_CONTEXT: Record<string, unknown> = Object.freeze({})
 
@@ -57,17 +36,17 @@ export class State {
   signal: AbortSignal | undefined = undefined
   nextSample = CLOCK_SAMPLE
   nowValue: Date | undefined = undefined
-  /** Containers this evaluation has recorded a shape for (see `track`). */
-  recorded = 0
-  /** Expensive resources (patterns, formatters) first used in this evaluation; created on demand. */
-  private used: Set<string> | undefined = undefined
+  /** Shapes of containers this evaluation built (see `track`); created on demand. */
+  shapes: WeakMap<object, number> | undefined = undefined
+  /** Time zones this evaluation has read, and what it has paid for (see time.ts). */
+  zones: Map<string, unknown> | undefined = undefined
+  /** Costly resources (patterns, formatters) this evaluation has used; created on demand. */
+  private resources: Map<string, unknown> | undefined = undefined
   readonly limits: RuntimeLimits
   readonly clock: () => Date
-  readonly caches: RuntimeCaches
 
   constructor(limits: RuntimeLimits, clock: () => Date) {
     this.limits = limits
-    this.caches = cachesFor(limits)
     this.maxSteps = limits.maxSteps
     this.clock = clock
   }
@@ -89,14 +68,17 @@ export class State {
     this.signal = signal
     this.scheduleSample()
     this.nowValue = undefined
-    this.used = undefined
-    this.recorded = 0
+    this.resources = undefined
+    this.shapes = undefined
+    this.zones = undefined
     if (signal?.aborted === true) throw abortError(this)
   }
 
   release(): void {
     this.ctx = NO_CONTEXT
-    this.used = undefined
+    this.resources = undefined
+    this.shapes = undefined
+    this.zones = undefined
     this.locals.fill(undefined)
     this.signal = undefined
   }
@@ -140,15 +122,18 @@ export class State {
   }
 
   /**
-   * Charges `cost` the first time `key` is used in this evaluation. Creating a
-   * pattern or formatter is charged as if it were never cached, so step counts
-   * never depend on what earlier evaluations left in a cache.
+   * A costly resource (a compiled pattern, a formatter) for this evaluation.
+   * Its first use in an evaluation is charged `cost(resource)` as if nothing
+   * were cached, and the evaluation keeps it, so step counts never depend on
+   * what shared caches hold, and a cache eviction never causes uncharged work.
    */
-  chargeFirstUse(key: string, cost: number): void {
-    this.used ??= new Set()
-    if (this.used.has(key)) return
-    this.used.add(key)
-    this.charge(cost)
+  resource<R>(key: string, create: () => R, cost: (resource: R) => number): R {
+    this.resources ??= new Map()
+    if (this.resources.has(key)) return this.resources.get(key) as R
+    const value = create()
+    this.resources.set(key, value)
+    this.charge(cost(value))
+    return value
   }
 
   now(): Date {
