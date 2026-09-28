@@ -1081,13 +1081,23 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       case '<=':
       case '>':
       case '>=': {
+        // Ordering with null is false whatever the other side is (the spec).
+        if (left.kind === 'null' || right.kind === 'null') {
+          report(
+            'ALWAYS_FALSE',
+            'This comparison is always false: an ordering with null is false',
+            node,
+            'warning',
+          )
+          return BOOLEAN
+        }
         const a = widen(nonNull(left))
         const b = widen(nonNull(right))
         for (const [side, sideType] of [
           [node.left, left],
           [node.right, right],
         ] as const) {
-          if (mayBeNull(sideType) && sideType.kind !== 'null') {
+          if (mayBeNull(sideType)) {
             report(
               'MAYBE_NULL',
               'This value may be null, and a comparison with null is false; check it first (x != null && ...) or use ??',
