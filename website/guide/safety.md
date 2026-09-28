@@ -15,7 +15,7 @@ Bonsai is designed to evaluate expression text written by people you do not full
 
 **Run code.** There is no `eval`, `new Function`, or generated code. The only callable things are built-in functions and the host functions you declared. A function value found in data can be compared but never called, and `x.f()` always resolves `f` among the declared functions, never on `x`.
 
-**Reach prototypes or globals.** A property read returns an own property of a plain object or class instance. Inherited members, class methods, and prototype getters never resolve. Host collections and other built-in objects (`Map`, `Set`, `RegExp`, promises, typed arrays, errors) are opaque: an expression can compare them and pass them to host functions but not read into them. `__proto__`, `constructor`, and `prototype` are rejected as syntax, as computed keys, and in keys spread from host data. Maps created by expressions are ordinary objects that never contain those keys.
+**Reach prototypes or globals.** A property read returns an own enumerable property of a plain object or class instance. Inherited members, class methods, prototype getters, and non-enumerable properties never resolve. Host collections and other built-in objects (`Map`, `Set`, `RegExp`, promises and other thenables, typed arrays, errors), including ones from another realm, are opaque: an expression can compare them and pass them to host functions but not read into them. `__proto__`, `constructor`, and `prototype` are rejected as syntax, as computed keys, and in keys spread from host data. Maps created by expressions are ordinary objects that never contain those keys.
 
 <!-- context: { user: { name: "Ada" } } -->
 ```bonsai
@@ -38,8 +38,8 @@ user.toString // => null
 
 - **Host functions are your code.** Validate their inputs if they reach sensitive systems and give them their own timeouts. A synchronous host function that is already running cannot be interrupted.
 - **Getters and Proxies run when read.** Pass plain data when the context contains anything sensitive or expensive to compute.
-- **Only put in the context what expressions may see.** Every own property of the context is readable. Build a dedicated context object rather than passing a whole database row or request.
-- **Set a timeout when expressions call slow host functions.** The step budget bounds the work Bonsai does deterministically, but not wall-clock time spent inside your host functions, and each host call costs only one step.
+- **Only put in the context what expressions may see.** Every own enumerable property of the context is readable. Build a dedicated context object rather than passing a whole database row or request.
+- **Set a timeout when expressions call slow host functions.** The step budget bounds the work Bonsai does deterministically, but not wall-clock time spent inside your host functions, and each host call costs a fixed number of steps (32 unless the function declares its own `cost`), however long it runs.
 - **Bonsai is not a process boundary.** If your host functions or context data are themselves untrusted, evaluate in a worker or a separate process.
 
 ## A hardened setup
@@ -72,7 +72,7 @@ env.check('account.billingEmail').diagnostics[0].code // => "UNKNOWN_PROPERTY"
 ```
 
 ::: warning Types are not access control
-A closed `t.object` type stops `account.billingEmail` from checking, but it does not hide data. A computed index with a dynamic key (`account[key]`) and `keys()`, `values()`, or `entries()` read every own property of the value you pass at run time, declared or not. The context you pass is the only boundary on what an expression can read.
+A closed `t.object` type stops `account.billingEmail` from checking, but it does not hide data. A computed index with a dynamic key (`account[key]`) and `keys()`, `values()`, or `entries()` read every own enumerable property of the value you pass at run time, declared or not. The context you pass is the only boundary on what an expression can read.
 :::
 
 <!-- context: { account: { plan: "pro", seats: 10, internalNotes: "do not show" } } -->

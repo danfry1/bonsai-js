@@ -11,7 +11,7 @@ Every limit is on by default except `timeout`. The `limits` option of `bonsai()`
 | `maxStringLength` | 100000 | Length of any string an expression produces. |
 | `maxListLength` | 100000 | Length of any list an expression produces. |
 | `maxValueDepth` | 64 | Nesting of lists and maps an expression builds, and of values walked by equality, templates, and `unique`. Cyclic data fails here instead of looping. |
-| `maxPatternLength` | 4096 | Length of a regular expression pattern passed to `matches`. |
+| `maxPatternLength` | 4096 | Length of a regular expression pattern passed to `matches` (`PATTERN_LIMIT`). |
 | `timeout` | 0 (none) | Wall-clock milliseconds per evaluation. |
 
 The program cache is not a limit: its size is the top-level [`cacheSize`](/api/environment#options) option.
@@ -66,7 +66,7 @@ Evaluation limits are enforced while an expression runs. Sizes are checked befor
 ## What limits do not cover
 
 - **Host functions.** A synchronous host function that is already running cannot be interrupted; the timeout is checked when it returns. Give slow functions their own limits, and set `timeout` when expressions call them.
-- **Waiting on async host functions.** The timeout and signal stop the evaluation while it waits, but the underlying work (a network request, a query) continues unless your function cancels it. Each host call costs 32 steps, so at the default budget an expression can make at most about 31,000 calls: batch expensive lookups in the host, or lower `maxSteps` for expressions that call costly functions.
+- **Waiting on async host functions.** The timeout and signal stop the evaluation while it waits, but the underlying work (a network request, a query) continues unless your function cancels it. Each host call costs its function's `cost` in steps (default 32), so at the default budget an expression can make at most about 31,000 calls to a default-cost function: batch expensive lookups in the host, declare a higher `cost` for functions that do I/O, or lower `maxSteps` for expressions that call them.
 - **Getters and Proxies in the context.** They are your code and run when read.
 
 Limit errors are never caught by `try(...)` in an expression.

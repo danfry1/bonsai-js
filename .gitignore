@@ -14,3 +14,4 @@ reports/
 # Local agent/tooling state (worktrees, local settings)
 .claude/
 .claire/
+/.examples-typecheck-*/

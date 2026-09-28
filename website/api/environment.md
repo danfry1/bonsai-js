@@ -22,7 +22,7 @@ const env = bonsai(options?)
 | `clock` | `() => Date` | system clock | The source of `now()`, read once per evaluation. |
 | `validateContext` | `boolean` | `false` | Check the context against the declared variable types before every evaluation. |
 
-Without `variables` an environment is **open**: every identifier reads the context and is typed `any`. With `variables`, the environment is **strict**: the checker knows the declared types and rejects any other name. Set `strict: false` to declare some variables and still let undeclared names read the context as `any`.
+Without `variables` an environment is **open**: every identifier reads the context and is typed `any`. With `variables` (even `variables: {}`), the environment is **strict**: the checker knows the declared types and rejects any other name. Set `strict: false` to declare some variables and still let undeclared names read the context as `any`. Variable names must be identifiers other than the keywords `true`, `false`, `null`, `let`, `in`, and `not`, and other than `__proto__`, `constructor`, and `prototype`; declaring the same variable in two libraries, or in a library and `variables`, throws a `TypeError`, as does listing a library twice.
 
 Unknown option names and invalid values (a limit out of range, a type that is not a `t` type, a malformed host function) make `bonsai()` throw a `TypeError` or `RangeError` immediately.
 
@@ -34,11 +34,11 @@ open.evaluateSync('a + b', { a: 1, b: 2 }) // => 3
 
 const typed = bonsai({
   variables: { a: t.number(), b: t.number() },
-  strict: true, // the default when variables are declared
   clock: () => new Date('2026-01-15T10:30:00Z'),
 })
+typed.strict // => true
 typed.evaluateSync('a + b', { a: 1, b: 2 }) // => 3
-typed.evaluateSync('now()') // => 2026-01-15T10:30:00.000Z
+typed.evaluateSync('now()', { a: 1, b: 2 }) // => 2026-01-15T10:30:00.000Z
 typed.check('c').ok // => false
 ```
 
@@ -90,7 +90,9 @@ Parses, checks, and compiles. Returns a [Program](/api/programs). Throws `Bonsai
 compile<E extends Type>(source: string, options?: { expect?: E }): Program<Context, Infer<E>>
 ```
 
-`expect` requires the result type and sets the program's TypeScript result type. When the checker cannot prove the result type statically (part of it is `any`, as with untyped variables or `values()` of a declared object), the result is checked at run time instead, and a mismatch is a `TYPE_ERROR`, so the TypeScript result type always holds.
+`expect` requires the result type and sets the program's TypeScript result type. When the checker cannot prove the result type statically (part of it is `any`, as with untyped variables or `values()` of a declared object), the result is checked at run time instead, and a mismatch is a `TYPE_ERROR`. That check walks the result, so it costs time and steps in proportion to the result's size (about 7 steps per record for a list of small maps); declare variable types to let the checker prove the result instead.
+
+The checker proves results from the declared variable types, which describe the data you pass but are not checked against it unless `validateContext` is on. With `validateContext: true` (or data that is already known to match the declarations), the TypeScript result type always holds. Without it, a context that breaks its declarations (a string where a number is declared) can produce a result of a different type.
 
 <!-- continue -->
 ```ts
@@ -113,12 +115,12 @@ await typed.evaluate('a * b', { a: 3, b: 4 }) // => 12
 await typed.evaluate('a *', { a: 3, b: 4 }) // throws: SYNTAX
 ```
 
-The context must be an object (or omitted when no variable is required). Its own properties are the variables. `options` are per-evaluation overrides:
+The context must be an object (or omitted when no variable is required). Its own enumerable properties are the variables. In an open environment the context's TypeScript type is `object`, so a value typed by an interface is accepted as is. `options` are per-evaluation overrides, validated like `limits` (an unknown key or invalid value throws a `TypeError` or `RangeError`):
 
 | Option | Type | Description |
 | --- | --- | --- |
-| `timeout` | `number` | Wall-clock budget in milliseconds for this evaluation. |
-| `maxSteps` | `number` | Step budget for this evaluation, replacing the environment's. |
+| `timeout` | `number` | Wall-clock budget in milliseconds for this evaluation (`0` for none). |
+| `maxSteps` | `number` | Step budget for this evaluation, replacing the environment's (`0` for none). |
 | `signal` | `AbortSignal` | Cancels the evaluation with an `ABORTED` error. |
 
 <!-- continue -->

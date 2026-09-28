@@ -20,6 +20,7 @@ print(tree, { calls: 'function' }) // 'toUpperCase(trim(name))'
 - Printed text means the same as the tree: it evaluates to the same result or fails with the same error.
 - Parentheses are added only where they change meaning, and where the language requires them (for example `(-2) ** 2` and `(a ?? b) || c`).
 - Comments and original spacing are not part of the tree and are not printed.
+- A tree the parser could not have produced is rejected with a `TypeError` instead of printing text that would mean something else or not parse: a variable named like a keyword (`null`) or not an identifier (`a b`), an unknown operator (`===`) or node type, `__proto__`, `constructor`, or `prototype` as a property or key, a call named `has` or `try`, a `Local` that no `let` or lambda binds, a `Variable` hidden by a binding of the same name, or a lambda anywhere but a function argument.
 
 ## Options
 

@@ -42,7 +42,8 @@ nullable.diagnostics[0].code // => "NULLABLE_RECEIVER"
 
 const good = env.check('cart.items.map(.price * .qty).sum()')
 good.ok // => true
-formatType(good.type) // => "number"
+// `type` is undefined only when the source does not parse.
+good.type === undefined ? 'unparsed' : formatType(good.type) // => "number"
 ```
 
 `formatType` is exported from `bonsai-js` and renders a type as text.

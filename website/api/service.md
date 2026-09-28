@@ -8,7 +8,7 @@ import { createLanguageService } from 'bonsai-js/service'
 
 <!-- no-run -->
 ```ts
-function createLanguageService(env: Environment<any>): LanguageService
+function createLanguageService(env: Environment<never>): LanguageService
 
 interface LanguageService {
   complete(source: string, offset: number): CompletionResult
@@ -17,7 +17,7 @@ interface LanguageService {
 }
 ```
 
-Offsets are UTF-16 code unit offsets into `source`, the same unit as JavaScript string indices and `Diagnostic.start`/`end`.
+Offsets are UTF-16 code unit offsets into `source`, the same unit as JavaScript string indices and `Diagnostic.start`/`end`. `Environment<never>` accepts an environment of any context type.
 
 ## complete(source, offset)
 
@@ -31,10 +31,13 @@ interface CompletionResult {
 
 interface Completion {
   label: string
-  kind: 'variable' | 'local' | 'property' | 'function' | 'method' | 'keyword'
+  kind: 'value' | 'variable' | 'local' | 'property' | 'function' | 'method' | 'keyword'
   detail: string // a type, or one signature per line
   documentation?: string
   insertText: string
+  // Set when this item replaces a different range than the result's start..end:
+  // a field that is not a plain name is inserted as ["first-name"] in place of the "." before it.
+  range?: { start: number; end: number }
 }
 ```
 

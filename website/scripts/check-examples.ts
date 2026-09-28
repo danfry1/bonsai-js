@@ -20,6 +20,10 @@
 // <!-- no-run --> skips the next block (use sparingly: fragments only).
 // <!-- no-run: reason --> skips it too and lists it with its reason, for
 // examples of behavior that is documented ahead of the code.
+//
+// Every ts block that runs is also type-checked, under strict settings, as it
+// is written (with its <!-- continue --> chain), so examples cannot drift from
+// the published types.
 import { readdirSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -210,10 +214,82 @@ function transformTs(block: Block): string {
         : `${indent}await __throws(async () => { return ${code} }, ${expected}, ${lineNo})`,
     )
   })
-  return out
-    .join('\n')
+  return redirectImports(out.join('\n'))
+}
+
+/** A chain of ts blocks as written, for the type-check pass, with its position in the docs. */
+interface TypedExample {
+  readonly name: string
+  readonly file: string
+  /** For each generated line (0-based), the documentation line it came from. */
+  readonly lines: readonly number[]
+}
+const typedExamples: TypedExample[] = []
+
+function redirectImports(code: string): string {
+  return code
     .replaceAll("from 'bonsai-js/service'", `from ${JSON.stringify(join(srcDir, 'service/index.ts'))}`)
     .replaceAll("from 'bonsai-js'", `from ${JSON.stringify(join(srcDir, 'index.ts'))}`)
+}
+
+function queueTypeCheck(file: string, blocks: Block[], dir: string): void {
+  const lines: number[] = []
+  const body: string[] = []
+  for (const block of blocks) {
+    block.code.split('\n').forEach((line, index) => {
+      body.push(redirectImports(line))
+      lines.push(block.line + index + 1)
+    })
+  }
+  // `export {}` makes each example its own module, so names do not clash across files.
+  body.push('export {}')
+  lines.push(blocks[blocks.length - 1].line)
+  const name = `typed-${typedExamples.length}.ts`
+  writeFileSync(join(dir, name), body.join('\n'))
+  typedExamples.push({ name, file, lines })
+}
+
+function typeCheck(dir: string): void {
+  if (typedExamples.length === 0) return
+  writeFileSync(
+    join(dir, 'tsconfig.json'),
+    JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        noEmit: true,
+        target: 'es2022',
+        module: 'esnext',
+        moduleResolution: 'bundler',
+        allowImportingTsExtensions: true,
+        skipLibCheck: true,
+        types: ['node'],
+        lib: ['es2022', 'dom'],
+      },
+      include: ['typed-*.ts'],
+    }),
+  )
+  const tsc = join(repoDir, 'node_modules', 'typescript', 'bin', 'tsc')
+  const run = spawnSync(process.execPath, [tsc, '-p', join(dir, 'tsconfig.json'), '--pretty', 'false'], {
+    encoding: 'utf8',
+    timeout: 120_000,
+  })
+  if (run.status === 0) return
+  const byName = new Map(typedExamples.map((example) => [example.name, example]))
+  const output = `${run.stdout}${run.stderr}`.trim()
+  let mapped = false
+  // A block continued by later ones is checked in each chain; report each error once.
+  const reported = new Set<string>()
+  for (const line of output.split('\n')) {
+    const match = /(typed-\d+\.ts)\((\d+),\d+\): (error .*)$/u.exec(line)
+    const example = match === null ? undefined : byName.get(match[1])
+    if (match === null || example === undefined) continue
+    mapped = true
+    const where = `${example.file}:${example.lines[Number(match[2]) - 1] ?? '?'}`
+    if (reported.has(`${where} ${match[3]}`)) continue
+    reported.add(`${where} ${match[3]}`)
+    fail(where, `type error: ${match[3]}`)
+  }
+  if (!mapped) fail('type check', output)
 }
 
 function checkTs(file: string, blocks: Block[], tmp: string): void {
@@ -237,6 +313,8 @@ const documents = [
 ]
 
 const tmp = mkdtempSync(join(tmpdir(), 'bonsai-examples-'))
+// Inside the repository, so `types: ['node']` resolves from its node_modules.
+const typedDir = mkdtempSync(join(repoDir, '.examples-typecheck-'))
 try {
   for (const { path, file } of documents) {
     const blocks = blocksOf(readFileSync(path, 'utf8'))
@@ -251,11 +329,14 @@ try {
       else if (block.lang === 'ts') {
         chain = block.continues ? [...chain, block] : [block]
         checkTs(file, chain, tmp)
+        queueTypeCheck(file, chain, typedDir)
       }
     }
   }
+  typeCheck(typedDir)
 } finally {
   rmSync(tmp, { recursive: true, force: true })
+  rmSync(typedDir, { recursive: true, force: true })
 }
 
 if (pendingBlocks.length > 0) console.log(`Not run, pending:\n  ${pendingBlocks.join('\n  ')}`)

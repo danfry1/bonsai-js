@@ -26,8 +26,10 @@ Most expressions need small, mechanical changes, and the checker finds most of t
 | `ts \|> formatDate("YYYY-MM-DD")` | `formatDate(t, "yyyy-MM-dd")` | Takes a timestamp, not epoch milliseconds. Tokens are `yyyy MM dd HH mm ss SSS` (and more); an optional time zone argument is accepted. |
 | `xs \|> filter`, `xs \|> some`, `xs \|> every` (no argument, by truthiness) | `xs.filter(. != null)`, `flags.some(.)`, `flags.every(.)` | Lambdas are required. `.` alone works for lists of booleans; for other lists write the test. |
 | `undefined` | `null` | There is no `undefined` literal. |
-| `substring`, `charAt`, `concat` | `slice`, `at`, `+` | |
-| `toSorted()`, `toReversed()` | `sort()`, `reverse()` | They never mutate, so the `to` prefix is not needed. |
+| `substring(i, j)` | `slice(i, j)` | The same for `0 <= i <= j`. `slice` does not swap reversed arguments and counts negative positions from the end. See [Results that changed](#results-that-changed). |
+| `charAt(i)` | `at(i)` | `at` gives `null` past the end and counts negative positions from the end. |
+| `concat` | `+` | |
+| `toSorted()`, `toReversed()` | `sort()`, `reverse()` | They never mutate, so the `to` prefix is not needed. `sort()` orders numbers numerically. |
 | `toSpliced(i, n)` | `xs.slice(0, i) + xs.slice(i + n)` | |
 | `with(i, v)` | `xs.slice(0, i) + [v] + xs.slice(i + 1)` | |
 | `charCodeAt(i)` | none | Declare a host function if you need code points. |
@@ -53,7 +55,7 @@ These expressions run in both versions but give different results. The checker c
 | `(1.005).toFixed(2)` | `"1.00"` | `"1.01"` | Rounds the decimal value as written, not its binary approximation. |
 | `avg([])` | `0` | `null` | `avg(xs) ?? 0` |
 | `unique` on lists of maps or lists | compares by reference | compares by value (`==`) | |
-| `diffDays(a, b)` | whole days, always positive | `inDays(a - b)` is fractional and signed | `round(abs(inDays(a - b)))` |
+| `diffDays(a, b)` | whole days, always positive | `inDays(a - b)` is fractional and signed | `round(abs(inDays(a - b)))`. At exactly half a day this rounds up in both orders; 0.x rounded 3.5 days apart to 3 when `a` was earlier and to 4 when it was later. |
 | `` `${x}` `` with `x` null | `"null"` | `""` | `` `${x ?? "null"}` `` |
 | `` `${x}` `` with `x` undefined or missing | `"undefined"` | `""` | |
 | `` `${date}` `` | local `Date.toString()` text | ISO-8601 in UTC | `formatDate(date, pattern, zone)` |
@@ -69,8 +71,15 @@ These expressions run in both versions but give different results. The checker c
 | `[1] == [1]` | `false` | `true` | |
 | `null < 1` | `true` | `false` | |
 | `0 \|\| "d"` | `"d"` | `TYPE_ERROR` | `x ?? "d"` for defaults, or an explicit test |
-| `keys(m)` with integer-like keys | insertion order | integer-like keys first, ascending | See [Maps](/language/literals#maps). |
-| A host `Map`, `Set`, or `RegExp` in the context | its own properties (usually none) | an opaque value; reading a property is a `TYPE_ERROR` | Pass plain objects. |
+| `nums.toSorted()` with `nums` = `[10, 9, 1, 100]` | `[1, 10, 100, 9]` (text order, as JavaScript) | `[1, 9, 10, 100]` | Sort text with `map(toString(.)).sort()`. |
+| `ll.includes([1])`, `ll.indexOf([2])`, `[1] in ll`, `objs.includes({ a: 1 })` | `false`, `-1`, `false`, `false` (by reference) | `true`, `1`, `true`, `true` (by value) | |
+| `d1 == d2`, two `Date`s at the same instant | `false` (different objects) | `true` | |
+| `"abc".replace("b", "$&$&")` | `"abbc"` (`$&`, `$$`, and `` $` ``/`$'` patterns expand) | `"a$&$&c"` (replacement text is literal) | Build the text: `` s.replace("b", `${x}${x}`) `` |
+| `"hello".substring(3, 1)` → `slice(3, 1)` | `"el"` (arguments swapped) | `""` | `slice(min(i, j), max(i, j))` |
+| `"hello".substring(-2)` → `slice(-2)` | `"hello"` (negative treated as 0) | `"lo"` (counts from the end) | `slice(max(i, 0))` |
+| `"hello".charAt(10)` → `at(10)` | `""` | `null` | `at(i) ?? ""` |
+| `"hello".charAt(-1)` → `at(-1)` | `""` | `"o"` (counts from the end) | `i < 0 ? "" : at(i) ?? ""` |
+| A host `Map`, `Set`, or `RegExp` in the context | read through its prototype: `m.size`, `re.source`, even `m.get` as a function | an opaque value; reading any property is a `TYPE_ERROR` | Pass plain objects, arrays, and values (`m.size` as a number). |
 
 <!-- context: { x: null, xs: [], d: new Date("2026-01-02T03:04:05Z") } -->
 ```bonsai
@@ -120,14 +129,14 @@ name || "Anonymous" // error: TYPE_ERROR
 
 **Lambdas are type-directed.** `.` binds to the nearest enclosing argument whose parameter is a function, so an expression such as `items.filter(.price > max(.bonus, 10))` now works: `.bonus` belongs to the item. In 0.x the shorthand could not be passed into another call.
 
-**Only plain data is navigable.** Plain objects and class instances are read through their own properties, as before. `Map`, `Set`, `RegExp`, promises, typed arrays, errors, and boxed primitives are opaque: they can be compared and passed to host functions, but reading a property of one is a `TYPE_ERROR`. Convert them to plain objects and arrays before evaluating.
+**Only plain data is navigable.** Plain objects and class instances are read through their own enumerable properties. In 0.x, built-in objects were also read through their prototypes (`m.size`, `re.source`). Now `Map`, `Set`, `RegExp`, promises and other thenables, typed arrays, errors, and boxed primitives are opaque: they can be compared and passed to host functions, but reading a property of one is a `TYPE_ERROR`. Convert them to plain objects and arrays before evaluating.
 
 ## API
 
 | 0.x | 1.x |
 | --- | --- |
 | `const expr = bonsai(options)` | `const env = bonsai({ variables, strict, functions, libraries, limits, cacheSize, clock, validateContext })` |
-| `bonsai<AppCtx>()` | The context type is inferred from `variables`. Without `variables`, the context is `Record<string, unknown>`. |
+| `bonsai<AppCtx>()` | The context type is inferred from `variables`. Without `variables`, the context is any object, so a value typed by an interface (`const ctx: AppCtx = ...`) is accepted as is. |
 | `expr.use(strings).use(arrays)`, `bonsai-js/stdlib` | Nothing to import: every built-in is always available. |
 | `expr.addFunction('f', fn)` | `bonsai({ functions: { f: fn({ params, returns, run }) } })` |
 | `expr.addContextFunction('f', (ctx, ...) => ...)` | `fn({ params, returns, context: true, run: (ctx, ...args) => ... })`, or `withContext<Ctx>()` for a typed context. |
@@ -143,7 +152,6 @@ name || "Anonymous" // error: TYPE_ERROR
 | `allowedProperties`, `deniedProperties`, `getPolicy()` | Removed. Pass only the data expressions may read. Declare variables with `t` to catch unknown names and fields at check time. |
 | `timeout`, `maxDepth`, `maxArrayLength`, `maxStringLength` options | `limits: { timeout, maxDepth, maxListLength, maxStringLength, ... }`. See [Limits](#limits). |
 | `cacheSize` option, `clearCache()` | `cacheSize` option (unchanged). There is no `clearCache()`; create a new environment to start with an empty cache. |
-| `expr.seal()` | Not needed: environments are immutable. `env.extend()` returns a new environment. |
 | `listFunctions()`, `hasFunction()`, `listTransforms()`, `hasTransform()`, `isContextFunction()` | `env.listFunctions()` and `env.describeFunction(name)` (`undefined` when the function does not exist). |
 | `bonsai-js/autocomplete`, `createAutocomplete(expr, { context })`, `complete()` returning `Completion[]` | `bonsai-js/service`, `createLanguageService(env)`. `complete(source, offset)` returns `{ start, end, items }`, computed from types rather than by evaluating a sample context. |
 | `tokenize`, `parse`, `compile` exports | `env.parse(src)` returns the syntax tree; `print(tree)` turns it back into source. |

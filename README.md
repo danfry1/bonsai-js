@@ -138,11 +138,12 @@ await env.evaluate('hasRole("admin") || orders.map(fxRate(.currency) * .amount).
 }) // => true
 ```
 
-- Parameter and result types are declared with `t`; `run`'s argument types are inferred from them. Arguments are validated before your code runs, and results are checked deeply against the declared type: a mismatch is a `HOST_CONTRACT` error, which `try()` in an expression cannot catch. An exception thrown by your function is a `HOST_ERROR`, which `try()` can recover from.
+- Parameter and result types are declared with `t`; `run`'s argument types are inferred from them. Arguments are validated before your code runs, and results are checked deeply against the declared type: a mismatch is a `HOST_CONTRACT` error, which `try()` in an expression cannot catch. Anything your function throws, including a `BonsaiError`, becomes a `HOST_ERROR`, which `try()` can recover from.
 - `async: true` functions are awaited by `evaluate()`, one call at a time. `evaluateSync()` rejects expressions that call them before any host code runs. A function not declared `async` that returns a promise is a `HOST_CONTRACT` error.
 - A host function with the same name as a built-in replaces it for that environment, so new built-ins in future releases never change the meaning of your expressions.
 - `withContext<AppContext>()` returns a version of `fn` whose `run` receives the typed context first: `withContext<Ctx>()({ params: [], returns: t.string(), run: (ctx) => ctx.tenant.id })`.
 - Optional parameters (after `required`) arrive as `null` when omitted, so declare them with `t.optional(...)`.
+- Each call is charged `cost` steps (default 32) against the step budget; set a lower `cost` for cheap pure helpers.
 - Bundle functions into a `Library` (`{ name, functions }`) and pass `libraries: [a, b]`; a name defined twice is an error. `env.extend({...})` derives a new environment.
 
 Context data is not validated against the declared types by default (it is your data, and validation costs time proportional to it). Pass `validateContext: true` to check it before every evaluation; a mismatch fails with `INVALID_CONTEXT` and the exact path, e.g. `user.created should be timestamp, got string "2026-01-01"`. Objects may carry more keys than their declared type lists (a database row with extra columns is fine); the checker accounts for that.
@@ -159,7 +160,7 @@ All callable as `f(x, ...)` or `x.f(...)`.
 | Maps | `keys` `values` `entries` `type` |
 | Time | `now` `timestamp` `weeks` `days` `hours` `minutes` `seconds` `milliseconds` `inDays` `inHours` `inMinutes` `inSeconds` `inMilliseconds` `year` `month` `day` `hour` `minute` `second` `dayOfWeek` `startOfDay` `startOfMonth` `startOfYear` `addDays` `addMonths` `addYears` `formatDate` |
 
-`matches(text, pattern)` uses JavaScript regular expression syntax (as with the `u` flag) and runs in linear time, so a user-written pattern cannot hang evaluation; backreferences and lookaround are rejected, a leading `(?i)` ignores ASCII case, and patterns are limited to `maxPatternLength` characters. `formatDate` understands `yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS` and rejects unknown letters; constant patterns are checked when the expression is compiled.
+`matches(text, pattern)` uses JavaScript regular expression syntax (as with the `u` flag) and runs in linear time, so a user-written pattern cannot hang evaluation; backreferences, lookaround, named groups, `\p{...}`, and inline flags other than a leading `(?i)` are rejected ([full list](./docs/language.md)), a leading `(?i)` ignores ASCII case, and a pattern longer than `maxPatternLength` is a `PATTERN_LIMIT` error. `formatDate` understands `yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS` and rejects unknown letters; constant patterns are checked when the expression is compiled.
 
 `env.listFunctions()` returns every signature and description, for documentation or tooling.
 
@@ -185,7 +186,7 @@ print(tree, { calls: 'function' }) // 'toUpperCase(trim(name))'
 import { createLanguageService } from 'bonsai-js/service'
 
 const service = createLanguageService(env) // env from the first example
-service.complete('orders.filter(.', 15) // { start: 15, end: 15, items: created, paid, total, then map methods: entries, isEmpty, keys, type, values }
+service.complete('orders.filter(.', 15) // { start: 15, end: 15, items: created, paid, total, then methods that take a map, such as keys and type }
 service.hover('orders.map(.total)', 2)  // { start: 0, end: 6, detail: '{ total: number, paid: boolean, created: timestamp }[]' }
 service.diagnostics('user.agee')        // same diagnostics as env.check
 ```
@@ -194,13 +195,13 @@ The service never evaluates expressions or calls host functions.
 
 ## Errors
 
-Every error thrown while checking or evaluating an expression is a `BonsaiError` with a stable `code`, the `source`, a `span` (`{ start, end }`), a 1-based `position`, and a `formatted` message with a code frame. That includes failures in your own code: a host function that throws, or a getter or Proxy in the context that throws when read, becomes a `HOST_ERROR` with the original error as its `cause`. Invalid configuration passed to `bonsai()` or `fn()` throws a `TypeError` or `RangeError` immediately.
+Every error thrown while checking or evaluating an expression is a `BonsaiError` with a stable `code`, the `source`, a `span` (`{ start, end }`), a 1-based `position`, and a `formatted` message with a code frame. That includes failures in your own code: a host function that throws, or a getter or Proxy in the context that throws when read, becomes a `HOST_ERROR` with the original error as its `cause`. Invalid configuration passed to `bonsai()` or `fn()`, invalid per-evaluation options, and a syntax tree `print()` cannot print faithfully throw a `TypeError` or `RangeError` immediately.
 
 | Class | Codes |
 |---|---|
 | `BonsaiSyntaxError` | `SYNTAX` |
 | `BonsaiCheckError` | `CHECK` (see `.diagnostics`) |
-| `BonsaiLimitError` | `SOURCE_TOO_LONG` `TOO_DEEP` `TOO_MANY_NODES` `STEP_LIMIT` `STRING_LIMIT` `LIST_LIMIT` `TIMEOUT` `ABORTED` |
+| `BonsaiLimitError` | `SOURCE_TOO_LONG` `TOO_DEEP` `TOO_MANY_NODES` `TOO_COMPLEX` `STEP_LIMIT` `STRING_LIMIT` `LIST_LIMIT` `PATTERN_LIMIT` `TIMEOUT` `ABORTED` |
 | `BonsaiRuntimeError` | `TYPE_ERROR` `NO_OVERLOAD` `NULL_RECEIVER` `DIVISION_BY_ZERO` `NON_FINITE` `BLOCKED_PROPERTY` `INVALID_ARGUMENT` `INVALID_CONTEXT` `ASYNC_IN_SYNC` `HOST_ERROR` `HOST_CONTRACT` |
 
 `try(expr, fallback)` in an expression catches runtime errors except `HOST_CONTRACT`; it never catches syntax, check, or limit errors.

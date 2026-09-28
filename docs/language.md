@@ -43,11 +43,16 @@ put in the context (see §10).
 | duration | A span of time, produced by `days(3)`, `hours(1)`, `t1 - t2`, ... |
 
 Every other host value is **opaque**: functions, symbols, bigints, `Map`,
-`Set`, `WeakMap`, `WeakSet`, `RegExp`, promises and other thenables,
-`ArrayBuffer` and typed arrays, errors, and boxed primitives. An opaque value
-can be compared with `==` (by identity or primitive equality) and passed to
-host functions, and `type()` returns `"opaque"` for it, but reading a property
-of one is a `TYPE_ERROR`.
+`Set`, `WeakMap`, `WeakSet`, `RegExp`, promises and other thenables (any
+object with a callable `then`), `ArrayBuffer` and typed arrays, errors, and
+boxed primitives, including those created in another realm (a `node:vm`
+context, an iframe). An opaque value can be compared with `==` (by identity or
+primitive equality) and passed to host functions, and `type()` returns
+`"opaque"` for it, but reading a property of one is a `TYPE_ERROR`.
+
+A map's non-enumerable own properties are not part of it: they cannot be read,
+tested with `in` or `has()`, or listed by `keys()`, and they do not take part
+in `==`.
 
 <!-- context: { lookup: new Map([["a", 1]]), big: Number.POSITIVE_INFINITY } -->
 ```bonsai
@@ -178,10 +183,22 @@ cancellation) and `HOST_CONTRACT` errors (a host function that returned a
 value not matching its declaration) are never caught.
 
 `matches(text, pattern)` uses JavaScript regular expression syntax, as with
-the `u` flag, without backreferences or lookaround, which cannot run in linear
-time. A leading `(?i)` makes the match ignore ASCII case. Matching takes time
-linear in the pattern and text, and patterns are limited by
-`maxPatternLength`.
+the `u` flag, restricted to what can run in linear time. A pattern using any
+of the following is an `INVALID_ARGUMENT` error:
+
+- backreferences (`\1`, `\k<name>`) and lookaround (`(?=`, `(?!`, `(?<=`, `(?<!`);
+- named groups (`(?<name>...)`);
+- Unicode property escapes (`\p{...}`, `\P{...}`) and control escapes (`\cX`);
+- inline flags other than a leading `(?i)`, and flag groups such as `(?i:...)`;
+- a quantifier on an assertion (`(?:^)*`, `\b+`);
+- a repeat count above 1000, groups nested more than 100 deep, or a pattern
+  that compiles to more than 5000 instructions.
+
+A leading `(?i)` makes the match ignore ASCII case (other letters match
+exactly). Unlike the `u` flag, a backslash before punctuation that needs no
+escape (`\-`, `\!`) matches that character. Matching takes time linear in
+the pattern and text. A pattern longer than `maxPatternLength` is a
+`PATTERN_LIMIT` error, which, like every limit error, `try()` does not catch.
 
 ## 6. Lambdas
 

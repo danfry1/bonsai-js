@@ -31,18 +31,33 @@ import {
 
 // === public option types ===
 
-export interface Limits extends Partial<ParseLimits>, Partial<RuntimeLimits> {
+/** Every field optional, and `undefined` accepted, even under `exactOptionalPropertyTypes`. */
+type Optional<T> = { readonly [K in keyof T]?: T[K] | undefined }
+
+export interface Limits extends Optional<ParseLimits>, Optional<RuntimeLimits> {
   /** Wall-clock budget per evaluation in milliseconds (0 = none). Default 0. */
-  readonly timeout?: number
+  readonly timeout?: number | undefined
+}
+
+/**
+ * The part of an `AbortSignal` evaluation reads. A standard `AbortSignal`
+ * satisfies it; declaring it structurally keeps the types free of DOM or Node
+ * library requirements.
+ */
+export interface AbortSignalLike {
+  readonly aborted: boolean
+  readonly reason?: unknown
+  addEventListener: (type: 'abort', listener: () => void, options?: { once?: boolean }) => void
+  removeEventListener: (type: 'abort', listener: () => void) => void
 }
 
 export interface EvaluateOptions {
-  /** Wall-clock budget for this evaluation in milliseconds. */
-  readonly timeout?: number
-  /** Step budget for this evaluation (overrides the environment limit). */
-  readonly maxSteps?: number
+  /** Wall-clock budget for this evaluation in milliseconds (0 = none). */
+  readonly timeout?: number | undefined
+  /** Step budget for this evaluation (0 = none; overrides the environment limit). */
+  readonly maxSteps?: number | undefined
   /** Cancels the evaluation. */
-  readonly signal?: AbortSignal
+  readonly signal?: AbortSignalLike | undefined
 }
 
 type InferParams<P extends readonly Type[]> = Extract<
@@ -149,33 +164,33 @@ export function withContext<Ctx>() {
 /** A reusable bundle of host functions (and optionally variables). */
 export interface Library {
   readonly name: string
-  readonly functions?: Readonly<Record<string, HostFunction>>
-  readonly variables?: Readonly<Record<string, Type>>
+  readonly functions?: Readonly<Record<string, HostFunction>> | undefined
+  readonly variables?: Readonly<Record<string, Type>> | undefined
 }
 
 export interface EnvironmentOptions<V extends Readonly<Record<string, Type>>> {
   /** Declared context variables and their types. */
-  readonly variables?: V
+  readonly variables?: V | undefined
   /**
    * Report unknown variables as errors. Default: true when `variables` is
-   * declared, false for an open environment.
+   * declared (even as `{}`), false for an open environment.
    */
-  readonly strict?: boolean
+  readonly strict?: boolean | undefined
   /** Host functions by name. A host function replaces a built-in of the same name. */
-  readonly functions?: Readonly<Record<string, HostFunction>>
-  /** Libraries of host functions; a name defined twice is an error. */
-  readonly libraries?: readonly Library[]
-  readonly limits?: Limits
+  readonly functions?: Readonly<Record<string, HostFunction>> | undefined
+  /** Libraries of host functions and variables; a name defined twice is an error. */
+  readonly libraries?: readonly Library[] | undefined
+  readonly limits?: Limits | undefined
   /** Compiled programs kept for `evaluate(source)` and `evaluateSync(source)`. Default 256; 0 disables the cache. */
-  readonly cacheSize?: number
+  readonly cacheSize?: number | undefined
   /** Source of now(). Default: the system clock. */
-  readonly clock?: () => Date
+  readonly clock?: (() => Date) | undefined
   /**
    * Check the context against the declared variable types before every
    * evaluation (deep, proportional to the data) and fail with INVALID_CONTEXT
    * naming the first mismatching path. Default: false.
    */
-  readonly validateContext?: boolean
+  readonly validateContext?: boolean | undefined
 }
 
 export type CheckResult =
@@ -192,7 +207,7 @@ type Args<Ctx> =
     : [context: Ctx, options?: EvaluateOptions]
 
 /** A checked, compiled expression. Immutable and safe to share. */
-export interface Program<Ctx, R> {
+export interface Program<Ctx = object, R = unknown> {
   readonly source: string
   /** The syntax tree after implicit lambdas are made explicit. */
   readonly ast: Node
@@ -210,9 +225,9 @@ export interface Program<Ctx, R> {
   evaluateSync: (...args: Args<Ctx>) => R
 }
 
-export interface CompileOptions<E extends Type> {
+export interface CompileOptions<E extends Type = Type> {
   /** The type the expression must produce; also types the program's result. */
-  readonly expect?: E
+  readonly expect?: E | undefined
 }
 
 export interface FunctionInfo {
@@ -228,14 +243,14 @@ export interface FunctionInfo {
   }[]
 }
 
-export interface Environment<Ctx> {
+export interface Environment<Ctx = object> {
   /** Declared variables, or undefined for an open environment. */
   readonly variables: Readonly<Record<string, Type>> | undefined
   readonly strict: boolean
   /** Parses without checking. */
   parse: (source: string) => Node
   /** Parses and checks, reporting every finding instead of throwing. */
-  check: (source: string, options?: CompileOptions<Type>) => CheckResult
+  check: (source: string, options?: CompileOptions) => CheckResult
   /** Parses, checks, and compiles. Throws BonsaiSyntaxError / BonsaiCheckError / BonsaiLimitError. */
   compile: <E extends Type = AnyType>(
     source: string,
@@ -255,8 +270,12 @@ export interface Environment<Ctx> {
   ) => Environment<Ctx & ContextOf<V2>>
 }
 
-/** The context type of an environment with declared variables `V`. */
-export type ContextOf<V> = [keyof V] extends [never] ? Record<string, unknown> : InferVariables<V>
+/**
+ * The context type of an environment with declared variables `V`. An open
+ * environment (no variables) accepts any object, including values typed by an
+ * interface.
+ */
+export type ContextOf<V> = [keyof V] extends [never] ? object : InferVariables<V>
 
 // === implementation ===
 
@@ -355,20 +374,37 @@ function mergeFunctions(
   return out
 }
 
+/** Words an expression reads as syntax, so a variable with that name could never be referenced. */
+const RESERVED_VARIABLE_NAMES = new Set(['true', 'false', 'null', 'let', 'in', 'not'])
+/** Names no expression may read. */
+const BLOCKED_NAMES = new Set(['__proto__', 'constructor', 'prototype'])
+
 function mergeVariables(
   base: Readonly<Record<string, Type>> | undefined,
   options: EnvironmentOptions<Readonly<Record<string, Type>>>,
 ): Readonly<Record<string, Type>> | undefined {
-  let out: Record<string, Type> | undefined = base === undefined ? undefined : { ...base }
-  const add = (name: string, type: Type): void => {
-    if (!IDENTIFIER.test(name)) throw new TypeError(`Invalid variable name "${name}"`)
+  // Declaring `variables` (even as {}) makes the environment declared, and so strict by default.
+  let out: Record<string, Type> | undefined =
+    base === undefined && options.variables === undefined ? undefined : { ...base }
+  const added = new Map<string, string>()
+  const add = (name: string, type: Type, origin: string): void => {
+    if (!IDENTIFIER.test(name) || RESERVED_VARIABLE_NAMES.has(name) || BLOCKED_NAMES.has(name)) {
+      throw new TypeError(`Invalid variable name "${name}" (in ${origin})`)
+    }
+    const previous = added.get(name)
+    if (previous !== undefined) {
+      throw new TypeError(`Variable "${name}" is declared by both ${previous} and ${origin}`)
+    }
+    added.set(name, origin)
     assertType(type, `Variable "${name}"`)
     out ??= {}
     out[name] = type
   }
-  for (const library of options.libraries ?? [])
-    for (const [k, v] of Object.entries(library.variables ?? {})) add(k, v)
-  for (const [k, v] of Object.entries(options.variables ?? {})) add(k, v)
+  for (const library of options.libraries ?? []) {
+    for (const [k, v] of Object.entries(library.variables ?? {}))
+      add(k, v, `library "${library.name}"`)
+  }
+  for (const [k, v] of Object.entries(options.variables ?? {})) add(k, v, 'the variables option')
   return out === undefined ? undefined : Object.freeze(out)
 }
 
@@ -433,10 +469,13 @@ function assertOptions(
     throw new TypeError('functions must be an object of fn() declarations')
   if (o.libraries !== undefined) {
     if (!Array.isArray(o.libraries)) throw new TypeError('libraries must be an array')
+    const names = new Set<string>()
     for (const library of o.libraries) {
       assertKeys(library, LIBRARY_KEYS, 'Library')
       const l = library as Record<string, unknown>
       if (typeof l.name !== 'string' || l.name === '') throw new TypeError('A library needs a name')
+      if (names.has(l.name)) throw new TypeError(`Library "${l.name}" is listed twice`)
+      names.add(l.name)
       if (l.functions !== undefined && !isPlainRecord(l.functions))
         throw new TypeError(`functions of library "${l.name}" must be an object`)
       if (l.variables !== undefined && !isPlainRecord(l.variables))
@@ -529,6 +568,44 @@ class ProgramCache<V> {
 
 const EMPTY_CONTEXT: Record<string, unknown> = Object.freeze({})
 
+const EVALUATE_OPTION_KEYS = new Set(['timeout', 'maxSteps', 'signal'])
+
+interface EvaluationLimits {
+  readonly maxSteps: number
+  readonly timeout: number
+  readonly signal: AbortSignal | undefined
+}
+
+/** Validates per-evaluation options the way `limits` are validated; nothing fails open. */
+function evaluationLimits(options: unknown, settings: Settings): EvaluationLimits {
+  if (options === undefined) {
+    return {
+      maxSteps: settings.runtimeLimits.maxSteps,
+      timeout: settings.timeout,
+      signal: undefined,
+    }
+  }
+  assertKeys(options, EVALUATE_OPTION_KEYS, 'Evaluate option')
+  const o = options as Record<string, unknown>
+  const signal = o.signal
+  if (
+    signal !== undefined &&
+    (typeof signal !== 'object' ||
+      signal === null ||
+      typeof (signal as { aborted?: unknown }).aborted !== 'boolean' ||
+      typeof (signal as { addEventListener?: unknown }).addEventListener !== 'function' ||
+      typeof (signal as { removeEventListener?: unknown }).removeEventListener !== 'function')
+  ) {
+    throw new TypeError('signal must be an AbortSignal')
+  }
+  return {
+    maxSteps: numberOption('maxSteps', o.maxSteps, settings.runtimeLimits.maxSteps, 0),
+    timeout: numberOption('timeout', o.timeout, settings.timeout, 0),
+    // A structurally checked AbortSignalLike; evaluation only reads the members checked above.
+    signal: signal as AbortSignal | undefined,
+  }
+}
+
 /** Freezes a syntax tree (or any tree of plain objects and arrays) in place, without recursion. */
 function deepFreeze<T>(root: T): T {
   const pending: unknown[] = [root]
@@ -591,7 +668,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       for (const name of BUILTINS.keys()) if (!settings.host.has(name)) yield name
     },
   }
-  const cache = new ProgramCache<Program<Ctx, unknown>>(settings.cacheSize)
+  const cache = new ProgramCache<Program<Ctx>>(settings.cacheSize)
 
   function parseSource(source: string): Node {
     if (typeof source !== 'string') throw new TypeError('An expression must be a string')
@@ -630,22 +707,16 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       options: EvaluateOptions | undefined,
       locals: number,
     ): void {
+      const limits = evaluationLimits(options, settings)
       const ctx = contextOf(context)
       if (settings.validateContext && settings.variables !== undefined) {
         validateContext(ctx, settings.variables, source, {
           maxDepth: settings.runtimeLimits.maxValueDepth,
-          maxSteps: options?.maxSteps ?? settings.runtimeLimits.maxSteps,
-          timeout: options?.timeout ?? settings.timeout,
+          maxSteps: limits.maxSteps,
+          timeout: limits.timeout,
         })
       }
-      state.reset(
-        ctx,
-        source,
-        locals,
-        options?.maxSteps ?? settings.runtimeLimits.maxSteps,
-        options?.timeout ?? settings.timeout,
-        options?.signal,
-      )
+      state.reset(ctx, source, locals, limits.maxSteps, limits.timeout, limits.signal)
     }
 
     function runSync(context: unknown, options: EvaluateOptions | undefined): R {
@@ -730,7 +801,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     return makeProgram<R>(source, analysis, expect)
   }
 
-  function cached(source: string): Program<Ctx, unknown> {
+  function cached(source: string): Program<Ctx> {
     let program = cache.get(source)
     if (program === undefined) {
       program = compile(source, undefined)
@@ -758,7 +829,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     variables: settings.variables,
     strict: settings.strict,
     parse: parseSource,
-    check(source: string, options?: CompileOptions<Type>): CheckResult {
+    check(source: string, options?: CompileOptions): CheckResult {
       let analysis: Analysis
       try {
         analysis = analyzeSource(source, options?.expect)

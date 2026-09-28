@@ -126,11 +126,12 @@ fn({
   async: false, // true: run returns a promise; evaluateSync rejects the expression with ASYNC_IN_SYNC; a promise from a non-async function is HOST_CONTRACT
   context: false, // true: run(ctx, ...args)
   description: 'Shown in listFunctions and editor hovers',
+  cost: 32, // steps charged per call (default 32); lower for cheap pure helpers
   run: (name, count) => true,
 })
 ```
 
-Arguments are validated before `run`; results are checked deeply against `returns` (`HOST_CONTRACT` otherwise, not caught by `try`); exceptions become `HOST_ERROR` with `cause`. `withContext<Ctx>()` returns an `fn` variant whose `run` receives a typed context.
+Arguments are validated before `run`; results are checked deeply against `returns` (`HOST_CONTRACT` otherwise, not caught by `try`); exceptions (even a `BonsaiError`) become `HOST_ERROR` with `cause`. `withContext<Ctx>()` returns an `fn` variant whose `run` receives a typed context.
 
 ### Types (t)
 
@@ -138,27 +139,27 @@ Arguments are validated before `run`; results are checked deeply against `return
 
 ### Errors
 
-All errors from checking and evaluating extend `BonsaiError` with `code`, `source`, `span` (`{ start, end }`), `position` (1-based), `formatted` (message + code frame); exceptions from host code (functions, getters, Proxies) are wrapped as `HOST_ERROR`. Invalid configuration throws `TypeError` or `RangeError` from `bonsai()` and `fn()`.
+All errors from checking and evaluating extend `BonsaiError` with `code`, `source`, `span` (`{ start, end }`), `position` (1-based), `formatted` (message + code frame); exceptions from host code (functions, getters, Proxies, including a `BonsaiError` a host function throws) are wrapped as `HOST_ERROR`. Invalid configuration throws `TypeError` or `RangeError` from `bonsai()`, `fn()`, `evaluate*()` (per-evaluation options), and `print()` (trees the parser could not produce).
 - `BonsaiSyntaxError`: `SYNTAX`
 - `BonsaiCheckError`: `CHECK` (`.diagnostics`)
-- `BonsaiLimitError`: `SOURCE_TOO_LONG`, `TOO_DEEP`, `TOO_MANY_NODES`, `STEP_LIMIT`, `STRING_LIMIT`, `LIST_LIMIT`, `TIMEOUT`, `ABORTED`
+- `BonsaiLimitError`: `SOURCE_TOO_LONG`, `TOO_DEEP`, `TOO_MANY_NODES`, `TOO_COMPLEX`, `STEP_LIMIT`, `STRING_LIMIT`, `LIST_LIMIT`, `PATTERN_LIMIT`, `TIMEOUT`, `ABORTED`
 - `BonsaiRuntimeError`: `TYPE_ERROR`, `NO_OVERLOAD`, `NULL_RECEIVER`, `DIVISION_BY_ZERO`, `NON_FINITE`, `BLOCKED_PROPERTY`, `INVALID_ARGUMENT`, `ASYNC_IN_SYNC`, `HOST_ERROR`, `HOST_CONTRACT`, `INVALID_CONTEXT`
 
 ### Limits (defaults)
 
-`maxSourceLength` 100000, `maxDepth` 128, `maxNodes` 20000, `maxSteps` 1000000 (0 disables; charged by the real cost of each operation, deterministic), `maxStringLength` 100000, `maxListLength` 100000, `maxValueDepth` 64 (values built or walked), `maxPatternLength` 4096 (regex patterns), `timeout` 0 (none).
+`maxSourceLength` 100000, `maxDepth` 128, `maxNodes` 20000, `maxSteps` 1000000 (0 disables; charged by the real cost of each operation, deterministic), `maxStringLength` 100000, `maxListLength` 100000, `maxValueDepth` 64 (values built or walked), `maxPatternLength` 4096 (regex patterns, `PATTERN_LIMIT`), `timeout` 0 (none). Each host call costs its function's `cost` (default 32 steps).
 
 ### Language service (bonsai-js/service)
 
-`createLanguageService(env)` -> `{ complete(src, offset), hover(src, offset), diagnostics(src) }`. `complete` returns `{ start, end, items: [{ label, kind, detail, documentation?, insertText }] }` with kinds `value`, `variable`, `local`, `property`, `function`, `method`, `keyword`. It never evaluates or calls host functions.
+`createLanguageService(env)` -> `{ complete(src, offset), hover(src, offset), diagnostics(src) }`. `complete` returns `{ start, end, items: [{ label, kind, detail, documentation?, insertText, range? }] }` with kinds `value`, `variable`, `local`, `property`, `function`, `method`, `keyword`. It never evaluates or calls host functions.
 
 ## Security model
 
-Expression text is untrusted; context data and host functions are trusted. Expressions cannot run code, reach prototypes or globals, call functions found in data, trigger conversion hooks, mutate data, or run unbounded: the step budget charges every operation for its real cost, including text search, regular expressions, sorting, and time zone math. Built-ins never run host code on receivers (no iterators, species, or methods). Host functions run with full privileges and cannot be interrupted while running synchronously; getters and Proxies in the context run when read. Declared types are not access control: `keys()`, `values()`, `entries()`, and dynamic indexing read every own property of the data passed in.
+Expression text is untrusted; context data and host functions are trusted. Expressions cannot run code, reach prototypes or globals, call functions found in data, trigger conversion hooks, mutate data, or run unbounded: the step budget charges every operation for its real cost, including text search, regular expressions, sorting, and time zone math. Built-ins never run host code on receivers (no iterators, species, or methods). Host functions run with full privileges and cannot be interrupted while running synchronously; getters and Proxies in the context run when read. Declared types are not access control: `keys()`, `values()`, `entries()`, and dynamic indexing read every own enumerable property of the data passed in.
 
 ## Migrating from 0.x
 
-`a |> f(b)` -> `a.f(b)`; `upper`/`lower` -> `toUpperCase`/`toLowerCase`; `flatten` -> `flat`; stdlib plugins -> built in; `addFunction` -> `functions: { name: fn({...}) }`; `addContextFunction` -> `fn({ context: true, ... })`; `validate()` -> `check()`; `evaluateExpression` -> `bonsai().evaluateSync`; `allowedProperties` -> pass only the data expressions may read; `x == null` now includes missing values; `&&`/`||` are strict booleans (use `??` for defaults). Results that changed silently: `round` rounds halves away from zero and honors digits; `avg([])` is null; `unique` compares by value; templates render null as empty text and dates as ISO-8601; `toNumber` of invalid text is an error; division and remainder by zero are errors. Requires Node.js 22+. Full guide: https://danfry1.github.io/bonsai-js/guide/migrating
+`a |> f(b)` -> `a.f(b)`; `upper`/`lower` -> `toUpperCase`/`toLowerCase`; `flatten` -> `flat`; stdlib plugins -> built in; `addFunction` -> `functions: { name: fn({...}) }`; `addContextFunction` -> `fn({ context: true, ... })`; `validate()` -> `check()`; `evaluateExpression` -> `bonsai().evaluateSync`; `allowedProperties` -> pass only the data expressions may read; `x == null` now includes missing values; `&&`/`||` are strict booleans (use `??` for defaults). Results that changed silently: `round` rounds halves away from zero and honors digits; `avg([])` is null; `unique` compares by value; templates render null as empty text and dates as ISO-8601; `toNumber` of invalid text is an error; division and remainder by zero are errors; `sort()` is numeric; `includes`/`indexOf`/`in` and `Date` equality compare by value; `replace` inserts its replacement literally; `substring` -> `slice` and `charAt` -> `at` differ for reversed or negative positions. Requires Node.js 22+. Full guide: https://danfry1.github.io/bonsai-js/guide/migrating
 
 ## Built-in functions
 

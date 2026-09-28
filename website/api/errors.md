@@ -35,7 +35,7 @@ try {
 | `formatted` | `string` | The message followed by a code frame, when a span is known. |
 | `cause` | `unknown` | For `HOST_ERROR`, the error your host function (or a getter or Proxy in the context) threw. |
 
-`isBonsaiError(value)` is a type guard for `BonsaiError`. Checking and evaluating an expression only ever throw `BonsaiError`s, including when your own code fails: a host function that throws, or a getter, Proxy trap, or `then` hook in the context that throws when read, becomes a `HOST_ERROR` with the original error as its `cause`. Any other error escaping from Bonsai is a bug. Invalid configuration is reported differently, as a `TypeError` or `RangeError` thrown synchronously by `bonsai()`, `extend()`, or `fn()` (an unknown option or limit, a limit out of range, a malformed parameter list, a duplicate function name).
+`isBonsaiError(value)` is a type guard for `BonsaiError`. Checking and evaluating an expression only ever throw `BonsaiError`s, including when your own code fails: a host function that throws (even a `BonsaiError`, for example from an evaluation it runs itself), or a getter, Proxy trap, or `then` hook in the context that throws when read (including while `validateContext` or an `expect` check reads it), becomes a `HOST_ERROR` with the original error as its `cause`. Any other error escaping from Bonsai is a bug. Invalid configuration is reported differently, as a `TypeError` or `RangeError` thrown synchronously: by `bonsai()`, `extend()`, or `fn()` (an unknown option or limit, a limit out of range, a malformed parameter list, a duplicate or invalid name), by `evaluate()` and `evaluateSync()` for invalid per-evaluation options (an unknown key, a negative `maxSteps`, a `signal` that is not an `AbortSignal`), and by `print()` for a tree the parser could not have produced.
 
 ## Classes and codes
 
@@ -50,6 +50,7 @@ try {
 | | `STEP_LIMIT` | Evaluation exceeded the step budget. |
 | | `STRING_LIMIT` | A produced string would exceed `maxStringLength`. |
 | | `LIST_LIMIT` | A produced list would exceed `maxListLength`. |
+| | `PATTERN_LIMIT` | A regular expression pattern passed to `matches` exceeds `maxPatternLength`. |
 | | `TIMEOUT` | Evaluation exceeded the timeout. |
 | | `ABORTED` | The `AbortSignal` was aborted. |
 | `BonsaiRuntimeError` | `TYPE_ERROR` | An operator or property read on values of the wrong kind. |
@@ -58,9 +59,9 @@ try {
 | | `DIVISION_BY_ZERO` | Division or remainder by zero. |
 | | `NON_FINITE` | A result would be `NaN` or infinite. |
 | | `BLOCKED_PROPERTY` | A computed key is `__proto__`, `constructor`, or `prototype`. |
-| | `INVALID_ARGUMENT` | An argument has the right type but an invalid value (an unparsable timestamp, an unknown time zone, a non-integer count), or the context is not an object. |
+| | `INVALID_ARGUMENT` | An argument has the right type but an invalid value (an unparsable timestamp, an unknown time zone, a non-integer count, a regular expression the engine does not support), or the context is not an object. |
 | | `ASYNC_IN_SYNC` | `evaluateSync()` on an expression that calls a host function declared `async: true`. |
-| | `HOST_ERROR` | A host function threw, or reading the context ran host code (a getter or Proxy) that threw. |
+| | `HOST_ERROR` | A host function threw (anything, including a `BonsaiError` from a nested evaluation), or reading the context ran host code (a getter or Proxy) that threw. |
 | | `HOST_CONTRACT` | A host function broke its declaration: it returned a value that does not match `returns` (checked deeply), or returned a promise without `async: true`. |
 | | `INVALID_CONTEXT` | With `validateContext`, the context does not match the declared variable types. |
 
@@ -116,7 +117,8 @@ try {
   typed.compile('"a" + price')
 } catch (error) {
   error instanceof BonsaiCheckError // => true
-  (error as BonsaiCheckError).diagnostics.length // => 1
+  const checkError = error as BonsaiCheckError
+  checkError.diagnostics.length // => 1
 }
 ```
 

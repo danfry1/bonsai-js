@@ -32,12 +32,14 @@ env.evaluateSync('(200).discount(0.25)') // => 150
 | `async` | `boolean` | `run` returns a promise. The expression must be evaluated with `evaluate()`. |
 | `context` | `boolean` | `run` receives the evaluation context as its first argument. |
 | `description` | `string` | Shown by `listFunctions()` and in editor completions and hover. |
+| `cost` | `number` | Steps charged per call, a non-negative integer (default 32). Lower it for cheap pure helpers so they do not use up the budget; raise it for calls that reach a database or network. |
 
 ## What Bonsai guarantees around your function
 
 - **Checked calls.** The checker rejects calls whose arguments do not match `params` (`NO_OVERLOAD`) before anything runs. At run time, arguments are validated before `run` is called, so `run` only ever receives values of the declared types.
 - **Checked results.** A result that does not match `returns` (checked deeply, through lists and maps) is a `HOST_CONTRACT` error, so a bug in your function cannot leak an unexpected value into the expression. So is a promise returned by a function not declared `async`. `try(...)` never catches `HOST_CONTRACT`: it signals a bug in host code, not a condition the expression should hide.
-- **Wrapped failures.** An exception thrown by `run` becomes a `BonsaiRuntimeError` with code `HOST_ERROR` and the original error as its `cause`. Expressions can recover from it with `try(...)`.
+- **Wrapped failures.** An exception thrown by `run` becomes a `BonsaiRuntimeError` with code `HOST_ERROR` and the original error as its `cause`, whatever was thrown, including a `BonsaiError` (for example a limit error from an evaluation `run` performs itself). Expressions can recover from it with `try(...)`.
+- **A fixed cost per call.** Each call is charged `cost` steps (default 32) against the step budget, however long `run` takes. The budget therefore bounds how many calls one evaluation can make, not the time your function spends.
 
 <!-- continue -->
 ```ts

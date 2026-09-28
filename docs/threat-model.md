@@ -44,20 +44,25 @@ declared functions, never on `x`.
 
 ### Navigation is data-only
 
-- A property read returns an **own** property of a plain object or class
-  instance. Inherited members, class methods, and prototype getters never
-  resolve. Built-in host objects (`Map`, `Set`, `WeakMap`, `WeakSet`,
-  `RegExp`, promises and thenables, `ArrayBuffer` and typed arrays, errors,
-  boxed primitives, functions) are opaque: reading into them is a type error.
+- A property read returns an **own enumerable** property of a plain object or
+  class instance. Inherited members, class methods, prototype getters, and
+  non-enumerable properties never resolve. Built-in host objects (`Map`,
+  `Set`, `WeakMap`, `WeakSet`, `RegExp`, promises and thenables,
+  `ArrayBuffer` and typed arrays, errors, boxed primitives, functions),
+  including ones from another realm, are opaque: reading into them is a type
+  error.
 - `__proto__`, `constructor`, and `prototype` are rejected wherever they appear:
   as syntax, as computed keys, and in keys spread from host data.
 - Produced maps never contain `__proto__`, `constructor`, or `prototype` keys, even when spread from host data parsed with `JSON.parse`.
 - `matches()` uses a linear-time regular expression engine (JavaScript syntax
   without backreferences or lookaround), so a user-written pattern cannot
   cause catastrophic backtracking. Pattern length is limited by
-  `maxPatternLength`, compiling and matching are charged to the step budget,
-  and compiled patterns are cached per environment within a bounded total
-  size, so one tenant's patterns cannot exhaust another's memory.
+  `maxPatternLength` (`PATTERN_LIMIT`). Compiling is charged by the size of
+  the compiled program on first use in each evaluation, whether or not it was
+  cached, and matching is charged per step of the engine. Compiled patterns,
+  number formats, and time zone data are cached process-wide within a fixed
+  memory bound, so no number of environments or tenants can grow them, and
+  an evaluation's step count does not depend on what is cached.
 - Templates, comparisons, keys, and arithmetic never call `valueOf`,
   `toString`, `toJSON`, or `Symbol.toPrimitive`.
 - Built-ins read host lists by index into their own copy and use their own
@@ -83,9 +88,13 @@ time zone calculations, and the size of lists and maps an expression builds. A
 single native operation never runs unbounded between budget checks, so the
 budget bounds wall-clock time as well as work: at the default budget, any
 expression finishes or fails within about 100 ms on Node.
-Sizes are checked before allocation. Values an expression builds are limited to
-`maxValueDepth` levels, so a result is bounded in size and safe for the host to
-serialize. Cyclic data fails closed on the depth limit.
+Sizes are checked before allocation. Lists and maps an expression builds are
+limited to `maxValueDepth` levels and charged for their size, so the structure
+an expression creates is bounded. A result can still contain host data as it
+was passed in: `[order]` or `{...settings}` returns the host's own objects,
+including any cycles or depth they have, so serialize results with the same
+care as the context they came from. Cyclic data fails closed on the depth limit
+wherever the language walks it (equality, `unique`, `in`).
 
 ### Async isolation
 
@@ -128,9 +137,10 @@ serialize. Cyclic data fails closed on the depth limit.
   separate process.
 - Set a `timeout` when expressions call slow host functions. The step budget
   bounds Bonsai's own work deterministically, but not wall-clock time spent
-  inside host functions. Each host call costs 32 steps, so an expression can
-  still call a host function tens of thousands of times; batch or rate-limit
-  expensive calls in the host.
+  inside host functions. Each host call costs its declared `cost` in steps
+  (default 32), so an expression can still call a default-cost function tens
+  of thousands of times; declare a higher `cost` for functions that do I/O,
+  and batch or rate-limit expensive calls in the host.
 
 ## Assurance
 

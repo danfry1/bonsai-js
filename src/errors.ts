@@ -12,6 +12,7 @@ export type ErrorCode =
   | 'STEP_LIMIT'
   | 'STRING_LIMIT'
   | 'LIST_LIMIT'
+  | 'PATTERN_LIMIT'
   | 'TIMEOUT'
   | 'ABORTED'
   // evaluation

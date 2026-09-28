@@ -96,7 +96,8 @@ try {
   // The public API is exactly this list: a change here is an API change.
   const publicExports: Record<string, readonly string[]> = {
     'index.d.mts': [
-      ...['AnyType', 'BinaryNode', 'BinaryOperator', 'BonsaiCheckError', 'BonsaiError'],
+      ...['AbortSignalLike', 'AnyType', 'BinaryNode', 'BinaryOperator', 'BonsaiCheckError'],
+      'BonsaiError',
       ...['BonsaiLimitError', 'BonsaiRuntimeError', 'BonsaiSyntaxError', 'BooleanType'],
       ...['CallNode', 'CallStyle', 'CheckResult', 'CompileOptions', 'ConditionalNode'],
       ...['ContextOf', 'Diagnostic', 'DiagnosticCode', 'Duration', 'DurationType'],

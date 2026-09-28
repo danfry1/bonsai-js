@@ -40,6 +40,143 @@ const COMPARISON_LEVELS = new Set([BINARY['=='], BINARY['<']])
 const ASSOCIATIVE = new Set<BinaryOperator>(['&&', '||', '??'])
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/u
 const RESERVED = new Set(['true', 'false', 'null', 'let', 'in', 'not'])
+/** Names the language never lets an expression read, bind, or use as a key. */
+const BLOCKED = new Set(['__proto__', 'constructor', 'prototype'])
+/** Call names the parser reads as syntax, not as calls. */
+const SPECIAL_CALLS = new Set(['has', 'try'])
+
+const invalid = (message: string): never => {
+  throw new TypeError(`Cannot print this tree: ${message}`)
+}
+
+const isName = (name: unknown): name is string =>
+  typeof name === 'string' && IDENTIFIER.test(name) && !RESERVED.has(name) && !BLOCKED.has(name)
+
+/**
+ * Rejects trees the parser could not have produced, and that would therefore
+ * print as source meaning something else (or not parse at all). Trees from
+ * `parse()` and `Program.ast` always pass.
+ */
+function assertPrintable(root: Node): void {
+  // Names bound by enclosing `let`s and explicit lambdas.
+  const scope: string[] = []
+  const bind = (name: unknown, what: string): void => {
+    if (!isName(name)) return invalid(`${what} ${JSON.stringify(name)} is not a valid name`)
+    if (scope.includes(name)) invalid(`${what} "${name}" is already bound in this scope`)
+    scope.push(name)
+  }
+  const visit = (n: Node, asArgument: boolean): void => {
+    if (typeof n !== 'object' || n === null) invalid(`${String(n)} is not a node`)
+    switch (n.type) {
+      case 'It':
+        return
+      case 'Literal': {
+        const v: unknown = n.value
+        if (v !== null && typeof v !== 'boolean' && typeof v !== 'number' && typeof v !== 'string')
+          invalid(`a literal cannot hold ${typeof v}`)
+        return
+      }
+      case 'Template':
+        for (const part of n.parts) if (typeof part !== 'string') visit(part, false)
+        return
+      case 'Variable':
+        if (!isName(n.name)) invalid(`variable ${JSON.stringify(n.name)} is not a valid name`)
+        if (scope.includes(n.name))
+          invalid(`variable "${n.name}" would print as the local binding of the same name`)
+        return
+      case 'Local':
+        if (!scope.includes(n.name)) invalid(`local ${JSON.stringify(n.name)} is not bound here`)
+        return
+      case 'Member':
+        if (typeof n.name !== 'string' || BLOCKED.has(n.name))
+          invalid(`property ${JSON.stringify(n.name)} is not accessible`)
+        visit(n.object, false)
+        return
+      case 'Index':
+        visit(n.object, false)
+        visit(n.index, false)
+        return
+      case 'Call': {
+        if (!isName(n.name) || SPECIAL_CALLS.has(n.name))
+          invalid(`${JSON.stringify(n.name)} is not a callable function name`)
+        const [first] = n.args
+        if (
+          n.optional &&
+          (first === undefined || first.type === 'Spread' || first.type === 'Lambda')
+        )
+          invalid(`"?.${n.name}()" needs a receiver`)
+        for (const arg of n.args) {
+          if (arg.type === 'Spread') visit(arg.argument, false)
+          else visit(arg, true)
+        }
+        return
+      }
+      case 'Unary':
+        if (n.operator !== '!' && n.operator !== '-')
+          invalid(`unknown unary operator ${JSON.stringify(n.operator)}`)
+        visit(n.operand, false)
+        return
+      case 'Binary':
+        if (!Object.hasOwn(BINARY, n.operator))
+          invalid(`unknown operator ${JSON.stringify(n.operator)}`)
+        visit(n.left, false)
+        visit(n.right, false)
+        return
+      case 'Conditional':
+        visit(n.test, false)
+        visit(n.then, false)
+        visit(n.otherwise, false)
+        return
+      case 'List':
+        for (const item of n.items) visit(item.type === 'Spread' ? item.argument : item, false)
+        return
+      case 'Map':
+        for (const entry of n.entries) {
+          if (entry.type === 'Spread') visit(entry.argument, false)
+          else if (entry.type === 'Entry') {
+            if (typeof entry.key === 'string') {
+              if (BLOCKED.has(entry.key)) invalid(`"${entry.key}" cannot be used as a key`)
+            } else visit(entry.key, false)
+            visit(entry.value, false)
+          } else invalid(`unknown map entry ${JSON.stringify((entry as { type?: unknown }).type)}`)
+        }
+        return
+      case 'Lambda': {
+        if (!asArgument) invalid('a lambda can only be a function argument')
+        if (n.implicit) {
+          if (n.params.length > 0) invalid('an implicit lambda has no named parameters')
+          visit(n.body, false)
+          return
+        }
+        const depth = scope.length
+        for (const param of n.params) bind(param, 'lambda parameter')
+        visit(n.body, false)
+        scope.length = depth
+        return
+      }
+      case 'Let': {
+        visit(n.value, false)
+        const depth = scope.length
+        bind(n.name, 'let binding')
+        visit(n.body, false)
+        scope.length = depth
+        return
+      }
+      case 'Has':
+        if (n.target.type !== 'Member' && n.target.type !== 'Index')
+          invalid('has(...) takes a property path')
+        visit(n.target, false)
+        return
+      case 'Try':
+        visit(n.body, false)
+        visit(n.fallback, false)
+        return
+      default:
+        invalid(`unknown node type ${JSON.stringify((n as { type?: unknown }).type)}`)
+    }
+  }
+  visit(root, false)
+}
 
 /**
  * Prints a syntax tree as Bonsai source. `parse(print(tree))` means the same
@@ -48,6 +185,9 @@ const RESERVED = new Set(['true', 'false', 'null', 'let', 'in', 'not'])
  */
 export function print(node: Node, options: PrintOptions = {}): string {
   const style = options.calls ?? 'preserve'
+  if (style !== 'preserve' && style !== 'method' && style !== 'function')
+    throw new TypeError('calls must be "preserve", "method", or "function"')
+  assertPrintable(node)
 
   function levelOf(n: Node): number {
     switch (n.type) {
@@ -204,8 +344,9 @@ export function print(node: Node, options: PrintOptions = {}): string {
       case 'Has':
         return `has(${expr(n.target)})`
       case 'Try':
-      default:
         return `try(${expr(n.body)}, ${expr(n.fallback)})`
+      default:
+        return invalid(`unknown node type ${JSON.stringify((n as { type?: unknown }).type)}`)
     }
   }
 

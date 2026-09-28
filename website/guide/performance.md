@@ -57,3 +57,25 @@ Treat benchmark numbers as point-in-time guidance for your hardware, not as part
 - **Timeouts.** A `timeout` makes each evaluation read the clock, and adds a timer around each async host call. The cost is small for synchronous expressions and noticeable for expressions that make many async calls.
 - **Regular expressions.** `matches` runs a linear-time engine, which is predictable but slower than JavaScript's native `RegExp` on simple patterns. Prefer `startsWith`, `endsWith`, and `includes` where they express the test.
 - **Cache misses.** Every distinct source text passed to `env.evaluate*()` is parsed, checked, and compiled the first time it is seen. If your sources are generated with values embedded in them, pass the values through the context instead so the text stays the same.
+- **Runtime `expect` checks.** When the checker cannot prove a result matches `expect` (the result type is partly `any`), the result is checked on every evaluation, at about 7 steps per record for a list of small maps. Declaring variable types lets the checker prove it instead.
+
+## What fits in the default budget
+
+The step budget (`maxSteps`, default 1,000,000) is charged in proportion to the work each operation does, so it bounds how much data one evaluation can process. Approximate costs and the most records one evaluation can handle at the default budget:
+
+| Operation | Steps | Most at the default budget |
+| --- | --- | --- |
+| `filter` over records | about 2 per record | the list limit (100,000) |
+| `map` to a number | about 6 per record | the list limit |
+| `filter`, `map`, and `sum` together | about 11 per record | about 94,000 records |
+| `sortBy` | about 12 per record | about 56,000 records |
+| `unique` over 10-field records | about 17 per record | about 58,000 records |
+| A template per record | about 10 per record | about 99,000 records |
+| `formatNumber`, `formatCurrency` | about 20 per call | about 50,000 calls |
+| A host function call | its `cost` (default 32) | about 31,000 calls |
+| `matches` | TODO(runtime2) steps per character of text | TODO(runtime2) |
+| Calendar functions in a time zone (`startOfDay(t, zone)`) | TODO(runtime2) per call | TODO(runtime2) calls |
+
+If a legitimate workload needs more, raise `maxSteps` for that environment or that evaluation; the budget then bounds proportionally more time. Lower a pure helper function's `cost` so its calls do not dominate.
+
+The compiled regular expressions, number formats, and time zone data that these functions use are cached process-wide, with a fixed memory bound (TODO(runtime2) size), and shared by every environment. Step charges do not depend on whether something was already cached, so the same evaluation uses the same steps every time.

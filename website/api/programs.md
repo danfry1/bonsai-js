@@ -87,6 +87,8 @@ Both accept per-evaluation options:
 | `maxSteps` | Step budget, replacing the environment's `limits.maxSteps`. Exceeding it is a `STEP_LIMIT` error. |
 | `signal` | An `AbortSignal`. Aborting stops the evaluation with an `ABORTED` error, including while waiting on an async host function. |
 
+They are validated like `limits`: `timeout` and `maxSteps` must be non-negative integers (`0` turns the limit off), `signal` must be an `AbortSignal`, and an unknown key or invalid value throws a `TypeError` or `RangeError` before anything runs, so a miscalculated budget can never turn the limit off by accident.
+
 <!-- continue -->
 ```ts
 const controller = new AbortController()
