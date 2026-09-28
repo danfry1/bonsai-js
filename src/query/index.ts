@@ -222,6 +222,8 @@ function lower(
     )
   }
   const knownData = options.known ?? {}
+  if (Object.hasOwn(knownData, options.row))
+    throw new TypeError(`known must not contain the row variable (${options.row})`)
   // A misspelled row (or a missing known value) would otherwise read as null.
   for (const name of program.references.variables) {
     if (name !== options.row && !Object.hasOwn(knownData, name))
@@ -453,6 +455,10 @@ function lower(
       return ka === 'null' ? { kind: 'const', value: true } : { kind: 'null', value: a }
     if (ka === 'null') return { kind: 'null', value: b }
     if (ka !== kb) {
+      // Arithmetic is never null when it succeeds, so the answer is false unless it fails;
+      // Bonsai evaluates both sides of == first.
+      const failing = [a, b].find(failable)
+      if (failing !== undefined) return { kind: 'in', value: failing, list: [] }
       // Different kinds are equal only when both are null (b is non-null if constant).
       const isNull = (v: Value): Pred =>
         v.kind === 'const' ? { kind: 'const', value: false } : { kind: 'null', value: v }
@@ -596,6 +602,8 @@ const tooLarge = (source: string): BonsaiTranslationError =>
 /** SQL text length, and MongoDB filter nodes, above which a translation is rejected. */
 const MAX_SQL_LENGTH = 1_000_000
 const MAX_MONGO_NODES = 100_000
+/** MongoDB rejects longer patterns; this leaves room for the anchors. */
+const MAX_MONGO_PATTERN_BYTES = 32_000
 /** Most parameters a statement can bind. */
 const MAX_PARAMS = { postgres: 65_535, sqlite: 32_766 } as const
 /** The last year Postgres reads from an ISO timestamp (years with more digits use `+YYYYYY`). */
@@ -623,6 +631,8 @@ function prefixEnd(prefix: string): string | undefined {
 }
 
 // === SQL ===
+
+const LIKE_SPECIAL = /[\\%_]/gu
 
 const PG_CASTS: Readonly<Record<ColumnType, string>> = {
   text: 'text',
@@ -722,6 +732,9 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
   const operand = (value: Value): string =>
     !pg && value.kind === 'column' ? `CAST(${val(value)} AS REAL)` : val(value)
   const typed = (value: Value): string => (kindOf(value) === 'text' ? text(val(value)) : val(value))
+  // Column against column: a text-like type (citext) would otherwise pick its own operator.
+  const plain = (value: Value): string =>
+    pg && kindOf(value) === 'text' ? text(`${val(value)}::text`) : typed(value)
   /** Byte-wise SQLite text, so text holding NUL is read whole. UTF-8 matches by code point. */
   const bytes = (sql: string): string => `CAST(${sql} AS BLOB)`
   const INFINITY = pg ? `'Infinity'::float8` : '9e999'
@@ -751,13 +764,14 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     needle: string,
   ): string => {
     if (pg) {
+      if (op === 'startsWith') {
+        // A prefix LIKE, whose index range Postgres derives in the database's own encoding.
+        const like = placeholder(`${needle.replace(LIKE_SPECIAL, (ch) => `\\${ch}`)}%`, 'text')
+        return `(${text(column)} LIKE ${like} ESCAPE '\\')`
+      }
       const pattern = placeholder(needle, 'text')
       if (op === 'includes') return `(strpos(${text(column)}, ${pattern}) > 0)`
-      if (op === 'endsWith') return `(right(${column}, char_length(${pattern})) = ${text(pattern)})`
-      // A prefix range an index can use, alongside the exact test.
-      const end = prefixEnd(needle)
-      const range = `${text(column)} >= ${text(pattern)}${end === undefined ? '' : ` AND ${text(column)} < ${text(placeholder(end, 'text'))}`}`
-      return `(${range} AND left(${column}, char_length(${pattern})) = ${text(pattern)})`
+      return `(right(${column}, char_length(${pattern})) = ${text(pattern)})`
     }
     const pattern = placeholder(needle, 'text')
     const blob = bytes(pattern)
@@ -787,7 +801,7 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
           }
           return compare(
             pg
-              ? `(${typed(p.left)} IS NOT DISTINCT FROM ${typed(p.right)})`
+              ? `(${plain(p.left)} IS NOT DISTINCT FROM ${plain(p.right)})`
               : `(${typed(p.left)} IS ${typed(p.right)})`,
             p.left,
             p.right,
@@ -799,14 +813,15 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
           const nonNull = p.list.filter((entry) => entry !== null)
           const parts: string[] = []
           if (nonNull.length > 0) {
-            if (pg) {
-              // One array parameter, whatever the list's length.
-              const type = kind === 'null' ? 'text' : kind
+            const type = kind === 'null' ? 'text' : kind
+            // One array parameter in Postgres, whatever the list's length. Not for booleans:
+            // there are only two, and postgres.js cannot send a boolean array.
+            if (pg && type !== 'boolean') {
               const array = placeholder(nonNull.map(encode), `${PG_CASTS[type]}[]`)
               parts.push(`${typed(p.value)} = ANY(${array})`)
             } else {
-              const entries = nonNull.map((entry) => param(entry, kind === 'null' ? 'text' : kind))
-              parts.push(`${val(p.value)} IN (${entries.join(', ')})`)
+              const entries = [...new Set(nonNull)].map((entry) => param(entry, type))
+              parts.push(`${typed(p.value)} IN (${entries.join(', ')})`)
             }
           }
           if (nonNull.length !== p.list.length) parts.push(`${val(p.value)} IS NULL`)
@@ -879,8 +894,12 @@ export function toMongo(program: Translatable, options: MongoOptions): MongoQuer
       return undefined
     },
     checkConstant: () => undefined,
-    checkPattern: (text) =>
-      text.includes('\0') ? 'MongoDB patterns cannot contain a NUL character' : undefined,
+    checkPattern: (text) => {
+      if (text.includes('\0')) return 'MongoDB patterns cannot contain a NUL character'
+      if (utf8Length(escapeRegex(text)) > MAX_MONGO_PATTERN_BYTES)
+        return 'The text is too long for a MongoDB pattern'
+      return undefined
+    },
   }
   const predicate = lower(
     program,
