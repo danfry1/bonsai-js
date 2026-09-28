@@ -8,7 +8,7 @@ import { createLanguageService } from 'bonsai-js/service'
 
 <!-- no-run -->
 ```ts
-function createLanguageService(env: Environment<any>): LanguageService
+function createLanguageService(env: Environment<never>): LanguageService
 
 interface LanguageService {
   complete(source: string, offset: number): CompletionResult
@@ -17,21 +17,21 @@ interface LanguageService {
 }
 ```
 
-Offsets are UTF-16 code unit offsets into `source`, the same unit as JavaScript string indices and `Diagnostic.start`/`end`.
+Offsets are UTF-16 code unit offsets into `source`, the same unit as JavaScript string indices. Every range in the service, like every range in Bonsai (`Diagnostic`, `BonsaiError.span`, `HoverResult`), is a `start` and an `end` offset. `createLanguageService` accepts an environment of any context type.
 
 ## complete(source, offset)
 
 <!-- no-run -->
 ```ts
 interface CompletionResult {
-  from: number // start of the range to replace (the partially typed name)
-  to: number // end of that range
+  start: number // start of the range to replace (the partially typed name)
+  end: number // end of that range
   items: readonly Completion[]
 }
 
 interface Completion {
   label: string
-  kind: 'variable' | 'local' | 'property' | 'function' | 'method' | 'keyword'
+  kind: 'value' | 'variable' | 'local' | 'property' | 'function' | 'method' | 'keyword'
   detail: string // a type, or one signature per line
   documentation?: string
   insertText: string
@@ -44,9 +44,10 @@ What is offered depends on the cursor:
 | --- | --- |
 | At the start of a name | the current item `.` (inside a lambda argument), `let` bindings and lambda parameters in scope, declared variables, every function, and keywords |
 | After `.` or `?.` | the fields of the receiver's type, `length` for strings and lists, and the functions whose first parameter accepts the receiver (as methods) |
+| After `==` or `!=`, or inside a string compared with an enum | the literal values of the other side's type (kind `value`), for example the members of a `t.enum` |
 | Inside a string or comment, or after a digit | nothing |
 
-Items are filtered by what has been typed so far (prefix matches first, then substring matches) and ordered by kind: locals, properties, variables, methods, functions, keywords. The service completes incomplete expressions by guessing the missing closing brackets, so it works in the middle of typing.
+Items are filtered by what has been typed so far (prefix matches first, then substring matches) and ordered by kind: values, locals, properties, variables, methods, functions, keywords. For `items.filter(.q` at offset 15, the result's `start` is 14 and `end` is 15, so accepting `qty` replaces the `q`. The service completes incomplete expressions by guessing the missing closing brackets, so it works in the middle of typing.
 
 ```ts
 import { bonsai, t } from 'bonsai-js'
@@ -58,7 +59,6 @@ const env = bonsai({
 const service = createLanguageService(env)
 
 const inLambda = service.complete('items.filter(.q', 15)
-inLambda.from // => 14
 inLambda.items[0].label // => "qty"
 inLambda.items[0].detail // => "number"
 

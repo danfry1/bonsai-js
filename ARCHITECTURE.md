@@ -79,10 +79,16 @@ ordering (with `null` making comparisons false), arithmetic with the duration
 and timestamp rules, member and index reads (own properties only, blocked keys
 rejected), and template rendering.
 
-Straight-line code is bounded by the AST size limit. Everything that can do
-work proportional to data charges steps: lambda invocations, equality and
-membership over lists and maps, concatenation, spread, templates, and every
-built-in that touches elements. Sizes are checked before allocation.
+Straight-line code is bounded by the AST size limit. Every operation charges
+steps for its real worst-case cost before it runs: lambda invocations, equality
+and membership over lists and maps, concatenation, spread, templates,
+characters scanned by text search and comparison, regular expression
+compilation and matching, sort comparisons, time zone conversions, and the
+size of lists and maps an expression builds. A single native call never does
+unbounded work between budget checks, so steps bound wall-clock time too.
+Sizes are checked before allocation, and built values are limited in depth.
+Host lists are copied by index before built-ins touch them, so no host
+iterator, species hook, or method ever runs.
 
 ## Functions
 
@@ -92,7 +98,7 @@ The checker reads the declared types; the compiler dispatches on runtime kinds
 only when static types did not prove a single overload. Higher-order built-ins
 have a synchronous loop and an `async` variant used only when a lambda body
 awaits a host function. Host functions get deep argument validation and a
-result-kind check around every call.
+deep result check around every call; a mismatch is `HOST_CONTRACT`.
 
 ## Environments
 

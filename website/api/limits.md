@@ -1,18 +1,20 @@
 # Limits
 
-Every limit is on by default except `timeout`. The `limits` option of `bonsai()` changes the budgets. For `timeout` and `maxSteps`, `0` means no limit, and for `cacheSize` it disables the cache; for the other limits `0` rejects everything they bound.
+Every limit is on by default except `timeout`. The `limits` option of `bonsai()` changes the budgets. For `timeout` and `maxSteps`, `0` means no limit; every other limit must be a positive integer, and `bonsai()` throws a `RangeError` for an invalid value or a `TypeError` for an unknown limit name.
 
 | Limit | Default | Bounds |
 | --- | --- | --- |
 | `maxSourceLength` | 100000 | Expression length in UTF-16 code units. |
-| `maxDepth` | 128 | Syntactic nesting depth. |
-| `maxNodes` | 20000 | Syntax tree size (tokens are bounded at four times this). |
-| `maxSteps` | 1000000 | Work per evaluation: lambda calls and every element touched by equality, membership, concatenation, spread, templates, and built-ins. |
+| `maxDepth` | 128 | Syntactic nesting depth. Long chains of one operator (`a + b + c + ...`), `else if` style ladders (`a ? x : b ? y : ...`), and runs of `let` bindings do not use a level per link. |
+| `maxNodes` | 20000 | Syntax tree size (tokens are bounded at four times this). Checking and compiling are charged against this budget too. |
+| `maxSteps` | 1000000 | Work per evaluation. See [Steps](#steps). |
 | `maxStringLength` | 100000 | Length of any string an expression produces. |
 | `maxListLength` | 100000 | Length of any list an expression produces. |
-| `maxValueDepth` | 64 | Nesting walked by equality and templates. Cyclic data fails here instead of looping. |
+| `maxValueDepth` | 64 | Nesting of lists and maps an expression builds, and of values walked by equality, templates, and `unique`. Cyclic data fails here instead of looping. |
+| `maxPatternLength` | 4096 | Length of a regular expression pattern passed to `matches`. |
 | `timeout` | 0 (none) | Wall-clock milliseconds per evaluation. |
-| `cacheSize` | 256 | Compiled programs kept per environment for `env.evaluate*(source)`. `0` disables the cache. |
+
+The program cache is not a limit: its size is the top-level [`cacheSize`](/api/environment#options) option.
 
 ```ts
 import { bonsai } from 'bonsai-js'
@@ -40,16 +42,31 @@ const controller = new AbortController()
 await env.evaluate('xs.length', { xs: [] }, { timeout: 25, maxSteps: 1_000, signal: controller.signal }) // => 0
 ```
 
+## Steps
+
+The step budget is the main guarantee against expensive expressions. Every operation charges steps in proportion to its real worst-case cost, before it runs:
+
+- lambda calls, and every element touched by equality, membership, concatenation, spread, and templates;
+- characters scanned by text functions (`includes`, `indexOf`, `split`, `replace`, comparisons, and sorting of text), including the pattern and text of a search;
+- regular expressions, charged for compiling the pattern and for every step of the match;
+- sorting, charged per comparison and by the size of what is compared;
+- calendar and time zone functions (`startOfDay`, `addMonths`, `formatDate`, ...), which cost more than arithmetic;
+- the size of lists and maps an expression builds.
+
+No single operation can do unbounded work between checks, so the budget bounds time as well as work. At the default budget of 1,000,000 steps, ordinary expressions finish in about TODO(D1: typical ms) on Node, and the slowest expressions we know of finish or fail within about TODO(D1: worst-case ms).
+
+The step count is deterministic: the same expression over the same data always uses the same number of steps, whatever the machine or its load. That makes `maxSteps` the right limit for rejecting expensive expressions consistently. `timeout` is wall-clock time and varies with load; use it to bound time spent in your own host functions.
+
 ## Parse limits and evaluation limits
 
-Parse limits (`maxSourceLength`, `maxDepth`, `maxNodes`) are enforced before anything runs. `env.check()` reports them as a `LIMIT` diagnostic; `compile()` and `evaluate*()` throw a `BonsaiLimitError`.
+Parse limits (`maxSourceLength`, `maxDepth`, `maxNodes`) are enforced before anything runs, and they also bound the work of checking and compiling. `env.check()` reports them as a `LIMIT` diagnostic; `compile()` and `evaluate*()` throw a `BonsaiLimitError`.
 
-Evaluation limits are enforced while an expression runs. Sizes are checked before a string or list is allocated, so an expression cannot allocate a large value and fail afterwards. The step budget is deterministic: the same expression over the same data always uses the same number of steps, whatever the machine.
+Evaluation limits are enforced while an expression runs. Sizes are checked before a string or list is allocated, so an expression cannot allocate a large value and fail afterwards.
 
 ## What limits do not cover
 
-- **Host functions.** A synchronous host function that is already running cannot be interrupted; the timeout is checked when it returns. Give slow functions their own limits.
-- **Waiting on async host functions.** The timeout and signal stop the evaluation while it waits, but the underlying work (a network request, a query) continues unless your function cancels it.
+- **Host functions.** A synchronous host function that is already running cannot be interrupted; the timeout is checked when it returns. Give slow functions their own limits, and set `timeout` when expressions call them.
+- **Waiting on async host functions.** The timeout and signal stop the evaluation while it waits, but the underlying work (a network request, a query) continues unless your function cancels it. Each host call costs one step, so an expression can make many calls: batch expensive lookups in the host, or charge for them in your function.
 - **Getters and Proxies in the context.** They are your code and run when read.
 
 Limit errors are never caught by `try(...)` in an expression.

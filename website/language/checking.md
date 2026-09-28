@@ -7,9 +7,10 @@ Every expression is checked before it is evaluated. With declared variables the 
 Checking is gradual. A value whose type is unknown has type `any`, which is compatible with everything and is checked at run time instead. Values are `any` when they come from:
 
 - a variable in an open environment (no `variables` declared), or an undeclared variable in a non-strict environment;
-- a field of an open record (`t.record(...)`) or a field declared `t.any()`.
+- a field of an open record (`t.record(...)`) or a field declared `t.any()`;
+- `values()`, `entries()`, or a computed-key read on a declared object, since the value may carry keys the type does not list.
 
-Declare more to catch more. `strict: true` turns every undeclared variable into an error.
+Declare more to catch more. Declaring `variables` makes the environment strict, so every undeclared variable is an error; `strict: false` lets undeclared names read the context as `any`.
 
 ```ts
 import { bonsai, t, formatType, type BonsaiError } from 'bonsai-js'
@@ -27,7 +28,7 @@ const env = bonsai({
     }),
     items: t.list(t.object({ price: t.number(), qty: t.number() })),
   },
-  strict: true,
+  strict: true, // the default when variables are declared
 })
 formatType(env.check('items.map(.price * .qty).sum()').type!) // => "number"
 env.check('itemz.length').diagnostics[0].message // => 'Unknown variable "itemz"; did you mean "items"?'

@@ -17,8 +17,14 @@ put in the context (see §10).
 - Identifiers: `[A-Za-z_$][A-Za-z0-9_$]*`.
 - Reserved words: `true false null let in not`. After `.` any identifier or
   reserved word is a property name (`obj.in`).
-- Numbers: `42`, `3.14`, `1e-3`, `1_000`, `0xff`, `0b101`, `0o17`. A number
-  starts with a digit (`.5` is not a number). `_` only between digits.
+- Numbers: `42`, `3.14`, `1e-3`, `1_000`, `0xff`, `0xde_ad`, `0b101`, `0o17`. A
+  number starts with a digit (`.5` is not a number). `_` only between digits,
+  in any base.
+
+```bonsai
+0xde_ad // => 57005
+1_000 // => 1000
+```
 - Strings: `"..."` or `'...'`; escapes `\n \t \r \0 \\ \' \" \` \$ \xHH \uHHHH \u{H...}`.
 - Templates: `` `text ${expr} text` ``.
 - `|>` is reserved for a future release and is currently a syntax error.
@@ -29,16 +35,29 @@ put in the context (see §10).
 |---|---|
 | `null` | The single absent value. A missing property, a missing variable, and a host `undefined` all read as `null`. |
 | boolean | `true`, `false` |
-| number | IEEE-754 double. Operations that would produce `NaN` or `±Infinity` are errors. Host values that are already non-finite can be read and compared. |
+| number | IEEE-754 double. Operations never produce `NaN` or `±Infinity`: a computation that would is a `NON_FINITE` error. A non-finite host value can be read, compared with `==`, and passed to host functions; arithmetic, ordering (`sort`, `min`, `max`), and numeric built-ins on it are `NON_FINITE` errors. |
 | string | UTF-16 text. `length` and indices count UTF-16 code units. |
 | list | A host array or a produced list. Lists are never mutated. |
-| map | Any other host object, read through its **own** properties; object literals. |
+| map | A plain object or class instance, read through its **own** enumerable properties; object literals. A value may have more keys than its declared type lists. |
 | timestamp | A valid host `Date`, or one produced by `timestamp()`/`now()`. An invalid `Date` is an error when used. |
 | duration | A span of time, produced by `days(3)`, `hours(1)`, `t1 - t2`, ... |
 
-Functions, symbols, bigints, and other exotic host values are **opaque**: they
+Every other host value is **opaque**: functions, symbols, bigints, `Map`,
+`Set`, `WeakMap`, `WeakSet`, `RegExp`, promises and other thenables,
+`ArrayBuffer` and typed arrays, errors, and boxed primitives. An opaque value
 can be compared with `==` (by identity or primitive equality) and passed to
-host functions, but reading a property of one is an error.
+host functions, and `type()` returns `"opaque"` for it, but reading a property
+of one is a `TYPE_ERROR`.
+
+<!-- context: { lookup: new Map([["a", 1]]), big: Number.POSITIVE_INFINITY } -->
+```bonsai
+type(lookup) // => "opaque"
+lookup.a // error: TYPE_ERROR
+lookup == lookup // => true
+big == big // => true
+-big // error: NON_FINITE
+abs(big) // error: NON_FINITE
+```
 
 ## 3. Operators
 
@@ -70,7 +89,7 @@ comparisons (`a < b < c`, `a == b == c`).
 - primitives by strict equality (`1 == "1"` is `false`, `0 == -0` is `true`,
   host `NaN` is not equal to itself);
 - lists element-wise; maps by the same set of own enumerable keys with equal
-  values, in any order;
+  values, in any order (the comparison is symmetric);
 - timestamps by instant; durations by length;
 - values of different kinds are unequal (never an error).
 
@@ -149,21 +168,30 @@ in the function namespace.
   host's expressions.
 - Variables and functions are separate namespaces; call syntax decides.
 
-Passing `null` for an optional parameter uses its default.
+Passing `null` for an optional parameter uses its default, statically and at
+run time.
 
 `try(expr, fallback)` evaluates `expr` and, if it fails with an evaluation
-error (type error, invalid argument, host function failure), evaluates
-`fallback` instead. Limit errors (steps, size, timeout, cancellation) are never
-caught.
+error (type error, invalid argument, division by zero, a host function that
+throws), evaluates `fallback` instead. Limit errors (steps, size, timeout,
+cancellation) and `HOST_CONTRACT` errors (a host function that returned a
+value not matching its declaration) are never caught.
+
+`matches(text, pattern)` uses JavaScript regular expression syntax, as with
+the `u` flag, without backreferences or lookaround, which cannot run in linear
+time. A leading `(?i)` makes the match ignore ASCII case. Matching takes time
+linear in the pattern and text, and patterns are limited by
+`maxPatternLength`.
 
 ## 6. Lambdas
 
 Some parameters are declared as functions (`map`, `filter`, `sortBy`, ...).
 The argument for such a parameter is a lambda:
 
-```
-users.filter(u => u.age >= 18)
-orders.map((o, i) => `${i}: ${o.id}`)
+<!-- context: { users: [{ name: "Ada", age: 36, score: 12, bonus: 5, suspended: false }, { name: "Bo", age: 15, score: 20, bonus: 30, suspended: false }], orders: [{ id: "A1", promoSku: "X", lines: [{ sku: "X" }] }, { id: "B2", promoSku: "Z", lines: [{ sku: "Y" }] }], groups: [{ users: [{ active: true }, { active: false }] }], xs: [5, 12], rows: [[1, 2], [3, 4]] } -->
+```bonsai
+users.filter(u => u.age >= 18).map(u => u.name) // => ["Ada"]
+orders.map((o, i) => `${i}: ${o.id}`) // => ["0: A1", "1: B2"]
 ```
 
 **The implicit parameter `.`** is shorthand for the current item. The argument
@@ -171,20 +199,29 @@ for a function parameter that uses a free `.` becomes a one-parameter lambda.
 `.` binds to the **nearest enclosing argument whose parameter is a function**,
 skipping arguments of ordinary parameters:
 
+```bonsai
+users.filter(.age >= 18 && !.suspended).map(.name) // => ["Ada"]
+users.filter(.score > max(.bonus, 10)).map(.name) // => ["Ada"]
+users.map({ name: .name, adult: .age >= 18 }) // => [{ name: "Ada", adult: true }, { name: "Bo", adult: false }]
+groups.map(.users.filter(.active).length) // => [1]
+groups.map(filter(.users, .active).length) // => [1]
+xs.filter(10 < .) // => [12]
+rows.map(.[0]) // => [1, 3]
 ```
-users.filter(.age >= 18 && !.suspended)
-users.filter(.score > max(.bonus, 10))        // .bonus is the user's
-users.map({ name: .name, adult: .age >= 18 })
-groups.map(.users.filter(.active).length)     // .users: group, .active: user
-groups.map(filter(.users, .active))           // same meaning, prefix form
-xs.filter(10 < .)
-rows.map(.[0])
-```
+
+In `users.filter(.score > max(.bonus, 10))`, `.bonus` is the user's: `max`
+takes no function parameter, so `.` belongs to the `filter` lambda. In
+`groups.map(.users.filter(.active))`, `.users` is the group and `.active` a
+user.
 
 `.` directly inside an explicit lambda body is an error (name the parameter
 instead), and `.` with no enclosing function parameter is an error. To use an
 outer item from an inner lambda, name it:
-`orders.filter(o => o.lines.some(.sku == o.promoSku))`.
+
+```bonsai
+orders.filter(o => o.lines.some(.sku == o.promoSku)).map(.id) // => ["A1"]
+users.map(u => .age) // error: INVALID_LAMBDA
+```
 
 Lambdas are only valid as arguments for function parameters. A spread argument
 cannot be used in a call to a function that takes a function parameter.
@@ -194,9 +231,10 @@ soon as the result is known (`some`, `every`, `find`, ...).
 
 ## 7. Let bindings
 
-```
+<!-- context: { order: { items: [{ price: 40, qty: 2 }, { price: 30, qty: 1 }] } } -->
+```bonsai
 let total = order.items.map(.price * .qty).sum();
-total > 100 ? total * 0.9 : total
+total > 100 ? total * 0.9 : total // => 99
 ```
 
 A binding is visible in its body. A binding or lambda parameter may shadow a
@@ -210,8 +248,10 @@ context variable but not another binding or parameter.
   does not define (`{a: 1}.b`) is a check error rather than `null`. Computed keys must be strings or numbers (numbers become their
   decimal text). Spread takes a map (or `null`, which adds nothing). A duplicate
   static key is a syntax error; later computed/spread keys win.
-- Produced maps are ordinary objects with the keys in insertion order; blocked
-  keys are never present.
+- Produced maps are ordinary objects. Keys follow JavaScript property order:
+  integer-like keys (`"1"`, `"42"`) first in ascending order, then other keys
+  in insertion order. `keys()`, `values()`, and `entries()` use this order.
+  Blocked keys are never present.
 - Templates render `null` as empty text, numbers in shortest round-trip form,
   timestamps as ISO-8601, durations as ISO-8601 (`PT1H30M`). Lists and maps are
   a type error.
@@ -225,18 +265,31 @@ Calendar operations take an optional IANA time zone and default to UTC:
 
 ## 10. Guarantees and trust boundary
 
-- Evaluation terminates. Every operation that does work proportional to data
-  (equality, membership, concatenation, spread, templates, built-ins, lambda
-  calls) charges steps against `maxSteps`, and nesting is bounded by
-  `maxDepth`, including when comparing cyclic host data.
+- Evaluation terminates, and its work is bounded by the step budget. Every
+  operation charges `maxSteps` in proportion to its real worst-case cost
+  before it runs: lambda calls, equality, membership, concatenation, spread,
+  templates, text search, regular expression matching, sorting, calendar and
+  time zone calculations, and every other built-in. A single operation can
+  never do unbounded work. The step count is deterministic: the same
+  expression over the same data uses the same steps everywhere.
+- Checking and compiling are bounded by the parse limits (`maxSourceLength`,
+  `maxDepth`, `maxNodes`) and take time close to linear in the source.
 - Produced strings and lists are checked against `maxStringLength` and
-  `maxListLength` before they are allocated.
-- Built-ins never mutate inputs and never call functions found in data.
+  `maxListLength` before they are allocated. Lists and maps an expression
+  builds are limited to `maxValueDepth` levels of nesting, and building them
+  charges steps for their size, so any result is bounded by the budget.
+- Walking host data (equality, templates, `unique`, context validation) is
+  bounded by `maxValueDepth`, so cyclic data fails closed.
+- Built-ins never mutate inputs, never call functions found in data, and never
+  run host code on a receiver: host lists are read by index, never through
+  iterators, `Symbol.species`, or the receiver's methods.
 - Asynchronous host functions must be declared `async`. `evaluateSync` rejects
   an expression that calls one at check time, before any host code runs.
 - Property reads use the host object's own properties. A getter or Proxy the
   host put in the context is host code and runs when read; the language cannot
-  create one.
+  create one. If reading it throws, the failure is a `HOST_ERROR`.
+- Every error is a `BonsaiError` with a stable code; no other exception
+  escapes from checking or evaluating an expression.
 - Evaluation within one run is sequential: operands, arguments, and lambda
   invocations run left to right, one at a time, including in async mode.
 
@@ -244,7 +297,16 @@ Calendar operations take an optional IANA time zone and default to UTC:
 
 Checking is gradual. A value whose type is unknown (an undeclared variable in a
 non-strict environment, or data read from an open record) has type `any`, which
-is compatible with everything and is checked at runtime instead.
+is compatible with everything and is checked at runtime instead. An
+environment with declared variables is strict unless it sets `strict: false`.
+
+A declared object type lists the fields an expression may name. It does not
+promise that the value has no other keys: a database row can carry columns the
+type leaves out. The checker is sound under this reading. `values()`,
+`entries()`, and computed-key reads on a declared object include values of
+unknown type, a declared object is not accepted where a record of one value
+type (`t.record`) is expected, and a record is accepted for a declared object
+only when every field the record might lack is optional.
 
 - Errors: unknown variables (strict environments), unknown properties of closed
   records, unknown functions, calls that match no overload, operators applied to

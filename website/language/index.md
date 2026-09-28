@@ -35,11 +35,11 @@ The examples on these pages run with the clock fixed at `2026-01-15T10:30:00Z`.
 | number | `42`, `3.14`, `1e-3`, `0xff` | IEEE-754 doubles. Operations that would produce `NaN` or `Infinity` are errors. |
 | string | `"text"`, `'text'` | UTF-16 text. `length` and positions count code units, as in JavaScript. |
 | list | `[1, 2, 3]` | A host array or a list an expression produced. Lists are never mutated. |
-| map | `{ a: 1 }` | Any other host object, read through its own properties, and object literals. |
+| map | `{ a: 1 }` | A plain object or class instance, read through its own properties, and object literals. |
 | timestamp | `now()`, `timestamp("2026-01-01")` | A host `Date`, or one produced by `timestamp()` or `now()`. An invalid `Date` is an error when used. |
 | duration | `days(3)`, `hours(1)` | A span of time. Also the result of subtracting two timestamps. |
 
-Functions, symbols, bigints, and other exotic host values are **opaque**: they can be compared with `==` and passed to host functions, but reading a property of one is an error. Class instances and other objects are maps: an expression sees only their own properties, never members inherited from a prototype such as class methods.
+Functions, symbols, bigints, and built-in host objects such as `Map`, `Set`, `RegExp`, promises, typed arrays, and errors are **opaque**: they can be compared with `==` and passed to host functions, but reading a property of one is an error. Plain objects and class instances are maps: an expression sees only their own properties, never members inherited from a prototype such as class methods.
 
 `type(x)` returns the kind of any value as a string:
 

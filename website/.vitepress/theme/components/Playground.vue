@@ -438,9 +438,9 @@ onMounted(() => {
     const pos = exprInput.selectionStart
     const text = exprInput.value
     const result = service.complete(text, pos)
-    const typed = text.slice(result.from, pos)
+    const typed = text.slice(result.start, pos)
     // Only offer completions while a name or member is being typed.
-    const afterDot = /\??\.\s*$/.test(text.slice(0, result.from)) && !/\.\.\.\s*$/.test(text.slice(0, result.from))
+    const afterDot = /\??\.\s*$/.test(text.slice(0, result.start)) && !/\.\.\.\s*$/.test(text.slice(0, result.start))
     const items = result.items.filter((item) => item.label !== '.')
     if (
       items.length === 0 ||
@@ -451,8 +451,8 @@ onMounted(() => {
       return
     }
     acItems = items.slice(0, 12)
-    acFrom = result.from
-    acTo = result.to
+    acFrom = result.start
+    acTo = result.end
     acIndex = 0
     renderAutocomplete(typed)
   }

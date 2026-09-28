@@ -14,14 +14,17 @@ const env = bonsai(options?)
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `variables` | `Record<string, Type>` | none | Declared context variables and their [types](/api/types). Also types the context argument in TypeScript. |
-| `strict` | `boolean` | `false` | Report undeclared variables as errors. Without it, an undeclared variable reads the context and has type `any`. |
+| `strict` | `boolean` | `true` with `variables`, `false` without | Report undeclared variables as errors. With `strict: false`, an undeclared variable reads the context and has type `any`. |
 | `functions` | `Record<string, HostFunction>` | none | [Host functions](/api/host-functions) by name, created with `fn()`. A host function replaces a built-in of the same name. |
 | `libraries` | `Library[]` | none | Bundles of host functions and variables. A function name defined twice is an error. |
-| `limits` | `Limits` | all on | Resource limits and the cache size. See [Limits](/api/limits). |
+| `limits` | `Limits` | all on | Resource limits. See [Limits](/api/limits). |
+| `cacheSize` | `number` | `256` | Compiled programs kept for `env.evaluate*(source)`, by source text. `0` disables the cache. |
 | `clock` | `() => Date` | system clock | The source of `now()`, read once per evaluation. |
 | `validateContext` | `boolean` | `false` | Check the context against the declared variable types before every evaluation. |
 
-Without `variables` an environment is **open**: every identifier reads the context and is typed `any`. With `variables`, the checker knows their types; add `strict: true` to reject anything undeclared.
+Without `variables` an environment is **open**: every identifier reads the context and is typed `any`. With `variables`, the environment is **strict**: the checker knows the declared types and rejects any other name. Set `strict: false` to declare some variables and still let undeclared names read the context as `any`.
+
+Unknown option names and invalid values (a limit out of range, a type that is not a `t` type, a malformed host function) make `bonsai()` throw a `TypeError` or `RangeError` immediately.
 
 ```ts
 import { bonsai, t } from 'bonsai-js'
@@ -31,7 +34,7 @@ open.evaluateSync('a + b', { a: 1, b: 2 }) // => 3
 
 const typed = bonsai({
   variables: { a: t.number(), b: t.number() },
-  strict: true,
+  strict: true, // the default when variables are declared
   clock: () => new Date('2026-01-15T10:30:00Z'),
 })
 typed.evaluateSync('a + b', { a: 1, b: 2 }) // => 3
@@ -41,7 +44,7 @@ typed.check('c').ok // => false
 
 ## Validating the context
 
-The checker trusts the declared types: it assumes the context you pass matches them. If the context comes from somewhere you do not control (a JSON body, a database column), set `validateContext: true`. Every evaluation then checks the declared variables deeply before running and fails with `INVALID_CONTEXT`, naming the first path that does not match. The check is proportional to the size of the data, so leave it off when the context is built by your own typed code.
+The checker trusts the declared types: it assumes the context you pass matches them. A declared object type lists the fields expressions may use, and the value may have more keys (a row with extra columns is valid); the checker accounts for that, and validation accepts extra keys. If the context comes from somewhere you do not control (a JSON body, a database column), set `validateContext: true`. Every evaluation then checks the declared variables deeply before running and fails with `INVALID_CONTEXT`, naming the first path that does not match. The check is proportional to the size of the data, so leave it off when the context is built by your own typed code.
 
 <!-- continue -->
 ```ts

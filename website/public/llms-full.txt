@@ -2,7 +2,7 @@
 
 Bonsai (`bonsai-js` on npm) is a small, total, typed expression language for JavaScript. It evaluates untrusted expression text against host data without executing JavaScript. Every expression terminates: there are no loops, recursion, or assignment. An expression reaches host code only through functions the host declared and data the host put in the context.
 
-Entry points: `bonsai-js` (environment, types, errors) and `bonsai-js/service` (editor features). ESM only, zero dependencies. Runtimes: Node.js 24+, current Bun, modern ESM browsers.
+Entry points: `bonsai-js` (environment, types, errors) and `bonsai-js/service` (editor features). ESM only, zero dependencies. Runtimes: Node.js 22+, current Bun, modern ESM browsers.
 
 ## Quick start
 
@@ -14,7 +14,6 @@ const env = bonsai({
     customer: t.object({ tier: t.enum('standard', 'gold'), email: t.optional(t.string()) }),
     cart: t.object({ items: t.list(t.object({ price: t.number(), qty: t.number() })) }),
   },
-  strict: true,
 })
 
 env.check('customer.teir == "gold"').ok // false: UNKNOWN_PROPERTY, did you mean "tier"?
@@ -29,14 +28,14 @@ env.evaluateSync('customer.email ?? "no email"', ctx) // one-off evaluation, com
 
 - `null`: the single absent value. Missing properties, missing variables, and host `undefined` read as `null`.
 - boolean, number (IEEE-754 double; NaN/Infinity results are errors), string (UTF-16; `length` counts code units).
-- list (host arrays, never mutated), map (other host objects via own properties; object literals).
+- list (host arrays, read by index, never mutated), map (plain objects and class instances via own enumerable properties; object literals). A value may have more keys than its declared type lists. Keys follow JavaScript property order: integer-like keys first, ascending, then insertion order.
 - timestamp (a host `Date`, `now()`, `timestamp("2026-01-01T00:00:00Z")`), duration (`days(3)`, `t1 - t2`).
-- Functions, symbols, bigints are opaque: comparable with `==`, not readable.
+- Opaque: functions, symbols, bigints, and built-in host objects (`Map`, `Set`, `WeakMap`, `WeakSet`, `RegExp`, promises and thenables, `ArrayBuffer` and typed arrays, errors, boxed primitives). Comparable with `==` and passable to host functions; reading a property is a `TYPE_ERROR`.
 - `type(x)` returns "null", "boolean", "number", "string", "list", "map", "timestamp", "duration", or "opaque".
 
 ## Syntax
 
-- Literals: `42`, `3.14`, `1e-3`, `1_000`, `0xff`, `0b101`, `0o17` (a number starts with a digit: `.5` is invalid), `"text"`, `'text'`, `true`, `false`, `null`, `[1, ...rest]`, `{ a: 1, "b-c": 2, [key]: 3, ...other, name }`.
+- Literals: `42`, `3.14`, `1e-3`, `1_000`, `0xff`, `0xde_ad`, `0b101`, `0o17` (a number starts with a digit: `.5` is invalid), `"text"`, `'text'`, `true`, `false`, `null`, `[1, ...rest]`, `{ a: 1, "b-c": 2, [key]: 3, ...other, name }`.
 - Comments: `// line` and `/* block */`.
 - Templates: `` `Hello ${name}` ``. `null` renders as empty text, timestamps and durations as ISO-8601, lists and maps are a type error.
 - Reserved: `true false null let in not`. `has(...)` and `try(...)` are special forms. `|>` is reserved and is a syntax error.
@@ -86,7 +85,7 @@ Syntax errors instead of silent groupings: `??` mixed with `&&`/`||` without par
 ## let, try, has
 
 - `let total = items.map(.price * .qty).sum(); total > 100 ? total * 0.9 : total`. Bindings may shadow context variables, not other bindings.
-- `try(expr, fallback)` catches evaluation errors (type errors, invalid arguments, division by zero, host failures), never syntax, check, or limit errors.
+- `try(expr, fallback)` catches evaluation errors (type errors, invalid arguments, division by zero, host functions that throw), never syntax, check, or limit errors, and never `HOST_CONTRACT`.
 
 ## Time
 
@@ -94,18 +93,18 @@ Timestamps are instants; durations are exact (a day is 24 hours). Calendar funct
 
 ## Static checking
 
-Gradual: unknown values are `any` (open environments, undeclared variables in non-strict environments, open records). Errors: `UNKNOWN_VARIABLE` (strict), `UNKNOWN_PROPERTY` (closed records and map literals), `UNKNOWN_FUNCTION`, `NO_OVERLOAD`, `TYPE_ERROR`, `NULLABLE_RECEIVER`, `INVALID_LAMBDA`, `BLOCKED_PROPERTY`, `EXPECTED_TYPE`, `INVALID_ARGUMENT`, plus `SYNTAX` and `LIMIT` from `check()`. Warnings (severity "warning", code `TYPE_ERROR`): comparisons that can never hold, ordering comparisons with possibly-null values, `??` on never-null values, lambdas that may return null where a boolean is expected.
+Gradual: unknown values are `any` (open environments, undeclared variables in non-strict environments, open records, and `values()`/`entries()`/computed reads on declared objects, which may carry extra keys). Declaring `variables` makes an environment strict unless `strict: false`. Errors: `UNKNOWN_VARIABLE` (strict), `UNKNOWN_PROPERTY` (closed records and map literals), `UNKNOWN_FUNCTION`, `NO_OVERLOAD`, `TYPE_ERROR`, `NULLABLE_RECEIVER`, `INVALID_LAMBDA`, `BLOCKED_PROPERTY`, `EXPECTED_TYPE`, `INVALID_ARGUMENT`, plus `SYNTAX` and `LIMIT` from `check()`. Warnings (severity "warning"): `ALWAYS_FALSE` (comparisons that can never hold), `MAYBE_NULL` (ordering comparisons with possibly-null values, lambdas that may return null where a boolean is expected), `NEVER_NULL` (`??` on never-null values).
 
 ## API
 
 ### bonsai(options) -> Environment
 
-Options: `variables` (Record of types), `strict` (undeclared variables are errors), `functions` (host functions), `libraries` (`{ name, functions?, variables? }[]`, duplicate names are errors), `limits`, `clock` (`() => Date`), `validateContext` (check the context against declared types before each evaluation; fails with `INVALID_CONTEXT`).
+Options: `variables` (Record of types), `strict` (undeclared variables are errors; default true when `variables` is given), `functions` (host functions), `libraries` (`{ name, functions?, variables? }[]`, duplicate names are errors), `limits`, `cacheSize` (compiled programs cached, default 256), `clock` (`() => Date`), `validateContext` (check the context against declared types before each evaluation; fails with `INVALID_CONTEXT`).
 
 Environment members:
 - `check(src, { expect? })` -> `{ ok, type, diagnostics }`; never throws.
 - `compile(src, { expect? })` -> Program; throws `BonsaiSyntaxError`, `BonsaiCheckError`, `BonsaiLimitError`.
-- `evaluateSync(src, ctx?, options?)`, `evaluate(src, ctx?, options?)`: compile through an LRU cache (`limits.cacheSize`, default 256) and evaluate.
+- `evaluateSync(src, ctx?, options?)`, `evaluate(src, ctx?, options?)`: compile through an LRU cache (`cacheSize`, default 256) and evaluate.
 - `extend(options)` -> new environment with more variables/functions/libraries.
 - `listFunctions()`, `describeFunction(name)` -> `{ name, description, host, async, signatures: [{ params, required, rest?, returns }] }`.
 - `parse(src)` -> syntax tree; `variables`; `strict`.
@@ -124,14 +123,14 @@ fn({
   required: 1, // later parameters are optional, must be nullable, and arrive as null when omitted
   rest: t.number(), // optional variadic type
   returns: t.boolean(),
-  async: false, // true: run returns a promise; evaluateSync rejects the expression with ASYNC_IN_SYNC
+  async: false, // true: run returns a promise; evaluateSync rejects the expression with ASYNC_IN_SYNC; a promise from a non-async function is HOST_CONTRACT
   context: false, // true: run(ctx, ...args)
   description: 'Shown in listFunctions and editor hovers',
   run: (name, count) => true,
 })
 ```
 
-Arguments are validated before `run`; results are checked against `returns` (`HOST_ERROR` otherwise); exceptions become `HOST_ERROR` with `cause`. `withContext<Ctx>()` returns an `fn` variant whose `run` receives a typed context.
+Arguments are validated before `run`; results are checked deeply against `returns` (`HOST_CONTRACT` otherwise, not caught by `try`); exceptions become `HOST_ERROR` with `cause`. `withContext<Ctx>()` returns an `fn` variant whose `run` receives a typed context.
 
 ### Types (t)
 
@@ -139,27 +138,27 @@ Arguments are validated before `run`; results are checked against `returns` (`HO
 
 ### Errors
 
-All errors extend `BonsaiError` with `code`, `source`, `span`, `position` (1-based), `formatted` (message + code frame).
+All errors from checking and evaluating extend `BonsaiError` with `code`, `source`, `span` (`{ start, end }`), `position` (1-based), `formatted` (message + code frame); exceptions from host code (functions, getters, Proxies) are wrapped as `HOST_ERROR`. Invalid configuration throws `TypeError` or `RangeError` from `bonsai()` and `fn()`.
 - `BonsaiSyntaxError`: `SYNTAX`
 - `BonsaiCheckError`: `CHECK` (`.diagnostics`)
 - `BonsaiLimitError`: `SOURCE_TOO_LONG`, `TOO_DEEP`, `TOO_MANY_NODES`, `STEP_LIMIT`, `STRING_LIMIT`, `LIST_LIMIT`, `TIMEOUT`, `ABORTED`
-- `BonsaiRuntimeError`: `TYPE_ERROR`, `NO_OVERLOAD`, `NULL_RECEIVER`, `DIVISION_BY_ZERO`, `NON_FINITE`, `BLOCKED_PROPERTY`, `INVALID_ARGUMENT`, `ASYNC_IN_SYNC`, `HOST_ERROR`, `INVALID_CONTEXT`
+- `BonsaiRuntimeError`: `TYPE_ERROR`, `NO_OVERLOAD`, `NULL_RECEIVER`, `DIVISION_BY_ZERO`, `NON_FINITE`, `BLOCKED_PROPERTY`, `INVALID_ARGUMENT`, `ASYNC_IN_SYNC`, `HOST_ERROR`, `HOST_CONTRACT`, `INVALID_CONTEXT`
 
 ### Limits (defaults)
 
-`maxSourceLength` 100000, `maxDepth` 128, `maxNodes` 20000, `maxSteps` 1000000 (0 disables), `maxStringLength` 100000, `maxListLength` 100000, `maxValueDepth` 64, `timeout` 0 (none), `cacheSize` 256.
+`maxSourceLength` 100000, `maxDepth` 128, `maxNodes` 20000, `maxSteps` 1000000 (0 disables; charged by the real cost of each operation, deterministic), `maxStringLength` 100000, `maxListLength` 100000, `maxValueDepth` 64 (values built or walked), `maxPatternLength` 4096 (regex patterns), `timeout` 0 (none).
 
 ### Language service (bonsai-js/service)
 
-`createLanguageService(env)` -> `{ complete(src, offset), hover(src, offset), diagnostics(src) }`. `complete` returns `{ from, to, items: [{ label, kind, detail, documentation?, insertText }] }` with kinds `variable`, `local`, `property`, `function`, `method`, `keyword`. It never evaluates or calls host functions.
+`createLanguageService(env)` -> `{ complete(src, offset), hover(src, offset), diagnostics(src) }`. `complete` returns `{ start, end, items: [{ label, kind, detail, documentation?, insertText }] }` with kinds `value`, `variable`, `local`, `property`, `function`, `method`, `keyword`. It never evaluates or calls host functions.
 
 ## Security model
 
-Expression text is untrusted; context data and host functions are trusted. Expressions cannot run code, reach prototypes or globals, call functions found in data, trigger conversion hooks, mutate data, or run unbounded. Host functions run with full privileges and cannot be interrupted while running synchronously; getters and Proxies in the context run when read. Declared types are not access control: `keys()`, `values()`, `entries()`, and dynamic indexing read every own property of the data passed in.
+Expression text is untrusted; context data and host functions are trusted. Expressions cannot run code, reach prototypes or globals, call functions found in data, trigger conversion hooks, mutate data, or run unbounded: the step budget charges every operation for its real cost, including text search, regular expressions, sorting, and time zone math. Built-ins never run host code on receivers (no iterators, species, or methods). Host functions run with full privileges and cannot be interrupted while running synchronously; getters and Proxies in the context run when read. Declared types are not access control: `keys()`, `values()`, `entries()`, and dynamic indexing read every own property of the data passed in.
 
 ## Migrating from 0.x
 
-`a |> f(b)` -> `a.f(b)`; `upper`/`lower` -> `toUpperCase`/`toLowerCase`; `flatten` -> `flat`; stdlib plugins -> built in; `addFunction` -> `functions: { name: fn({...}) }`; `addContextFunction` -> `fn({ context: true, ... })`; `validate()` -> `check()`; `evaluateExpression` -> `bonsai().evaluateSync`; `allowedProperties` -> pass only the data expressions may read; `x == null` now includes missing values; `&&`/`||` are strict booleans (use `??` for defaults).
+`a |> f(b)` -> `a.f(b)`; `upper`/`lower` -> `toUpperCase`/`toLowerCase`; `flatten` -> `flat`; stdlib plugins -> built in; `addFunction` -> `functions: { name: fn({...}) }`; `addContextFunction` -> `fn({ context: true, ... })`; `validate()` -> `check()`; `evaluateExpression` -> `bonsai().evaluateSync`; `allowedProperties` -> pass only the data expressions may read; `x == null` now includes missing values; `&&`/`||` are strict booleans (use `??` for defaults). Results that changed silently: `round` rounds halves away from zero and honors digits; `avg([])` is null; `unique` compares by value; templates render null as empty text and dates as ISO-8601; `toNumber` of invalid text is an error; division and remainder by zero are errors. Requires Node.js 22+. Full guide: https://danfry1.github.io/bonsai-js/guide/migrating
 
 ## Built-in functions
 
@@ -187,7 +186,7 @@ Every built-in is callable as `f(x, ...)` or `x.f(...)`. `?` marks an optional p
 - padEnd(string, number, string?): string: Pads text at the end to a length.
 - repeat(string, number): string: Repeats text a number of times.
 - at(string, number): string | null: The item or character at a position; negative positions count from the end.
-- matches(string, string): boolean: Whether text contains a match for a regular expression (RE2 syntax, linear time; anchor with ^ and $; prefix (?i) to ignore case).
+- matches(string, string): boolean: Whether text contains a match for a regular expression (JavaScript syntax as with the u flag, without backreferences or lookaround; linear time; anchor with ^ and $; prefix (?i) to ignore case).
 - toString(string | number | boolean | null | timestamp | duration): string: Renders a value as text, as a template would.
 - toNumber(string | number): number: Parses text as a number.
 

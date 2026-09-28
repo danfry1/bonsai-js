@@ -2,7 +2,7 @@
 
 # Maps and Values
 
-Functions over maps, and functions that inspect any value.
+Functions over maps, and functions that inspect any value. Keys are listed in JavaScript property order: integer-like keys first, ascending, then the other keys in the order they were added.
 
 Every function can be called as `f(x, ...)` or as a method, `x.f(...)`. In the signatures, `T` and `U` stand for any type, `T[]` is a list, `?` marks an optional parameter, and `(T, number) => boolean` is a lambda parameter.
 

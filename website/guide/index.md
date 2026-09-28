@@ -18,7 +18,7 @@ Throughout this site, `// => value` after an expression shows its result.
 - **Safety by construction.** No globals, no prototype access, no calling functions found in data, no conversion hooks, no mutation. Every evaluation terminates and is bounded by a step budget, size limits, an optional timeout, and an `AbortSignal`.
 - **Speed.** Expressions compile once to closures (no `eval`, safe under a strict Content Security Policy) and are cached per environment.
 - **Editor support.** A language service in `bonsai-js/service` provides completions, hover, and diagnostics without evaluating anything.
-- **No dependencies.** Runs in Node.js 24 and newer, current Bun, and modern ESM browsers.
+- **No dependencies.** Runs in Node.js 22 and newer, current Bun, and modern ESM browsers.
 
 ## What it is not
 

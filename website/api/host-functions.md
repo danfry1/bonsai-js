@@ -25,7 +25,7 @@ env.evaluateSync('(200).discount(0.25)') // => 150
 | Field | Type | Description |
 | --- | --- | --- |
 | `params` | `Type[]` | Parameter types, in order. The types of `run`'s arguments are inferred from them. |
-| `returns` | `Type` | The declared result type. The result is checked against it at run time. |
+| `returns` | `Type` | The declared result type. The result is checked deeply against it at run time. |
 | `run` | function | The implementation. |
 | `required` | `number` | How many leading parameters are required (default: all). Missing optional arguments arrive as `null`, so optional parameters must be declared with `t.optional(...)`. |
 | `rest` | `Type` | The type of further variadic arguments. |
@@ -36,22 +36,33 @@ env.evaluateSync('(200).discount(0.25)') // => 150
 ## What Bonsai guarantees around your function
 
 - **Checked calls.** The checker rejects calls whose arguments do not match `params` (`NO_OVERLOAD`) before anything runs. At run time, arguments are validated before `run` is called, so `run` only ever receives values of the declared types.
-- **Checked results.** A result that does not conform to `returns` (checked deeply, against the step budget) is a `HOST_CONTRACT` error, so a bug in your function cannot leak an unexpected value into the expression. `try(...)` does not recover from it: it is a bug in the host, not a condition the expression should handle.
+- **Checked results.** A result that does not match `returns` (checked deeply, through lists and maps) is a `HOST_CONTRACT` error, so a bug in your function cannot leak an unexpected value into the expression. So is a promise returned by a function not declared `async`. `try(...)` never catches `HOST_CONTRACT`: it signals a bug in host code, not a condition the expression should hide.
 - **Wrapped failures.** An exception thrown by `run` becomes a `BonsaiRuntimeError` with code `HOST_ERROR` and the original error as its `cause`. Expressions can recover from it with `try(...)`.
 
 <!-- continue -->
 ```ts
 env.check('discount("a", 1)').diagnostics[0].code // => "NO_OVERLOAD"
 
-const strict = bonsai({
+const guarded = bonsai({
   functions: {
-    broken: fn({ params: [], returns: t.number(), run: () => 'oops' as unknown as number }),
     failing: fn({ params: [], returns: t.number(), run: () => { throw new Error('service down') } }),
   },
 })
-strict.evaluateSync('broken()') // throws: HOST_CONTRACT
-strict.evaluateSync('failing()') // throws: HOST_ERROR
-strict.evaluateSync('try(failing(), -1)') // => -1
+guarded.evaluateSync('failing()') // throws: HOST_ERROR
+guarded.evaluateSync('try(failing(), -1)') // => -1
+```
+
+<!-- continue -->
+```ts
+const broken = bonsai({
+  functions: {
+    wrongType: fn({ params: [], returns: t.number(), run: () => 'oops' as unknown as number }),
+    wrongShape: fn({ params: [], returns: t.list(t.number()), run: () => ['a'] as unknown as number[] }),
+  },
+})
+broken.evaluateSync('wrongType()') // throws: HOST_CONTRACT
+broken.evaluateSync('wrongShape()') // throws: HOST_CONTRACT
+broken.evaluateSync('try(wrongType(), -1)') // throws: HOST_CONTRACT
 ```
 
 ## Optional and variadic parameters
@@ -147,9 +158,9 @@ await fx.evaluate('amounts.map(.value * fxRate(.currency)).sum()', {
 fx.evaluateSync('fxRate("EUR")') // throws: ASYNC_IN_SYNC
 ```
 
-Calls run one at a time, left to right, in async mode too: an expression cannot start several host calls concurrently.
+Calls run one at a time, left to right, in async mode too: an expression cannot start several host calls concurrently. If a function reaches a network or database, prefetch the data into the context or batch inside your function.
 
-A function that is not declared `async` must not return a promise; doing so is an `ASYNC_IN_SYNC` error.
+A function that is not declared `async` must not return a promise; doing so is a `HOST_CONTRACT` error.
 
 ## Replacing built-ins
 
