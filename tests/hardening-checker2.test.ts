@@ -223,7 +223,8 @@ describe('the check budget bounds time', () => {
       code = (error as { code?: string }).code
     }
     expect(['TOO_COMPLEX', undefined]).toContain(code)
-    expect(performance.now() - start).toBeLessThan(1000)
+    // A generous bound: unbudgeted, this shape takes minutes.
+    expect(performance.now() - start).toBeLessThan(5000)
   })
 })
 

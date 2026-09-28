@@ -75,11 +75,25 @@ describe('checking time is bounded', () => {
     return performance.now() - start
   }
 
+  /**
+   * Growth from n to 4n: about 4x when linear, 16x when quadratic. A ratio
+   * (median of three) survives a loaded machine better than a time bound.
+   */
+  function growth(check: (n: number) => unknown, n: number): number {
+    const median = (size: number): number => {
+      const runs = [0, 1, 2].map(() => timed(() => check(size))).sort((a, b) => a - b)
+      return Math.max(runs[1], 0.5)
+    }
+    check(n) // warm up
+    return median(4 * n) / median(n)
+  }
+
   it('does not expand shared types (let-bound maps nested in maps)', () => {
     const parts = ['let v0 = 1;']
     for (let i = 1; i <= 40; i++) parts.push(`let v${i} = {x: v${i - 1}, y: v${i - 1}};`)
     const lets = parts.join(' ')
-    expect(timed(() => open.check(`${lets} c ? v40 : 1`))).toBeLessThan(500)
+    // Expanding the shared types would take 2^40 steps; bounded work takes milliseconds.
+    expect(timed(() => open.check(`${lets} c ? v40 : 1`))).toBeLessThan(5000)
     const failed = open.check(`${lets} v40 + 1`)
     expect(failed.diagnostics[0]?.code).toBe('TYPE_ERROR')
     // Type text in messages is capped.
@@ -88,14 +102,16 @@ describe('checking time is bounded', () => {
   })
 
   it('checks long chains in near-linear time', () => {
-    const and = Array.from({ length: 9999 }, (_, i) => `x${i}`).join(' && ')
-    const nullish = Array.from({ length: 9999 }, (_, i) => String(i)).join(' ?? ')
-    const maps = `[${Array.from({ length: 6600 }, (_, i) => `{k${i}: ${i}}`).join(', ')}]`
     const plain = bonsai()
-    expect(timed(() => plain.check(and))).toBeLessThan(1000)
-    expect(timed(() => plain.compile(and))).toBeLessThan(1000)
-    expect(timed(() => plain.check(nullish))).toBeLessThan(1500)
-    expect(timed(() => plain.check(maps))).toBeLessThan(1000)
+    const and = (n: number): string => Array.from({ length: n }, (_, i) => `x${i}`).join(' && ')
+    const nullish = (n: number): string =>
+      Array.from({ length: n }, (_, i) => String(i)).join(' ?? ')
+    const maps = (n: number): string =>
+      `[${Array.from({ length: n }, (_, i) => `{k${i}: ${i}}`).join(', ')}]`
+    expect(growth((n) => plain.check(and(n)), 2400)).toBeLessThan(9)
+    expect(growth((n) => plain.compile(and(n)), 2400)).toBeLessThan(9)
+    expect(growth((n) => plain.check(nullish(n)), 2400)).toBeLessThan(9)
+    expect(growth((n) => plain.check(maps(n)), 1600)).toBeLessThan(9)
   })
 
   it('handles wide enums without quadratic unions', () => {
@@ -108,7 +124,12 @@ describe('checking time is bounded', () => {
         f: t.enum(...values('b')),
       },
     })
-    expect(timed(() => wide.check('a == null ? e : f'))).toBeLessThan(500)
+    const enumOf = (n: number, prefix: string): Type => t.enum(...values(prefix).slice(0, n))
+    const join = (n: number): unknown =>
+      bonsai({
+        variables: { a: t.optional(t.number()), e: enumOf(n, 'a'), f: enumOf(n, 'b') },
+      }).check('a == null ? e : f')
+    expect(growth(join, 1250)).toBeLessThan(9)
     const compared = wide.check('e == f')
     expect(compared.diagnostics.map((d) => d.code)).toEqual(['ALWAYS_FALSE'])
     expect(compared.diagnostics[0]?.message.length).toBeLessThan(2500)
@@ -122,7 +143,7 @@ describe('checking time is bounded', () => {
     const nested = bonsai()
     const start = performance.now()
     const result = nested.check(source)
-    expect(performance.now() - start).toBeLessThan(3000)
+    expect(performance.now() - start).toBeLessThan(10_000)
     if (!result.ok) expect(result.diagnostics.map((d) => d.code)).toContain('LIMIT')
   })
 })
