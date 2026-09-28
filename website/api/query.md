@@ -22,7 +22,7 @@ const { filter: mongoFilter, options } = toMongo(filter, { row: 'order', fields:
 - A filter is an expression over one record variable (`row`). Every other variable must be in `known`, which is applied by [partial evaluation](./partial) before translating; a variable that is neither is rejected, so a misspelled `row` cannot silently read as null.
 - The query selects **exactly** the records for which the filter evaluates to `true` in Bonsai. Records for which it would fail (for example calling `startsWith` on a null field) are excluded, as `try(filter, false)` would.
 - SQL's three-valued `NULL` logic is converted to Bonsai's: `x != "a"` includes rows where `x` is `NULL`, comparisons with `NULL` are false, and `!` of a failing condition stays excluded. The returned SQL is true for the selected rows and may be `NULL` for the others, so negate a filter by translating `!(filter)`, not by wrapping the SQL in `NOT`.
-- This is verified by differential tests that run random filters over random rows in real SQLite, real Postgres (PGlite), and a MongoDB query engine, and compare the selected records with Bonsai's evaluation.
+- This is verified by differential tests that run random filters over random rows and compare the selected records with Bonsai's evaluation: in SQLite and PGlite on every run, and against Postgres 13 and 17 (through `pg` and `postgres`) and MongoDB 8.0 (through the official driver) with `bun run test:servers`.
 
 ## Columns
 
@@ -40,10 +40,10 @@ Use `{ type, name }` when the column (or MongoDB field path) differs from the ke
 The types are part of the contract, and results are exact only when the data keeps it:
 
 - Number columns hold finite values, never `NaN` or infinities (Bonsai and the databases order them differently). Postgres `int8` and `numeric` are compared as `float8`, which matches Bonsai when your application reads them as JavaScript numbers.
-- SQLite databases use UTF-8 (the default), tables are `STRICT`, and boolean columns hold only 0 or 1 (`CHECK (active IN (0, 1))`).
-- MongoDB fields hold the declared scalar types, not arrays, and the objects on the way to a nested key exist.
+- SQLite databases use UTF-8 (the default), tables are `STRICT`, text columns use the default `BINARY` collation (not `NOCASE`), and boolean columns hold only 0 or 1 (`CHECK (active IN (0, 1))`).
+- MongoDB fields hold the declared scalar types, not arrays, and the objects on the way to a nested key exist. Numbers are doubles, 32-bit integers, or 64-bit integers within ±2^53; `Decimal128` values compare differently from Bonsai's doubles.
 
-Invalid options (an unknown `dialect` or column type, a missing `row`, an invalid column name) throw a `TypeError`.
+Invalid options (an unknown `dialect` or column type, a missing `row`, the row variable in `known`, an invalid column name) throw a `TypeError`.
 
 ## What translates
 
@@ -64,7 +64,7 @@ Anything else throws a `BonsaiTranslationError` (code `UNTRANSLATABLE`) with the
 
 A failing `&&` or `||` repeats part of its left side in the query, so deeply nested filters grow quickly; a translation larger than 1,000,000 characters of SQL or 100,000 MongoDB filter nodes is rejected, as is one needing more parameters than the database accepts (65,535 in Postgres, 32,766 in SQLite).
 
-A filter that fails whatever the record is (say `limit / 0 > 1` with `limit` known) throws that `BonsaiRuntimeError` instead of translating to a query that selects nothing.
+A filter that fails whatever the record is (say `limit / 0 > 1` with `limit` known) throws that `BonsaiRuntimeError` instead of translating to a query that selects nothing. The environment's runtime limits (`maxSteps`, `timeout`) apply to translating, not to the database: a filter that would exceed them per record in Bonsai (for example over a known list of millions of items) still matches rows in the database.
 
 ## Indexes
 
@@ -85,7 +85,7 @@ Translated conditions are plain comparisons wherever Bonsai's semantics allow, s
 | `now` | both | The time `now()` returns |
 | `paramOffset` | SQL | Parameters already used, so numbering (`$n`, `?n`) continues |
 
-Parameters are always numbered (`$1` in Postgres, `?1` in SQLite) because a translated condition can repeat a sub-expression. In Postgres, a known list is one array parameter (`= ANY($1::text[])`), which drivers such as `pg`, `postgres`, and PGlite send as an array.
+Parameters are always numbered (`$1` in Postgres, `?1` in SQLite) because a translated condition can repeat a sub-expression. In Postgres, a known list of text, numbers, or timestamps is one array parameter (`= ANY($1::text[])`), which drivers such as `pg`, `postgres`, and PGlite send as an array.
 
 ## Caveats
 
