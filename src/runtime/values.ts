@@ -111,30 +111,6 @@ export function isMap(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null || isOtherMap(value, proto)
 }
 
-/**
- * The cheap shape test member reads use first: an object that is not a list,
- * timestamp, or duration. Opaque built-ins pass it; a read that finds no own
- * property then checks for them (see {@link missingMember}), so the hot path
- * pays nothing for the rare case.
- */
-export function isRecordLike(value: unknown): value is Record<string, unknown> {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    !Array.isArray(value) &&
-    !(value instanceof Date) &&
-    !(value instanceof Duration)
-  )
-}
-
-/** A member read found no own property: null for a map, an error for an opaque value. */
-export function missingMember(object: object, name: string, s: State, at: Span): null {
-  if (isOpaqueObject(object)) {
-    throw s.error('TYPE_ERROR', `Cannot read property "${name}" of ${describeKind(object)}`, at)
-  }
-  return null
-}
-
 /** Class instances are maps; lists, timestamps, durations, and opaque built-ins are not. */
 function isOtherMap(value: object, proto: unknown): boolean {
   if (Array.isArray(value) || value instanceof Date || value instanceof Duration) return false
@@ -200,8 +176,8 @@ export function readMember(object: unknown, name: string, s: State, at: Span): u
   if (typeof object === 'object') {
     if (Array.isArray(object)) {
       if (name === 'length') return object.length
-    } else if (isRecordLike(object)) {
-      if (!hasOwn(object, name)) return missingMember(object, name, s, at)
+    } else if (isMap(object)) {
+      if (!hasOwn(object, name)) return null
       const value = object[name]
       return value === undefined ? null : value
     }

@@ -82,7 +82,7 @@ comparison, regular expression compilation and matching, sorting, calendar and
 time zone calculations, and the size of lists and maps an expression builds. A
 single native operation never runs unbounded between budget checks, so the
 budget bounds wall-clock time as well as work: at the default budget, any
-expression finishes or fails within about TODO(D1: worst-case ms) on Node.
+expression finishes or fails within about 100 ms on Node.
 Sizes are checked before allocation. Values an expression builds are limited to
 `maxValueDepth` levels, so a result is bounded in size and safe for the host to
 serialize. Cyclic data fails closed on the depth limit.
@@ -128,9 +128,9 @@ serialize. Cyclic data fails closed on the depth limit.
   separate process.
 - Set a `timeout` when expressions call slow host functions. The step budget
   bounds Bonsai's own work deterministically, but not wall-clock time spent
-  inside host functions. Each host call costs one step, so an expression can
-  call a host function many times; batch or rate-limit expensive calls in the
-  host.
+  inside host functions. Each host call costs 32 steps, so an expression can
+  still call a host function tens of thousands of times; batch or rate-limit
+  expensive calls in the host.
 
 ## Assurance
 

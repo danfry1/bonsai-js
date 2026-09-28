@@ -46,6 +46,7 @@ try {
 | `BonsaiLimitError` | `SOURCE_TOO_LONG` | The source exceeds `maxSourceLength`. |
 | | `TOO_DEEP` | The syntax nests deeper than `maxDepth`, or equality walked values deeper than `maxValueDepth` (for example cyclic data). |
 | | `TOO_MANY_NODES` | The syntax tree exceeds `maxNodes`. |
+| | `TOO_COMPLEX` | Checking the expression would take too long (its types grow too large), even within the parse limits. |
 | | `STEP_LIMIT` | Evaluation exceeded the step budget. |
 | | `STRING_LIMIT` | A produced string would exceed `maxStringLength`. |
 | | `LIST_LIMIT` | A produced list would exceed `maxListLength`. |

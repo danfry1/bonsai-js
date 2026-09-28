@@ -17,9 +17,7 @@ import {
   equals,
   hasKey,
   isMap,
-  isRecordLike,
   mapKey,
-  missingMember,
   multiply,
   negate,
   order,
@@ -266,8 +264,8 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
       const name = names[0]
       return sync((s) => {
         const o = s.locals[slot]
-        if (isRecordLike(o)) {
-          if (!hasOwn(o, name)) return missingMember(o, name, s, node)
+        if (isMap(o)) {
+          if (!hasOwn(o, name)) return null
           const value = o[name]
           return value === undefined ? null : value
         }
@@ -278,8 +276,8 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
     if (names.length === 1) {
       const name = names[0]
       return strict1(object, (s, o) => {
-        if (isRecordLike(o)) {
-          if (!hasOwn(o, name)) return missingMember(o, name, s, node)
+        if (isMap(o)) {
+          if (!hasOwn(o, name)) return null
           const value = o[name]
           return value === undefined ? null : value
         }

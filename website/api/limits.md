@@ -5,7 +5,7 @@ Every limit is on by default except `timeout`. The `limits` option of `bonsai()`
 | Limit | Default | Bounds |
 | --- | --- | --- |
 | `maxSourceLength` | 100000 | Expression length in UTF-16 code units. |
-| `maxDepth` | 128 | Syntactic nesting depth. Long chains of one operator (`a + b + c + ...`), `else if` style ladders (`a ? x : b ? y : ...`), and runs of `let` bindings do not use a level per link. |
+| `maxDepth` | 128 | Syntactic nesting depth. Runs of `&&`, `\|\|`, and `??` are balanced and use few levels; other chains use a level per link (`a + b + c + ...`, `a ? x : b ? y : ...`, runs of `let`). For long lookup ladders, use a map: `{gold: 0.2, silver: 0.1}[tier] ?? 0`. |
 | `maxNodes` | 20000 | Syntax tree size (tokens are bounded at four times this). Checking and compiling are charged against this budget too. |
 | `maxSteps` | 1000000 | Work per evaluation. See [Steps](#steps). |
 | `maxStringLength` | 100000 | Length of any string an expression produces. |
@@ -53,7 +53,7 @@ The step budget is the main guarantee against expensive expressions. Every opera
 - calendar and time zone functions (`startOfDay`, `addMonths`, `formatDate`, ...), which cost more than arithmetic;
 - the size of lists and maps an expression builds.
 
-No single operation can do unbounded work between checks, so the budget bounds time as well as work. At the default budget of 1,000,000 steps, ordinary expressions finish in about TODO(D1: typical ms) on Node, and the slowest expressions we know of finish or fail within about TODO(D1: worst-case ms).
+No single operation can do unbounded work between checks, so the budget bounds time as well as work. At the default budget of 1,000,000 steps, ordinary expressions finish in about 40 ms of work per million steps on Node, and the slowest expressions we know of finish or fail within about 100 ms (measured on Node 24).
 
 The step count is deterministic: the same expression over the same data always uses the same number of steps, whatever the machine or its load. That makes `maxSteps` the right limit for rejecting expensive expressions consistently. `timeout` is wall-clock time and varies with load; use it to bound time spent in your own host functions.
 
@@ -66,7 +66,7 @@ Evaluation limits are enforced while an expression runs. Sizes are checked befor
 ## What limits do not cover
 
 - **Host functions.** A synchronous host function that is already running cannot be interrupted; the timeout is checked when it returns. Give slow functions their own limits, and set `timeout` when expressions call them.
-- **Waiting on async host functions.** The timeout and signal stop the evaluation while it waits, but the underlying work (a network request, a query) continues unless your function cancels it. Each host call costs one step, so an expression can make many calls: batch expensive lookups in the host, or charge for them in your function.
+- **Waiting on async host functions.** The timeout and signal stop the evaluation while it waits, but the underlying work (a network request, a query) continues unless your function cancels it. Each host call costs 32 steps, so at the default budget an expression can make at most about 31,000 calls: batch expensive lookups in the host, or lower `maxSteps` for expressions that call costly functions.
 - **Getters and Proxies in the context.** They are your code and run when read.
 
 Limit errors are never caught by `try(...)` in an expression.

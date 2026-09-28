@@ -90,7 +90,7 @@ Parses, checks, and compiles. Returns a [Program](/api/programs). Throws `Bonsai
 compile<E extends Type>(source: string, options?: { expect?: E }): Program<Context, Infer<E>>
 ```
 
-`expect` requires the result type and sets the program's TypeScript result type.
+`expect` requires the result type and sets the program's TypeScript result type. When the checker cannot prove the result type statically (part of it is `any`, as with untyped variables or `values()` of a declared object), the result is checked at run time instead, and a mismatch is a `TYPE_ERROR`, so the TypeScript result type always holds.
 
 <!-- continue -->
 ```ts

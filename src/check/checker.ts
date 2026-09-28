@@ -400,7 +400,7 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
     return withTypeBudget(CHECK_BUDGET, () => analyzeWithin(root, env, options))
   } catch (error) {
     if (!(error instanceof TypeBudgetExceeded)) throw error
-    throw new BonsaiLimitError('TOO_MANY_NODES', 'Expression is too complex to check', {
+    throw new BonsaiLimitError('TOO_COMPLEX', 'Expression is too complex to check', {
       span: { start: root.start, end: root.end },
     })
   }
@@ -1692,7 +1692,8 @@ function isProven(argType: Type, param: Type): boolean {
 
 const containsAnyMemo = new WeakMap<Type, boolean>()
 
-function containsAny(type: Type): boolean {
+/** Whether a type is only partly known statically (`any` somewhere inside). */
+export function containsAny(type: Type): boolean {
   if (type.kind !== 'list' && type.kind !== 'map' && type.kind !== 'union')
     return type.kind === 'any' || type.kind === 'var'
   let result = containsAnyMemo.get(type)

@@ -1,4 +1,4 @@
-import { analyze, type Analysis, type CheckEnv } from './check/checker.js'
+import { analyze, containsAny, type Analysis, type CheckEnv } from './check/checker.js'
 import { compileProgram, type CompiledProgram } from './compile/compiler.js'
 import {
   BonsaiCheckError,
@@ -11,6 +11,7 @@ import { BUILTINS } from './functions/builtins.js'
 import {
   assertHostSpec,
   assertType,
+  conforms,
   describeMismatch,
   overload,
   type FunctionDef,
@@ -19,7 +20,14 @@ import {
 import { DEFAULT_RUNTIME_LIMITS, State, type RuntimeLimits } from './runtime/state.js'
 import type { Node } from './syntax/ast.js'
 import { DEFAULT_PARSE_LIMITS, parse, type ParseLimits } from './syntax/parser.js'
-import { isNullable, type AnyType, type Infer, type InferVariables, type Type } from './types.js'
+import {
+  formatType,
+  isNullable,
+  type AnyType,
+  type Infer,
+  type InferVariables,
+  type Type,
+} from './types.js'
 
 // === public option types ===
 
@@ -594,7 +602,19 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     return analyze(parseSource(source), checkEnv, { expected: expect })
   }
 
-  function makeProgram<R>(source: string, analysis: Analysis): Program<Ctx, R> {
+  function makeProgram<R>(source: string, analysis: Analysis, expect?: Type): Program<Ctx, R> {
+    // The checker proved the result matches `expect` unless its type is partly `any`;
+    // then the result is checked at run time, so the declared result type holds.
+    const guard = expect !== undefined && containsAny(analysis.type) ? expect : undefined
+    const checked = (result: unknown, state: State): void => {
+      if (guard !== undefined && !conforms(result, guard, state)) {
+        throw new BonsaiRuntimeError(
+          'TYPE_ERROR',
+          `The result does not match the expected type ${formatType(guard)}`,
+          { source },
+        )
+      }
+    }
     let syncCode: CompiledProgram | undefined
     let asyncCode: CompiledProgram | undefined
     let pooled: State | undefined
@@ -649,6 +669,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       try {
         prepare(state, context, options, code.localCount)
         const result = code.run(state)
+        checked(result, state)
         state.checkTime()
         return result as R
       } finally {
@@ -664,6 +685,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       try {
         prepare(state, context, options, code.localCount)
         const result = await code.run(state)
+        checked(result, state)
         state.checkTime()
         return settle(result as R)
       } finally {
@@ -705,7 +727,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     const analysis = analyzeSource(source, expect)
     const errors = analysis.diagnostics.filter((d) => d.severity === 'error')
     if (errors.length > 0) throw new BonsaiCheckError(source, errors)
-    return makeProgram<R>(source, analysis)
+    return makeProgram<R>(source, analysis, expect)
   }
 
   function cached(source: string): Program<Ctx, unknown> {

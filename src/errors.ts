@@ -8,6 +8,7 @@ export type ErrorCode =
   | 'SOURCE_TOO_LONG'
   | 'TOO_DEEP'
   | 'TOO_MANY_NODES'
+  | 'TOO_COMPLEX'
   | 'STEP_LIMIT'
   | 'STRING_LIMIT'
   | 'LIST_LIMIT'
