@@ -1,6 +1,6 @@
 import type { Span } from '../errors.js'
 import type { State } from '../runtime/state.js'
-import { BLOCKED_KEYS, Duration, isMap } from '../runtime/values.js'
+import { BLOCKED_KEYS, Duration, isEnumerable, isMap } from '../runtime/values.js'
 import { formatType, type FunctionType, type Type, type TypeVar } from '../types.js'
 
 /** A lambda as seen by a built-in: called with the item and its index. */
@@ -45,6 +45,8 @@ export interface FunctionDef {
   /** Host functions: receives the evaluation context as its first argument. */
   readonly context?: boolean
   readonly host?: boolean
+  /** Host functions: steps charged per call (default 32). */
+  readonly cost?: number
 }
 
 export const T: TypeVar = Object.freeze({ kind: 'var', name: 'T' })
@@ -121,7 +123,9 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
       const fields = Object.entries(type.fields)
       state.charge(1 + fields.length)
       for (const [key, fieldType] of fields) {
-        if (!conforms(Object.hasOwn(value, key) ? value[key] : null, fieldType, state, depth + 1))
+        if (
+          !conforms(isEnumerable.call(value, key) ? value[key] : null, fieldType, state, depth + 1)
+        )
           return false
       }
       if (type.rest !== undefined && type.rest.kind !== 'any') {
@@ -211,7 +215,7 @@ export function describeMismatch(
   }
   if (type.kind === 'map' && isMap(actual)) {
     for (const [key, fieldType] of Object.entries(type.fields)) {
-      const field = Object.hasOwn(actual, key) ? actual[key] : null
+      const field = isEnumerable.call(actual, key) ? actual[key] : null
       const problem = describeMismatch(field, fieldType, `${path}.${key}`, budget, depth + 1)
       if (problem !== undefined) return problem
     }
@@ -343,6 +347,7 @@ const HOST_SPEC_KEYS = new Set([
   'async',
   'context',
   'description',
+  'cost',
   'run',
 ])
 
@@ -375,5 +380,10 @@ export function assertHostSpec(spec: unknown, label: string): void {
   }
   if (spec.description !== undefined && typeof spec.description !== 'string')
     throw new TypeError(`"description" of ${label} must be a string`)
+  if (spec.cost !== undefined) {
+    if (typeof spec.cost !== 'number') throw new TypeError(`"cost" of ${label} must be a number`)
+    if (!Number.isSafeInteger(spec.cost) || spec.cost < 0)
+      throw new RangeError(`"cost" of ${label} must be a non-negative integer`)
+  }
   if (typeof spec.run !== 'function') throw new TypeError(`${label} needs a run function`)
 }

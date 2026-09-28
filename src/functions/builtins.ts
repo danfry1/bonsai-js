@@ -18,6 +18,7 @@ import {
 import {
   BLOCKED_KEYS,
   Duration,
+  chargeKey,
   chargeSearch,
   isMap,
   shown,
@@ -177,8 +178,11 @@ function list(value: unknown): readonly unknown[] {
 
 const MAX_CACHED = 256
 const MAX_INTL_DIGITS = 20
-/** Total compiled size (instructions plus class ranges) one environment keeps cached. */
-const REGEX_CACHE_BUDGET = 200_000
+/**
+ * Total compiled size (instructions plus class ranges, about 50 bytes each)
+ * of the patterns kept for reuse, shared by every environment.
+ */
+const REGEX_CACHE_BUDGET = 100_000
 /** Steps charged for creating a number formatter (about 6 microseconds of work). */
 const NUMBER_FORMAT_COST = 256
 /** Steps charged for formatting one number with Intl (about half a microsecond). */
@@ -186,58 +190,87 @@ const FORMAT_COST = 16
 /** Steps charged for parsing a timestamp (a pattern match and calendar arithmetic). */
 const PARSE_COST = 16
 
-function regexFor(pattern: string, site: CallSite): RegexProgram {
-  const s = site.state
-  if (pattern.length > s.limits.maxPatternLength) {
-    throw s.error(
-      'INVALID_ARGUMENT',
-      `Pattern of length ${pattern.length} exceeds the limit of ${s.limits.maxPatternLength}`,
-      site.span,
-    )
+/**
+ * Compiled patterns shared by every environment, bounded by total size and
+ * least recently used first out. Each evaluation still pays to compile a
+ * pattern the first time it uses it (see State.resource), so the cache only
+ * saves time: it never changes step counts, and evicting never costs a
+ * running evaluation uncharged work.
+ */
+const regexCache = new Map<string, RegexProgram>()
+let regexCacheSize = 0
+
+function compiledPattern(pattern: string, site: CallSite): RegexProgram {
+  const cached = regexCache.get(pattern)
+  if (cached !== undefined) {
+    regexCache.delete(pattern)
+    regexCache.set(pattern, cached)
+    return cached
   }
-  // Compiling is near-linear in the pattern (classes sort their ranges).
-  s.chargeFirstUse(`r${pattern}`, 1 + pattern.length)
-  const cache = s.caches.regex
-  const cached = cache.get(pattern)
-  if (cached !== undefined) return cached.program as RegexProgram
   let program: RegexProgram
   try {
     program = compileRegex(pattern)
   } catch (error) {
     if (error instanceof RegexSyntaxError)
-      throw s.error('INVALID_ARGUMENT', error.message, site.span)
+      throw site.state.error('INVALID_ARGUMENT', error.message, site.span)
     throw error
   }
-  if (cache.size >= MAX_CACHED || s.caches.regexSize + program.size > REGEX_CACHE_BUDGET) {
-    cache.clear()
-    s.caches.regexSize = 0
+  if (program.size > REGEX_CACHE_BUDGET) return program
+  for (const [key, old] of regexCache) {
+    if (regexCache.size < MAX_CACHED && regexCacheSize + program.size <= REGEX_CACHE_BUDGET) break
+    regexCache.delete(key)
+    regexCacheSize -= old.size
   }
-  if (program.size <= REGEX_CACHE_BUDGET) {
-    cache.set(pattern, { program, size: program.size })
-    s.caches.regexSize += program.size
-  }
+  regexCache.set(pattern, program)
+  regexCacheSize += program.size
   return program
 }
+
+function regexFor(pattern: string, site: CallSite): RegexProgram {
+  const s = site.state
+  if (pattern.length > s.limits.maxPatternLength) {
+    throw new BonsaiLimitError(
+      'PATTERN_LIMIT',
+      `Pattern of length ${pattern.length} exceeds the limit of ${s.limits.maxPatternLength}`,
+      { source: s.source, span: { start: site.span.start, end: site.span.end } },
+    )
+  }
+  // Compiling reads the pattern and builds the program: both are charged.
+  return s.resource(
+    `r${pattern}`,
+    () => compiledPattern(pattern, site),
+    (program) => 1 + pattern.length + program.size,
+  )
+}
+
+/** Number formatters shared by every environment (charged per evaluation, as patterns are). */
+const numberFormats = new Map<string, Intl.NumberFormat>()
 
 function numberFormat(
   locale: string,
   options: Intl.NumberFormatOptions,
   site: CallSite,
 ): Intl.NumberFormat {
-  const numberFormats = site.state.caches.numberFormats
   const key = `${locale}\u0000${JSON.stringify(options)}`
-  site.state.chargeFirstUse(`n${key}`, NUMBER_FORMAT_COST)
+  const format = site.state.resource(
+    `n${key}`,
+    () => {
+      let created = numberFormats.get(key)
+      if (created !== undefined) return created
+      try {
+        created = new Intl.NumberFormat(locale, options)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        throw site.state.error('INVALID_ARGUMENT', `Invalid number format: ${message}`, site.span)
+      }
+      if (numberFormats.size >= MAX_CACHED)
+        numberFormats.delete(numberFormats.keys().next().value as string)
+      numberFormats.set(key, created)
+      return created
+    },
+    () => NUMBER_FORMAT_COST,
+  )
   site.state.charge(FORMAT_COST)
-  let format = numberFormats.get(key)
-  if (format !== undefined) return format
-  try {
-    format = new Intl.NumberFormat(locale, options)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw site.state.error('INVALID_ARGUMENT', `Invalid number format: ${message}`, site.span)
-  }
-  if (numberFormats.size >= MAX_CACHED) numberFormats.clear()
-  numberFormats.set(key, format)
   return format
 }
 
@@ -331,10 +364,17 @@ function sortKeyed(
   const n = items.length
   const s = site.state
   s.charge(n === 0 ? 1 : Math.ceil(n * Math.log2(n + 1)))
-  const indices = Array.from({ length: n }, (_, i) => i)
+  // Every key is checked, not only those a comparison happens to reach.
+  // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i]
+    if (typeof key === 'number' && !Number.isFinite(key))
+      throw s.error('NON_FINITE', 'Cannot order a non-finite number', site.span)
+  }
   // Each comparison charges for string length (sortOrder), so a long sort is
-  // accounted, and interrupted by the step limit or timeout, as it runs.
-  indices.sort((a, b) => {
+  // accounted, and interrupted by the step limit or timeout, as it runs. The
+  // merge sort makes the same comparisons on every engine, so steps agree too.
+  const indices = mergeSort(n, (a, b) => {
     const result = sortOrder(keys[a], keys[b], s, site.span)
     return descending ? -result : result
   })
@@ -343,10 +383,33 @@ function sortKeyed(
   return made(out, site)
 }
 
+/** A stable bottom-up merge sort of the indices 0..n-1. */
+function mergeSort(n: number, compare: (a: number, b: number) => number): number[] {
+  let from = Array.from({ length: n }, (_, i) => i)
+  let to = new Array<number>(n)
+  for (let width = 1; width < n; width *= 2) {
+    for (let low = 0; low < n; low += 2 * width) {
+      const middle = Math.min(low + width, n)
+      const high = Math.min(low + 2 * width, n)
+      let i = low
+      let j = middle
+      let k = low
+      // Take from the right run only when it is strictly smaller: stable.
+      while (i < middle && j < high) to[k++] = compare(from[j], from[i]) < 0 ? from[j++] : from[i++]
+      while (i < middle) to[k++] = from[i++]
+      while (j < high) to[k++] = from[j++]
+    }
+    ;[from, to] = [to, from]
+  }
+  return from
+}
+
 function groupKey(key: unknown, site: CallSite): string {
   let name: string
-  if (typeof key === 'string') name = key
-  else if (typeof key === 'number' || typeof key === 'boolean') name = String(key)
+  if (typeof key === 'string') {
+    chargeKey(site.state, key)
+    name = key
+  } else if (typeof key === 'number' || typeof key === 'boolean') name = String(key)
   else
     throw site.state.error(
       'TYPE_ERROR',
@@ -371,27 +434,33 @@ function madeGroups(groups: Record<string, unknown[]>, site: CallSite): Record<s
   return made(groups, site)
 }
 
-/** Identity numbers for opaque values in canonical keys. */
-const opaqueIds = new WeakMap<object, number>()
-let nextOpaqueId = 0
+/** Identities of the values one canonical-key pass has seen that compare by identity. */
+interface Identities {
+  readonly ids: Map<unknown, number>
+  next: number
+}
 
 /**
  * A string that is equal for two values exactly when `equals` says they are:
- * maps by sorted keys, timestamps by time, opaque values by identity. Charged
- * by the size of the value.
+ * maps by sorted keys, timestamps by time, opaque values (symbols, host
+ * objects) by identity, and NaN never. Charged by the size of the value.
  */
-function canonicalKey(value: unknown, site: CallSite, depth: number): string {
+function canonicalKey(value: unknown, site: CallSite, depth: number, seen: Identities): string {
   const s = site.state
   if (value === null || value === undefined) return 'n'
   switch (typeof value) {
     case 'boolean':
       return value ? 'T' : 'F'
     case 'number':
+      // NaN equals nothing, not even NaN: a key no other value shares.
+      if (Number.isNaN(value)) return `N${seen.next++}`
       return `d${value === 0 ? 0 : value}`
     case 'string':
       s.charge(value.length >>> CHARS_PER_STEP_SHIFT)
       return `s${value.length}:${value}`
     case 'bigint':
+      // Bigints compare by value (1n == 1n).
+      return `b${value}`
     case 'function':
     case 'object':
     case 'symbol':
@@ -403,7 +472,7 @@ function canonicalKey(value: unknown, site: CallSite, depth: number): string {
     throw new BonsaiLimitError(
       'TOO_DEEP',
       `Values nest deeper than ${s.limits.maxValueDepth} (is the data cyclic?)`,
-      { source: s.source },
+      { source: s.source, span: { start: site.span.start, end: site.span.end } },
     )
   }
   s.charge(1)
@@ -411,28 +480,31 @@ function canonicalKey(value: unknown, site: CallSite, depth: number): string {
     s.charge(value.length)
     let key = '['
     for (let i = 0; i < value.length; i++)
-      key += (i === 0 ? '' : ',') + canonicalKey(value[i], site, depth + 1)
+      key += (i === 0 ? '' : ',') + canonicalKey(value[i], site, depth + 1, seen)
     return charged(`${key}]`, site)
   }
   if (value instanceof Date && !Number.isNaN(value.getTime())) return `t${value.getTime()}`
   if (value instanceof Duration) return `u${value.ms}`
   if (isMap(value)) {
     const keys = Object.keys(value)
+    // Sorting compares keys: about log2(k) comparisons each, linear in the key length.
+    let text = 0
+    for (const name of keys) text += name.length
+    s.charge(keys.length + Math.ceil(Math.log2(keys.length + 1)) * (text >>> CHARS_PER_STEP_SHIFT))
     if (keys.length > 1) keys.sort()
-    s.charge(keys.length)
     let key = '{'
     let first = true
     for (const name of keys) {
       if (BLOCKED_KEYS.has(name)) continue
-      key += `${first ? '' : ','}${name.length}:${name}=${canonicalKey(value[name], site, depth + 1)}`
+      key += `${first ? '' : ','}${name.length}:${name}=${canonicalKey(value[name], site, depth + 1, seen)}`
       first = false
     }
     return charged(`${key}}`, site)
   }
-  let id = opaqueIds.get(value)
+  let id = seen.ids.get(value)
   if (id === undefined) {
-    id = nextOpaqueId++
-    opaqueIds.set(value, id)
+    id = seen.next++
+    seen.ids.set(value, id)
   }
   return `o${id}`
 }
@@ -446,11 +518,12 @@ function charged(key: string, site: CallSite): string {
 function uniqueOf(items: readonly unknown[], site: CallSite): unknown[] {
   site.state.charge(items.length)
   const seen = new Set<string>()
+  const identities: Identities = { ids: new Map(), next: 0 }
   const out: unknown[] = []
   // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
   for (let i = 0; i < items.length; i++) {
     const value = items[i] ?? null
-    const key = canonicalKey(value, site, 0)
+    const key = canonicalKey(value, site, 0, identities)
     if (seen.has(key)) continue
     seen.add(key)
     out.push(value)
@@ -577,7 +650,8 @@ const STRING_FUNCTIONS: FunctionDef[] = [
     overload([listT, any], num, ([l, v], site) => {
       const items = list(l)
       site.state.charge(items.length)
-      for (let i = 0; i < items.length; i++) if (equals(items[i], v, site.state)) return i
+      for (let i = 0; i < items.length; i++)
+        if (equals(items[i], v, site.state, 0, site.span)) return i
       return -1
     }),
   ]),
@@ -589,7 +663,8 @@ const STRING_FUNCTIONS: FunctionDef[] = [
     overload([listT, any], num, ([l, v], site) => {
       const items = list(l)
       site.state.charge(items.length)
-      for (let i = items.length - 1; i >= 0; i--) if (equals(items[i], v, site.state)) return i
+      for (let i = items.length - 1; i >= 0; i--)
+        if (equals(items[i], v, site.state, 0, site.span)) return i
       return -1
     }),
   ]),
@@ -1149,10 +1224,13 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     ),
   ]),
   define('isEmpty', 'Whether a list, text, or map has no items; null is empty.', [
-    overload([t.union(t.list(any), str, t.record(any), t.null())], bool, ([v]) => {
+    overload([t.union(t.list(any), str, t.record(any), t.null())], bool, ([v], site) => {
       if (v === null || v === undefined) return true
       if (Array.isArray(v) || typeof v === 'string') return v.length === 0
-      return Object.keys(v).length === 0
+      // Listing a map's keys is linear in how many it has.
+      const keys = Object.keys(v)
+      site.state.charge(keys.length)
+      return keys.length === 0
     }),
   ]),
 ]

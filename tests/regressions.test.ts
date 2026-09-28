@@ -232,7 +232,11 @@ describe('second review round', () => {
   it('bounds regex compilation and nesting', () => {
     const started = performance.now()
     expect(matches('(?:(?:(?:){1000}){1000}){1000}', 'x')).toEqual({ code: 'INVALID_ARGUMENT' })
+    // 16,001 characters: over maxPatternLength, a limit error.
     expect(matches(`${'('.repeat(8000)}a${')'.repeat(8000)}`, 'a')).toEqual({
+      code: 'PATTERN_LIMIT',
+    })
+    expect(matches(`${'('.repeat(1000)}a${')'.repeat(1000)}`, 'a')).toEqual({
       code: 'INVALID_ARGUMENT',
     })
     expect(performance.now() - started).toBeLessThan(1000)

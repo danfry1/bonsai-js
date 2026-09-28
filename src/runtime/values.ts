@@ -10,6 +10,12 @@ export const MS_PER_WEEK = 604_800_000
 /** Characters scanned per step charged when searching or comparing strings. */
 const SEARCH_CHARS_PER_STEP = 64
 /**
+ * A computed property name longer than KEY_FREE_CHARS costs one step per
+ * 2^3 = 8 characters: the engine flattens, hashes, and interns it.
+ */
+const KEY_SHIFT = 3
+const KEY_FREE_CHARS = 64
+/**
  * Character comparisons per step for a substring search. Native search is
  * O(text x needle) in the worst case, and a single native call cannot be
  * interrupted, so the worst case is charged before it runs.
@@ -100,21 +106,45 @@ export function describeKind(value: unknown): string {
 }
 
 const hasOwn = Object.hasOwn
+const getPrototypeOf = Object.getPrototypeOf
+const OBJECT_PROTOTYPE: object = Object.prototype
+/**
+ * Whether `key` is an own enumerable property: the only properties that are
+ * data. (A non-enumerable own property, like a class's hidden field, is not.)
+ */
 // oxlint-disable-next-line typescript/unbound-method -- always invoked with .call
-const isEnumerable = Object.prototype.propertyIsEnumerable
+export const isEnumerable = Object.prototype.propertyIsEnumerable
 export const BLOCKED_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype'])
 
+/**
+ * Whether a value is a map: a plain object, or a class instance, read through
+ * its own enumerable properties. Lists, timestamps, durations, thenables, and
+ * built-in host objects (a Map, a RegExp, ...) are not.
+ */
 export function isMap(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) return false
-  // Plain objects (the common case) answer from their prototype alone.
-  const proto: unknown = Object.getPrototypeOf(value)
-  return proto === Object.prototype || proto === null || isOtherMap(value, proto)
+  if (isPlainData(value)) return true
+  const proto: unknown = getPrototypeOf(value)
+  if (proto === OBJECT_PROTOTYPE || proto === null)
+    return typeof (value as { then?: unknown }).then !== 'function'
+  return isOtherMap(value, proto)
+}
+
+/**
+ * The quick test for the common case, a plain data object: its constructor
+ * is Object (or it has none, as with a null prototype) and it has no own
+ * `then`. A false answer is not final: `isMap` then classifies it fully.
+ * (Reading `constructor` is cheaper than the prototype on varied shapes.)
+ */
+function isPlainData(value: object): boolean {
+  const constructor = (value as { constructor?: unknown }).constructor
+  return (constructor === Object || constructor === undefined) && !hasOwn(value, 'then')
 }
 
 /** Class instances are maps; lists, timestamps, durations, and opaque built-ins are not. */
 function isOtherMap(value: object, proto: unknown): boolean {
   if (Array.isArray(value) || value instanceof Date || value instanceof Duration) return false
-  return !opaquePrototype(proto, value)
+  return !opaquePrototype(proto, value) && typeof (value as { then?: unknown }).then !== 'function'
 }
 
 /** Whether each prototype belongs to a built-in type whose data is not in own properties. */
@@ -124,38 +154,89 @@ const opaquePrototypes = new WeakMap<object, boolean>()
  * Built-in host objects keep their data internally (a Map's entries, a
  * RegExp's pattern), so reading them as maps of own properties would silently
  * see nothing. They are opaque: passed around, compared by identity, never read.
+ * So are thenables, which are pending results rather than data.
  * Plain objects and class instances are maps of their own properties.
  */
 function isOpaqueObject(value: object): boolean {
-  const proto: unknown = Object.getPrototypeOf(value)
-  if (proto === Object.prototype || proto === null) return false
-  return opaquePrototype(proto, value)
+  const proto: unknown = getPrototypeOf(value)
+  if (proto !== OBJECT_PROTOTYPE && proto !== null && opaquePrototype(proto, value)) return true
+  return typeof (value as { then?: unknown }).then === 'function'
 }
 
 function opaquePrototype(proto: unknown, value: object): boolean {
   if (typeof proto !== 'object' && typeof proto !== 'function') return false
   let opaque = opaquePrototypes.get(proto as object)
   if (opaque === undefined) {
-    opaque =
-      value instanceof Map ||
-      value instanceof Set ||
-      value instanceof WeakMap ||
-      value instanceof WeakSet ||
-      value instanceof WeakRef ||
-      value instanceof RegExp ||
-      value instanceof Promise ||
-      value instanceof Error ||
-      value instanceof ArrayBuffer ||
-      ArrayBuffer.isView(value) ||
-      value instanceof Number ||
-      value instanceof String ||
-      value instanceof Boolean ||
-      value instanceof Symbol ||
-      value instanceof BigInt ||
-      (typeof SharedArrayBuffer === 'function' && value instanceof SharedArrayBuffer)
+    opaque = isBuiltinObject(value)
     opaquePrototypes.set(proto as object, opaque)
   }
   return opaque
+}
+
+/** Methods that throw unless their receiver has a built-in's internal slots. */
+const BRAND_CHECKS: readonly ((value: object) => unknown)[] = [
+  (v) => Map.prototype.has.call(v, undefined),
+  (v) => Set.prototype.has.call(v, undefined),
+  (v) => WeakMap.prototype.has.call(v, OBJECT_PROTOTYPE),
+  (v) => WeakSet.prototype.has.call(v, OBJECT_PROTOTYPE),
+  (v) => WeakRef.prototype.deref.call(v),
+  (v) => Date.prototype.getTime.call(v),
+  (v) => Number.prototype.valueOf.call(v),
+  (v) => String.prototype.valueOf.call(v),
+  (v) => Boolean.prototype.valueOf.call(v),
+  (v) => Symbol.prototype.valueOf.call(v),
+  (v) => BigInt.prototype.valueOf.call(v),
+  ...getters(RegExp.prototype, 'source'),
+  ...getters(ArrayBuffer.prototype, 'byteLength'),
+  ...(typeof SharedArrayBuffer === 'function'
+    ? getters(SharedArrayBuffer.prototype, 'byteLength')
+    : []),
+]
+
+/** A brand check from a built-in getter, which throws on any other receiver. */
+function getters(proto: object, name: string): ((value: object) => unknown)[] {
+  // oxlint-disable-next-line typescript/unbound-method -- always invoked with .call
+  const get = Object.getOwnPropertyDescriptor(proto, name)?.get
+  return get === undefined ? [] : [(v) => get.call(v)]
+}
+
+/**
+ * Whether a value is a built-in host object, from this realm or another (an
+ * iframe, `node:vm`): `instanceof` sees this realm, and brand checks (methods
+ * that only accept a real Map, Date, ...) see any realm.
+ */
+function isBuiltinObject(value: object): boolean {
+  if (
+    value instanceof Map ||
+    value instanceof Set ||
+    value instanceof WeakMap ||
+    value instanceof WeakSet ||
+    value instanceof WeakRef ||
+    value instanceof RegExp ||
+    value instanceof Promise ||
+    value instanceof Error ||
+    value instanceof ArrayBuffer ||
+    ArrayBuffer.isView(value) ||
+    value instanceof Number ||
+    value instanceof String ||
+    value instanceof Boolean ||
+    value instanceof Symbol ||
+    value instanceof BigInt ||
+    (typeof SharedArrayBuffer === 'function' && value instanceof SharedArrayBuffer)
+  ) {
+    return true
+  }
+  // Errors have no brand-checking method; their built-in tag comes from an internal slot.
+  if (Object.prototype.toString.call(value) === '[object Error]') return true
+  for (const check of BRAND_CHECKS) {
+    try {
+      check(value)
+      return true
+    } catch {
+      // Not this kind of built-in.
+    }
+  }
+  return false
 }
 
 // === Truthiness, members, indexing ===
@@ -171,13 +252,23 @@ export function truth(value: unknown, s: State, at: Span, what: string): boolean
   )
 }
 
+/** Reads a member. Plain objects, the common case, take the short path first. */
 export function readMember(object: unknown, name: string, s: State, at: Span): unknown {
+  if (typeof object === 'object' && object !== null && isPlainData(object)) {
+    return isEnumerable.call(object, name)
+      ? ((object as Record<string, unknown>)[name] ?? null)
+      : null
+  }
+  return readOtherMember(object, name, s, at)
+}
+
+function readOtherMember(object: unknown, name: string, s: State, at: Span): unknown {
   if (object === null || object === undefined) return null
   if (typeof object === 'object') {
     if (Array.isArray(object)) {
       if (name === 'length') return object.length
     } else if (isMap(object)) {
-      if (!hasOwn(object, name)) return null
+      if (!isEnumerable.call(object, name)) return null
       const value = object[name]
       return value === undefined ? null : value
     }
@@ -207,30 +298,43 @@ export function readIndex(object: unknown, key: unknown, s: State, at: Span): un
   }
   if (isMap(object)) {
     const name = mapKey(key, s, at)
-    if (!hasOwn(object, name)) return null
+    if (!isEnumerable.call(object, name)) return null
     const value = object[name]
     return value === undefined ? null : value
   }
   throw s.error('TYPE_ERROR', `Cannot index ${describeKind(object)}`, at)
 }
 
+/**
+ * Charges using a computed string as a property name. The engine hashes (and
+ * flattens) the whole string to look it up or store it, so a long key costs
+ * work in proportion to its length.
+ */
+export function chargeKey(s: State, key: string): void {
+  if (key.length > KEY_FREE_CHARS) s.charge(key.length >>> KEY_SHIFT)
+}
+
 /** Converts a computed key to a property name, rejecting blocked keys. */
 export function mapKey(key: unknown, s: State, at: Span): string {
   let name: string
-  if (typeof key === 'string') name = key
-  else if (typeof key === 'number' && Number.isFinite(key)) name = String(key)
+  if (typeof key === 'string') {
+    chargeKey(s, key)
+    name = key
+  } else if (typeof key === 'number' && Number.isFinite(key)) name = String(key)
   else throw s.error('TYPE_ERROR', `A map key must be a string, not ${describeKind(key)}`, at)
   if (BLOCKED_KEYS.has(name))
     throw s.error('BLOCKED_PROPERTY', `Property "${name}" is not accessible`, at)
   return name
 }
 
-export function hasKey(object: unknown, key: unknown): boolean {
+export function hasKey(object: unknown, key: unknown, s: State): boolean {
   if (Array.isArray(object))
     return typeof key === 'number' && Number.isInteger(key) && key >= 0 && key < object.length
   if (isMap(object)) {
     const name = typeof key === 'number' ? String(key) : key
-    return typeof name === 'string' && !BLOCKED_KEYS.has(name) && hasOwn(object, name)
+    if (typeof name !== 'string') return false
+    chargeKey(s, name)
+    return !BLOCKED_KEYS.has(name) && isEnumerable.call(object, name)
   }
   return false
 }
@@ -255,11 +359,12 @@ function chargeCompare(s: State, a: string, b: string): void {
 
 // === Produced values ===
 
-/**
+/*
  * Logical size (nodes, counting every reference) and nesting depth of
- * containers an expression built, packed as size * DEPTH_SLOTS + depth.
+ * containers this evaluation built, packed as size * DEPTH_SLOTS + depth, are
+ * kept per evaluation (State.shapes). A value from an earlier evaluation passed
+ * back in counts like any host value, so steps never depend on its history.
  */
-const shapes = new WeakMap<object, number>()
 /** Depth never exceeds maxValueDepth, a small number; 1024 slots leave room. */
 const DEPTH_SLOTS = 1024
 /** Flat maps up to this many keys are not recorded; they count as one node. */
@@ -270,7 +375,7 @@ const SMALL_MAP = 8
  * keys would cost work on every reference). A result can therefore repeat
  * host maps, but never grow beyond the budget by nesting its own values.
  */
-function shapeOf(value: object): number {
+function shapeOf(shapes: WeakMap<object, number>, value: object): number {
   return shapes.get(value) ?? (Array.isArray(value) ? 1 + value.length : 1) * DEPTH_SLOTS + 1
 }
 
@@ -289,9 +394,8 @@ export function track(
   let nested = 0
   let count = 0
   let depth = 0
-  // Until this evaluation records a shape, every container has the default
-  // one (values passed back in from earlier results count by their length).
-  const lookup = s.recorded > 0
+  // Until this evaluation records a shape, every container has the default one.
+  const shapes = s.shapes
   const values: readonly unknown[] = Array.isArray(out)
     ? out
     : ownValues(out as Readonly<Record<string, unknown>>)
@@ -301,7 +405,7 @@ export function track(
     const value = values[i]
     if (value === null || typeof value !== 'object') continue
     let shape: number
-    if (lookup) shape = shapeOf(value)
+    if (shapes !== undefined) shape = shapeOf(shapes, value)
     else shape = (Array.isArray(value) ? 1 + value.length : 1) * DEPTH_SLOTS + 1
     const inner = shape % DEPTH_SLOTS
     nested += (shape - inner) / DEPTH_SLOTS - 1
@@ -309,10 +413,8 @@ export function track(
   }
   if (depth === 0) {
     // Flat: a list's size follows from its length; a larger map's is recorded.
-    if (!Array.isArray(out) && count > SMALL_MAP) {
-      shapes.set(out, (1 + count) * DEPTH_SLOTS + 1)
-      s.recorded++
-    }
+    if (!Array.isArray(out) && count > SMALL_MAP)
+      (s.shapes ??= new WeakMap()).set(out, (1 + count) * DEPTH_SLOTS + 1)
     return
   }
   if (depth + 1 > s.limits.maxValueDepth) {
@@ -322,8 +424,7 @@ export function track(
     })
   }
   if (nested > 0) s.charge(nested)
-  shapes.set(out, (1 + count + nested) * DEPTH_SLOTS + depth + 1)
-  s.recorded++
+  ;(s.shapes ??= new WeakMap()).set(out, (1 + count + nested) * DEPTH_SLOTS + depth + 1)
 }
 
 function ownValues(map: Readonly<Record<string, unknown>>): unknown[] {
@@ -334,7 +435,7 @@ function ownValues(map: Readonly<Record<string, unknown>>): unknown[] {
 
 // === Equality and ordering ===
 
-export function equals(a: unknown, b: unknown, s: State, depth = 0): boolean {
+export function equals(a: unknown, b: unknown, s: State, depth = 0, at?: Span): boolean {
   if (typeof a === 'string' && typeof b === 'string') {
     chargeCompare(s, a, b)
     return a === b
@@ -348,16 +449,14 @@ export function equals(a: unknown, b: unknown, s: State, depth = 0): boolean {
     throw new BonsaiLimitError(
       'TOO_DEEP',
       `Values nest deeper than ${s.limits.maxValueDepth} (is the data cyclic?)`,
-      {
-        source: s.source,
-      },
+      { source: s.source, span: at === undefined ? undefined : { start: at.start, end: at.end } },
     )
   }
   s.charge(1)
   if (Array.isArray(a)) {
     if (!Array.isArray(b) || a.length !== b.length) return false
     s.charge(a.length)
-    for (let i = 0; i < a.length; i++) if (!equals(a[i], b[i], s, depth + 1)) return false
+    for (let i = 0; i < a.length; i++) if (!equals(a[i], b[i], s, depth + 1, at)) return false
     return true
   }
   if (Array.isArray(b)) return false
@@ -373,8 +472,8 @@ export function equals(a: unknown, b: unknown, s: State, depth = 0): boolean {
   s.charge(keys.length)
   for (const key of keys) {
     // An own enumerable key, as Object.keys(b) lists: a non-enumerable key is not data.
-    if (!hasOwn(b, key) || !isEnumerable.call(b, key)) return false
-    if (!equals(a[key], b[key], s, depth + 1)) return false
+    if (!isEnumerable.call(b, key)) return false
+    if (!equals(a[key], b[key], s, depth + 1, at)) return false
   }
   return true
 }
@@ -444,7 +543,7 @@ export function contains(container: unknown, item: unknown, s: State, at: Span):
       return false
     }
     // oxlint-disable-next-line typescript/prefer-for-of -- indexing never invokes a host array's own Symbol.iterator
-    for (let i = 0; i < container.length; i++) if (equals(item, container[i], s)) return true
+    for (let i = 0; i < container.length; i++) if (equals(item, container[i], s, 0, at)) return true
     return false
   }
   if (typeof container === 'string') {
@@ -467,7 +566,8 @@ export function contains(container: unknown, item: unknown, s: State, at: Span):
       )
     }
     const key = String(item)
-    return !BLOCKED_KEYS.has(key) && hasOwn(container, key)
+    chargeKey(s, key)
+    return !BLOCKED_KEYS.has(key) && isEnumerable.call(container, key)
   }
   throw s.error(
     'TYPE_ERROR',

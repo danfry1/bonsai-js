@@ -1,5 +1,5 @@
 import type { CallSite } from '../functions/define.js'
-import { MS_PER_DAY, MS_PER_MINUTE, MS_PER_SECOND, shown, timeOf } from './values.js'
+import { MS_PER_DAY, MS_PER_HOUR, MS_PER_MINUTE, MS_PER_SECOND, shown, timeOf } from './values.js'
 
 /** Calendar fields of an instant as seen on a wall clock in some time zone. */
 export interface WallClock {
@@ -24,7 +24,11 @@ const SUNDAY = 7
 type CalendarFields = Pick<WallClock, 'year' | 'month' | 'day'> &
   Partial<Pick<WallClock, 'hour' | 'minute' | 'second' | 'millisecond'>>
 
-/** Date.UTC, but without mapping years 0-99 to 1900-1999. */
+/**
+ * Date.UTC, but without mapping years 0-99 to 1900-1999, and by arithmetic.
+ * Fields may overflow (day 0, month 13, hour 25) and normalize as in Date.UTC.
+ * Out-of-range results stay finite; `checked` rejects them.
+ */
 function utc({
   year,
   month,
@@ -34,70 +38,126 @@ function utc({
   second = 0,
   millisecond = 0,
 }: CalendarFields): number {
-  const date = new Date(0)
-  date.setUTCFullYear(year, month - 1, day)
-  date.setUTCHours(hour, minute, second, millisecond)
-  return date.getTime()
+  const months = month - 1
+  const whole = year + Math.floor(months / MONTHS_PER_YEAR)
+  const within = months - Math.floor(months / MONTHS_PER_YEAR) * MONTHS_PER_YEAR + 1
+  return (
+    (daysFromCivil(whole, within) + day - 1) * MS_PER_DAY +
+    hour * MS_PER_HOUR +
+    minute * MS_PER_MINUTE +
+    second * MS_PER_SECOND +
+    millisecond
+  )
 }
+
+/** Days from 1970-01-01 to the first of a month (month 1-12): Hinnant's days_from_civil. */
+function daysFromCivil(year: number, month: number): number {
+  const y = month <= 2 ? year - 1 : year
+  const era = Math.floor(y / YEARS_PER_ERA)
+  const yearOfEra = y - era * YEARS_PER_ERA
+  const dayOfYear = Math.floor(
+    (MONTH_CYCLE_DAYS * (month > 2 ? month - MARCH : month + MONTHS_AFTER_MARCH) + 2) /
+      MONTH_CYCLE_MONTHS,
+  )
+  const dayOfEra =
+    yearOfEra * DAYS_PER_YEAR +
+    Math.floor(yearOfEra / YEARS_PER_LEAP) -
+    Math.floor(yearOfEra / YEARS_PER_CENTURY) +
+    dayOfYear
+  return era * DAYS_PER_ERA + dayOfEra - EPOCH_SHIFT
+}
+
+/*
+ * Time zones. Intl's formatter is the source of truth, but calling it costs
+ * about a microsecond, so offsets are cached. Time is cut into 6-hour spans;
+ * the offset is read at each span boundary, and a span whose two boundaries
+ * agree has that offset throughout (a zone never changes offset twice within
+ * 6 hours and changes back). A span whose boundaries differ holds one
+ * transition, found once by bisection. Each evaluation pays for the formatter,
+ * for every boundary it touches, and for every bisection the first time, as if
+ * nothing were cached (steps never depend on the cache), plus a small fixed
+ * cost per read.
+ */
 
 const formatters = new Map<string, Intl.DateTimeFormat>()
 const MAX_CACHED_ZONES = 64
 /** Steps charged for creating a time zone formatter (about 20 microseconds of work). */
 const ZONE_FORMAT_COST = 1024
-/** Steps charged for reading a wall clock in a time zone (about 2 microseconds). */
-const ZONE_READ_COST = 64
-/** Recently read wall clocks by zone and instant; reads repeat in loops. */
-const clocks = new Map<string, WallClock>()
-const MAX_CACHED_CLOCKS = 4096
+/** Steps charged for one formatter call (a few microseconds). */
+const ZONE_PROBE_COST = 40
+/** Steps charged for reading an offset out of a span already in use. */
+const ZONE_READ_COST = 2
+const HOURS_PER_SPAN = 6
+const SPAN_MS = HOURS_PER_SPAN * MS_PER_HOUR
+/** Cached boundaries and transitions per zone before that zone's cache starts over. */
+const MAX_CACHED_POINTS = 65_536
+/** Largest instant a Date can hold (±8.64e15 ms). */
+const MAX_TIME = 8.64e15
 
-function formatterFor(zone: string, site: CallSite): Intl.DateTimeFormat {
-  site.state.chargeFirstUse(`z${zone}`, ZONE_FORMAT_COST)
-  let formatter = formatters.get(zone)
-  if (formatter !== undefined) return formatter
-  try {
-    formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: zone,
-      hourCycle: 'h23',
-      era: 'short',
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: 'numeric',
-      second: 'numeric',
-    })
-  } catch {
-    throw site.state.error('INVALID_ARGUMENT', `Unknown time zone ${shown(zone)}`, site.span)
-  }
-  if (formatters.size >= MAX_CACHED_ZONES) formatters.clear()
-  formatters.set(zone, formatter)
-  return formatter
+/** The UTC offset of a zone during one span: `before` until `change`, then `after`. */
+interface ZoneSpan {
+  readonly change: number
+  readonly before: number
+  readonly after: number
 }
 
-export function wallClock(date: Date, zone: string | null | undefined, site: CallSite): WallClock {
-  const ms = timeOf(date, site.state, site.span)
-  if (zone === null || zone === undefined || zone === 'UTC') {
-    return {
-      year: date.getUTCFullYear(),
-      month: date.getUTCMonth() + 1,
-      day: date.getUTCDate(),
-      hour: date.getUTCHours(),
-      minute: date.getUTCMinutes(),
-      second: date.getUTCSeconds(),
-      millisecond: date.getUTCMilliseconds(),
-    }
-  }
-  // Charged whether or not the read is cached, so step counts are deterministic.
-  site.state.charge(ZONE_READ_COST)
-  const formatter = formatterFor(zone, site)
-  const key = `${zone}\u0000${ms}`
-  const cached = clocks.get(key)
-  if (cached !== undefined) return { ...cached }
-  const parts = formatter.formatToParts(date)
+/** A transition found by bisection, and the formatter calls it took. */
+interface Transition extends ZoneSpan {
+  readonly probes: number
+}
+
+/** Shared by every evaluation: offsets at span boundaries, and transitions. */
+interface ZoneData {
+  readonly boundaries: Map<number, number>
+  readonly transitions: Map<number, Transition>
+}
+
+/** One evaluation's view of a zone: what it has used (and paid for). */
+interface EvaluationZone {
+  readonly formatter: Intl.DateTimeFormat
+  readonly spans: Map<number, ZoneSpan>
+  readonly paid: Set<number>
+}
+
+const zoneData = new Map<string, ZoneData>()
+
+function formatterFor(zone: string, site: CallSite): Intl.DateTimeFormat {
+  return site.state.resource(
+    `f${zone}`,
+    () => {
+      let formatter = formatters.get(zone)
+      if (formatter !== undefined) return formatter
+      try {
+        formatter = new Intl.DateTimeFormat('en-US', {
+          timeZone: zone,
+          hourCycle: 'h23',
+          era: 'short',
+          year: 'numeric',
+          month: 'numeric',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: 'numeric',
+          second: 'numeric',
+        })
+      } catch {
+        throw site.state.error('INVALID_ARGUMENT', `Unknown time zone ${shown(zone)}`, site.span)
+      }
+      if (formatters.size >= MAX_CACHED_ZONES)
+        formatters.delete(formatters.keys().next().value as string)
+      formatters.set(zone, formatter)
+      return formatter
+    },
+    () => ZONE_FORMAT_COST,
+  )
+}
+
+/** The wall clock a formatter shows at an instant (the exact, uncached read). */
+function formattedClock(formatter: Intl.DateTimeFormat, ms: number): WallClock {
+  const parts = formatter.formatToParts(new Date(ms))
   const get = (type: string): number => Number(parts.find((part) => part.type === type)?.value ?? 0)
   const era = parts.find((part) => part.type === 'era')?.value
   const year = get('year')
-  const clock: WallClock = {
+  return {
     year: era !== undefined && /^B/iu.test(era) ? 1 - year : year,
     month: get('month'),
     day: get('day'),
@@ -106,9 +166,150 @@ export function wallClock(date: Date, zone: string | null | undefined, site: Cal
     second: get('second'),
     millisecond: ((ms % MS_PER_SECOND) + MS_PER_SECOND) % MS_PER_SECOND,
   }
-  if (clocks.size >= MAX_CACHED_CLOCKS) clocks.clear()
-  clocks.set(key, clock)
-  return { ...clock }
+}
+
+function exactOffset(formatter: Intl.DateTimeFormat, ms: number): number {
+  const at = Math.max(-MAX_TIME, Math.min(MAX_TIME, ms))
+  return utc(formattedClock(formatter, at)) - at
+}
+
+function dataFor(zone: string): ZoneData {
+  let data = zoneData.get(zone)
+  if (data === undefined) {
+    if (zoneData.size >= MAX_CACHED_ZONES) zoneData.delete(zoneData.keys().next().value as string)
+    data = { boundaries: new Map(), transitions: new Map() }
+    zoneData.set(zone, data)
+  }
+  if (data.boundaries.size >= MAX_CACHED_POINTS) data.boundaries.clear()
+  if (data.transitions.size >= MAX_CACHED_POINTS) data.transitions.clear()
+  return data
+}
+
+/** The offset at the start of span `index`, charged the first time this evaluation uses it. */
+function boundary(zone: EvaluationZone, data: ZoneData, index: number, site: CallSite): number {
+  if (!zone.paid.has(index)) {
+    zone.paid.add(index)
+    site.state.charge(ZONE_PROBE_COST)
+  }
+  let offset = data.boundaries.get(index)
+  if (offset === undefined) {
+    offset = exactOffset(zone.formatter, index * SPAN_MS)
+    data.boundaries.set(index, offset)
+  }
+  return offset
+}
+
+function spanOf(zone: EvaluationZone, name: string, index: number, site: CallSite): ZoneSpan {
+  const data = dataFor(name)
+  const before = boundary(zone, data, index, site)
+  const after = boundary(zone, data, index + 1, site)
+  if (before === after) return { change: Infinity, before, after }
+  let transition = data.transitions.get(index)
+  if (transition === undefined) {
+    // Transitions happen on whole seconds: bisect for the first second showing `after`.
+    let low = Math.floor((index * SPAN_MS) / MS_PER_SECOND)
+    let high = Math.floor(((index + 1) * SPAN_MS) / MS_PER_SECOND)
+    let probes = 0
+    while (high - low > 1) {
+      const middle = Math.floor((low + high) / 2)
+      probes++
+      if (exactOffset(zone.formatter, middle * MS_PER_SECOND) === before) low = middle
+      else high = middle
+    }
+    transition = { change: high * MS_PER_SECOND, before, after, probes }
+    data.transitions.set(index, transition)
+  }
+  site.state.charge(transition.probes * ZONE_PROBE_COST)
+  return transition
+}
+
+/** UTC offset (ms) of `zone` at an instant. */
+function offsetAt(ms: number, zone: string, site: CallSite): number {
+  // Probes a day either side may fall outside the Date range; clamp them.
+  if (!Number.isFinite(ms))
+    throw site.state.error('INVALID_ARGUMENT', 'Timestamp out of range', site.span)
+  const at = Math.max(-MAX_TIME, Math.min(MAX_TIME, ms))
+  const s = site.state
+  s.charge(ZONE_READ_COST)
+  const zones = (s.zones ??= new Map())
+  let used = zones.get(zone) as EvaluationZone | undefined
+  if (used === undefined) {
+    used = { formatter: formatterFor(zone, site), spans: new Map(), paid: new Set() }
+    zones.set(zone, used)
+  }
+  const index = Math.floor(at / SPAN_MS)
+  let span = used.spans.get(index)
+  if (span === undefined) {
+    span = spanOf(used, zone, index, site)
+    used.spans.set(index, span)
+  }
+  return at < span.change ? span.before : span.after
+}
+
+export function wallClock(date: Date, zone: string | null | undefined, site: CallSite): WallClock {
+  const ms = timeOf(date, site.state, site.span)
+  if (zone === null || zone === undefined || zone === 'UTC') return utcClock(ms)
+  const shifted = ms + offsetAt(ms, zone, site)
+  // At the very ends of the Date range the shifted instant may not exist.
+  if (Math.abs(shifted) > MAX_TIME) return formattedClock(formatterFor(zone, site), ms)
+  return utcClock(shifted)
+}
+
+// Days from 0000-03-01 to 1970-01-01, and the days in a 400-year cycle.
+const EPOCH_SHIFT = 719_468
+const DAYS_PER_ERA = 146_097
+const DAYS_PER_4_YEARS = 1460
+const DAYS_PER_CENTURY = 36_524
+const LAST_DAY_OF_ERA = 146_096
+const DAYS_PER_YEAR = 365
+const YEARS_PER_ERA = 400
+const YEARS_PER_LEAP = 4
+const MONTH_CYCLE_DAYS = 153
+const MONTH_CYCLE_MONTHS = 5
+const MARCH = 3
+const MONTHS_AFTER_MARCH = 9
+/** March to December: the months of the shifted year (it starts in March) before its new year. */
+const MONTHS_FROM_MARCH = 10
+
+/**
+ * The UTC calendar fields of an instant, by integer arithmetic (the civil
+ * calendar algorithm of H. Hinnant): several times faster than Date's getters.
+ */
+function utcClock(ms: number): WallClock {
+  const days = Math.floor(ms / MS_PER_DAY)
+  let rest = ms - days * MS_PER_DAY
+  const hour = Math.floor(rest / MS_PER_HOUR)
+  rest -= hour * MS_PER_HOUR
+  const minute = Math.floor(rest / MS_PER_MINUTE)
+  rest -= minute * MS_PER_MINUTE
+  const second = Math.floor(rest / MS_PER_SECOND)
+  const shifted = days + EPOCH_SHIFT
+  const era = Math.floor(shifted / DAYS_PER_ERA)
+  const dayOfEra = shifted - era * DAYS_PER_ERA
+  const yearOfEra = Math.floor(
+    (dayOfEra -
+      Math.floor(dayOfEra / DAYS_PER_4_YEARS) +
+      Math.floor(dayOfEra / DAYS_PER_CENTURY) -
+      Math.floor(dayOfEra / LAST_DAY_OF_ERA)) /
+      DAYS_PER_YEAR,
+  )
+  const dayOfYear =
+    dayOfEra -
+    (DAYS_PER_YEAR * yearOfEra +
+      Math.floor(yearOfEra / YEARS_PER_LEAP) -
+      Math.floor(yearOfEra / YEARS_PER_CENTURY))
+  const monthIndex = Math.floor((MONTH_CYCLE_MONTHS * dayOfYear + 2) / MONTH_CYCLE_DAYS)
+  const month =
+    monthIndex < MONTHS_FROM_MARCH ? monthIndex + MARCH : monthIndex - MONTHS_AFTER_MARCH
+  return {
+    year: yearOfEra + era * YEARS_PER_ERA + (month <= 2 ? 1 : 0),
+    month,
+    day: dayOfYear - Math.floor((MONTH_CYCLE_DAYS * monthIndex + 2) / MONTH_CYCLE_MONTHS) + 1,
+    hour,
+    minute,
+    second,
+    millisecond: rest - second * MS_PER_SECOND,
+  }
 }
 
 /**
@@ -130,6 +331,9 @@ export function fromWallClock(
   if (zone === null || zone === undefined || zone === 'UTC') return checked(asUtc, site)
   const before = offsetAt(asUtc - MS_PER_DAY, zone, site)
   const after = offsetAt(asUtc + MS_PER_DAY, zone, site)
+  // No transition near (one offset a day either side, and valid): the one candidate.
+  if (before === after && offsetAt(asUtc - before, zone, site) === before)
+    return checked(asUtc - before, site)
   const candidates = [...new Set([before, after, offsetAt(asUtc, zone, site)])]
     .map((offset) => ({ offset, instant: asUtc - offset }))
     .filter(({ instant, offset }) => offsetAt(instant, zone, site) === offset)
@@ -142,19 +346,6 @@ export function fromWallClock(
   return checked(asUtc - before, site)
 }
 
-/** UTC offset (ms) of `zone` at an instant. */
-/** Largest instant a Date can hold (±8.64e15 ms). */
-const MAX_TIME = 8.64e15
-
-function offsetAt(ms: number, zone: string, site: CallSite): number {
-  // Probes a day either side may fall outside the Date range; clamp them.
-  if (!Number.isFinite(ms))
-    throw site.state.error('INVALID_ARGUMENT', 'Timestamp out of range', site.span)
-  const at = Math.max(-MAX_TIME, Math.min(MAX_TIME, ms))
-  const clock = wallClock(new Date(at), zone, site)
-  return utc(clock) - at
-}
-
 function checked(ms: number, site: CallSite): Date {
   const date = new Date(ms)
   if (Number.isNaN(date.getTime()))
@@ -163,7 +354,9 @@ function checked(ms: number, site: CallSite): Date {
 }
 
 function daysInMonth(year: number, month: number): number {
-  return new Date(utc({ year, month: month + 1, day: 0 })).getUTCDate()
+  return month === MONTHS_PER_YEAR
+    ? daysFromCivil(year + 1, 1) - daysFromCivil(year, month)
+    : daysFromCivil(year, month + 1) - daysFromCivil(year, month)
 }
 
 /** Adds calendar months, clamping the day (Jan 31 + 1 month = Feb 28/29). */

@@ -11,6 +11,7 @@ export type ErrorCode =
   | 'TOO_COMPLEX'
   | 'STEP_LIMIT'
   | 'STRING_LIMIT'
+  | 'PATTERN_LIMIT'
   | 'LIST_LIMIT'
   | 'PATTERN_LIMIT'
   | 'TIMEOUT'
