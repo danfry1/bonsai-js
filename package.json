@@ -16,6 +16,11 @@
       "types": "./dist/service/index.d.mts",
       "import": "./dist/service/index.mjs",
       "default": "./dist/service/index.mjs"
+    },
+    "./query": {
+      "types": "./dist/query/index.d.mts",
+      "import": "./dist/query/index.mjs",
+      "default": "./dist/query/index.mjs"
     }
   },
   "files": [
@@ -85,6 +90,7 @@
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
+    "@electric-sql/pglite": "0.5.8",
     "@fast-check/vitest": "0.4.1",
     "@marcbachmann/cel-js": "8.0.0",
     "@stryker-mutator/core": "9.6.1",
@@ -95,6 +101,7 @@
     "fast-check": "4.9.0",
     "knip": "6.26.0",
     "lefthook": "2.1.10",
+    "mingo": "7.2.4",
     "npm": "11.19.0",
     "oxfmt": "0.58.0",
     "oxlint": "1.73.0",
