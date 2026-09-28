@@ -18,7 +18,7 @@ import {
   type ValidationBudget,
 } from './functions/define.js'
 import { DEFAULT_RUNTIME_LIMITS, State, type RuntimeLimits } from './runtime/state.js'
-import { errorText } from './runtime/values.js'
+import { errorText, isMap } from './runtime/values.js'
 import type { Node } from './syntax/ast.js'
 import { DEFAULT_PARSE_LIMITS, parse, type ParseLimits } from './syntax/parser.js'
 import {
@@ -70,33 +70,33 @@ type InferParams<P extends readonly Type[]> = Extract<
 export interface HostFunction {
   readonly params: readonly Type[]
   readonly returns: Type
-  readonly required?: number
-  readonly rest?: Type
-  readonly async?: boolean
-  readonly context?: boolean
-  readonly description?: string
+  readonly required?: number | undefined
+  readonly rest?: Type | undefined
+  readonly async?: boolean | undefined
+  readonly context?: boolean | undefined
+  readonly description?: string | undefined
   /** Steps charged per call (default 32). */
-  readonly cost?: number
+  readonly cost?: number | undefined
   readonly run: (...args: never[]) => unknown
 }
 
 /** The declaration passed to {@link fn}, without `run`, `async`, and `context`. */
-export interface FnSpec<P extends readonly Type[], R extends Type> {
+export interface FnSpec<P extends readonly Type[] = readonly Type[], R extends Type = Type> {
   /** Parameter types, in order. */
   readonly params: P
   /** Declared result type; results are checked against its kind. */
   readonly returns: R
   /** Number of required leading parameters (default: all). Missing optional arguments arrive as null. */
-  readonly required?: number
+  readonly required?: number | undefined
   /** Type of further variadic arguments. */
-  readonly rest?: Type
-  readonly description?: string
+  readonly rest?: Type | undefined
+  readonly description?: string | undefined
   /**
    * Steps charged per call (default 32), so one evaluation makes at most
    * maxSteps / cost calls. Lower it for cheap pure functions; raise it for
    * expensive ones.
    */
-  readonly cost?: number
+  readonly cost?: number | undefined
 }
 
 /**
@@ -177,7 +177,9 @@ export interface Library {
   readonly variables?: Readonly<Record<string, Type>> | undefined
 }
 
-export interface EnvironmentOptions<V extends Readonly<Record<string, Type>>> {
+export interface EnvironmentOptions<
+  V extends Readonly<Record<string, Type>> = Readonly<Record<string, Type>>,
+> {
   /** Declared context variables and their types. */
   readonly variables?: V | undefined
   /**
@@ -322,7 +324,7 @@ interface Settings {
 }
 
 function toDef(name: string, host: HostFunction): FunctionDef {
-  if (!IDENTIFIER.test(name) || RESERVED_FUNCTION_NAMES.has(name)) {
+  if (!IDENTIFIER.test(name) || RESERVED_FUNCTION_NAMES.has(name) || BLOCKED_NAMES.has(name)) {
     throw new TypeError(`Invalid function name "${name}"`)
   }
   assertHostSpec(host, `Function "${name}"`)
@@ -363,7 +365,7 @@ function toDef(name: string, host: HostFunction): FunctionDef {
 
 function mergeFunctions(
   base: ReadonlyMap<string, FunctionDef>,
-  options: EnvironmentOptions<Readonly<Record<string, Type>>>,
+  options: EnvironmentOptions,
 ): Map<string, FunctionDef> {
   const out = new Map(base)
   const added = new Map<string, string>()
@@ -391,7 +393,7 @@ const BLOCKED_NAMES = new Set(['__proto__', 'constructor', 'prototype'])
 
 function mergeVariables(
   base: Readonly<Record<string, Type>> | undefined,
-  options: EnvironmentOptions<Readonly<Record<string, Type>>>,
+  options: EnvironmentOptions,
 ): Readonly<Record<string, Type>> | undefined {
   // Declaring `variables` (even as {}) makes the environment declared, and so strict by default.
   let out: Record<string, Type> | undefined =
@@ -467,9 +469,7 @@ function assertKeys(value: unknown, allowed: ReadonlySet<string>, what: string):
 }
 
 /** Environment options come from configuration: mistakes there are programming errors. */
-function assertOptions(
-  options: unknown,
-): asserts options is EnvironmentOptions<Readonly<Record<string, Type>>> {
+function assertOptions(options: unknown): asserts options is EnvironmentOptions {
   assertKeys(options, OPTION_KEYS, 'Options')
   const o = options as Record<string, unknown>
   if (o.limits !== undefined) assertKeys(o.limits, LIMIT_KEYS, 'Limits')
@@ -546,7 +546,7 @@ function settingsFrom(base: Settings | undefined, options: unknown): Settings {
       base?.cacheSize ?? DEFAULT_CACHE_SIZE,
       0,
     ),
-    clock: options.clock ?? base?.clock ?? (() => new Date()),
+    clock: options.clock === undefined ? (base?.clock ?? systemClock) : checkedClock(options.clock),
     validateContext: options.validateContext ?? base?.validateContext ?? false,
   }
 }
@@ -695,10 +695,43 @@ function hostDataFailure(error: unknown, source: string): unknown {
   })
 }
 
+const systemClock = (): Date => new Date()
+
+/** A host clock whose results are checked: now() must be a valid timestamp. */
+function checkedClock(clock: () => Date): () => Date {
+  return () => {
+    let value: unknown
+    try {
+      value = clock()
+    } catch (error) {
+      throw new BonsaiRuntimeError('HOST_ERROR', 'The clock failed', { cause: error })
+    }
+    if (!(value instanceof Date) || Number.isNaN(Date.prototype.getTime.call(value))) {
+      throw new BonsaiRuntimeError(
+        'HOST_CONTRACT',
+        'The clock must return a valid Date (for example () => new Date())',
+      )
+    }
+    return value
+  }
+}
+
 function contextOf(value: unknown): Record<string, unknown> {
   if (value === undefined || value === null) return EMPTY_CONTEXT
-  if (typeof value !== 'object' || Array.isArray(value)) {
-    throw new BonsaiRuntimeError('INVALID_ARGUMENT', 'The evaluation context must be an object')
+  let map: boolean
+  try {
+    // A Proxy (even a revoked one) answers these through its traps.
+    map = typeof value === 'object' && isMap(value)
+  } catch (error) {
+    throw new BonsaiRuntimeError('HOST_ERROR', 'Reading the evaluation context failed', {
+      cause: error,
+    })
+  }
+  if (!map) {
+    throw new BonsaiRuntimeError(
+      'INVALID_ARGUMENT',
+      'The evaluation context must be a plain object or class instance',
+    )
   }
   return value as Record<string, unknown>
 }
@@ -721,7 +754,19 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
   }
 
   function analyzeSource(source: string, expect: Type | undefined): Analysis {
-    return analyze(parseSource(source), checkEnv, { expected: expect })
+    const root = parseSource(source)
+    try {
+      return analyze(root, checkEnv, { expected: expect })
+    } catch (error) {
+      // The checker has no source text; attach it so the error can show where.
+      if (error instanceof BonsaiLimitError && error.source === undefined) {
+        throw new BonsaiLimitError(error.code, error.message, {
+          source,
+          ...(error.span === undefined ? {} : { span: error.span }),
+        })
+      }
+      throw error
+    }
   }
 
   function makeProgram<R>(source: string, analysis: Analysis, expect?: Type): Program<Ctx, R> {

@@ -13,7 +13,7 @@ A redesign of the language and the engine. Expressions and host code written for
 - `null` is the single absent value: missing properties and host `undefined` read as `null`, and `x == null` holds for both. Ordering comparisons with `null` are `false`.
 - `&&`, `||`, `!`, and `?:` take booleans (`null` counts as false). There is no coercion: `"a" + 1` and `null + 1` are errors. Division and remainder by zero and non-finite results are errors. Chained comparisons are parse errors.
 - Results that changed: `round` rounds halves away from zero and honors its digits argument; `toFixed` rounds the written decimal; `avg([])` is `null`; `unique` compares by value; templates render `null` as empty text, dates as ISO-8601, and reject lists and maps; `toString(null)` is `""`; `toNumber` rejects invalid text; `now()` is a timestamp; `sort()` orders numbers numerically; `includes`, `indexOf`, and `in` compare lists and maps by value, and `Date`s at the same instant are equal; `replace` and `replaceAll` insert their replacement text literally (no `$&` patterns).
-- Only plain objects and class instances are read as maps, through their own enumerable properties. `Map`, `Set`, `RegExp`, promises and other thenables, typed arrays, and errors are opaque. Map keys follow JavaScript property order.
+- Only plain objects and class instances are read as maps: reads see their own properties, and `keys()`, spread, and `==` see the enumerable ones, as in JavaScript. `Map`, `Set`, `RegExp`, promises, typed arrays, and errors are opaque; a plain object with a `then` method is an ordinary map and is never awaited. Map keys follow JavaScript property order.
 
 **API**
 

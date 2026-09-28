@@ -222,6 +222,22 @@ export type InferVariables<V> = Simplify<
  */
 let meter: { remaining: number } | undefined
 
+/**
+ * Large unions built during one analysis, by structural hash: the same union
+ * rebuilt (a join repeated in every clause of a rule) becomes the same object,
+ * so its index and comparisons are computed once.
+ */
+let interned: Map<number, UnionType[]> | undefined
+/** Unions at least this large are interned. */
+const INTERN_MIN_MEMBERS = 32
+
+let lastWork = 0
+
+/** Type work the last completed budget used: a machine-independent measure of checking cost. */
+export function lastTypeWork(): number {
+  return lastWork
+}
+
 /** Raised when the installed type-work budget runs out. */
 export class TypeBudgetExceeded extends Error {}
 
@@ -229,10 +245,13 @@ export class TypeBudgetExceeded extends Error {}
 export function withTypeBudget<T>(budget: number, run: () => T): T {
   if (meter !== undefined) return run()
   meter = { remaining: budget }
+  interned = new Map()
   try {
     return run()
   } finally {
+    lastWork = budget - meter.remaining
     meter = undefined
+    interned = undefined
   }
 }
 
@@ -403,7 +422,7 @@ function hashText(text: string): number {
 function typeHash(type: Type): number {
   const cached = hashMemo.get(type)
   if (cached !== undefined) return cached
-  chargeTypeWork(1)
+  chargeTypeWork(type.kind === 'union' ? 1 + (type.types.length >>> 2) : 1)
   let h: number
   switch (type.kind) {
     case 'literal':
@@ -491,7 +510,8 @@ export function sameType(a: Type, b: Type): boolean {
         break
       }
       // Members are distinct, so equal sizes and every member found means equal sets.
-      chargeTypeWork(a.types.length + other.types.length)
+      // Hashed lookups are cheap next to other checking work: charged per 8 members.
+      chargeTypeWork(1 + ((a.types.length + other.types.length) >>> 3))
       const buckets = new Map<number, Type[]>()
       for (const candidate of other.types) {
         const h = typeHash(candidate)
@@ -550,6 +570,8 @@ const MAX_UNION_LITERALS = 256
  * members. `collapse` widens very wide literal unions (see MAX_UNION_LITERALS).
  */
 export function unionOf(types: readonly Type[], collapse = true): Type {
+  // One type is already its own union (unions are built flat).
+  if (types.length === 1 && types[0].kind !== 'never') return types[0]
   if (collapse && types.length === 2) return unionOfTwo(types[0], types[1])
   return unionOfAll(types, collapse)
 }
@@ -565,6 +587,10 @@ function unionOfTwo(a: Type, b: Type): Type {
   if (a === b && a.kind !== 'union') return a
   if (a.kind === 'union' && contains(a, b)) return a
   if (b.kind === 'union' && contains(b, a)) return b
+  if (a.kind === 'union' && b.kind === 'union') {
+    if (holdsAll(a, b)) return a
+    if (holdsAll(b, a)) return b
+  }
   let memo = pairMemo.get(a)
   const cached = memo?.get(b)
   if (cached !== undefined) {
@@ -575,6 +601,13 @@ function unionOfTwo(a: Type, b: Type): Type {
   if (memo === undefined) pairMemo.set(a, (memo = new WeakMap()))
   memo.set(b, result)
   return result
+}
+
+/** Whether `outer` certainly holds every member of `inner` (`Zone | null` holds `Zone`). */
+function holdsAll(outer: UnionType, inner: UnionType): boolean {
+  if (inner.types.length > outer.types.length) return false
+  chargeTypeWork(1 + (inner.types.length >>> 1))
+  return inner.types.every((member) => contains(outer, member))
 }
 
 /** Whether a union certainly holds a literal or base kind already. */
@@ -634,7 +667,15 @@ function unionOfAll(types: readonly Type[], collapse: boolean): Type {
   if (out.length === 1) return out[0]
   // Not frozen: freezing a large member array costs more than building it, and
   // checker types are only read (a program's result type is frozen when exposed).
-  return { kind: 'union', types: out }
+  const union: UnionType = { kind: 'union', types: out }
+  if (interned === undefined || out.length < INTERN_MIN_MEMBERS) return union
+  const h = typeHash(union)
+  const bucket = interned.get(h)
+  const existing = bucket?.find((candidate) => sameType(candidate, union))
+  if (existing !== undefined) return existing
+  if (bucket === undefined) interned.set(h, [union])
+  else bucket.push(union)
+  return union
 }
 
 const assignableMemo = [
@@ -862,7 +903,19 @@ function literalBase(key: string): string {
 const MAX_TYPE_TEXT = 1000
 
 /** Human-readable type text, e.g. `{ name: string, tags: string[] } | null`. */
+const formatMemo = new WeakMap<Type, string>()
+
 export function formatType(type: Type, maxLength = MAX_TYPE_TEXT): string {
+  // Messages repeat a type's text (every unknown field of one large object).
+  if (maxLength === MAX_TYPE_TEXT) {
+    let text = formatMemo.get(type)
+    if (text === undefined) formatMemo.set(type, (text = formatTypeText(type, maxLength)))
+    return text
+  }
+  return formatTypeText(type, maxLength)
+}
+
+function formatTypeText(type: Type, maxLength: number): string {
   let out = ''
   let full = false
   const emit = (text: string): boolean => {

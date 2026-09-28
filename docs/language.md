@@ -43,9 +43,8 @@ put in the context (see §10).
 | duration | A span of time, produced by `days(3)`, `hours(1)`, `t1 - t2`, ... |
 
 Every other host value is **opaque**: functions, symbols, bigints, `Map`,
-`Set`, `WeakMap`, `WeakSet`, `RegExp`, promises and other thenables (any
-object with a callable `then`), `ArrayBuffer` and typed arrays, errors, and
-boxed primitives, including those created in another realm (a `node:vm`
+`Set`, `WeakMap`, `WeakSet`, `RegExp`, promises, `ArrayBuffer` and typed
+arrays, errors, and boxed primitives, including those created in another realm (a `node:vm`
 context, an iframe). An opaque value can be compared with `==` (by identity or
 primitive equality) and passed to host functions, and `type()` returns
 `"opaque"` for it, but reading a property of one is a `TYPE_ERROR`.
@@ -196,8 +195,9 @@ of the following is an `INVALID_ARGUMENT` error:
   that compiles to more than 5000 instructions.
 
 A leading `(?i)` makes the match ignore ASCII case (other letters match
-exactly). Unlike the `u` flag, a backslash before punctuation that needs no
-escape (`\-`, `\!`) matches that character. Matching takes time linear in
+exactly). Unlike the `u` flag, a backslash before ASCII punctuation that
+needs no escape (`\-`, `\!`) matches that character; before any other
+character it is an error. Matching takes time linear in
 the pattern and text. A pattern longer than `maxPatternLength` is a
 `PATTERN_LIMIT` error, which, like every limit error, `try()` does not catch.
 
@@ -242,7 +242,9 @@ users.map(u => .age) // error: INVALID_LAMBDA
 ```
 
 Lambdas are only valid as arguments for function parameters. A spread argument
-cannot be used in a call to a function that takes a function parameter.
+cannot be used in a call to a function that takes a function parameter. How
+many arguments a spread supplies is known only at run time: a call that ends up
+with too few or too many fails with `NO_OVERLOAD` when it runs.
 
 Higher-order functions invoke lambdas sequentially, in list order, and stop as
 soon as the result is known (`some`, `every`, `find`, ...).

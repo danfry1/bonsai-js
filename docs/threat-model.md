@@ -48,12 +48,13 @@ declared functions, never on `x`.
   instance (enumeration, as in `keys()` or spread, sees only enumerable ones).
   Inherited members, class methods, and prototype getters never resolve; keep
   secrets in private class fields (`#field`), which are not properties. Built-in host objects (`Map`,
-  `Set`, `WeakMap`, `WeakSet`, `RegExp`, promises and thenables,
+  `Set`, `WeakMap`, `WeakSet`, `RegExp`, promises,
   `ArrayBuffer` and typed arrays, errors, boxed primitives, functions),
   including ones from another realm, are opaque: reading into them is a type
   error.
 - `__proto__`, `constructor`, and `prototype` are rejected wherever they appear:
-  as syntax, as computed keys, and in keys spread from host data.
+  as syntax (including as function or method names), as computed keys, as host
+  function names, and in keys spread from host data.
 - Produced maps never contain `__proto__`, `constructor`, or `prototype` keys, even when spread from host data parsed with `JSON.parse`.
 - `matches()` uses a linear-time regular expression engine (JavaScript syntax
   without backreferences or lookaround), so a user-written pattern cannot
@@ -102,8 +103,9 @@ wherever the language walks it (equality, `unique`, `in`).
 - A host function must be declared `async` to be awaited.
 - `evaluateSync` rejects an expression that calls one before any host code runs.
 - A promise from an undeclared function is an error.
-- A thenable in the context is opaque data. It is never awaited, and
-  `evaluate()` refuses to return one.
+- A thenable in the context (a plain object with a `then` method) is an
+  ordinary map. It is never awaited, and `evaluate()` refuses to return one
+  as the result.
 - A host function whose result does not match its declaration (checked
   deeply) or that returns a promise without `async: true` fails with
   `HOST_CONTRACT`, which `try()` cannot catch.

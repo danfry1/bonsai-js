@@ -95,10 +95,11 @@ export function createLanguageService(env: Environment<never>): LanguageService 
 
     const prefix = source.slice(0, from)
     const scan = scanOpen(prefix)
-    // Inside a string after == or != (user.plan == "p|), or in a list after
-    // `in` (user.plan in ["pro", "f|): offer the enum values.
+    // Inside a string after == or != (user.plan == "p|), in a list after `in`
+    // (user.plan in ["pro", "f|), or as a call argument (roles.includes("a|),
+    // xs.sortBy(.k, "d|)): offer the values the other side allows.
     const quoted =
-      /(?:==|!=|\bin\s*\[(?:\s*(?:"[^"\\]*"|'[^'\\]*')\s*,)*)\s*(?<quote>["'])(?<typed>[^"'\\]*)$/u.exec(
+      /(?:==|!=|[(,]|\bin\s*\[(?:\s*(?:"[^"\\]*"|'[^'\\]*')\s*,)*)\s*(?<quote>["'])(?<typed>[^"'\\]*)$/u.exec(
         source.slice(0, cursor),
       )
     if (quoted !== null && scan.inString) {
@@ -175,6 +176,26 @@ export function createLanguageService(env: Environment<never>): LanguageService 
       ) {
         other = analysis.types.get(node.left)
         if (other !== undefined) return
+      }
+      if (node.type === 'Call') {
+        const index = node.args.findIndex((arg) => arg.type !== 'Spread' && isProbe(arg))
+        if (index > 0) {
+          const receiver = node.args[0]
+          if (node.name === 'includes' && index === 1 && receiver.type !== 'Spread') {
+            // roles.includes("a"): the list's element type.
+            const list = analysis.types.get(receiver)
+            const listType = list === undefined ? undefined : nonNull(list)
+            if (listType?.kind === 'list') other = listType.element
+          } else {
+            // A parameter declared as literals (sortBy's "asc" | "desc").
+            const plan = analysis.calls.get(node)
+            const overload = plan?.def.overloads[plan.candidates[0] ?? 0]
+            const param = overload?.params[index] ?? overload?.rest
+            if (param !== undefined && unionMembers(param).every((m) => m.kind === 'literal'))
+              other = param
+          }
+          if (other !== undefined) return
+        }
       }
       forEachChild(node, find)
     }
@@ -318,6 +339,9 @@ export function createLanguageService(env: Environment<never>): LanguageService 
     let best: Node | undefined
     const visit = (node: Node): void => {
       if (offset < node.start || offset > node.end) return
+      // The implicit item's `.` ends where the name after it starts (`.cat`):
+      // an offset on that name belongs to the member, not the item.
+      if (node.type === 'It' && offset === node.end && best?.type === 'Member') return
       best = node
       forEachChild(node, visit)
     }

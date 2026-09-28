@@ -26,6 +26,10 @@ Bonsai follows Semantic Versioning for its two package entrypoints:
 - **New built-in functions.** Adding one never changes an existing environment's
   expressions, because a host function of the same name takes precedence and
   an unknown function was previously an error.
+- **New fields in exported interfaces.** An options or input interface may gain
+  optional fields, and a result interface may gain fields. Construct the
+  limits and options objects you pass as literals of the documented fields
+  rather than implementing exported interfaces (such as `RuntimeLimits`) in full.
 - **New variants in exported unions.** This covers syntax node types, `Type`
   kinds, `ErrorCode`, `DiagnosticCode`, and `CompletionKind`. Avoid exhaustive
   switches without a default branch.

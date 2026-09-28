@@ -158,7 +158,7 @@ function expectationProblem(actual: Type, expected: Type): string | undefined {
         !isNullable(expected.fields[key]),
     )
     const extra =
-      expected.rest === undefined
+      expected.rest === undefined && isExact(actual)
         ? Object.keys(actual.fields).filter((key) => !Object.hasOwn(expected.fields, key))
         : []
     const wrong = Object.keys(expected.fields).filter((key) => {
@@ -198,7 +198,7 @@ function expectationProblem(actual: Type, expected: Type): string | undefined {
 }
 
 function suggestAll(names: readonly string[], candidates: readonly string[]): string {
-  const hints = names.map((name) => suggest(name, candidates)).filter((hint) => hint !== '')
+  const hints = names.map((name) => suggest(name, () => candidates)).filter((hint) => hint !== '')
   return hints.length > 0 ? hints.join('') : ''
 }
 
@@ -424,9 +424,11 @@ function mapOf(type: Type): MapType | undefined {
 
 /**
  * Checks a parsed expression. Checking time is bounded: a source that would
- * need too much type work fails with a TOO_MANY_NODES limit error.
+ * need too much type work fails with a TOO_COMPLEX limit error.
  */
 export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): Analysis {
+  const outerSuggestions = suggestionsLeft
+  suggestionsLeft = MAX_SUGGESTIONS
   try {
     return withTypeBudget(CHECK_BUDGET, () => analyzeWithin(root, env, options))
   } catch (error) {
@@ -434,6 +436,8 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
     throw new BonsaiLimitError('TOO_COMPLEX', 'Expression is too complex to check', {
       span: { start: root.start, end: root.end },
     })
+  } finally {
+    suggestionsLeft = outerSuggestions
   }
 }
 
@@ -477,7 +481,12 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
    */
   const callMemo = new WeakMap<
     CallNode,
-    { inputs: readonly Type[]; type: Type; diagnostics: readonly Diagnostic[] }
+    {
+      expected: Type | undefined
+      inputs: readonly Type[]
+      type: Type
+      diagnostics: readonly Diagnostic[]
+    }
   >()
 
   // === pass 1: bind the implicit parameter ===
@@ -692,7 +701,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       expected.kind !== 'var' &&
       isAssignable(actual, expected)
       ? actual
-      : widen(actual)
+      : widenFresh(actual)
   }
 
   function checkNode(node: Node, scope: Scope, expected: Type | undefined): Type {
@@ -728,7 +737,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         if (env.strict) {
           report(
             'UNKNOWN_VARIABLE',
-            `Unknown variable "${node.name}"${suggest(node.name, Object.keys(env.variables ?? {}))}`,
+            `Unknown variable "${node.name}"${suggest(node.name, () => Object.keys(env.variables ?? {}))}`,
             node,
           )
         }
@@ -751,7 +760,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         return indexedType(objectType, indexType, node)
       }
       case 'Call':
-        return checkCall(node, scope)
+        return checkCall(node, scope, expected)
       case 'Unary': {
         const operand = check(node.operand, scope)
         markAsync(node, node.operand)
@@ -800,7 +809,14 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
             markAsync(node, item)
           }
         }
-        return t.list(elements.length === 0 ? t.never() : unionOf(elements))
+        if (elements.length === 0) return t.list(t.never())
+        // Items that all fit the expected item type (an allow-list of a large
+        // enum) keep their literals rather than collapsing to the base kind.
+        const fits =
+          expectedItem !== undefined &&
+          expectedItem.kind !== 'any' &&
+          elements.every((element) => isAssignable(element, expectedItem))
+        return t.list(unionOf(elements, !fits))
       }
       case 'Map': {
         const expectedMap = expected === undefined ? undefined : mapOf(nonNull(expected))
@@ -944,7 +960,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       if (quiet) return isExact(objectType) ? NULL : ANY
       report(
         'UNKNOWN_PROPERTY',
-        `Property "${name}" does not exist on ${formatType(objectType)}${suggest(name, Object.keys(objectType.fields))}`,
+        `Property "${name}" does not exist on ${formatType(objectType)}${suggest(name, () => Object.keys(objectType.fields))}`,
         at,
       )
       return ANY
@@ -1233,14 +1249,15 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
 
   // === calls ===
 
-  function checkCall(node: CallNode, scope: Scope): Type {
-    if (!node.args.some((arg) => arg.type === 'Lambda')) return checkCallNow(node, scope)
+  function checkCall(node: CallNode, scope: Scope, expected?: Type): Type {
+    if (!node.args.some((arg) => arg.type === 'Lambda')) return checkCallNow(node, scope, expected)
     const free = freeLocals(node)
     const inputs = free.names.map((name) => scope.locals.get(name) ?? ANY)
     if (free.it) inputs.push(scope.it ?? ANY)
     const last = callMemo.get(node)
     if (
       last !== undefined &&
+      last.expected === expected &&
       last.inputs.length === inputs.length &&
       last.inputs.every((input, i) => sameType(input, inputs[i] ?? ANY))
     ) {
@@ -1248,12 +1265,12 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       return last.type
     }
     const mark = diagnostics.length
-    const result = checkCallNow(node, scope)
-    callMemo.set(node, { inputs, type: result, diagnostics: diagnostics.slice(mark) })
+    const result = checkCallNow(node, scope, expected)
+    callMemo.set(node, { expected, inputs, type: result, diagnostics: diagnostics.slice(mark) })
     return result
   }
 
-  function checkCallNow(node: CallNode, scope: Scope): Type {
+  function checkCallNow(node: CallNode, scope: Scope, expected?: Type): Type {
     functions.add(node.name)
     const receiver = node.args[0]
     // Math.max(...) and friends. In an open environment the context may really
@@ -1304,7 +1321,8 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       const alias = Object.hasOwn(FUNCTION_ALIASES, node.name)
         ? FUNCTION_ALIASES[node.name]
         : undefined
-      const hint = alias === undefined ? suggest(node.name, env.functionNames()) : `; ${alias}`
+      const hint =
+        alias === undefined ? suggest(node.name, () => env.functionNames()) : `; ${alias}`
       report('UNKNOWN_FUNCTION', `Unknown function "${node.name}"${hint}`, {
         start: node.nameStart,
         end: node.nameEnd,
@@ -1366,7 +1384,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
 
     if (candidates.length === 0) {
       reportNoOverload(node, def, argTypes, hasSpread)
-      for (const arg of node.args) if (arg.type === 'Lambda') checkLambda(arg, [], scope)
+      recoverLambdas(def, node, argTypes, scope)
       calls.set(node, {
         def,
         candidates: def.overloads.map((_, i) => i),
@@ -1394,7 +1412,10 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       }
       let paramTypes = param.params.map((p) => substitute(p, firstBindings))
       const mark = diagnostics.length
-      let bodyType = checkLambda(arg, paramTypes, scope)
+      // What the call is expected to produce tells the lambda what to return:
+      // `map` returns list<U> of the lambda's U, `reduce` returns its U.
+      const bodyExpected = lambdaExpected(first.result, param.result, expected)
+      let bodyType = checkLambda(arg, paramTypes, scope, bodyExpected)
       unify(param.result, bodyType, firstBindings)
       // A parameter that takes the lambda's own result (reduce's accumulator)
       // widens with it: re-check until the parameter types are stable.
@@ -1409,7 +1430,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         if (last) next = next.map((p, i) => (changed.includes(i) ? ANY : p))
         truncate(mark)
         paramTypes = next
-        bodyType = checkLambda(arg, paramTypes, scope)
+        bodyType = checkLambda(arg, paramTypes, scope, bodyExpected)
         unify(param.result, bodyType, firstBindings)
         if (last) {
           // Still growing: what the lambda returns (and so the call's result) is
@@ -1424,11 +1445,11 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         param.result.kind !== 'any' &&
         !isAssignable(bodyType, param.result)
       ) {
-        const expected = substitute(param.result, firstBindings)
-        const onlyNull = expected.kind === 'boolean' && isAssignable(bodyType, OPTIONAL_BOOLEAN)
+        const required = substitute(param.result, firstBindings)
+        const onlyNull = required.kind === 'boolean' && isAssignable(bodyType, OPTIONAL_BOOLEAN)
         report(
           onlyNull ? 'MAYBE_NULL' : 'TYPE_ERROR',
-          `The lambda for ${node.name}() must return ${formatType(expected)} but returns ${formatType(bodyType)}`,
+          `The lambda for ${node.name}() must return ${formatType(required)} but returns ${formatType(bodyType)}`,
           arg.body,
           onlyNull ? 'warning' : 'error',
         )
@@ -1477,7 +1498,14 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
               RESULT_REFINERS[def.name],
               argTypes.map((a) => a ?? ANY),
             )
-      return refined ?? widenFresh(substitute(candidate.result, bindings[i]))
+      if (refined !== undefined) return refined
+      const exact = substitute(candidate.result, bindings[i])
+      return expected !== undefined &&
+        expected.kind !== 'any' &&
+        expected.kind !== 'var' &&
+        isAssignable(exact, expected)
+        ? exact
+        : widenFresh(exact)
     })
     const gradual =
       candidates.length === 1 &&
@@ -1505,6 +1533,24 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       asyncLambda,
       ...(gradual ? { gradual } : {}),
     })
+    // xs.includes(v) is `v in xs`: warn the same way when it can never hold.
+    if (def.host !== true && def.name === 'includes' && node.args.length === 2) {
+      const list = argTypes[0]
+      const item = argTypes[1]
+      if (
+        list?.kind === 'list' &&
+        item !== undefined &&
+        list.element.kind !== 'never' &&
+        !overlaps(item, list.element)
+      ) {
+        report(
+          'ALWAYS_FALSE',
+          `${formatType(item)} can never be in ${formatType(list)}`,
+          node,
+          'warning',
+        )
+      }
+    }
     // Several overloads can only match when argument types are unknown; the
     // result is then unknown too, unless every candidate agrees.
     const merged = unionOf(results)
@@ -1514,7 +1560,44 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     return receiverNull ? t.optional(result) : result
   }
 
-  function checkLambda(node: LambdaNode, params: readonly Type[], scope: Scope): Type {
+  /**
+   * After a failed match, checks lambdas with the parameter types of the first
+   * overload their other arguments fit, so an unfinished call being edited
+   * (`reduce(lines, (acc, l) => l.`) still types `l` for completions and hover.
+   */
+  function recoverLambdas(
+    def: FunctionDef,
+    node: CallNode,
+    argTypes: readonly (Type | undefined)[],
+    scope: Scope,
+  ): void {
+    let params: readonly (readonly Type[])[] | undefined
+    for (const candidate of def.overloads) {
+      const b = new Map<string, Type>()
+      const fits = node.args.every((arg, index) => {
+        const param = candidate.params[index]
+        const argType = argTypes[index]
+        if (arg.type === 'Lambda') return param?.kind === 'function'
+        return param === undefined || argType === undefined || unify(param, argType, b)
+      })
+      if (!fits) continue
+      params = node.args.map((_, index) => {
+        const param = candidate.params[index]
+        return param?.kind === 'function' ? param.params.map((p) => substitute(p, b)) : []
+      })
+      break
+    }
+    node.args.forEach((arg, index) => {
+      if (arg.type === 'Lambda') checkLambda(arg, params?.[index] ?? [], scope)
+    })
+  }
+
+  function checkLambda(
+    node: LambdaNode,
+    params: readonly Type[],
+    scope: Scope,
+    expected?: Type,
+  ): Type {
     let inner: Scope
     // Facts about an outer item do not apply to the new item.
     const outer: Facts | undefined =
@@ -1531,7 +1614,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       })
       inner = { locals, it: undefined, nonNull: outer }
     }
-    const bodyType = check(node.body, inner)
+    const bodyType = check(node.body, inner, expected)
     types.set(node, bodyType)
     return bodyType
   }
@@ -1545,9 +1628,18 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
   ): boolean {
     const count = node.args.length
     const required = candidate.required ?? candidate.params.length
-    if (!hasSpread) {
-      if (count < required) return false
-      if (count > candidate.params.length && candidate.rest === undefined) return false
+    // Spreading an empty list (`...[]`) passes no arguments at all.
+    const isEmptySpread = (i: number): boolean =>
+      node.args[i].type === 'Spread' && elementOf(nonNull(argTypes[i] ?? ANY))?.kind === 'never'
+    let passed = count
+    let otherSpread = false
+    for (let i = 0; i < count; i++) {
+      if (isEmptySpread(i)) passed--
+      else if (node.args[i].type === 'Spread') otherSpread = true
+    }
+    if (!hasSpread || !otherSpread) {
+      if (passed < required) return false
+      if (passed > candidate.params.length && candidate.rest === undefined) return false
     }
     for (let i = 0; i < count; i++) {
       const arg = node.args[i]
@@ -1810,6 +1902,25 @@ export function acceptsArgument(param: Type, arg: Type): boolean {
 }
 
 /** Binds type variables in `param` from `arg`; false when they cannot match. */
+/** The type a lambda should return for its call to produce `expected`, when the signature says. */
+function lambdaExpected(
+  result: Type,
+  lambdaResult: Type,
+  expected: Type | undefined,
+): Type | undefined {
+  if (expected === undefined || expected.kind === 'any' || lambdaResult.kind !== 'var')
+    return undefined
+  if (result.kind === 'var' && result.name === lambdaResult.name) return expected
+  if (
+    result.kind === 'list' &&
+    result.element.kind === 'var' &&
+    result.element.name === lambdaResult.name &&
+    expected.kind === 'list'
+  )
+    return expected.element
+  return undefined
+}
+
 function unify(param: Type, arg: Type, b: Map<string, Type>): boolean {
   if (arg.kind === 'any') {
     // Anything may flow into every type variable here: `any` absorbs them, so
@@ -2088,10 +2199,24 @@ const JS_GLOBALS: Readonly<Record<string, string>> = {
 }
 
 /** "Did you mean" suffix using edit distance. */
-function suggest(name: string, candidates: Iterable<string>): string {
+/**
+ * "Did you mean" hints cost an edit distance per candidate, so a source full of
+ * typos against a large schema is bounded: hints for the first unknown names
+ * only, each against a bounded number of candidates.
+ */
+const MAX_SUGGESTIONS = 16
+const MAX_SUGGESTION_CANDIDATES = 1000
+let suggestionsLeft = MAX_SUGGESTIONS
+
+function suggest(name: string, candidatesOf: () => Iterable<string>): string {
+  if (suggestionsLeft <= 0) return ''
+  suggestionsLeft--
+  const candidates = candidatesOf()
   let best: string | undefined
   let bestDistance = Math.max(2, Math.floor(name.length / 3)) + 1
+  let examined = 0
   for (const candidate of candidates) {
+    if (++examined > MAX_SUGGESTION_CANDIDATES) break
     const distance = editDistance(name.toLowerCase(), candidate.toLowerCase())
     if (distance < bestDistance) {
       best = candidate

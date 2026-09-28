@@ -35,7 +35,7 @@ try {
 | `formatted` | `string` | The message followed by a code frame, when a span is known. |
 | `cause` | `unknown` | For `HOST_ERROR`, the error your host function (or a getter or Proxy in the context) threw. |
 
-`isBonsaiError(value)` is a type guard for `BonsaiError`. Checking and evaluating an expression only ever throw `BonsaiError`s, including when your own code fails: a host function that throws (even a `BonsaiError`, for example from an evaluation it runs itself), or a getter, Proxy trap, or `then` hook in the context that throws when read (including while `validateContext` or an `expect` check reads it), becomes a `HOST_ERROR` with the original error as its `cause`. Any other error escaping from Bonsai is a bug. Invalid configuration is reported differently, as a `TypeError` or `RangeError` thrown synchronously: by `bonsai()`, `extend()`, or `fn()` (an unknown option or limit, a limit out of range, a malformed parameter list, a duplicate or invalid name), by `evaluate()` and `evaluateSync()` for invalid per-evaluation options (an unknown key, a negative `maxSteps`, a `signal` that is not an `AbortSignal`), and by `print()` for a tree the parser could not have produced.
+`isBonsaiError(value)` is a type guard for `BonsaiError`. Checking and evaluating an expression only ever throw `BonsaiError`s, including when your own code fails: a host function that throws (even a `BonsaiError`, for example from an evaluation it runs itself), or a getter, Proxy trap, or `then` hook in the context that throws when read (including while `validateContext` or an `expect` check reads it), becomes a `HOST_ERROR` with the original error as its `cause`. Any other error escaping from Bonsai is a bug. Invalid configuration is reported differently, as a `TypeError` or `RangeError` thrown synchronously: by `bonsai()`, `extend()`, or `fn()` (an unknown option or limit, a limit out of range, a malformed parameter list, a duplicate or invalid name), for invalid per-evaluation options (an unknown key, a negative `maxSteps`, a `signal` that is not an `AbortSignal`: `evaluateSync()` throws, and `evaluate()` returns a rejected promise), and by `print()` for a tree the parser could not have produced.
 
 ## Classes and codes
 
@@ -62,7 +62,7 @@ try {
 | | `INVALID_ARGUMENT` | An argument has the right type but an invalid value (an unparsable timestamp, an unknown time zone, a non-integer count, a regular expression the engine does not support), or the context is not an object. |
 | | `ASYNC_IN_SYNC` | `evaluateSync()` on an expression that calls a host function declared `async: true`. |
 | | `HOST_ERROR` | A host function threw (anything, including a `BonsaiError` from a nested evaluation), or reading the context ran host code (a getter or Proxy) that threw. |
-| | `HOST_CONTRACT` | A host function broke its declaration: it returned a value that does not match `returns` (checked deeply), or returned a promise without `async: true`. |
+| | `HOST_CONTRACT` | Host code broke its contract: a host function returned a value that does not match `returns` (checked deeply) or a promise without `async: true`, or the `clock` returned something other than a valid `Date`. |
 | | `INVALID_CONTEXT` | With `validateContext`, the context does not match the declared variable types. |
 
 `try(expr, fallback)` in an expression catches `BonsaiRuntimeError`s except `HOST_CONTRACT`, which is a bug in host code rather than a condition an expression should recover from. It never catches syntax, check, or limit errors.

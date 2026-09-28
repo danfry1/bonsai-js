@@ -8,7 +8,10 @@ Checking is gradual. A value whose type is unknown has type `any`, which is comp
 
 - a variable in an open environment (no `variables` declared), or an undeclared variable in a non-strict environment;
 - a field of an open record (`t.record(...)`) or a field declared `t.any()`;
-- `values()`, `entries()`, or a computed-key read on a declared object, since the value may carry keys the type does not list.
+- `values()`, `entries()`, or a computed-key read on a declared object, since the value may carry keys the type does not list;
+- a `reduce` whose accumulator keeps changing type (`(acc, x) => [acc, x]`): after a few rounds of inference its result is `any`.
+
+The number of arguments a spread supplies (`max(...xs)`) is also only known at run time: each item is checked against every position it may fill, and a call that ends up with too few or too many arguments fails with `NO_OVERLOAD` when it runs. Spreading a list the checker knows is empty (`...[]`) supplies no arguments.
 
 Declare more to catch more. Declaring `variables` makes the environment strict, so every undeclared variable is an error; `strict: false` lets undeclared names read the context as `any`.
 

@@ -350,6 +350,9 @@ const ITEM_ATOMS = [
   '1',
   '"a"',
 ] as const
+// Some accumulators never converge (`[acc, x]`, `{ v: acc }`): after reduce's
+// re-check limit their type is `any` by design, so their results are gradual
+// (checked at run time) rather than findings.
 const REDUCERS = [
   'acc + x',
   'acc ?? x',
