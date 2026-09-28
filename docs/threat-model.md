@@ -89,7 +89,8 @@ comparison, regular expression compilation and matching, sorting, calendar and
 time zone calculations, and the size of lists and maps an expression builds. A
 single native operation never runs unbounded between budget checks, so the
 budget bounds wall-clock time as well as work: at the default budget, any
-expression finishes or fails within about 100 ms on Node.
+expression finishes or fails within about 100 ms on Node (about 150 ms for the
+slowest shapes we have found, such as maps with 100,000 integer-like keys).
 Sizes are checked before allocation. Lists and maps an expression builds are
 limited to `maxValueDepth` levels and charged for their size, so the structure
 an expression creates is bounded. A result can still contain host data as it

@@ -56,7 +56,7 @@ The step budget is the main guarantee against expensive expressions. Every opera
 - every runtime error, at 64 steps, so errors caught by `try()` are not free;
 - resources such as a compiled pattern or a time zone, charged before they are created, whether or not creating them succeeds.
 
-No single operation can do unbounded work between checks, so the budget bounds time as well as work. At the default budget of 1,000,000 steps, ordinary expressions finish in about 40 ms of work per million steps on Node, and the slowest expressions we know of finish or fail within about 100 ms (measured on Node 24).
+No single operation can do unbounded work between checks, so the budget bounds time as well as work. At the default budget of 1,000,000 steps, ordinary expressions finish in about 40 ms of work per million steps on Node, and the slowest expressions we know of finish or fail within about 150 ms (measured on Node 24; most within 100 ms).
 
 The step count is deterministic: the same expression over the same data always uses the same number of steps, whatever the machine or its load. That makes `maxSteps` the right limit for rejecting expensive expressions consistently. `timeout` is wall-clock time and varies with load; use it to bound time spent in your own host functions.
 
