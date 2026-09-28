@@ -402,7 +402,8 @@ export function compileRegex(source: string): Program {
         return { code: hexEscape(2, '\\x') }
       default:
         if (/[1-9]/u.test(e)) fail('Backreferences are not supported')
-        if (/[A-Za-z]/u.test(e)) fail(`Unknown escape \\${e}`)
+        // Only ASCII punctuation may be escaped to stand for itself (\. \- \/ ...).
+        if (!/^[!-/:-@[-`{-~]$/u.test(e)) fail(`Unknown escape \\${e}`)
         i--
         return { code: readCodePoint() }
     }

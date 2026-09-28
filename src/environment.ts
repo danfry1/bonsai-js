@@ -18,6 +18,7 @@ import {
   type ValidationBudget,
 } from './functions/define.js'
 import { DEFAULT_RUNTIME_LIMITS, State, type RuntimeLimits } from './runtime/state.js'
+import { errorText } from './runtime/values.js'
 import type { Node } from './syntax/ast.js'
 import { DEFAULT_PARSE_LIMITS, parse, type ParseLimits } from './syntax/parser.js'
 import {
@@ -585,6 +586,20 @@ interface EvaluationLimits {
   readonly signal: AbortSignal | undefined
 }
 
+/** Whether a value has an AbortSignal's members; a signal whose getters throw does not. */
+function looksLikeSignal(signal: object): boolean {
+  try {
+    const s = signal as Record<string, unknown>
+    return (
+      typeof s.aborted === 'boolean' &&
+      typeof s.addEventListener === 'function' &&
+      typeof s.removeEventListener === 'function'
+    )
+  } catch {
+    return false
+  }
+}
+
 /** Validates per-evaluation options the way `limits` are validated; nothing fails open. */
 function evaluationLimits(options: unknown, settings: Settings): EvaluationLimits {
   if (options === undefined) {
@@ -594,16 +609,21 @@ function evaluationLimits(options: unknown, settings: Settings): EvaluationLimit
       signal: undefined,
     }
   }
-  assertKeys(options, EVALUATE_OPTION_KEYS, 'Evaluate option')
-  const o = options as Record<string, unknown>
+  // Options are the caller's own object; one whose getters or Proxy traps throw
+  // is invalid options (a TypeError), never an error from inside evaluation.
+  let o: Record<string, unknown>
+  try {
+    assertKeys(options, EVALUATE_OPTION_KEYS, 'Evaluate option')
+    const read = options as Record<string, unknown>
+    o = { maxSteps: read.maxSteps, timeout: read.timeout, signal: read.signal }
+  } catch (error) {
+    if (error instanceof TypeError || error instanceof RangeError) throw error
+    throw new TypeError(`Evaluate options could not be read: ${errorText(error)}`, { cause: error })
+  }
   const signal = o.signal
   if (
     signal !== undefined &&
-    (typeof signal !== 'object' ||
-      signal === null ||
-      typeof (signal as { aborted?: unknown }).aborted !== 'boolean' ||
-      typeof (signal as { addEventListener?: unknown }).addEventListener !== 'function' ||
-      typeof (signal as { removeEventListener?: unknown }).removeEventListener !== 'function')
+    (typeof signal !== 'object' || signal === null || !looksLikeSignal(signal))
   ) {
     throw new TypeError('signal must be an AbortSignal')
   }
@@ -669,8 +689,7 @@ function validateContext(
  */
 function hostDataFailure(error: unknown, source: string): unknown {
   if (error instanceof BonsaiError) return error
-  const message = error instanceof Error ? error.message : String(error)
-  return new BonsaiRuntimeError('HOST_ERROR', `Reading host data failed: ${message}`, {
+  return new BonsaiRuntimeError('HOST_ERROR', `Reading host data failed: ${errorText(error)}`, {
     source,
     cause: error,
   })
@@ -719,6 +738,10 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         )
       }
     }
+    // The limits of an evaluation without options: built once, not per run.
+    const defaultLimits = evaluationLimits(undefined, settings)
+    const limitsOf = (options: EvaluateOptions | undefined): EvaluationLimits =>
+      options === undefined ? defaultLimits : evaluationLimits(options, settings)
     let syncCode: CompiledProgram | undefined
     let asyncCode: CompiledProgram | undefined
     let pooled: State | undefined
@@ -756,7 +779,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         )
       }
       const code = syncProgram()
-      const limits = evaluationLimits(options, settings)
+      const limits = limitsOf(options)
       const ctx = contextOf(context)
       let state: State
       const reuse = !pooledInUse
@@ -791,7 +814,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         }
       }
       const code = asyncProgram()
-      const limits = evaluationLimits(options, settings)
+      const limits = limitsOf(options)
       const ctx = contextOf(context)
       const state = new State(settings.runtimeLimits, settings.clock)
       try {

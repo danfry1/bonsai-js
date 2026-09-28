@@ -15,8 +15,9 @@ import {
   contains,
   describeKind,
   divide,
-  equals,
+  errorText,
   hasKey,
+  isEqual,
   isMap,
   mapKey,
   multiply,
@@ -27,6 +28,7 @@ import {
   readMember,
   remainder,
   subtract,
+  TEXT_SHIFT,
   toText,
   track,
   truth,
@@ -58,8 +60,6 @@ interface Scope {
   readonly it: number | undefined
 }
 
-/** Template rendering charges one extra step per 2^8 = 256 characters. */
-const TEXT_COST_SHIFT = 8
 /** Built-ins charge one extra step per 2^5 = 32 characters of string arguments. */
 const ARGUMENT_COST_SHIFT = 5
 /**
@@ -86,8 +86,7 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
  */
 function hostDataError(error: unknown, s: State): unknown {
   if (error instanceof BonsaiError) return error
-  const message = error instanceof Error ? error.message : String(error)
-  return s.error('HOST_ERROR', `Reading host data failed: ${message}`, undefined, error)
+  return s.error('HOST_ERROR', `Reading host data failed: ${errorText(error)}`, undefined, error)
 }
 
 /** Whether `try()` recovers from an error: runtime failures, not limits or host contract violations. */
@@ -290,7 +289,7 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
         s.stringLimit(out.length + piece.length, node)
         out += piece
       }
-      s.charge(1 + (out.length >>> TEXT_COST_SHIFT))
+      s.charge(1 + (out.length >>> TEXT_SHIFT))
       return out
     }
     if (parts.every((part) => typeof part === 'string' || !part.async)) {
@@ -769,10 +768,14 @@ function chargeArguments(s: State, args: unknown[]): void {
   s.charge(cost)
 }
 
-/** Every string or list a built-in returns is a produced value subject to the size limits. */
+/**
+ * Every string or list a built-in returns is a produced value subject to the
+ * size limits, and text it produces is charged by length (see TEXT_SHIFT).
+ */
 function checkProduced(s: State, result: unknown, span: Span): unknown {
   if (typeof result === 'string') {
     if (result.length > s.limits.maxStringLength) s.stringLimit(result.length, span)
+    s.charge(result.length >>> TEXT_SHIFT)
   } else if (Array.isArray(result)) {
     if (result.length > s.limits.maxListLength) s.listLimit(result.length, span)
   }
@@ -811,8 +814,7 @@ function noOverload(
  * itself): it failed in host code, not in this expression.
  */
 function hostError(s: State, name: string, error: unknown, span: Span): BonsaiError {
-  const message = error instanceof Error ? error.message : String(error)
-  return s.error('HOST_ERROR', `${name}() failed: ${message}`, span, error)
+  return s.error('HOST_ERROR', `${name}() failed: ${errorText(error)}`, span, error)
 }
 
 /**
@@ -853,7 +855,14 @@ async function awaitHost(
   return checkHostResult(s, def, def.overloads[0], result, node)
 }
 
-/** Waits for a host promise, rejecting early on timeout or abort. */
+/** The longest delay a timer accepts (2^31 - 1 ms); a longer one fires at once. */
+const MAX_TIMER_DELAY = 2_147_483_647
+
+/**
+ * Waits for a host promise, rejecting early on timeout or abort. The signal is
+ * host code: a listener method that throws counts as an abort, a cleanup that
+ * throws is ignored, and the promise always settles exactly once.
+ */
 function raceLimits(s: State, promise: PromiseLike<unknown>): Promise<unknown> {
   const signal = s.signal
   const deadline = s.deadline
@@ -861,39 +870,79 @@ function raceLimits(s: State, promise: PromiseLike<unknown>): Promise<unknown> {
   // Rejection reasons are passed through unchanged; they are Bonsai errors or
   // whatever the host promise rejected with.
   return new Promise((resolve, reject: (reason: Error) => void) => {
+    let settled = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const cleanup = (): void => {
       if (timer !== undefined) clearTimeout(timer)
-      signal?.removeEventListener('abort', onAbort)
-    }
-    const onAbort = (): void => {
-      cleanup()
       try {
-        s.checkTime()
-      } catch (error) {
-        reject(error as Error)
+        signal?.removeEventListener('abort', onAbort)
+      } catch {
+        // A broken signal cannot keep the evaluation from settling.
       }
     }
-    if (deadline !== 0) {
+    const finish = (settle: () => void): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      settle()
+    }
+    // An abort event (or a signal that fails) ends the wait even if the signal
+    // does not read as aborted afterwards.
+    const abort = (): void => {
+      finish(() => {
+        try {
+          s.checkTime()
+          reject(
+            new BonsaiLimitError('ABORTED', 'Evaluation was aborted', {
+              source: s.source,
+              cause: s.signalError,
+            }),
+          )
+        } catch (error) {
+          reject(error as Error)
+        }
+      })
+    }
+    function onAbort(): void {
+      abort()
+    }
+    const arm = (): void => {
+      const wait = deadline - performance.now()
       timer = setTimeout(
         () => {
-          cleanup()
+          // A deadline beyond the longest timer delay is reached in steps.
+          if (wait > MAX_TIMER_DELAY) {
+            arm()
+            return
+          }
           // The timer is set for the deadline, so it has passed even if the
           // clock reads a hair earlier (timers and performance.now() differ).
-          reject(new BonsaiLimitError('TIMEOUT', 'Evaluation timed out', { source: s.source }))
+          finish(() => {
+            reject(new BonsaiLimitError('TIMEOUT', 'Evaluation timed out', { source: s.source }))
+          })
         },
-        Math.max(0, deadline - performance.now()) + 1,
+        Math.min(MAX_TIMER_DELAY, Math.max(0, wait) + 1),
       )
     }
-    signal?.addEventListener('abort', onAbort, { once: true })
+    if (deadline !== 0) arm()
+    if (signal !== undefined) {
+      try {
+        signal.addEventListener('abort', onAbort, { once: true })
+      } catch (error) {
+        s.signalError = error
+        abort()
+      }
+    }
     Promise.resolve(promise).then(
       (value) => {
-        cleanup()
-        resolve(value)
+        finish(() => {
+          resolve(value)
+        })
       },
       (error: unknown) => {
-        cleanup()
-        reject(error as Error)
+        finish(() => {
+          reject(error as Error)
+        })
       },
     )
   })
@@ -934,13 +983,13 @@ function binaryFast(op: BinaryNode['operator'], l: Fn, r: Fn, at: Span): Fn | un
       return (s) => {
         const a = l(s)
         const b = r(s)
-        return a === b || equals(a, b, s)
+        return isEqual(a, b, s)
       }
     case '!=':
       return (s) => {
         const a = l(s)
         const b = r(s)
-        return !(a === b || equals(a, b, s))
+        return !isEqual(a, b, s)
       }
     case '<':
       return (s) => {
@@ -1023,9 +1072,9 @@ function binaryCombiner(
 ): (s: State, a: unknown, b: unknown) => unknown {
   switch (op) {
     case '==':
-      return (s, a, b) => a === b || equals(a, b, s)
+      return (s, a, b) => isEqual(a, b, s)
     case '!=':
-      return (s, a, b) => !(a === b || equals(a, b, s))
+      return (s, a, b) => !isEqual(a, b, s)
     case '<':
       return (s, a, b) => {
         if (typeof a === 'number' && typeof b === 'number') return a < b

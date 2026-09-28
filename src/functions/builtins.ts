@@ -28,8 +28,11 @@ import {
   MS_PER_SECOND,
   MS_PER_WEEK,
   contains,
+  dateTime,
   describeKind,
   equals,
+  errorText,
+  isTimestamp,
   kindOf,
   order,
   sortOrder,
@@ -199,6 +202,16 @@ const PARSE_COST = 16
  */
 const regexCache = new Map<string, RegexProgram>()
 let regexCacheSize = 0
+/** Patterns that failed to compile, and why: a retry never compiles again. */
+const regexFailures = new Map<string, string>()
+/** Number formats that failed to build, and why. */
+const numberFormatFailures = new Map<string, string>()
+
+/** Remembers a failure in a bounded shared map (oldest first out). */
+function rememberFailure(failures: Map<string, string>, key: string, message: string): void {
+  if (failures.size >= MAX_CACHED) failures.delete(failures.keys().next().value as string)
+  failures.set(key, message)
+}
 
 function compiledPattern(pattern: string, site: CallSite): RegexProgram {
   const cached = regexCache.get(pattern)
@@ -207,12 +220,16 @@ function compiledPattern(pattern: string, site: CallSite): RegexProgram {
     regexCache.set(pattern, cached)
     return cached
   }
+  const failed = regexFailures.get(pattern)
+  if (failed !== undefined) throw site.state.error('INVALID_ARGUMENT', failed, site.span)
   let program: RegexProgram
   try {
     program = compileRegex(pattern)
   } catch (error) {
-    if (error instanceof RegexSyntaxError)
+    if (error instanceof RegexSyntaxError) {
+      rememberFailure(regexFailures, pattern, error.message)
       throw site.state.error('INVALID_ARGUMENT', error.message, site.span)
+    }
     throw error
   }
   if (program.size > REGEX_CACHE_BUDGET) return program
@@ -235,11 +252,13 @@ function regexFor(pattern: string, site: CallSite): RegexProgram {
       { source: s.source, span: { start: site.span.start, end: site.span.end } },
     )
   }
-  // Compiling reads the pattern and builds the program: both are charged.
+  // Compiling reads the pattern (charged first, so a failing pattern pays too)
+  // and builds the program.
   return s.resource(
     `r${pattern}`,
+    1 + pattern.length,
     () => compiledPattern(pattern, site),
-    (program) => 1 + pattern.length + program.size,
+    (program) => program.size,
   )
 }
 
@@ -252,24 +271,23 @@ function numberFormat(
   site: CallSite,
 ): Intl.NumberFormat {
   const key = `${locale}\u0000${JSON.stringify(options)}`
-  const format = site.state.resource(
-    `n${key}`,
-    () => {
-      let created = numberFormats.get(key)
-      if (created !== undefined) return created
-      try {
-        created = new Intl.NumberFormat(locale, options)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        throw site.state.error('INVALID_ARGUMENT', `Invalid number format: ${message}`, site.span)
-      }
-      if (numberFormats.size >= MAX_CACHED)
-        numberFormats.delete(numberFormats.keys().next().value as string)
-      numberFormats.set(key, created)
-      return created
-    },
-    () => NUMBER_FORMAT_COST,
-  )
+  const format = site.state.resource(`n${key}`, NUMBER_FORMAT_COST, () => {
+    let created = numberFormats.get(key)
+    if (created !== undefined) return created
+    const failed = numberFormatFailures.get(key)
+    if (failed !== undefined) throw site.state.error('INVALID_ARGUMENT', failed, site.span)
+    try {
+      created = new Intl.NumberFormat(locale, options)
+    } catch (error) {
+      const message = `Invalid number format: ${errorText(error)}`
+      rememberFailure(numberFormatFailures, key, message)
+      throw site.state.error('INVALID_ARGUMENT', message, site.span)
+    }
+    if (numberFormats.size >= MAX_CACHED)
+      numberFormats.delete(numberFormats.keys().next().value as string)
+    numberFormats.set(key, created)
+    return created
+  })
   site.state.charge(FORMAT_COST)
   return format
 }
@@ -364,13 +382,10 @@ function sortKeyed(
   const n = items.length
   const s = site.state
   s.charge(n === 0 ? 1 : Math.ceil(n * Math.log2(n + 1)))
-  // Every key is checked, not only those a comparison happens to reach.
+  // Every key is checked, not only those a comparison happens to reach (a
+  // list with one key makes no comparison at all).
   // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
-  for (let i = 0; i < keys.length; i++) {
-    const key = keys[i]
-    if (typeof key === 'number' && !Number.isFinite(key))
-      throw s.error('NON_FINITE', 'Cannot order a non-finite number', site.span)
-  }
+  for (let i = 0; i < keys.length; i++) checkOrderable(keys[i], site)
   // Each comparison charges for string length (sortOrder), so a long sort is
   // accounted, and interrupted by the step limit or timeout, as it runs. The
   // merge sort makes the same comparisons on every engine, so steps agree too.
@@ -483,7 +498,7 @@ function canonicalKey(value: unknown, site: CallSite, depth: number, seen: Ident
       key += (i === 0 ? '' : ',') + canonicalKey(value[i], site, depth + 1, seen)
     return charged(`${key}]`, site)
   }
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return `t${value.getTime()}`
+  if (isTimestamp(value)) return `t${dateTime(value)}`
   if (value instanceof Duration) return `u${value.ms}`
   if (isMap(value)) {
     const keys = Object.keys(value)
@@ -575,6 +590,26 @@ function joinText(items: readonly unknown[], separator: unknown, site: CallSite)
   return out
 }
 
+/**
+ * A value sort, min, and max can order: a finite number, a string, a valid
+ * timestamp, a duration, or null. Checked for every item, so a single item is
+ * held to the same rule as many.
+ */
+function checkOrderable(value: unknown, site: CallSite): void {
+  if (value === null || value === undefined || typeof value === 'string') return
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value))
+      throw site.state.error('NON_FINITE', 'Cannot order a non-finite number', site.span)
+    return
+  }
+  if (value instanceof Duration) return
+  if (value instanceof Date) {
+    timeOf(value, site.state, site.span)
+    return
+  }
+  throw site.state.error('TYPE_ERROR', `Cannot order ${describeKind(value)}`, site.span)
+}
+
 function extreme(items: readonly unknown[], sign: 1 | -1, site: CallSite): unknown {
   site.state.charge(items.length)
   let best: unknown = null
@@ -582,8 +617,7 @@ function extreme(items: readonly unknown[], sign: 1 | -1, site: CallSite): unkno
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
     if (item === null || item === undefined) continue
-    if (typeof item === 'number' && !Number.isFinite(item))
-      throw site.state.error('NON_FINITE', 'Cannot order a non-finite number', site.span)
+    checkOrderable(item, site)
     if (best === null) {
       best = item
       continue

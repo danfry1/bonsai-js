@@ -121,34 +121,39 @@ interface EvaluationZone {
 
 const zoneData = new Map<string, ZoneData>()
 
+/** Zones that are not valid, and why: a retry never builds a formatter again. */
+const zoneFailures = new Map<string, string>()
+
 function formatterFor(zone: string, site: CallSite): Intl.DateTimeFormat {
-  return site.state.resource(
-    `f${zone}`,
-    () => {
-      let formatter = formatters.get(zone)
-      if (formatter !== undefined) return formatter
-      try {
-        formatter = new Intl.DateTimeFormat('en-US', {
-          timeZone: zone,
-          hourCycle: 'h23',
-          era: 'short',
-          year: 'numeric',
-          month: 'numeric',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: 'numeric',
-          second: 'numeric',
-        })
-      } catch {
-        throw site.state.error('INVALID_ARGUMENT', `Unknown time zone ${shown(zone)}`, site.span)
-      }
-      if (formatters.size >= MAX_CACHED_ZONES)
-        formatters.delete(formatters.keys().next().value as string)
-      formatters.set(zone, formatter)
-      return formatter
-    },
-    () => ZONE_FORMAT_COST,
-  )
+  return site.state.resource(`f${zone}`, ZONE_FORMAT_COST, () => {
+    let formatter = formatters.get(zone)
+    if (formatter !== undefined) return formatter
+    const failed = zoneFailures.get(zone)
+    if (failed !== undefined) throw site.state.error('INVALID_ARGUMENT', failed, site.span)
+    try {
+      formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: zone,
+        hourCycle: 'h23',
+        era: 'short',
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        second: 'numeric',
+      })
+    } catch {
+      const message = `Unknown time zone ${shown(zone)}`
+      if (zoneFailures.size >= MAX_CACHED_ZONES)
+        zoneFailures.delete(zoneFailures.keys().next().value as string)
+      zoneFailures.set(zone, message)
+      throw site.state.error('INVALID_ARGUMENT', message, site.span)
+    }
+    if (formatters.size >= MAX_CACHED_ZONES)
+      formatters.delete(formatters.keys().next().value as string)
+    formatters.set(zone, formatter)
+    return formatter
+  })
 }
 
 /** The wall clock a formatter shows at an instant (the exact, uncached read). */
@@ -366,6 +371,8 @@ export function addMonths(
   zone: string | null | undefined,
   site: CallSite,
 ): Date {
+  if (!Number.isFinite(months))
+    throw site.state.error('INVALID_ARGUMENT', 'Timestamp out of range', site.span)
   if (!Number.isInteger(months))
     throw site.state.error('INVALID_ARGUMENT', 'Months must be an integer', site.span)
   const clock = wallClock(date, zone, site)
@@ -410,7 +417,7 @@ function zoneOffset(
 ): number | undefined {
   return zone === null || zone === undefined || zone === 'UTC'
     ? undefined
-    : offsetAt(date.getTime(), zone, site)
+    : offsetAt(timeOf(date, site.state, site.span), zone, site)
 }
 
 /** ISO weekday: Monday = 1 ... Sunday = 7. */
@@ -497,6 +504,8 @@ const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satur
 
 // Longest tokens first. Any other ASCII letter is an error, so a typo such as
 // "YYYY" or "DD" fails loudly instead of being printed literally.
+/** Rendering one format token costs about as much as a few ordinary steps. */
+const TOKEN_COST = 4
 const TOKENS = /'[^']*'|yyyy|yy|MMMM|MMM|MM|M|dd|d|EEEE|EEE|HH|H|hh|h|mm|m|ss|s|SSS|a|[A-Za-z]/gu
 
 /** An error message for a pattern with unknown letters, or undefined. */
@@ -527,7 +536,7 @@ export function formatTimestamp(
     clock.hour % HOURS_PER_HALF_DAY === 0 ? HOURS_PER_HALF_DAY : clock.hour % HOURS_PER_HALF_DAY
   const weekday = WEEKDAYS[isoWeekday(clock) - 1]
   const month = MONTHS[clock.month - 1]
-  return pattern.replace(TOKENS, (token) => {
+  const render = (token: string): string => {
     switch (token) {
       case 'yyyy':
         return clock.year < 0 ? `-${pad(-clock.year, 4)}` : pad(clock.year, 4)
@@ -577,5 +586,19 @@ export function formatTimestamp(
           site.span,
         )
     }
-  })
+  }
+  // Token by token: each is charged as it is rendered, and the text is
+  // checked against the string limit before it grows, never after.
+  const s = site.state
+  let out = ''
+  let from = 0
+  for (const match of pattern.matchAll(TOKENS)) {
+    s.charge(TOKEN_COST)
+    const piece = pattern.slice(from, match.index) + render(match[0])
+    s.stringLimit(out.length + piece.length, site.span)
+    out += piece
+    from = match.index + match[0].length
+  }
+  s.stringLimit(out.length + pattern.length - from, site.span)
+  return out + pattern.slice(from)
 }

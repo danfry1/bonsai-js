@@ -24,6 +24,19 @@ export const DEFAULT_RUNTIME_LIMITS: RuntimeLimits = Object.freeze({
 
 const CLOCK_SAMPLE = 1024
 const NO_CONTEXT: Record<string, unknown> = Object.freeze({})
+/**
+ * Building a runtime error (message, span, stack) costs about as much as
+ * 50 ordinary steps; `try()` can catch errors in a loop, so each one is charged.
+ */
+const ERROR_COST = 64
+
+/** A resource whose creation failed, remembered so a retry costs no work. */
+class Failed {
+  readonly error: unknown
+  constructor(error: unknown) {
+    this.error = error
+  }
+}
 
 /** Mutable per-evaluation state. Created (or reset) once per run. */
 export class State {
@@ -34,6 +47,8 @@ export class State {
   maxSteps: number
   deadline = 0
   signal: AbortSignal | undefined = undefined
+  /** An error thrown while reading the signal (see `isAborted`). */
+  signalError: unknown = undefined
   nextSample = CLOCK_SAMPLE
   nowValue: Date | undefined = undefined
   /** Shapes of containers this evaluation built (see `track`); created on demand. */
@@ -66,12 +81,13 @@ export class State {
     this.maxSteps = maxSteps
     this.deadline = timeout > 0 ? performance.now() + timeout : 0
     this.signal = signal
+    this.signalError = undefined
     this.scheduleSample()
     this.nowValue = undefined
     this.resources = undefined
     this.shapes = undefined
     this.zones = undefined
-    if (signal?.aborted === true) throw abortError(this)
+    if (signal !== undefined && isAborted(this)) throw abortError(this)
   }
 
   release(): void {
@@ -118,21 +134,38 @@ export class State {
     if (this.deadline !== 0 && performance.now() > this.deadline) {
       throw new BonsaiLimitError('TIMEOUT', 'Evaluation timed out', { source: this.source })
     }
-    if (this.signal?.aborted === true) throw abortError(this)
+    if (this.signal !== undefined && isAborted(this)) throw abortError(this)
   }
 
   /**
    * A costly resource (a compiled pattern, a formatter) for this evaluation.
-   * Its first use in an evaluation is charged `cost(resource)` as if nothing
-   * were cached, and the evaluation keeps it, so step counts never depend on
-   * what shared caches hold, and a cache eviction never causes uncharged work.
+   * Its first use in an evaluation is charged `before` (then `after(resource)`)
+   * as if nothing were cached, and the evaluation keeps it, so step counts never
+   * depend on what shared caches hold, and a cache eviction never causes
+   * uncharged work. The charge comes before creating it, so a creation that
+   * fails (inside `try()`) is paid for too, and the failure is remembered.
    */
-  resource<R>(key: string, create: () => R, cost: (resource: R) => number): R {
-    this.resources ??= new Map()
-    if (this.resources.has(key)) return this.resources.get(key) as R
-    const value = create()
-    this.resources.set(key, value)
-    this.charge(cost(value))
+  resource<R>(key: string, before: number, create: () => R, after?: (resource: R) => number): R {
+    const resources = (this.resources ??= new Map())
+    const known = resources.get(key)
+    if (known !== undefined) {
+      if (known instanceof Failed) {
+        // Failing again costs what failing costs, even without building the error anew.
+        this.charge(ERROR_COST)
+        throw known.error
+      }
+      return known as R
+    }
+    this.charge(before)
+    let value: R
+    try {
+      value = create()
+    } catch (error) {
+      resources.set(key, new Failed(error))
+      throw error
+    }
+    resources.set(key, value)
+    if (after !== undefined) this.charge(after(value))
     return value
   }
 
@@ -162,6 +195,7 @@ export class State {
   }
 
   error(code: ErrorCode, message: string, at?: Span, cause?: unknown): BonsaiRuntimeError {
+    this.charge(ERROR_COST)
     return new BonsaiRuntimeError(code, message, { source: this.source, span: spanOf(at), cause })
   }
 }
@@ -171,9 +205,27 @@ function spanOf(at: Span | undefined): Span | undefined {
   return at === undefined ? undefined : { start: at.start, end: at.end }
 }
 
+/**
+ * Reads the signal, which is host code: a getter that throws counts as an
+ * abort (failing closed, with the error as the cause), never as a raw error.
+ */
+function isAborted(state: State): boolean {
+  try {
+    return state.signal?.aborted === true
+  } catch (error) {
+    state.signalError = error
+    return true
+  }
+}
+
 function abortError(state: State): BonsaiLimitError {
-  return new BonsaiLimitError('ABORTED', 'Evaluation was aborted', {
-    source: state.source,
-    cause: state.signal?.reason,
-  })
+  let cause: unknown = state.signalError
+  if (cause === undefined) {
+    try {
+      cause = state.signal?.reason
+    } catch (error) {
+      cause = error
+    }
+  }
+  return new BonsaiLimitError('ABORTED', 'Evaluation was aborted', { source: state.source, cause })
 }

@@ -198,10 +198,14 @@ describe('text operations charge their worst case', () => {
     ).toEqual({ code: 'STEP_LIMIT' })
   })
 
-  it('appends to a string in reduce at a fair price', () => {
-    expect(run('reduce("abcde".repeat(20000).split(""), (a, x) => a + x, "").length')).toEqual({
-      value: 100_000,
+  it('charges appending in reduce by the text built; join builds long text in one step', () => {
+    expect(run('reduce("abcde".repeat(1000).split(""), (a, x) => a + x, "").length')).toEqual({
+      value: 5000,
     })
+    expect(run('reduce("abcde".repeat(20000).split(""), (a, x) => a + x, "").length')).toEqual({
+      code: 'STEP_LIMIT',
+    })
+    expect(run('join("abcde".repeat(20000).split(""), "").length')).toEqual({ value: 100_000 })
   })
 
   it('shortens input echoed in error messages', () => {
@@ -589,12 +593,13 @@ describe('values', () => {
         }),
       },
     })
-    // The host call costs 32 steps; the failing item comes before the list is charged.
-    expect(outcome(() => e.evaluateSync('[id(1), z - 1]', { z: null }, { maxSteps: 33 }))).toEqual({
+    // The host call costs 32 steps and the error 64; the failing item comes
+    // before the list is charged.
+    expect(outcome(() => e.evaluateSync('[id(1), z - 1]', { z: null }, { maxSteps: 97 }))).toEqual({
       code: 'TYPE_ERROR',
     })
     expect(
-      await outcomeAsync(() => e.evaluate('[aid(1), z - 1]', { z: null }, { maxSteps: 33 })),
+      await outcomeAsync(() => e.evaluate('[aid(1), z - 1]', { z: null }, { maxSteps: 97 })),
     ).toEqual({ code: 'TYPE_ERROR' })
   })
 })

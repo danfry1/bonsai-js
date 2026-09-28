@@ -326,11 +326,12 @@ describe('values from other realms and thenables', () => {
     expect(run('type(x)', { x })).toEqual({ value: 'map' })
   })
 
-  it('treats thenables as opaque', () => {
+  it('reads objects with a then method as maps, and keeps promises opaque', () => {
+    // Bonsai never awaits a value it reads; only a real Promise is opaque.
     const x = { a: 1, then: (): void => undefined }
-    expect(run('type(x)', { x })).toEqual({ value: 'opaque' })
-    expect(run('x.a', { x })).toEqual({ code: 'TYPE_ERROR' })
-    expect(run('type(y)', { y: { then: 1 } })).toEqual({ value: 'map' })
+    expect(run('type(x)', { x })).toEqual({ value: 'map' })
+    expect(run('x.a', { x })).toEqual({ value: 1 })
+    expect(run('type(p)', { p: Promise.resolve(1) })).toEqual({ value: 'opaque' })
   })
 })
 

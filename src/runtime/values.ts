@@ -22,8 +22,14 @@ const KEY_FREE_CHARS = 64
  */
 const SEARCH_COMPARISONS_PER_STEP = 512
 const SEARCH_SHIFT = 6
-/** String concatenation charges one extra step per 2^8 = 256 characters. */
-const CONCAT_COST_SHIFT = 8
+/**
+ * Producing text costs one step per 2^5 = 32 characters of the result (a
+ * concatenation, a template, a built-in's output). Engines join strings
+ * lazily, but a later read flattens the whole string into new memory, so the
+ * text an evaluation creates, and so the memory it can hold, is bounded by
+ * the budget: at most about 32 million characters at the default.
+ */
+export const TEXT_SHIFT = 5
 /** Durations print at most nanosecond precision. */
 const DURATION_FRACTION_DIGITS = 9
 const NS_PER_MS = 1_000_000
@@ -76,8 +82,8 @@ export function kindOf(value: unknown): Kind {
       return 'string'
     case 'object':
       if (Array.isArray(value)) return 'list'
-      // An invalid Date is not a timestamp: it is an opaque host value.
-      if (value instanceof Date) return Number.isNaN(value.getTime()) ? 'opaque' : 'timestamp'
+      // An invalid Date (or a fake one) is not a timestamp: it is an opaque host value.
+      if (value instanceof Date) return Number.isNaN(dateTime(value)) ? 'opaque' : 'timestamp'
       if (value instanceof Duration) return 'duration'
       return isOpaqueObject(value) ? 'opaque' : 'map'
     case 'bigint':
@@ -118,125 +124,126 @@ export const BLOCKED_KEYS: ReadonlySet<string> = new Set(['__proto__', 'construc
 
 /**
  * Whether a value is a map: a plain object, or a class instance, read through
- * its own enumerable properties. Lists, timestamps, durations, thenables, and
- * built-in host objects (a Map, a RegExp, ...) are not.
+ * its own properties. Lists, timestamps, durations, and built-in host objects
+ * (a Map, a RegExp, a Promise, ...) are not.
  */
 export function isMap(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) return false
   if (isPlainData(value)) return true
-  const proto: unknown = getPrototypeOf(value)
-  if (proto === OBJECT_PROTOTYPE || proto === null)
-    return typeof (value as { then?: unknown }).then !== 'function'
-  return isOtherMap(value, proto)
+  if (Array.isArray(value) || value instanceof Date || value instanceof Duration) return false
+  return !isOpaqueObject(value)
 }
 
 /**
  * The quick test for the common case, a plain data object: its constructor
- * is Object (or it has none, as with a null prototype) and it has no own
- * `then`. A false answer is not final: `isMap` then classifies it fully.
- * (Reading `constructor` is cheaper than the prototype on varied shapes.)
+ * is Object (or it has none, as with a null prototype). A false answer is not
+ * final: `isMap` then classifies it fully. (Reading `constructor` is cheaper
+ * than the prototype on varied shapes. Host data is trusted, so an object that
+ * sets its own `constructor` to Object is read as the plain object it claims to be.)
  */
 function isPlainData(value: object): boolean {
   const constructor = (value as { constructor?: unknown }).constructor
-  return (constructor === Object || constructor === undefined) && !hasOwn(value, 'then')
+  return constructor === Object || constructor === undefined
 }
 
-/** Class instances are maps; lists, timestamps, durations, and opaque built-ins are not. */
-function isOtherMap(value: object, proto: unknown): boolean {
-  if (Array.isArray(value) || value instanceof Date || value instanceof Duration) return false
-  return !opaquePrototype(proto, value) && typeof (value as { then?: unknown }).then !== 'function'
-}
+/** Built-in prototypes whose instances keep their data in internal slots. */
+const OPAQUE_PROTOTYPES: ReadonlySet<object> = new Set(
+  [
+    Map,
+    Set,
+    WeakMap,
+    WeakSet,
+    WeakRef,
+    RegExp,
+    Promise,
+    Error,
+    ArrayBuffer,
+    DataView,
+    Object.getPrototypeOf(Uint8Array) as { prototype: object },
+    Number,
+    String,
+    Boolean,
+    Symbol,
+    BigInt,
+    Date,
+    ...(typeof SharedArrayBuffer === 'function' ? [SharedArrayBuffer] : []),
+  ].map((constructor) => constructor.prototype as object),
+)
 
-/** Whether each prototype belongs to a built-in type whose data is not in own properties. */
-const opaquePrototypes = new WeakMap<object, boolean>()
+/**
+ * What each prototype chain means, from the chain alone (so the answer never
+ * depends on which value was seen first): `true` for a built-in from this
+ * realm, `false` for a plain or class chain from this realm, and `undefined`
+ * for another realm (an iframe, `node:vm`), whose values are judged one by one.
+ */
+const chainVerdicts = new WeakMap<object, boolean | undefined>()
+// oxlint-disable-next-line typescript/unbound-method -- always invoked with .call
+const objectToString = Object.prototype.toString
+
+function chainVerdict(proto: object): boolean | undefined {
+  if (chainVerdicts.has(proto)) return chainVerdicts.get(proto)
+  let verdict: boolean | undefined
+  let link: object | null = proto
+  let builtin = false
+  for (;;) {
+    if (OPAQUE_PROTOTYPES.has(link)) builtin = true
+    const next = getPrototypeOf(link) as object | null
+    if (next === null) {
+      verdict = link === OBJECT_PROTOTYPE ? builtin : undefined
+      break
+    }
+    link = next
+  }
+  chainVerdicts.set(proto, verdict)
+  return verdict
+}
 
 /**
  * Built-in host objects keep their data internally (a Map's entries, a
  * RegExp's pattern), so reading them as maps of own properties would silently
  * see nothing. They are opaque: passed around, compared by identity, never read.
- * So are thenables, which are pending results rather than data.
- * Plain objects and class instances are maps of their own properties.
+ * Plain objects, class instances, and objects that merely have a `then` method
+ * are maps of their own properties; Bonsai never awaits a value it reads.
  */
 function isOpaqueObject(value: object): boolean {
-  const proto: unknown = getPrototypeOf(value)
-  if (proto !== OBJECT_PROTOTYPE && proto !== null && opaquePrototype(proto, value)) return true
-  return typeof (value as { then?: unknown }).then === 'function'
-}
-
-function opaquePrototype(proto: unknown, value: object): boolean {
-  if (typeof proto !== 'object' && typeof proto !== 'function') return false
-  let opaque = opaquePrototypes.get(proto as object)
-  if (opaque === undefined) {
-    opaque = isBuiltinObject(value)
-    opaquePrototypes.set(proto as object, opaque)
-  }
-  return opaque
-}
-
-/** Methods that throw unless their receiver has a built-in's internal slots. */
-const BRAND_CHECKS: readonly ((value: object) => unknown)[] = [
-  (v) => Map.prototype.has.call(v, undefined),
-  (v) => Set.prototype.has.call(v, undefined),
-  (v) => WeakMap.prototype.has.call(v, OBJECT_PROTOTYPE),
-  (v) => WeakSet.prototype.has.call(v, OBJECT_PROTOTYPE),
-  (v) => WeakRef.prototype.deref.call(v),
-  (v) => Date.prototype.getTime.call(v),
-  (v) => Number.prototype.valueOf.call(v),
-  (v) => String.prototype.valueOf.call(v),
-  (v) => Boolean.prototype.valueOf.call(v),
-  (v) => Symbol.prototype.valueOf.call(v),
-  (v) => BigInt.prototype.valueOf.call(v),
-  ...getters(RegExp.prototype, 'source'),
-  ...getters(ArrayBuffer.prototype, 'byteLength'),
-  ...(typeof SharedArrayBuffer === 'function'
-    ? getters(SharedArrayBuffer.prototype, 'byteLength')
-    : []),
-]
-
-/** A brand check from a built-in getter, which throws on any other receiver. */
-function getters(proto: object, name: string): ((value: object) => unknown)[] {
-  // oxlint-disable-next-line typescript/unbound-method -- always invoked with .call
-  const get = Object.getOwnPropertyDescriptor(proto, name)?.get
-  return get === undefined ? [] : [(v) => get.call(v)]
+  const proto = getPrototypeOf(value) as object | null
+  if (proto === OBJECT_PROTOTYPE || proto === null) return false
+  const verdict = chainVerdict(proto)
+  if (verdict !== undefined) return verdict
+  // Another realm: its built-ins report their internal tag (a plain object or
+  // class instance reports "Object"), checked per value, never cached.
+  return objectToString.call(value) !== '[object Object]'
 }
 
 /**
- * Whether a value is a built-in host object, from this realm or another (an
- * iframe, `node:vm`): `instanceof` sees this realm, and brand checks (methods
- * that only accept a real Map, Date, ...) see any realm.
+ * Epoch milliseconds of a real Date, or NaN for an invalid Date and for an
+ * object that only inherits from Date.prototype (which has no time slot).
  */
-function isBuiltinObject(value: object): boolean {
-  if (
-    value instanceof Map ||
-    value instanceof Set ||
-    value instanceof WeakMap ||
-    value instanceof WeakSet ||
-    value instanceof WeakRef ||
-    value instanceof RegExp ||
-    value instanceof Promise ||
-    value instanceof Error ||
-    value instanceof ArrayBuffer ||
-    ArrayBuffer.isView(value) ||
-    value instanceof Number ||
-    value instanceof String ||
-    value instanceof Boolean ||
-    value instanceof Symbol ||
-    value instanceof BigInt ||
-    (typeof SharedArrayBuffer === 'function' && value instanceof SharedArrayBuffer)
-  ) {
-    return true
+export function dateTime(value: Date): number {
+  try {
+    return Date.prototype.getTime.call(value)
+  } catch {
+    return Number.NaN
   }
-  // Errors have no brand-checking method; their built-in tag comes from an internal slot.
-  if (Object.prototype.toString.call(value) === '[object Error]') return true
-  for (const check of BRAND_CHECKS) {
-    try {
-      check(value)
-      return true
-    } catch {
-      // Not this kind of built-in.
-    }
+}
+
+/** A valid timestamp: a real Date holding a time. */
+export function isTimestamp(value: unknown): value is Date {
+  return value instanceof Date && !Number.isNaN(dateTime(value))
+}
+
+/**
+ * The message of something host code threw, read defensively: a message
+ * getter that throws, or a revoked Proxy, gives a fixed text instead.
+ */
+export function errorText(error: unknown): string {
+  try {
+    if (!(error instanceof Error)) return String(error)
+    const message: unknown = error.message
+    return typeof message === 'string' ? message : String(message)
+  } catch {
+    return 'an error that could not be read'
   }
-  return false
 }
 
 // === Truthiness, members, indexing ===
@@ -433,6 +440,16 @@ function ownValues(map: Readonly<Record<string, unknown>>): unknown[] {
 
 // === Equality and ordering ===
 
+/** `==`: identical values take the fast path, but equal strings still pay for comparing. */
+export function isEqual(a: unknown, b: unknown, s: State): boolean {
+  if (a === b) {
+    if (typeof a === 'string' && a.length > SEARCH_CHARS_PER_STEP)
+      s.charge(a.length >>> SEARCH_SHIFT)
+    return true
+  }
+  return equals(a, b, s)
+}
+
 export function equals(a: unknown, b: unknown, s: State, depth = 0, at?: Span): boolean {
   if (typeof a === 'string' && typeof b === 'string') {
     chargeCompare(s, a, b)
@@ -459,8 +476,10 @@ export function equals(a: unknown, b: unknown, s: State, depth = 0, at?: Span): 
   }
   if (Array.isArray(b)) return false
   // An invalid Date is opaque: equal only to itself (handled above).
-  if (a instanceof Date)
-    return b instanceof Date && a.getTime() === b.getTime() && !Number.isNaN(a.getTime())
+  if (a instanceof Date) {
+    const time = dateTime(a)
+    return b instanceof Date && time === dateTime(b) && !Number.isNaN(time)
+  }
   if (a instanceof Duration) return b instanceof Duration && a.ms === b.ms
   if (b instanceof Date || b instanceof Duration) return false
   if (!isMap(a) || !isMap(b)) return false
@@ -478,7 +497,7 @@ export function equals(a: unknown, b: unknown, s: State, depth = 0, at?: Span): 
 
 /** Epoch milliseconds of a valid timestamp; an invalid Date is an error. */
 export function timeOf(date: Date, s: State, at?: Span): number {
-  const time = date.getTime()
+  const time = dateTime(date)
   if (Number.isNaN(time)) throw s.error('INVALID_ARGUMENT', 'Invalid timestamp', at)
   return time
 }
@@ -610,10 +629,9 @@ function arithmeticError(operator: string, a: unknown, b: unknown, s: State, at:
 export function add(a: unknown, b: unknown, s: State, at: Span): unknown {
   if (typeof a === 'number' && typeof b === 'number') return finite(a + b, s, at)
   if (typeof a === 'string' && typeof b === 'string') {
-    s.stringLimit(a.length + b.length, at)
-    // Engines join strings lazily (ropes), so appending costs about the
-    // shorter side; operations that later read the whole string pay for it.
-    s.charge(1 + ((a.length < b.length ? a.length : b.length) >>> CONCAT_COST_SHIFT))
+    const length = a.length + b.length
+    s.stringLimit(length, at)
+    s.charge(1 + (length >>> TEXT_SHIFT))
     return a + b
   }
   if (Array.isArray(a) && Array.isArray(b)) {
@@ -712,10 +730,7 @@ export function toText(value: unknown, s: State, at: Span): string {
     case 'symbol':
     case 'undefined':
     default:
-      if (value instanceof Date) {
-        timeOf(value, s, at)
-        return value.toISOString()
-      }
+      if (value instanceof Date) return new Date(timeOf(value, s, at)).toISOString()
       if (value instanceof Duration) return value.toString()
       throw s.error(
         'TYPE_ERROR',
