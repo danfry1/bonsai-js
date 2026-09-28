@@ -9,11 +9,13 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.mts",
-      "import": "./dist/index.mjs"
+      "import": "./dist/index.mjs",
+      "default": "./dist/index.mjs"
     },
     "./service": {
       "types": "./dist/service/index.d.mts",
-      "import": "./dist/service/index.mjs"
+      "import": "./dist/service/index.mjs",
+      "default": "./dist/service/index.mjs"
     }
   },
   "files": [
@@ -78,7 +80,7 @@
   "author": "Daniel Fry",
   "license": "MIT",
   "engines": {
-    "node": ">=24"
+    "node": ">=22"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
@@ -86,7 +88,7 @@
     "@marcbachmann/cel-js": "8.0.0",
     "@stryker-mutator/core": "9.6.1",
     "@stryker-mutator/vitest-runner": "9.6.1",
-    "@types/node": "24.13.3",
+    "@types/node": "22.20.4",
     "@varlock/bumpy": "1.18.1",
     "@vitest/coverage-v8": "4.1.10",
     "fast-check": "4.9.0",

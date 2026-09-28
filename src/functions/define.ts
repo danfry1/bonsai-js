@@ -265,3 +265,111 @@ export function define(
 ): FunctionDef {
   return Object.freeze({ name, description, overloads: Object.freeze([...overloads]) })
 }
+
+// === validation of host-supplied declarations ===
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+function describe(value: unknown): string {
+  if (value === null) return 'null'
+  if (Array.isArray(value)) return 'an array'
+  return typeof value
+}
+
+const TYPE_DEPTH_LIMIT = 64
+
+/**
+ * Throws a TypeError unless `value` is a well-formed Type (as built by `t`).
+ * Types come from configuration, so a malformed one is a programming error.
+ */
+export function assertType(value: unknown, path: string, depth = 0): asserts value is Type {
+  if (depth > TYPE_DEPTH_LIMIT) throw new TypeError(`${path} nests deeper than ${TYPE_DEPTH_LIMIT}`)
+  if (!isRecord(value) || typeof value.kind !== 'string') {
+    throw new TypeError(`${path} must be a type built with t (got ${describe(value)})`)
+  }
+  switch (value.kind) {
+    case 'any':
+    case 'never':
+    case 'null':
+    case 'boolean':
+    case 'number':
+    case 'string':
+    case 'timestamp':
+    case 'duration':
+      return
+    case 'literal':
+      if (!['string', 'number', 'boolean'].includes(typeof value.value)) {
+        throw new TypeError(
+          `${path} is a literal type whose value is not a string, number, or boolean`,
+        )
+      }
+      return
+    case 'list':
+      assertType(value.element, `${path}.element`, depth + 1)
+      return
+    case 'map':
+      if (!isRecord(value.fields)) throw new TypeError(`${path}.fields must be an object`)
+      for (const [key, field] of Object.entries(value.fields))
+        assertType(field, `${path}.fields.${key}`, depth + 1)
+      if (value.rest !== undefined) assertType(value.rest, `${path}.rest`, depth + 1)
+      return
+    case 'union':
+      if (!Array.isArray(value.types)) throw new TypeError(`${path}.types must be an array`)
+      value.types.forEach((member: unknown, i: number) => {
+        assertType(member, `${path}.types[${i}]`, depth + 1)
+      })
+      return
+    case 'opaque':
+      if (typeof value.name !== 'string')
+        throw new TypeError(`${path} is an opaque type without a name`)
+      return
+    case 'function':
+    case 'var':
+    default:
+      throw new TypeError(`${path} has an unsupported type kind "${value.kind}"`)
+  }
+}
+
+const HOST_SPEC_KEYS = new Set([
+  'params',
+  'returns',
+  'required',
+  'rest',
+  'async',
+  'context',
+  'description',
+  'run',
+])
+
+/**
+ * Throws unless `spec` is a well-formed host function declaration. `label`
+ * names it in messages, e.g. `Function "rate"`.
+ */
+export function assertHostSpec(spec: unknown, label: string): void {
+  if (!isRecord(spec)) throw new TypeError(`${label} must be declared with fn()`)
+  for (const key of Object.keys(spec)) {
+    if (!HOST_SPEC_KEYS.has(key)) throw new TypeError(`${label} has an unknown option "${key}"`)
+  }
+  if (!Array.isArray(spec.params)) throw new TypeError(`${label} needs a params array`)
+  spec.params.forEach((param: unknown, i: number) => {
+    assertType(param, `Parameter ${i + 1} of ${label}`)
+  })
+  assertType(spec.returns, `The returns type of ${label}`)
+  if (spec.required !== undefined) {
+    if (typeof spec.required !== 'number')
+      throw new TypeError(`"required" of ${label} must be a number`)
+    if (!Number.isInteger(spec.required) || spec.required < 0 || spec.required > spec.params.length)
+      throw new RangeError(
+        `"required" of ${label} must be an integer from 0 to ${spec.params.length}`,
+      )
+  }
+  if (spec.rest !== undefined) assertType(spec.rest, `The rest type of ${label}`)
+  for (const flag of ['async', 'context'] as const) {
+    if (spec[flag] !== undefined && typeof spec[flag] !== 'boolean')
+      throw new TypeError(`"${flag}" of ${label} must be a boolean`)
+  }
+  if (spec.description !== undefined && typeof spec.description !== 'string')
+    throw new TypeError(`"description" of ${label} must be a string`)
+  if (typeof spec.run !== 'function') throw new TypeError(`${label} needs a run function`)
+}

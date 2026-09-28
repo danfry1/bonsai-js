@@ -238,7 +238,7 @@ function sameType(a: Type, b: Type): boolean {
 }
 
 /** A canonical string for de-duplication. */
-export function typeKey(type: Type): string {
+function typeKey(type: Type): string {
   switch (type.kind) {
     case 'literal':
       return `lit:${typeof type.value}:${String(type.value)}`

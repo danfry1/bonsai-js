@@ -636,6 +636,7 @@ describe('map functions', () => {
         nested: t.list(t.union(t.list(t.number()), t.string())),
         plain: t.list(t.list(t.number())),
       },
+      strict: false,
     })
     expect(typed.compile('values(m)').type).toEqual(t.list(t.union(t.number(), t.string())))
     expect(typed.compile('entries(r)').type).toEqual(

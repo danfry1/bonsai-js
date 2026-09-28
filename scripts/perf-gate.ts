@@ -60,7 +60,14 @@ function writeLine(message: string): void {
 const env = bonsai()
 const compiled = env.compile(RULE)
 // A zero-size cache forces every evaluateSync(source) through parse, check, and compile.
-const uncached = bonsai({ limits: { cacheSize: 0 } })
+// Older bases took cacheSize as a limit and ignore it at the top level; newer ones reject it as a limit.
+const uncached = (() => {
+  try {
+    return bonsai({ limits: { cacheSize: 0 } } as never)
+  } catch {
+    return bonsai({ cacheSize: 0 })
+  }
+})()
 
 function measure(fn: () => unknown): number {
   for (let i = 0; i < WARMUP_ITERATIONS; i++) fn()

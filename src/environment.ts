@@ -9,6 +9,8 @@ import {
 } from './errors.js'
 import { BUILTINS } from './functions/builtins.js'
 import {
+  assertHostSpec,
+  assertType,
   describeMismatch,
   overload,
   type FunctionDef,
@@ -24,8 +26,6 @@ import { isNullable, type AnyType, type Infer, type InferVariables, type Type } 
 export interface Limits extends Partial<ParseLimits>, Partial<RuntimeLimits> {
   /** Wall-clock budget per evaluation in milliseconds (0 = none). Default 0. */
   readonly timeout?: number
-  /** Compiled programs kept per environment for evaluate(source). Default 256. */
-  readonly cacheSize?: number
 }
 
 export interface EvaluateOptions {
@@ -54,7 +54,8 @@ export interface HostFunction {
   readonly run: (...args: never[]) => unknown
 }
 
-interface FnSpec<P extends readonly Type[], R extends Type> {
+/** The declaration passed to {@link fn}, without `run`, `async`, and `context`. */
+export interface FnSpec<P extends readonly Type[], R extends Type> {
   /** Parameter types, in order. */
   readonly params: P
   /** Declared result type; results are checked against its kind. */
@@ -106,6 +107,7 @@ export function fn<const P extends readonly Type[], R extends Type>(
         }
     ),
 ): HostFunction {
+  assertHostSpec(spec, 'fn()')
   return Object.freeze({ ...spec })
 }
 
@@ -130,7 +132,10 @@ export function withContext<Ctx>() {
             readonly run: (context: Readonly<Ctx>, ...args: InferParams<P>) => Promise<Infer<R>>
           }
       ),
-  ): HostFunction => Object.freeze({ ...spec, context: true })
+  ): HostFunction => {
+    assertHostSpec(spec, 'withContext()')
+    return Object.freeze({ ...spec, context: true })
+  }
 }
 
 /** A reusable bundle of host functions (and optionally variables). */
@@ -143,13 +148,18 @@ export interface Library {
 export interface EnvironmentOptions<V extends Readonly<Record<string, Type>>> {
   /** Declared context variables and their types. */
   readonly variables?: V
-  /** Report unknown variables as errors. Default: false. */
+  /**
+   * Report unknown variables as errors. Default: true when `variables` is
+   * declared, false for an open environment.
+   */
   readonly strict?: boolean
   /** Host functions by name. A host function replaces a built-in of the same name. */
   readonly functions?: Readonly<Record<string, HostFunction>>
   /** Libraries of host functions; a name defined twice is an error. */
   readonly libraries?: readonly Library[]
   readonly limits?: Limits
+  /** Compiled programs kept for `evaluate(source)` and `evaluateSync(source)`. Default 256; 0 disables the cache. */
+  readonly cacheSize?: number
   /** Source of now(). Default: the system clock. */
   readonly clock?: () => Date
   /**
@@ -237,7 +247,8 @@ export interface Environment<Ctx> {
   ) => Environment<Ctx & ContextOf<V2>>
 }
 
-type ContextOf<V> = [keyof V] extends [never] ? Record<string, unknown> : InferVariables<V>
+/** The context type of an environment with declared variables `V`. */
+export type ContextOf<V> = [keyof V] extends [never] ? Record<string, unknown> : InferVariables<V>
 
 // === implementation ===
 
@@ -255,13 +266,15 @@ export function internalsOf(env: Environment<never>): EnvironmentInternals {
   return found
 }
 
-/** Compiled programs kept per environment unless `limits.cacheSize` says otherwise. */
+/** Compiled programs kept per environment unless `cacheSize` says otherwise. */
 const DEFAULT_CACHE_SIZE = 256
 const RESERVED_FUNCTION_NAMES = new Set(['has', 'try', 'true', 'false', 'null', 'let', 'in', 'not'])
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/u
 
 interface Settings {
   readonly variables: Readonly<Record<string, Type>> | undefined
+  /** The explicit `strict` option, if one was given (here or in a base environment). */
+  readonly strictOption: boolean | undefined
   readonly strict: boolean
   readonly host: ReadonlyMap<string, FunctionDef>
   readonly parseLimits: ParseLimits
@@ -276,7 +289,7 @@ function toDef(name: string, host: HostFunction): FunctionDef {
   if (!IDENTIFIER.test(name) || RESERVED_FUNCTION_NAMES.has(name)) {
     throw new TypeError(`Invalid function name "${name}"`)
   }
-  if (typeof host.run !== 'function') throw new TypeError(`Function "${name}" needs a run function`)
+  assertHostSpec(host, `Function "${name}"`)
   const run = host.run as (...args: unknown[]) => unknown
   const count = host.params.length
   host.params.forEach((param, index) => {
@@ -341,6 +354,7 @@ function mergeVariables(
   let out: Record<string, Type> | undefined = base === undefined ? undefined : { ...base }
   const add = (name: string, type: Type): void => {
     if (!IDENTIFIER.test(name)) throw new TypeError(`Invalid variable name "${name}"`)
+    assertType(type, `Variable "${name}"`)
     out ??= {}
     out[name] = type
   }
@@ -351,53 +365,130 @@ function mergeVariables(
 }
 
 /** Limits where 0 means "none"; every other limit must be at least 1. */
-const ZERO_DISABLES = new Set(['maxSteps', 'timeout', 'cacheSize'])
+const ZERO_DISABLES = new Set(['maxSteps', 'timeout'])
 
-function positiveInt(name: string, value: number | undefined, fallback: number): number {
+/** A number option: TypeError when it is not a number, RangeError when out of range. */
+function numberOption(name: string, value: unknown, fallback: number, minimum: number): number {
   if (value === undefined) return fallback
-  const minimum = ZERO_DISABLES.has(name) ? 0 : 1
+  if (typeof value !== 'number') throw new TypeError(`${name} must be a number`)
   if (!Number.isInteger(value) || value < minimum) {
-    throw new TypeError(
+    throw new RangeError(
       minimum === 0
-        ? `Limit "${name}" must be a non-negative integer (0 disables it)`
-        : `Limit "${name}" must be a positive integer`,
+        ? `${name} must be a non-negative integer (0 disables it)`
+        : `${name} must be a positive integer`,
     )
   }
   return value
 }
 
-function settingsFrom(
-  base: Settings | undefined,
-  options: EnvironmentOptions<Readonly<Record<string, Type>>>,
-): Settings {
-  const limits = options.limits ?? {}
-  const parseBase = base?.parseLimits ?? DEFAULT_PARSE_LIMITS
-  const runtimeBase = base?.runtimeLimits ?? DEFAULT_RUNTIME_LIMITS
+const OPTION_KEYS = new Set([
+  'variables',
+  'strict',
+  'functions',
+  'libraries',
+  'limits',
+  'cacheSize',
+  'clock',
+  'validateContext',
+])
+const LIMIT_KEYS: ReadonlySet<string> = new Set([
+  ...Object.keys(DEFAULT_PARSE_LIMITS),
+  ...Object.keys(DEFAULT_RUNTIME_LIMITS),
+  'timeout',
+])
+const LIBRARY_KEYS = new Set(['name', 'functions', 'variables'])
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+function assertKeys(value: unknown, allowed: ReadonlySet<string>, what: string): void {
+  if (!isPlainRecord(value)) throw new TypeError(`${what} must be an object`)
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new TypeError(
+        `Unknown ${what.toLowerCase()} key "${key}" (expected one of: ${[...allowed].join(', ')})`,
+      )
+    }
+  }
+}
+
+/** Environment options come from configuration: mistakes there are programming errors. */
+function assertOptions(
+  options: unknown,
+): asserts options is EnvironmentOptions<Readonly<Record<string, Type>>> {
+  assertKeys(options, OPTION_KEYS, 'Options')
+  const o = options as Record<string, unknown>
+  if (o.limits !== undefined) assertKeys(o.limits, LIMIT_KEYS, 'Limits')
+  if (o.variables !== undefined && !isPlainRecord(o.variables))
+    throw new TypeError('variables must be an object of types')
+  if (o.functions !== undefined && !isPlainRecord(o.functions))
+    throw new TypeError('functions must be an object of fn() declarations')
+  if (o.libraries !== undefined) {
+    if (!Array.isArray(o.libraries)) throw new TypeError('libraries must be an array')
+    for (const library of o.libraries) {
+      assertKeys(library, LIBRARY_KEYS, 'Library')
+      const l = library as Record<string, unknown>
+      if (typeof l.name !== 'string' || l.name === '') throw new TypeError('A library needs a name')
+      if (l.functions !== undefined && !isPlainRecord(l.functions))
+        throw new TypeError(`functions of library "${l.name}" must be an object`)
+      if (l.variables !== undefined && !isPlainRecord(l.variables))
+        throw new TypeError(`variables of library "${l.name}" must be an object`)
+    }
+  }
+  for (const flag of ['strict', 'validateContext'] as const) {
+    if (o[flag] !== undefined && typeof o[flag] !== 'boolean')
+      throw new TypeError(`${flag} must be a boolean`)
+  }
+  if (o.clock !== undefined && typeof o.clock !== 'function')
+    throw new TypeError('clock must be a function returning a Date')
+}
+
+type Numbers = Readonly<Record<string, number>>
+
+/** The limits in `defaults` (parse or runtime), overridden by `limits` over `current`. */
+function pickLimits(
+  defaults: object,
+  current: object,
+  limits: Readonly<Record<string, unknown>>,
+): Numbers {
+  const base = current as Numbers
+  return Object.freeze(
+    Object.fromEntries(
+      Object.keys(defaults).map((name) => [
+        name,
+        numberOption(`Limit "${name}"`, limits[name], base[name], ZERO_DISABLES.has(name) ? 0 : 1),
+      ]),
+    ),
+  )
+}
+
+function settingsFrom(base: Settings | undefined, options: unknown): Settings {
+  assertOptions(options)
+  const limits = (options.limits ?? {}) as Readonly<Record<string, unknown>>
+  const variables = mergeVariables(base?.variables, options)
+  const strictOption = options.strict ?? base?.strictOption
   return {
-    variables: mergeVariables(base?.variables, options),
-    strict: options.strict ?? base?.strict ?? false,
+    variables,
+    strictOption,
+    strict: strictOption ?? variables !== undefined,
     host: mergeFunctions(base?.host ?? new Map(), options),
-    parseLimits: Object.freeze({
-      maxSourceLength: positiveInt(
-        'maxSourceLength',
-        limits.maxSourceLength,
-        parseBase.maxSourceLength,
-      ),
-      maxDepth: positiveInt('maxDepth', limits.maxDepth, parseBase.maxDepth),
-      maxNodes: positiveInt('maxNodes', limits.maxNodes, parseBase.maxNodes),
-    }),
-    runtimeLimits: Object.freeze({
-      maxSteps: positiveInt('maxSteps', limits.maxSteps, runtimeBase.maxSteps),
-      maxStringLength: positiveInt(
-        'maxStringLength',
-        limits.maxStringLength,
-        runtimeBase.maxStringLength,
-      ),
-      maxListLength: positiveInt('maxListLength', limits.maxListLength, runtimeBase.maxListLength),
-      maxValueDepth: positiveInt('maxValueDepth', limits.maxValueDepth, runtimeBase.maxValueDepth),
-    }),
-    timeout: positiveInt('timeout', limits.timeout, base?.timeout ?? 0),
-    cacheSize: positiveInt('cacheSize', limits.cacheSize, base?.cacheSize ?? DEFAULT_CACHE_SIZE),
+    parseLimits: pickLimits(
+      DEFAULT_PARSE_LIMITS,
+      base?.parseLimits ?? DEFAULT_PARSE_LIMITS,
+      limits,
+    ) as unknown as ParseLimits,
+    runtimeLimits: pickLimits(
+      DEFAULT_RUNTIME_LIMITS,
+      base?.runtimeLimits ?? DEFAULT_RUNTIME_LIMITS,
+      limits,
+    ) as unknown as RuntimeLimits,
+    timeout: numberOption('Limit "timeout"', limits.timeout, base?.timeout ?? 0, 0),
+    cacheSize: numberOption(
+      'cacheSize',
+      options.cacheSize,
+      base?.cacheSize ?? DEFAULT_CACHE_SIZE,
+      0,
+    ),
     clock: options.clock ?? base?.clock ?? (() => new Date()),
     validateContext: options.validateContext ?? base?.validateContext ?? false,
   }
@@ -429,6 +520,18 @@ class ProgramCache<V> {
 }
 
 const EMPTY_CONTEXT: Record<string, unknown> = Object.freeze({})
+
+/** Freezes a syntax tree (or any tree of plain objects and arrays) in place, without recursion. */
+function deepFreeze<T>(root: T): T {
+  const pending: unknown[] = [root]
+  while (pending.length > 0) {
+    const value = pending.pop()
+    if (typeof value !== 'object' || value === null || Object.isFrozen(value)) continue
+    Object.freeze(value)
+    for (const child of Object.values(value)) pending.push(child)
+  }
+  return root
+}
 
 function validateContext(
   ctx: Record<string, unknown>,
@@ -585,13 +688,14 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       return result
     }
 
+    // Programs are shared: the tree compiles lazily, so it must not change afterwards.
     return Object.freeze({
       source,
-      ast: analysis.root,
-      type: analysis.type,
+      ast: deepFreeze(analysis.root),
+      type: deepFreeze(analysis.type),
       async: analysis.async,
-      warnings: analysis.diagnostics.filter((d) => d.severity === 'warning'),
-      references: analysis.references,
+      warnings: deepFreeze(analysis.diagnostics.filter((d) => d.severity === 'warning')),
+      references: deepFreeze(analysis.references),
       evaluate: (...args: Args<Ctx>) => runAsync(args[0], args[1]),
       evaluateSync: (...args: Args<Ctx>) => runSync(args[0], args[1]),
     })
