@@ -1174,14 +1174,6 @@ describe('§10 guarantees', () => {
     )
   })
 
-  it('a host function with a built-in name replaces the built-in', () => {
-    const env = bonsai({
-      functions: { trim: fn({ params: [t.string()], returns: t.string(), run: () => 'host' }) },
-    })
-    expect(env.evaluateSync('" x ".trim()')).toBe('host')
-    expect(env.evaluateSync('trim(" x ")')).toBe('host')
-  })
-
   it('operands and arguments evaluate left to right, one at a time', async () => {
     for (const mode of ['sync', 'async'] as const) {
       const log: number[] = []

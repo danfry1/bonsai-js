@@ -117,54 +117,58 @@ describe('produced lists never hold host undefined', () => {
 })
 
 describe('time zones: cached offsets match Intl at real transitions', () => {
-  it.each(['Europe/Berlin', 'Australia/Lord_Howe', 'Pacific/Chatham', 'America/Santiago'])(
-    '%s, 2020 to 2026',
-    (zone) => {
-      const format = new Intl.DateTimeFormat('en-US', {
-        timeZone: zone,
-        hourCycle: 'h23',
-        year: 'numeric',
-        month: 'numeric',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: 'numeric',
-        second: 'numeric',
-      })
-      const fields = (ms: number): string =>
-        format
-          .formatToParts(new Date(ms))
-          .filter((p) => p.type !== 'literal')
-          .map((p) => Number(p.value))
-          .join(',')
-      const offset = (ms: number): number => {
-        const [mo, d, y, h, mi, s] = fields(ms).split(',').map(Number)
-        return Date.UTC(y, mo - 1, d, h, mi, s) - ms
+  it.each([
+    'America/New_York',
+    'Europe/Dublin',
+    'Europe/Berlin',
+    'Australia/Lord_Howe',
+    'Pacific/Chatham',
+    'America/Santiago',
+  ])('%s, 2020 to 2026', (zone) => {
+    const format = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+    })
+    const fields = (ms: number): string =>
+      format
+        .formatToParts(new Date(ms))
+        .filter((p) => p.type !== 'literal')
+        .map((p) => Number(p.value))
+        .join(',')
+    const offset = (ms: number): number => {
+      const [mo, d, y, h, mi, s] = fields(ms).split(',').map(Number)
+      return Date.UTC(y, mo - 1, d, h, mi, s) - ms
+    }
+    const program = env.compile(
+      '[month(t, z), day(t, z), year(t, z), hour(t, z), minute(t, z), second(t, z)]',
+    )
+    let transitions = 0
+    const step = 3 * 3_600_000
+    let previous = offset(Date.UTC(2020, 0, 1))
+    for (let ms = Date.UTC(2020, 0, 1); ms < Date.UTC(2026, 0, 1); ms += step) {
+      const now = offset(ms)
+      if (now === previous) continue
+      let low = (ms - step) / 1000
+      let high = ms / 1000
+      while (high - low > 1) {
+        const middle = Math.floor((low + high) / 2)
+        if (offset(middle * 1000) === previous) low = middle
+        else high = middle
       }
-      const program = env.compile(
-        '[month(t, z), day(t, z), year(t, z), hour(t, z), minute(t, z), second(t, z)]',
-      )
-      let transitions = 0
-      const step = 3 * 3_600_000
-      let previous = offset(Date.UTC(2020, 0, 1))
-      for (let ms = Date.UTC(2020, 0, 1); ms < Date.UTC(2026, 0, 1); ms += step) {
-        const now = offset(ms)
-        if (now === previous) continue
-        let low = (ms - step) / 1000
-        let high = ms / 1000
-        while (high - low > 1) {
-          const middle = Math.floor((low + high) / 2)
-          if (offset(middle * 1000) === previous) low = middle
-          else high = middle
-        }
-        transitions++
-        for (const at of [high * 1000 - 1000, high * 1000, high * 1000 + 1000]) {
-          expect((program.evaluateSync({ t: new Date(at), z: zone }) as number[]).join(',')).toBe(
-            fields(at),
-          )
-        }
-        previous = now
+      transitions++
+      for (const at of [high * 1000 - 1000, high * 1000, high * 1000 + 1000]) {
+        expect((program.evaluateSync({ t: new Date(at), z: zone }) as number[]).join(',')).toBe(
+          fields(at),
+        )
       }
-      expect(transitions).toBeGreaterThan(0)
-    },
-  )
+      previous = now
+    }
+    expect(transitions).toBeGreaterThan(0)
+  })
 })

@@ -387,6 +387,7 @@ describe('the host boundary', () => {
       'reduce(xs, (a, x) => a + x, 0)',
       'xs.flat()',
       'xs.flatMap([.])',
+      'xs.filter(. > 1)',
       'xs.unique()',
       '[...xs]',
       'max(...xs)',

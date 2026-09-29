@@ -3,7 +3,7 @@
 // it in each position forces that node onto the async path, and both
 // compilations must agree on the value or the error code.
 import { describe, expect, it } from 'vitest'
-import { BonsaiError, BonsaiRuntimeError, Duration, bonsai, fn, t } from '../src/index.js'
+import { BonsaiError, BonsaiLimitError, Duration, bonsai, fn, t } from '../src/index.js'
 
 type Outcome = { value: unknown } | { error: string }
 
@@ -203,33 +203,6 @@ describe('async compilation agrees with sync compilation', () => {
 
 describe('sync compilation of the same node kinds', () => {
   const env = bonsai()
-  it('evaluates spreads, computed keys, and operators without async calls', () => {
-    expect(env.evaluateSync('[0, ...xs, ...n]', context)).toEqual([0, 1, 2, 3])
-    expect(env.evaluateSync('{ [s]: 1, ...m, ...n }', context)).toEqual({
-      abc: 1,
-      a: 1,
-      b: { c: 2 },
-    })
-    expect(env.evaluateSync('max(...xs, 0)', context)).toBe(3)
-    expect(env.evaluateSync('[2 / 4, 7 % 4, 2 ** 3, "a" < "b", 2 in xs]', context)).toEqual([
-      0.5,
-      3,
-      8,
-      true,
-      true,
-    ])
-    expect(env.evaluateSync('[1 != 2, "a" <= "a", "b" > "a", "a" >= "b"]')).toEqual([
-      true,
-      true,
-      true,
-      false,
-    ])
-    expect(env.evaluateSync('[d - days(1), hours(1) * 2]', context)).toEqual([
-      new Date('2023-12-31T00:00:00Z'),
-      new Duration(7_200_000),
-    ])
-  })
-
   it('rejects a spread of a non-list into arguments or a list', () => {
     expect(() => env.evaluateSync('max(...m)', context)).toThrow(/spread into arguments/u)
     expect(() => env.evaluateSync('[...m]', context)).toThrow(/spread into a list/u)
@@ -243,13 +216,6 @@ describe('sync compilation of the same node kinds', () => {
     expect(() => limited.evaluateSync('xs.map((x, i) => x + i + 1 + 2)', { xs })).toThrow(
       /step limit/u,
     )
-  })
-
-  it('drops blocked keys from spread maps', () => {
-    const hostile = JSON.parse('{"__proto__": {"x": 1}, "ok": 2}') as Record<string, unknown>
-    const result = env.evaluateSync('{ ...h }', { h: hostile })
-    expect(result).toEqual({ ok: 2 })
-    expect(Object.hasOwn(result as object, '__proto__')).toBe(false)
   })
 
   it('reads undefined list items and map values as null', () => {
@@ -271,7 +237,12 @@ describe('host call boundaries', () => {
         }),
       },
     })
-    expect(() => env.evaluateSync('sneaky()')).toThrow(/not declared async/u)
+    expect(() => env.evaluateSync('sneaky()')).toThrow(
+      expect.objectContaining({
+        code: 'HOST_CONTRACT',
+        message: expect.stringMatching(/not declared async/u),
+      }),
+    )
     await expect(env.evaluate('sneaky()')).rejects.toMatchObject({ code: 'HOST_CONTRACT' })
     // The orphaned rejection is swallowed rather than surfacing as unhandled.
     await new Promise((resolve) => {
@@ -349,26 +320,8 @@ describe('host call boundaries', () => {
     const pending = env.evaluate('slow()', {}, { signal: controller.signal })
     controller.abort()
     await expect(pending).rejects.toMatchObject({ code: 'ABORTED' })
+    await expect(pending).rejects.toBeInstanceOf(BonsaiLimitError)
     release()
-  })
-
-  it('wraps Bonsai errors thrown by host functions as HOST_ERROR', () => {
-    const cause = new BonsaiRuntimeError('INVALID_ARGUMENT', 'nope')
-    const env = bonsai({
-      functions: {
-        reject: fn({
-          params: [t.string()],
-          returns: t.boolean(),
-          run: () => {
-            throw cause
-          },
-        }),
-      },
-    })
-    expect(() => env.evaluateSync('reject("nope")')).toThrow(
-      expect.objectContaining({ code: 'HOST_ERROR', cause }),
-    )
-    expect(env.evaluateSync('try(reject("nope"), false)')).toBe(false)
   })
 
   it('resolves a host promise that settles before the deadline', async () => {

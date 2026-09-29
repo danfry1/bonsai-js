@@ -82,19 +82,6 @@ describe('sandbox', () => {
     expect(hooked).toBe(false)
   })
 
-  it('ignores array subclass hooks and does not mutate host data', () => {
-    class Sneaky extends Array<number> {
-      static override get [Symbol.species](): ArrayConstructor {
-        throw new Error('species hook ran')
-      }
-    }
-    const xs = Sneaky.from([3, 1, 2]) as Sneaky
-    expect(env.evaluateSync('xs.sort()', { xs })).toEqual([1, 2, 3])
-    expect(env.evaluateSync('xs.reverse()', { xs })).toEqual([2, 1, 3])
-    expect(env.evaluateSync('xs.filter(. > 1)', { xs })).toEqual([3, 2])
-    expect([...xs]).toEqual([3, 1, 2])
-  })
-
   it('produced maps are plain objects and skip blocked keys from spread host data', () => {
     const hostile = JSON.parse('{"__proto__": {"polluted": true}, "ok": 1}') as object
     const result = env.evaluateSync('{ ...h, x: 1 }', { h: hostile }) as Record<string, unknown>

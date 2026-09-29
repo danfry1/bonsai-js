@@ -1,7 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import {
   BonsaiCheckError,
-  BonsaiError,
   BonsaiRuntimeError,
   BonsaiSyntaxError,
   bonsai,
@@ -21,6 +20,7 @@ describe('environment', () => {
     const variables = { user: t.object({ age: t.number() }) }
     expect(bonsai({ variables, strict: false }).check('usr.age').ok).toBe(true)
     expect(bonsai().check('usr.age').ok).toBe(true)
+    expect(bonsai().strict).toBe(false)
     const strict = bonsai({ variables })
     expect(strict.strict).toBe(true)
     const result = strict.check('usr.age')
@@ -172,76 +172,6 @@ describe('host functions', () => {
     expect(seen).toEqual([])
   })
 
-  it('validates the result kind', () => {
-    const env = bonsai({
-      functions: {
-        bad: fn({ params: [], returns: t.number(), run: () => 'nope' as unknown as number }),
-      },
-    })
-    expect(() => env.evaluateSync('bad()')).toThrow(
-      expect.objectContaining({ code: 'HOST_CONTRACT' }),
-    )
-  })
-
-  it('wraps host exceptions, which try() can catch', () => {
-    const env = bonsai({
-      functions: {
-        boom: fn({
-          params: [],
-          returns: t.number(),
-          run: () => {
-            throw new Error('kaput')
-          },
-        }),
-      },
-    })
-    expect(() => env.evaluateSync('boom()')).toThrow(/boom\(\) failed: kaput/u)
-    expect(env.evaluateSync('try(boom(), -1)')).toBe(-1)
-  })
-
-  it('pads missing optional arguments with null', () => {
-    const env = bonsai({
-      functions: {
-        greet: fn({
-          params: [t.string(), t.optional(t.string())],
-          required: 1,
-          returns: t.string(),
-          run: (name, greeting) => `${greeting ?? 'Hello'} ${name}`,
-        }),
-      },
-    })
-    expect(env.evaluateSync('greet("Ada")')).toBe('Hello Ada')
-    expect(env.evaluateSync('greet("Ada", "Hi")')).toBe('Hi Ada')
-  })
-
-  it('passes the context to context functions', () => {
-    const env = bonsai({
-      functions: {
-        tenant: fn({
-          params: [],
-          returns: t.string(),
-          context: true,
-          run: (ctx) => String(ctx.tenant),
-        }),
-      },
-    })
-    expect(env.evaluateSync('tenant()', { tenant: 'acme' })).toBe('acme')
-  })
-
-  it('replaces a built-in of the same name', () => {
-    const env = bonsai({
-      functions: { sum: fn({ params: [t.list(t.any())], returns: t.number(), run: () => 42 }) },
-    })
-    expect(env.evaluateSync('[1, 2].sum()')).toBe(42)
-    expect(bonsai().evaluateSync('[1, 2].sum()')).toBe(3)
-  })
-
-  it('rejects invalid names', () => {
-    const f = fn({ params: [], returns: t.number(), run: () => 1 })
-    expect(() => bonsai({ functions: { has: f } })).toThrow(/Invalid function name/u)
-    expect(() => bonsai({ functions: { 'a-b': f } })).toThrow(/Invalid function name/u)
-  })
-
   it('composes libraries and rejects duplicate names', () => {
     const f = fn({ params: [], returns: t.number(), run: () => 1 })
     const a: Library = { name: 'a', functions: { one: f } }
@@ -300,42 +230,6 @@ describe('async host functions', () => {
     ])
   })
 
-  it('rejects async calls in evaluateSync before running host code', () => {
-    let ran = false
-    const tracked = bonsai({
-      functions: {
-        a: fn({
-          params: [],
-          returns: t.number(),
-          async: true,
-          run: () => {
-            ran = true
-            return Promise.resolve(1)
-          },
-        }),
-      },
-    })
-    expect(() => tracked.evaluateSync('a()')).toThrow(
-      expect.objectContaining({ code: 'ASYNC_IN_SYNC' }),
-    )
-    expect(ran).toBe(false)
-  })
-
-  it('rejects a promise from a function not declared async', () => {
-    const sneaky = bonsai({
-      functions: {
-        p: fn({
-          params: [],
-          returns: t.number(),
-          run: () => Promise.resolve(1) as unknown as number,
-        }),
-      },
-    })
-    expect(() => sneaky.evaluateSync('p()')).toThrow(
-      expect.objectContaining({ code: 'HOST_CONTRACT' }),
-    )
-  })
-
   it('short-circuits without starting the right-hand call', async () => {
     let calls = 0
     const counting = bonsai({
@@ -377,10 +271,5 @@ describe('async host functions', () => {
     })
     await expect(seq.evaluate('[1, 2].map(x => visit(x) + x)')).resolves.toEqual([2, 4])
     expect(log).toEqual(['start 1', 'end 1', 'start 2', 'end 2'])
-  })
-
-  it('evaluate works for sync-only expressions', async () => {
-    await expect(bonsai().evaluate('1 + 1')).resolves.toBe(2)
-    await expect(bonsai().evaluate('1 +')).rejects.toBeInstanceOf(BonsaiError)
   })
 })

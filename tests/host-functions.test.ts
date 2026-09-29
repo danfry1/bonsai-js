@@ -50,7 +50,7 @@ describe('host argument validation', () => {
       ],
     ],
     ['union', t.union(t.string(), t.list(t.number())), ['a', [1]], [1, ['a'], null]],
-    ['optional', t.optional(t.number()), [1], ['a']],
+    ['optional', t.optional(t.number()), [1, null], ['a']],
   ]
 
   for (const [name, type, good, bad] of kinds) {
@@ -65,11 +65,6 @@ describe('host argument validation', () => {
       }
     })
   }
-
-  it('accepts null for optional parameters at any position', () => {
-    const env = accepting(t.optional(t.number()))
-    expect(env.evaluateSync('f(v)', { v: null })).toBe(true)
-  })
 
   it('bounds argument validation by the value depth limit', () => {
     const deep = t.list(t.list(t.list(t.number())))
@@ -273,6 +268,7 @@ describe('host declarations', () => {
       functions: { trim: fn({ params: [t.string()], returns: t.string(), run: () => 'host' }) },
     })
     expect(env.evaluateSync('" a ".trim()')).toBe('host')
+    expect(env.evaluateSync('trim(" a ")')).toBe('host')
     expect(env.describeFunction('trim')?.host).toBe(true)
     expect(env.listFunctions()[0]?.name).toBe('trim')
     expect(env.listFunctions().filter((f) => f.name === 'trim')).toHaveLength(1)

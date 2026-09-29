@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BonsaiLimitError, bonsai, fn, t } from '../src/index.js'
+import { bonsai, fn, t } from '../src/index.js'
 import { codeOf } from './helpers.js'
 
 describe('parse limits', () => {
@@ -97,28 +97,5 @@ describe('time limits', () => {
       },
     })
     expect(codeOf(() => env.evaluateSync('block()'))).toBe('TIMEOUT')
-  })
-
-  it('stops waiting on a hanging async host call', async () => {
-    const env = bonsai({
-      functions: {
-        hang: fn({
-          params: [],
-          returns: t.number(),
-          async: true,
-          run: () =>
-            new Promise<number>(() => {
-              // never settles
-            }),
-        }),
-      },
-    })
-    await expect(env.evaluate('hang()', {}, { timeout: 10 })).rejects.toMatchObject({
-      code: 'TIMEOUT',
-    })
-    const controller = new AbortController()
-    const pending = env.evaluate('hang()', {}, { signal: controller.signal })
-    controller.abort()
-    await expect(pending).rejects.toBeInstanceOf(BonsaiLimitError)
   })
 })

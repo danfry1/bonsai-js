@@ -15,20 +15,6 @@ function spanOf(run: () => unknown): { start: number; end: number } | undefined 
 describe('strict by default with declared variables', () => {
   const variables = { user: t.object({ age: t.number() }) }
 
-  it('reports a misspelled variable when variables are declared', () => {
-    const env = bonsai({ variables })
-    expect(env.strict).toBe(true)
-    const result = env.check('usr.age > 1')
-    expect(result.ok).toBe(false)
-    expect(result.diagnostics[0]?.code).toBe('UNKNOWN_VARIABLE')
-  })
-
-  it('stays open without declared variables, or when strict is false', () => {
-    expect(bonsai().strict).toBe(false)
-    expect(bonsai().check('anything.at.all').ok).toBe(true)
-    expect(bonsai({ variables, strict: false }).check('usr.age > 1').ok).toBe(true)
-  })
-
   it('keeps an explicit choice through extend(), and defaults when variables arrive', () => {
     expect(bonsai({ strict: false }).extend({ variables }).strict).toBe(false)
     expect(bonsai().extend({ variables }).strict).toBe(true)

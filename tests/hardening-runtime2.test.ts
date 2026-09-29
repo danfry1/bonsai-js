@@ -407,24 +407,4 @@ describe('time zones', () => {
     const warm = minimalSteps(fresh, source, { xs })
     expect(warm).toBe(cold)
   })
-
-  it('agrees with Intl across transitions', () => {
-    const zones = ['America/New_York', 'Europe/Dublin', 'Australia/Lord_Howe', 'Pacific/Chatham']
-    for (const zone of zones) {
-      const formatter = new Intl.DateTimeFormat('en-US', {
-        timeZone: zone,
-        hourCycle: 'h23',
-        hour: 'numeric',
-        minute: 'numeric',
-      })
-      for (let ms = Date.UTC(2024, 0, 1); ms < Date.UTC(2025, 0, 1); ms += 37 * 60_000 + 13_000) {
-        const parts = formatter.formatToParts(new Date(ms))
-        const want = parts
-          .filter((p) => p.type === 'hour' || p.type === 'minute')
-          .map((p) => Number(p.value))
-        const got = env.evaluateSync('[hour(d, z), minute(d, z)]', { d: new Date(ms), z: zone })
-        expect(got, `${zone} ${new Date(ms).toISOString()}`).toEqual(want)
-      }
-    }
-  })
 })
