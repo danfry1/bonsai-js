@@ -49,10 +49,6 @@ export interface CallPlan {
   readonly def: FunctionDef
   /** Candidate overload indices, in declaration order. */
   readonly candidates: readonly number[]
-  /** True when the single candidate is proven by static types: no runtime dispatch. */
-  readonly direct: boolean
-  /** Some lambda argument's body calls an async host function. */
-  readonly asyncLambda: boolean
   /**
    * An argument was accepted gradually: an open object that may hold an
    * optional key of the parameter with another type. Checked at run time.
@@ -1264,8 +1260,6 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         calls.set(node, {
           def,
           candidates: def.overloads.map((_, i) => i),
-          direct: false,
-          asyncLambda: false,
         })
         return NULL
       }
@@ -1297,8 +1291,6 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         calls.set(node, {
           def,
           candidates: distributed.candidates,
-          direct: false,
-          asyncLambda: false,
         })
         return receiverNull ? t.optional(distributed.result) : distributed.result
       }
@@ -1310,8 +1302,6 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       calls.set(node, {
         def,
         candidates: def.overloads.map((_, i) => i),
-        direct: false,
-        asyncLambda: false,
       })
       return ANY
     }
@@ -1440,21 +1430,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
           !isProvenAssignable(argType, param)
         )
       })
-    const proven =
-      candidates.length === 1 &&
-      !hasSpread &&
-      !gradual &&
-      argTypes.every(
-        (argType, index) =>
-          argType === undefined || isProven(argType, first.params[index] ?? first.rest ?? ANY),
-      )
-    calls.set(node, {
-      def,
-      candidates,
-      direct: proven,
-      asyncLambda,
-      ...(gradual ? { gradual } : {}),
-    })
+    calls.set(node, { def, candidates, ...(gradual ? { gradual } : {}) })
     // xs.includes(v) is `v in xs`: warn the same way when it can never hold.
     if (def.host !== true && def.name === 'includes' && node.args.length === 2) {
       const list = argTypes[0]
@@ -1767,12 +1743,6 @@ function changedAt(next: readonly Type[], previous: readonly Type[]): number[] {
     if (!sameType(type, previous[i] ?? ANY)) out.push(i)
   })
   return out
-}
-
-function isProven(argType: Type, param: Type): boolean {
-  if (param.kind === 'any' || param.kind === 'var') return argType.kind !== 'never'
-  if (containsAny(argType)) return false
-  return isAssignable(argType, param)
 }
 
 const containsAnyMemo = new WeakMap<Type, boolean>()
