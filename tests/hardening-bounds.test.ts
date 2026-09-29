@@ -116,7 +116,7 @@ describe('produced lists never hold host undefined', () => {
   })
 })
 
-describe('time zones: cached offsets match Intl at real transitions', () => {
+describe('time zones: cached offsets match Intl at and between real transitions', () => {
   it.each([
     'America/New_York',
     'Europe/Dublin',
@@ -152,6 +152,13 @@ describe('time zones: cached offsets match Intl at real transitions', () => {
     const step = 3 * 3_600_000
     let previous = offset(Date.UTC(2020, 0, 1))
     for (let ms = Date.UTC(2020, 0, 1); ms < Date.UTC(2026, 0, 1); ms += step) {
+      // Every seventh step (21 hours, so each hour of the day comes round) is
+      // also checked away from any transition.
+      if ((ms / step) % 7 === 0) {
+        expect((program.evaluateSync({ t: new Date(ms), z: zone }) as number[]).join(',')).toBe(
+          fields(ms),
+        )
+      }
       const now = offset(ms)
       if (now === previous) continue
       let low = (ms - step) / 1000
