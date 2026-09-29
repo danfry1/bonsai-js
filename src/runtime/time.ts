@@ -72,7 +72,9 @@ function daysFromCivil(year: number, month: number): number {
  * about a microsecond, so offsets are cached. Time is cut into 6-hour spans;
  * the offset is read at each span boundary, and a span whose two boundaries
  * agree has that offset throughout (a zone never changes offset twice within
- * 6 hours and changes back). A span whose boundaries differ holds one
+ * 6 hours and changes back: in tzdata 2025b the closest such pair is further
+ * apart, and tests/hardening-bounds.test.ts checks real transitions against
+ * Intl). A span whose boundaries differ holds one
  * transition, found once by bisection. Each evaluation pays for the formatter,
  * for every boundary it touches, and for every bisection the first time, as if
  * nothing were cached (steps never depend on the cache), plus a small fixed
@@ -255,8 +257,12 @@ export function wallClock(date: Date, zone: string | null | undefined, site: Cal
   const ms = timeOf(date, site.state, site.span)
   if (zone === null || zone === undefined || zone === 'UTC') return utcClock(ms)
   const shifted = ms + offsetAt(ms, zone, site)
-  // At the very ends of the Date range the shifted instant may not exist.
-  if (Math.abs(shifted) > MAX_TIME) return formattedClock(formatterFor(zone, site), ms)
+  // At the very ends of the Date range the shifted instant may not exist: read
+  // the formatter directly, which costs a probe every time (nothing caches it).
+  if (Math.abs(shifted) > MAX_TIME) {
+    site.state.charge(ZONE_PROBE_COST)
+    return formattedClock(formatterFor(zone, site), ms)
+  }
   return utcClock(shifted)
 }
 

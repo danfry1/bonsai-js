@@ -325,6 +325,29 @@ const INDEX_KEY_MAX_LENGTH = 17
 /** Extra steps for an integer-like key, which the engine stores and hashes more slowly. */
 const INDEX_KEY_COST = 3
 
+/**
+ * Maps past this many keys are held by the engine as dictionaries, and each key
+ * costs several times more to list or copy (hashing, cache misses).
+ */
+const LARGE_MAP = 16_384
+
+/** Steps per key for listing a small map's keys, and a large one's. */
+const SMALL_KEY_LIST = 2
+const LARGE_KEY_LIST = 4
+/** Steps per key for writing a small map, and a large one, beyond listing its keys. */
+const SMALL_MAP_BUILD = 2
+const LARGE_MAP_BUILD = 6
+
+/** Steps for listing the keys of a map with `count` keys (keys, spread, ==, isEmpty). */
+export function keyListCost(count: number): number {
+  return count * (count > LARGE_MAP ? LARGE_KEY_LIST : SMALL_KEY_LIST)
+}
+
+/** Steps for writing `count` keys into a new map (spread, groupBy), beyond listing them. */
+export function mapBuildCost(count: number): number {
+  return count * (count > LARGE_MAP ? LARGE_MAP_BUILD : SMALL_MAP_BUILD)
+}
+
 /** Charges storing `name` as a key when it is integer-like (see {@link INDEX_KEY_COST}). */
 export function chargeIndexKey(s: State, name: string): void {
   if (name.length <= INDEX_KEY_MAX_LENGTH && INDEX_KEY.test(name)) s.charge(INDEX_KEY_COST)
@@ -343,7 +366,7 @@ export function mapKey(key: unknown, s: State, at: Span): string {
   return name
 }
 
-export function hasKey(object: unknown, key: unknown, s: State): boolean {
+export function hasKey(object: unknown, key: unknown, s: State, at: Span): boolean {
   if (Array.isArray(object))
     return typeof key === 'number' && Number.isInteger(key) && key >= 0 && key < object.length
   if (isMap(object)) {
@@ -351,6 +374,14 @@ export function hasKey(object: unknown, key: unknown, s: State): boolean {
     if (typeof name !== 'string') return false
     chargeKey(s, name)
     return !BLOCKED_KEYS.has(name) && hasOwn(object, name)
+  }
+  // has() is a read: an opaque value is never read into (as with `in`).
+  if (kindOf(object) === 'opaque') {
+    throw s.error(
+      'TYPE_ERROR',
+      `Cannot read property ${shown(String(key))} of ${describeKind(object)}`,
+      at,
+    )
   }
   return false
 }
@@ -498,9 +529,9 @@ export function equals(a: unknown, b: unknown, s: State, depth = 0, at?: Span): 
   // Listing keys costs work per key, so each side is charged as it is listed,
   // before the counts can differ and end the comparison early.
   const keys = Object.keys(a)
-  s.charge(1 + 2 * keys.length)
+  s.charge(1 + keyListCost(keys.length))
   const other = Object.keys(b)
-  s.charge(1 + 2 * other.length)
+  s.charge(1 + keyListCost(other.length))
   if (keys.filter(visible).length !== other.filter(visible).length) return false
   for (const key of keys) {
     if (!visible(key)) continue
@@ -654,8 +685,9 @@ export function add(a: unknown, b: unknown, s: State, at: Span): unknown {
     s.listLimit(a.length + b.length, at)
     s.charge(1 + a.length + b.length)
     const out = new Array<unknown>(a.length + b.length)
-    for (let i = 0; i < a.length; i++) out[i] = a[i]
-    for (let i = 0; i < b.length; i++) out[a.length + i] = b[i]
+    // Host `undefined` (or a hole) is null in every produced list.
+    for (let i = 0; i < a.length; i++) out[i] = a[i] ?? null
+    for (let i = 0; i < b.length; i++) out[a.length + i] = b[i] ?? null
     track(out, s, at)
     return out
   }
@@ -699,9 +731,21 @@ export function divide(a: unknown, b: unknown, s: State, at: Span): unknown {
   throw arithmeticError('/', a, b, s, at)
 }
 
+/** A dividend below this takes the remainder in constant time. */
+const FAST_REMAINDER = 1_048_576
+/** Bits of exponent difference per step (the engine divides one bit at a time). */
+const REMAINDER_BITS_PER_STEP = 24
+
 export function remainder(a: unknown, b: unknown, s: State, at: Span): unknown {
   if (typeof a === 'number' && typeof b === 'number') {
     if (b === 0) throw s.error('DIVISION_BY_ZERO', 'Remainder by zero', at)
+    // The remainder of a large number by a small one is long division over the
+    // difference of their exponents: 1e308 % 7 costs a thousand times 7 % 3.
+    const magnitude = Math.abs(a)
+    if (magnitude >= FAST_REMAINDER && Number.isFinite(magnitude)) {
+      const gap = Math.log2(magnitude) - Math.log2(Math.abs(b))
+      if (gap > REMAINDER_BITS_PER_STEP) s.charge(Math.ceil(gap / REMAINDER_BITS_PER_STEP))
+    }
     return finite(a % b, s, at)
   }
   throw arithmeticError('%', a, b, s, at)

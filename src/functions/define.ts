@@ -1,6 +1,6 @@
 import type { Span } from '../errors.js'
 import type { State } from '../runtime/state.js'
-import { BLOCKED_KEYS, Duration, isMap } from '../runtime/values.js'
+import { BLOCKED_KEYS, Duration, isMap, keyListCost } from '../runtime/values.js'
 import { formatType, type FunctionType, type Type, type TypeVar } from '../types.js'
 
 /** A lambda as seen by a built-in: called with the item and its index. */
@@ -128,7 +128,7 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
       }
       if (type.rest !== undefined && type.rest.kind !== 'any') {
         const keys = Object.keys(value)
-        state.charge(keys.length)
+        state.charge(keyListCost(keys.length))
         for (const key of keys) {
           if (
             !Object.hasOwn(type.fields, key) &&
@@ -218,7 +218,11 @@ export function describeMismatch(
       if (problem !== undefined) return problem
     }
     if (type.rest !== undefined) {
-      for (const key of Object.keys(actual)) {
+      const keys = Object.keys(actual)
+      // Listing a map's keys costs per key (see keyListCost), and more for a large one.
+      budget.remaining -= keyListCost(keys.length)
+      if (budget.remaining < 0) budget.onExhausted('steps')
+      for (const key of keys) {
         // Keys the language can never read are not part of the data.
         if (Object.hasOwn(type.fields, key) || BLOCKED_KEYS.has(key)) continue
         const problem = describeMismatch(

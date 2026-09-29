@@ -20,6 +20,8 @@ import {
   Duration,
   chargeIndexKey,
   chargeKey,
+  keyListCost,
+  mapBuildCost,
   chargeSearch,
   isMap,
   shown,
@@ -112,7 +114,7 @@ function newList(length: number, site: CallSite): unknown[] {
 /** Appends to a growing list, enforcing the list limit as it grows. */
 function push(out: unknown[], value: unknown, site: CallSite): void {
   if (out.length >= site.state.limits.maxListLength) site.state.listLimit(out.length + 1, site.span)
-  out.push(value)
+  out.push(value ?? null)
 }
 
 function numbersOf(items: readonly unknown[], what: string, site: CallSite): number[] {
@@ -140,7 +142,8 @@ function numbersOf(items: readonly unknown[], what: string, site: CallSite): num
 /** Copies a list by index: never runs a host list's iterator, species, or methods. */
 function copyOf(items: readonly unknown[], from = 0, to = items.length): unknown[] {
   const out = new Array<unknown>(Math.max(0, to - from))
-  for (let i = from; i < to; i++) out[i - from] = items[i]
+  // Host `undefined` (or a hole) is null in every list a built-in produces.
+  for (let i = from; i < to; i++) out[i - from] = items[i] ?? null
   return out
 }
 
@@ -395,7 +398,7 @@ function sortKeyed(
     return descending ? -result : result
   })
   const out = new Array<unknown>(n)
-  for (let i = 0; i < n; i++) out[i] = items[indices[i]]
+  for (let i = 0; i < n; i++) out[i] = items[indices[i]] ?? null
   return made(out, site)
 }
 
@@ -447,7 +450,10 @@ function bucket(groups: Record<string, unknown[]>, key: string): unknown[] {
 }
 
 function madeGroups(groups: Record<string, unknown[]>, site: CallSite): Record<string, unknown[]> {
-  for (const key in groups) if (Object.hasOwn(groups, key)) made(groups[key], site)
+  const keys = Object.keys(groups)
+  // Building a map costs per key, and much more once it is large (see mapBuildCost).
+  site.state.charge(keyListCost(keys.length) + mapBuildCost(keys.length))
+  for (const key of keys) made(groups[key], site)
   return made(groups, site)
 }
 
@@ -532,8 +538,14 @@ function charged(key: string, site: CallSite): string {
   return key
 }
 
+/**
+ * Steps per item for unique(): building each item's canonical key and hashing
+ * it into a set costs about as much as eight ordinary steps even for a number.
+ */
+const UNIQUE_ITEM_COST = 8
+
 function uniqueOf(items: readonly unknown[], site: CallSite): unknown[] {
-  site.state.charge(items.length)
+  site.state.charge(items.length * UNIQUE_ITEM_COST)
   const seen = new Set<string>()
   const identities: Identities = { ids: new Map(), next: 0 }
   const out: unknown[] = []
@@ -562,7 +574,7 @@ function appendFlat(out: unknown[], value: unknown, site: CallSite): void {
     site.state.listLimit(out.length + value.length, site.span)
     site.state.charge(value.length)
     // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
-    for (let i = 0; i < value.length; i++) out.push(value[i])
+    for (let i = 0; i < value.length; i++) out.push(value[i] ?? null)
   } else push(out, value, site)
 }
 
@@ -631,9 +643,9 @@ function extreme(items: readonly unknown[], sign: 1 | -1, site: CallSite): unkno
 }
 
 function entryList(map: Record<string, unknown>, site: CallSite): string[] {
-  const keys = Object.keys(map).filter((key) => !BLOCKED_KEYS.has(key))
-  // Two per key: integer-like keys make the engine sort and stringify them.
-  site.state.charge(2 * keys.length)
+  const listed = Object.keys(map)
+  site.state.charge(keyListCost(listed.length))
+  const keys = listed.filter((key) => !BLOCKED_KEYS.has(key))
   site.state.listLimit(keys.length, site.span)
   return keys
 }
@@ -1037,13 +1049,14 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     listT,
     (items, fn, site) => {
       const out: unknown[] = []
-      for (let i = 0; i < items.length; i++) if (truthy(fn(items[i], i), site)) out.push(items[i])
+      for (let i = 0; i < items.length; i++)
+        if (truthy(fn(items[i], i), site)) out.push(items[i] ?? null)
       return made(out, site)
     },
     async (items, fn, site) => {
       const out: unknown[] = []
       for (let i = 0; i < items.length; i++)
-        if (truthy(await fn(items[i], i), site)) out.push(items[i])
+        if (truthy(await fn(items[i], i), site)) out.push(items[i] ?? null)
       return made(out, site)
     },
   ),
@@ -1157,13 +1170,13 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     (items, fn, site) => {
       const out: Record<string, unknown[]> = {}
       for (let i = 0; i < items.length; i++)
-        bucket(out, groupKey(fn(items[i], i), site)).push(items[i])
+        bucket(out, groupKey(fn(items[i], i), site)).push(items[i] ?? null)
       return madeGroups(out, site)
     },
     async (items, fn, site) => {
       const out: Record<string, unknown[]> = {}
       for (let i = 0; i < items.length; i++)
-        bucket(out, groupKey(await fn(items[i], i), site)).push(items[i])
+        bucket(out, groupKey(await fn(items[i], i), site)).push(items[i] ?? null)
       return madeGroups(out, site)
     },
     { lambda: fnType([T, num], t.union(str, num, bool)) },
@@ -1231,7 +1244,7 @@ const LIST_FUNCTIONS: FunctionDef[] = [
       const items = list(l)
       site.state.charge(items.length)
       const out = newList(items.length, site)
-      for (let i = 0; i < items.length; i++) out[i] = items[items.length - 1 - i]
+      for (let i = 0; i < items.length; i++) out[i] = items[items.length - 1 - i] ?? null
       return made(out, site)
     }),
   ]),
@@ -1266,7 +1279,7 @@ const LIST_FUNCTIONS: FunctionDef[] = [
       if (Array.isArray(v) || typeof v === 'string') return v.length === 0
       // Listing a map's keys is linear in how many it has.
       const keys = Object.keys(v)
-      site.state.charge(2 * keys.length)
+      site.state.charge(keyListCost(keys.length))
       return keys.length === 0
     }),
   ]),

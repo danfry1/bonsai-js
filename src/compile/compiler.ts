@@ -19,6 +19,8 @@ import {
   hasKey,
   isEqual,
   isMap,
+  keyListCost,
+  mapBuildCost,
   mapKey,
   multiply,
   negate,
@@ -198,10 +200,10 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
         const object = compile(target.object, scope)
         if (target.type === 'Member') {
           const name = target.name
-          return strict1(object, (s, o) => hasKey(o, name, s))
+          return strict1(object, (s, o) => hasKey(o, name, s, node))
         }
         const key = compile(target.index, scope)
-        return strict2(object, key, (s, o, k) => hasKey(o, k, s))
+        return strict2(object, key, (s, o, k) => hasKey(o, k, s, node))
       }
       case 'Try': {
         const body = compile(node.body, scope)
@@ -464,8 +466,7 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
             step.at,
           )
         const keys = Object.keys(value)
-        // Two per key: integer-like keys make the engine sort and stringify them.
-        s.charge(2 * keys.length)
+        s.charge(keyListCost(keys.length) + mapBuildCost(keys.length))
         for (const k of keys) {
           chargeKey(s, k)
           if (!BLOCKED_KEYS.has(k)) out[k] = value[k] === undefined ? null : value[k]
