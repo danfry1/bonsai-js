@@ -123,15 +123,10 @@ interface EvaluationZone {
 
 const zoneData = new Map<string, ZoneData>()
 
-/** Zones that are not valid, and why: a retry never builds a formatter again. */
-const zoneFailures = new Map<string, string>()
-
 function formatterFor(zone: string, site: CallSite): Intl.DateTimeFormat {
   return site.state.resource(`f${zone}`, ZONE_FORMAT_COST, () => {
     let formatter = formatters.get(zone)
     if (formatter !== undefined) return formatter
-    const failed = zoneFailures.get(zone)
-    if (failed !== undefined) throw site.state.error('INVALID_ARGUMENT', failed, site.span)
     try {
       formatter = new Intl.DateTimeFormat('en-US', {
         timeZone: zone,
@@ -145,11 +140,7 @@ function formatterFor(zone: string, site: CallSite): Intl.DateTimeFormat {
         second: 'numeric',
       })
     } catch {
-      const message = `Unknown time zone ${shown(zone)}`
-      if (zoneFailures.size >= MAX_CACHED_ZONES)
-        zoneFailures.delete(zoneFailures.keys().next().value as string)
-      zoneFailures.set(zone, message)
-      throw site.state.error('INVALID_ARGUMENT', message, site.span)
+      throw site.state.error('INVALID_ARGUMENT', `Unknown time zone ${shown(zone)}`, site.span)
     }
     if (formatters.size >= MAX_CACHED_ZONES)
       formatters.delete(formatters.keys().next().value as string)

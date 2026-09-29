@@ -200,17 +200,6 @@ const PARSE_COST = 16
  */
 const regexCache = new Map<string, RegexProgram>()
 let regexCacheSize = 0
-/** Patterns that failed to compile, and why: a retry never compiles again. */
-const regexFailures = new Map<string, string>()
-/** Number formats that failed to build, and why. */
-const numberFormatFailures = new Map<string, string>()
-
-/** Remembers a failure in a bounded shared map (oldest first out). */
-function rememberFailure(failures: Map<string, string>, key: string, message: string): void {
-  if (failures.size >= MAX_CACHED) failures.delete(failures.keys().next().value as string)
-  failures.set(key, message)
-}
-
 function compiledPattern(pattern: string, site: CallSite): RegexProgram {
   const cached = regexCache.get(pattern)
   if (cached !== undefined) {
@@ -218,16 +207,12 @@ function compiledPattern(pattern: string, site: CallSite): RegexProgram {
     regexCache.set(pattern, cached)
     return cached
   }
-  const failed = regexFailures.get(pattern)
-  if (failed !== undefined) throw site.state.error('INVALID_ARGUMENT', failed, site.span)
   let program: RegexProgram
   try {
     program = compileRegex(pattern)
   } catch (error) {
-    if (error instanceof RegexSyntaxError) {
-      rememberFailure(regexFailures, pattern, error.message)
+    if (error instanceof RegexSyntaxError)
       throw site.state.error('INVALID_ARGUMENT', error.message, site.span)
-    }
     throw error
   }
   if (program.size > REGEX_CACHE_BUDGET) return program
@@ -272,14 +257,14 @@ function numberFormat(
   const format = site.state.resource(`n${key}`, NUMBER_FORMAT_COST, () => {
     let created = numberFormats.get(key)
     if (created !== undefined) return created
-    const failed = numberFormatFailures.get(key)
-    if (failed !== undefined) throw site.state.error('INVALID_ARGUMENT', failed, site.span)
     try {
       created = new Intl.NumberFormat(locale, options)
     } catch (error) {
-      const message = `Invalid number format: ${errorText(error)}`
-      rememberFailure(numberFormatFailures, key, message)
-      throw site.state.error('INVALID_ARGUMENT', message, site.span)
+      throw site.state.error(
+        'INVALID_ARGUMENT',
+        `Invalid number format: ${errorText(error)}`,
+        site.span,
+      )
     }
     if (numberFormats.size >= MAX_CACHED)
       numberFormats.delete(numberFormats.keys().next().value as string)
