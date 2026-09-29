@@ -15,6 +15,7 @@ import {
   isoWeekday,
   parseTimestamp,
   wallClock,
+  type WallClock,
 } from '../runtime/time.js'
 import {
   Duration,
@@ -834,6 +835,13 @@ const STRING_FUNCTIONS: FunctionDef[] = [
   ]),
 ]
 
+/** A built-in applying a number function whose result must be finite. */
+function math(name: string, description: string, apply: (n: number) => number): FunctionDef {
+  return define(name, description, [
+    overload([num], num, ([n], site) => finite(apply(n as number), site)),
+  ])
+}
+
 const NUMBER_FUNCTIONS: FunctionDef[] = [
   define('round', 'Rounds half away from zero, optionally to a number of decimal digits.', [
     overload(
@@ -844,22 +852,14 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
       { required: 1 },
     ),
   ]),
-  define('floor', 'Rounds down.', [
-    overload([num], num, ([n], site) => finite(Math.floor(n as number), site)),
-  ]),
-  define('ceil', 'Rounds up.', [
-    overload([num], num, ([n], site) => finite(Math.ceil(n as number), site)),
-  ]),
-  define('trunc', 'Drops the fractional part.', [
-    overload([num], num, ([n], site) => finite(Math.trunc(n as number), site)),
-  ]),
+  math('floor', 'Rounds down.', Math.floor),
+  math('ceil', 'Rounds up.', Math.ceil),
+  math('trunc', 'Drops the fractional part.', Math.trunc),
   define('abs', 'Absolute value.', [
     overload([num], num, ([n], site) => finite(Math.abs(n as number), site)),
     overload([dur], dur, ([d]) => new Duration(Math.abs((d as Duration).ms))),
   ]),
-  define('sqrt', 'Square root.', [
-    overload([num], num, ([n], site) => finite(Math.sqrt(n as number), site)),
-  ]),
+  math('sqrt', 'Square root.', Math.sqrt),
   define('clamp', 'Limits a number to a range.', [
     overload([num, num, num], num, ([n, lo, hi], site) => {
       if ((lo as number) > (hi as number))
@@ -1303,15 +1303,27 @@ function zoneArg(value: unknown): string | null {
   return value === undefined || value === null ? null : (value as string)
 }
 
-function field(
-  name: string,
-  description: string,
-  pick: (clock: ReturnType<typeof wallClock>) => number,
-): FunctionDef {
+function field(name: string, description: string, pick: (clock: WallClock) => number): FunctionDef {
   return define(name, description, [
     overload([ts, optZone], num, ([d, z], site) => pick(wallClock(d as Date, zoneArg(z), site)), {
       required: 1,
     }),
+  ])
+}
+
+/** Midnight at the start of the day, with `reset` fields of the wall clock set too. */
+function startOf(name: string, what: string, reset: Partial<WallClock>): FunctionDef {
+  return define(name, `${what}, in a time zone (default UTC).`, [
+    overload(
+      [ts, optZone],
+      ts,
+      ([d, z], site) => {
+        const clock = wallClock(d as Date, zoneArg(z), site)
+        const midnight = { ...clock, ...reset, hour: 0, minute: 0, second: 0, millisecond: 0 }
+        return fromWallClock(midnight, zoneArg(z), site)
+      },
+      { required: 1 },
+    ),
   ])
 }
 
@@ -1367,51 +1379,9 @@ const TIME_FUNCTIONS: FunctionDef[] = [
     'The ISO weekday (Monday 1 to Sunday 7), in a time zone (default UTC).',
     isoWeekday,
   ),
-  define('startOfDay', 'Midnight at the start of the day, in a time zone (default UTC).', [
-    overload(
-      [ts, optZone],
-      ts,
-      ([d, z], site) => {
-        const clock = wallClock(d as Date, zoneArg(z), site)
-        return fromWallClock(
-          { ...clock, hour: 0, minute: 0, second: 0, millisecond: 0 },
-          zoneArg(z),
-          site,
-        )
-      },
-      { required: 1 },
-    ),
-  ]),
-  define('startOfMonth', 'Midnight on the first of the month, in a time zone (default UTC).', [
-    overload(
-      [ts, optZone],
-      ts,
-      ([d, z], site) => {
-        const clock = wallClock(d as Date, zoneArg(z), site)
-        return fromWallClock(
-          { ...clock, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 },
-          zoneArg(z),
-          site,
-        )
-      },
-      { required: 1 },
-    ),
-  ]),
-  define('startOfYear', 'Midnight on January 1, in a time zone (default UTC).', [
-    overload(
-      [ts, optZone],
-      ts,
-      ([d, z], site) => {
-        const clock = wallClock(d as Date, zoneArg(z), site)
-        return fromWallClock(
-          { ...clock, month: 1, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 },
-          zoneArg(z),
-          site,
-        )
-      },
-      { required: 1 },
-    ),
-  ]),
+  startOf('startOfDay', 'Midnight at the start of the day', {}),
+  startOf('startOfMonth', 'Midnight on the first of the month', { day: 1 }),
+  startOf('startOfYear', 'Midnight on January 1', { month: 1, day: 1 }),
   define('addDays', 'Adds calendar days (keeps the wall-clock time across DST), in a time zone.', [
     overload(
       [ts, num, optZone],
