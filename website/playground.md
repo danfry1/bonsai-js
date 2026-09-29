@@ -1,5 +1,5 @@
 ---
-title: Playground — Bonsai
+title: Playground
 layout: page
 aside: false
 sidebar: false

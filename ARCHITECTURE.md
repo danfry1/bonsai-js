@@ -1,130 +1,118 @@
 # Architecture
 
-This document orients contributors to how bonsai turns an expression string into
-a value. For the public API and the lambda/safety model, see the
-[README](./README.md); for the support boundary, see
-[docs/stability-policy.md](./docs/stability-policy.md).
+How Bonsai turns an expression string into a value. The language itself is
+specified in [docs/language.md](./docs/language.md).
 
 ## Pipeline
 
 ```
-source string
-  -> tokenize        (src/lexer.ts)      -> Token[]
-  -> parse           (src/parser.ts)     -> ASTNode      (recursive-descent / Pratt)
-  -> compile         (src/compiler.ts)   -> ASTNode      (constant folding + dead-branch elimination)
-  -> evaluate        (src/evaluator.ts)        -> value          (synchronous)
-     evaluateAsync   (src/evaluator-async.ts)  -> Promise<value> (asynchronous)
+source
+  -> tokenize   src/syntax/lexer.ts     tokens (comments dropped, templates pre-scanned)
+  -> parse      src/syntax/parser.ts    syntax tree (precedence climbing; depth/node/size limits)
+  -> analyze    src/check/checker.ts    bind "." to lambdas, infer types, resolve overloads
+  -> compile    src/compile/compiler.ts closures over a per-run State
+  -> run        src/environment.ts      evaluate / evaluateSync
 ```
 
-A `bonsai()` instance (`src/index.ts`) wires these together and adds:
+Every phase has its own limits, so a hostile expression is rejected at the
+cheapest point: size before lexing, depth and node count while parsing, work
+and output size while running.
 
-- **Caching** (`src/cache.ts`): an LRU for parsed-and-compiled ASTs and one for
-  `CompiledExpression` objects, both keyed by source string.
-- **A pooled `ExecutionContext`** (`src/execution-context.ts`) reused across
-  `evaluateSync` calls to avoid per-call allocation on the hot path. A
-  reentrancy guard allocates a fresh context when a registered function calls
-  back into `evaluateSync` mid-evaluation.
-- **A plugin registry** (`src/plugins.ts`) holding transforms (used with `|>`)
-  and the shared pure/context function namespace.
+### Parse
 
-## Security
+One precedence-climbing parser produces a JSON-serializable tree
+(`src/syntax/ast.ts`). Names bound by `let` and lambda parameters are resolved
+to `Local` nodes here; everything else is a `Variable`. The implicit parameter
+`.` is left as an `It` node, because which lambda it belongs to depends on
+function signatures.
 
-The sandbox is enforced in `src/execution-context.ts` (`SecurityPolicy` +
-`ExecutionContext`) and `src/eval-ops.ts`:
+### Analyze
 
-- blocked properties (`__proto__`, `constructor`, `prototype`) at every access
-  level; allow/deny lists for member and method names;
-- depth, array-size, and string-size limits, plus a cooperative step/timeout;
-- a method allowlist keyed by receiver type (`isAllowedReceiver`).
+`analyze()` runs two passes over the tree:
 
-All shared evaluation primitives (operators, member access, method validation,
-spread expansion, result-size checks) live in `src/eval-ops.ts` so both
-evaluators apply identical rules.
+1. **Binding.** An argument whose parameter is function-typed (per the
+   function's overloads) and that contains a free `It` becomes an implicit
+   `Lambda`. This is what makes `users.filter(.score > max(.a, .b))` mean the
+   natural thing: `max` does not take a function, so `.a` belongs to `filter`.
+2. **Types.** Gradual type inference over `src/types.ts`. It reports
+   diagnostics, resolves each call to candidate overloads (a single candidate
+   with proven argument types is marked `direct`, so the runtime skips
+   dispatch), and marks every node on a path to an async host function.
 
-## Why there are two evaluators (and four tree-walks)
+The same analysis powers `env.check`, `env.compile`, and the language service
+(`src/service`), which completes by analyzing the text before the cursor with a
+probe identifier and synthesized closing brackets. There is one inference
+engine.
 
-`evaluate` (sync) and `evaluateAsync` (async) are intentionally separate, and
-each contains a second inline walk for lambda bodies (`.x`, `. > 0`). This is a
-deliberate trade, not an oversight:
+### Compile
 
-- A single walk that is always `async` would force the synchronous path to
-  allocate a Promise and schedule a microtask at every node; bonsai's value
-  proposition includes a fast synchronous path, so that regression is not
-  acceptable.
-- A single "maybe-async" walk (check-for-Promise-then-thread) adds a branch and
-  a closure allocation per node even when nothing is async, also regressing the
-  sync path.
+Each node becomes a closure `(state) => value`. There is no tree-walking
+interpreter and no generated JavaScript (CSP-safe).
 
-So the duplication buys a fast sync path. The cost is that **any change to
-evaluation semantics or a security guard must be made in all four walks**:
-`evalNode`/`evalCompound` and `evalLambdaBody` in `src/evaluator.ts`, and
-`evalNodeAsync`/`evalCompoundAsync` and `evalLambdaBodyAsync` in
-`src/evaluator-async.ts`.
+- **Async only where needed.** In async mode a node becomes an `async`
+  closure only if the analysis marked it as reaching an async host function.
+  Pure data and operator subtrees stay synchronous even inside `evaluate()`,
+  so an expression with no async calls runs at synchronous speed either way.
+  Strict nodes (operators, member reads, literals, templates) are defined by one
+  semantic function used by both the sync and the async closure; only
+  short-circuiting nodes (`&&`, `||`, `??`, `?:`, `try`, `let`, calls) spell
+  out both forms.
+- **Static slots.** Lambda parameters and `let` bindings get fixed indices into
+  `state.locals`. There is no recursion and evaluation within one run is
+  sequential (including async), so a slot is never live twice.
+- **Specialization.** Chains of static member reads fuse into one closure; hot
+  operators have single-closure fast paths for numbers; member reads directly on
+  a lambda parameter read the slot inline.
 
-This rule is enforced by tests, not just convention:
+### Run
 
-- `tests/parity.test.ts` runs a curated corpus through both evaluators and
-  asserts identical results.
-- `tests/property.test.ts` fuzzes generated expressions (including transforms,
-  methods, pipes, and lambdas) and asserts `evaluateSync`, `evaluate`, and
-  `compile().evaluate*` all agree.
+`State` (`src/runtime/state.ts`) holds the context, locals, step counter,
+deadline, and abort signal. `charge(n)` is one addition and one comparison
+against `nextSample`, the next step count at which the step limit or the clock
+needs checking. The synchronous path reuses one pooled `State` per program
+(falling back to a fresh one on reentrancy); async runs always get their own.
 
-If you change one walk, run the suite; a divergence will surface there.
+## Values and the cost model
 
-## Performance
+`src/runtime/values.ts` implements the value semantics: kinds, deep equality,
+ordering (with `null` making comparisons false), arithmetic with the duration
+and timestamp rules, member and index reads (own properties only, blocked keys
+rejected), and template rendering.
 
-bonsai aims to be the fastest safe expression evaluator without paying for it in
-clarity or safety. The rule for optimization here is narrow: a change may remove
-*wasted* work, but it must keep results, evaluation semantics, and every security
-guard identical. Speed is never bought with a trick a reviewer has to forgive.
+Straight-line code is bounded by the AST size limit. Every operation charges
+steps for its real worst-case cost before it runs: lambda invocations, equality
+and membership over lists and maps, concatenation, spread, templates,
+characters scanned by text search and comparison, regular expression
+compilation and matching, sort comparisons, time zone conversions, and the
+size of lists and maps an expression builds. A single native call never does
+unbounded work between budget checks, so steps bound wall-clock time too.
+Sizes are checked before allocation, and built values are limited in depth.
+Host lists are copied by index before built-ins touch them, so no host
+iterator, species hook, or method ever runs.
 
-What that looks like in practice:
+## Functions
 
-- **A leaf fast path.** `evalNode` returns literals and identifiers without depth
-  tracking or step counting; only compound nodes pay for those guards.
-- **Pooled per-evaluation state.** The synchronous path reuses one
-  `ExecutionContext` and one `EvalEnv` per instance instead of allocating them per
-  call. Reuse is gated by an in-use flag; a reentrant call (a registered function
-  calling back into `evaluateSync`) falls back to fresh allocation, so the pool is
-  never aliased.
-- **Compile-time work stays at compile time.** Constant folding and dead-branch
-  elimination run once in `src/compiler.ts`, and the cache (`src/cache.ts`) keeps
-  the parsed-and-compiled AST so steady-state evaluation skips lexing and parsing
-  entirely.
-- **Static guards are not re-checked per value.** Where a property name is known
-  statically (`obj.prop`), access takes a fast path that does not re-derive the
-  key or run checks that the policy makes constant.
+Built-ins (`src/functions/builtins.ts`) and host functions share one
+representation (`FunctionDef` with typed `Overload`s, `src/functions/define.ts`).
+The checker reads the declared types; the compiler dispatches on runtime kinds
+only when static types did not prove a single overload. Higher-order built-ins
+have a synchronous loop and an `async` variant used only when a lambda body
+awaits a host function. Host functions get deep argument validation and a
+deep result check around every call; a mismatch is `HOST_CONTRACT`.
 
-This is kept honest by `bun run bench:gate` (a throughput floor that fails a
-catastrophic regression) and by the parity and property tests: a "faster" change
-that alters any result cannot pass.
+## Environments
 
-### Non-goals
+`bonsai()` (`src/environment.ts`) builds an immutable environment: variable
+types, host functions, limits, and a clock. `extend()` derives a new one. There
+is no registry mutation, so compiled programs never observe later changes.
+`evaluate(source)` compiles through an LRU cache keyed by source.
 
-Some well-known ways to go faster are deliberately declined, because each trades
-away something bonsai treats as load-bearing:
+## Invariants the tests hold
 
-- **A native or WebAssembly evaluator.** The interpreter touches host JavaScript
-  values on almost every node: context properties, built-in methods, and
-  user-registered functions and transforms. A native or WASM core would marshal
-  across the host boundary on each of those accesses, and that crossing would
-  dominate the nanoseconds the pure-JS path already takes. It would also cost the
-  zero-dependency install, browser support, and a sandbox that can be audited in
-  one language.
-- **Code generation via `new Function`.** Generating and running source is the
-  theoretical ceiling, but it executes constructed code and requires
-  `unsafe-eval` under a Content Security Policy. For a sandbox whose purpose is to
-  not run arbitrary code, that is a non-starter.
-- **A second "compiled closure" evaluation engine.** Compiling each AST to nested
-  closures measures at roughly 2 to 3x on boolean and comparison expressions, but
-  it would duplicate every node type and every security guard into another engine
-  (plus an async variant), doubling the surface the parity tests hold together and
-  reintroducing the maybe-async problem above. It stays a documented option to
-  revisit if a batch-filtering workload ever needs it, not a default.
-
-## Autocomplete
-
-`src/autocomplete/` is an independent, optional subpath (`bonsai-js/autocomplete`).
-It uses a tolerant tokenizer that falls back to a regex scanner for the
-incomplete expressions typical while typing, and filters suggestions through the
-instance security policy.
+- `tests/conformance.test.ts` pins the language against the spec, running every
+  case through `evaluateSync`, `evaluate`, and a compiled program.
+- `tests/security.test.ts` and `tests/limits.test.ts` pin the sandbox and every
+  resource limit.
+- `scripts/fuzz.ts` generates expressions and checks that no non-Bonsai error
+  escapes, that all three evaluation paths agree, and that checked expressions
+  do not fail with type errors on conforming data.

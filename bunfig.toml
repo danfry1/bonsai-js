@@ -4,10 +4,3 @@
 # defense-in-depth; the primary one-week gate is the Dependabot cooldown,
 # which blocks update PRs until a version is at least seven days old.
 minimumReleaseAge = 604800
-# Temporary exception: oxfmt 0.53.0 was adopted within the 7-day window. Safe to
-# remove once the version ages past the threshold (around 2026-06-09).
-minimumReleaseAgeExcludes = [
-  "oxfmt",
-  "@oxfmt/binding-darwin-arm64",
-  "@oxfmt/binding-linux-x64-gnu",
-]

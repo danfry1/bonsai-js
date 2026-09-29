@@ -6,26 +6,31 @@ Thanks for your interest in contributing. This guide covers the development setu
 
 ```bash
 git clone https://github.com/danfry1/bonsai-js.git
-cd core
+cd bonsai-js
 bun install
 ```
 
-Requires [Bun](https://bun.sh/) and Node.js 22+.
+Requires [Bun](https://bun.sh/) and Node.js 24+.
 
 ## Development Commands
 
 | Command | What it does |
 |---------|-------------|
-| `bun test` | Run all tests |
-| `bun test:watch` | Run tests in watch mode |
+| `bun run test` | Run all tests |
+| `bun run test:watch` | Run tests in watch mode |
 | `bun run test:coverage` | Run tests with coverage and enforce thresholds (also runs in CI) |
 | `bun run lint` | Lint with oxlint |
 | `bun run format` | Format with oxfmt |
 | `bun run format:check` | Check formatting without writing |
 | `bun run typecheck` | Type-check with tsc |
+| `bun run knip` | Check for dead files, exports, and dependencies |
 | `bun run build` | Build with tsdown |
 | `bun run bench` | Run benchmarks |
-| `bun run bench:gate` | Run performance regression gate |
+| `bun run bench:gate` | Run the absolute-floor performance gate |
+| `bun run bench:compare [ref]` | Compare throughput against a base ref (default `origin/main`) and fail on a relative drop |
+| `bun run fuzz` | Run the continuous parser/runtime/checker fuzz harness |
+| `bun run check:package` | Build and smoke-test the packed npm artifact |
+| `bun run check:release` | Run the complete offline release gate |
 
 ## Making Changes
 
@@ -33,7 +38,7 @@ Requires [Bun](https://bun.sh/) and Node.js 22+.
 2. Write or update tests for your change.
 3. Run the full quality suite before pushing:
    ```bash
-   bun run format:check && bun run lint && bun run typecheck && bun test
+   bun run check:release
    ```
 4. Open a pull request against `main`.
 
@@ -46,7 +51,7 @@ Requires [Bun](https://bun.sh/) and Node.js 22+.
 
 ## Testing
 
-We use [Vitest](https://vitest.dev/) with `bun test`.
+We use [Vitest](https://vitest.dev/) with `bun run test`.
 
 - Every bug fix needs a regression test.
 - Every new feature needs tests covering the happy path and error cases.
@@ -54,10 +59,14 @@ We use [Vitest](https://vitest.dev/) with `bun test`.
 
 ## Performance
 
-A performance gate runs on every release. If your change touches the evaluator hot path:
+CI runs two performance checks: `bench:gate` (loose absolute floors that
+survive slow runners) and, on pull requests, `bench:compare` against the base
+branch on the same runner, which fails if any case retains less than 75% of the
+base throughput. If your change touches the evaluator hot path:
 
 - Run `bun run bench` to check impact.
-- Run `bun run bench:gate` to verify no regressions below the minimum thresholds.
+- Run `bun run bench:compare` locally before opening the PR; it is the check
+  that actually sees a 2x slowdown.
 
 ## Pull Request Guidelines
 
@@ -129,23 +138,22 @@ split, caching, and the security model). A quick file map:
 
 ```
 src/
-  index.ts          # Public API: bonsai(), evaluateExpression()
-  types.ts          # TypeScript types and interfaces
-  errors.ts         # Error classes: ExpressionError, BonsaiTypeError, etc.
-  lexer.ts          # Tokenizer
-  parser.ts         # Recursive descent parser
-  compiler.ts       # AST optimizer (constant folding, dead branch elimination)
-  evaluator.ts      # Synchronous evaluator
-  evaluator-async.ts # Asynchronous evaluator
-  eval-ops.ts       # Shared evaluation helpers
-  execution-context.ts # Security policy and per-evaluation state
-  plugins.ts        # Plugin registry
-  cache.ts          # LRU cache
-  stdlib/           # Standard library modules (strings, arrays, math, types, dates)
-tests/              # Test files
-benchmarks/         # Performance benchmarks
+  index.ts              # Public API exports
+  environment.ts        # bonsai(), fn(), environments, programs, caching
+  types.ts              # Static types, the t builders, Infer
+  errors.ts             # Error classes, codes, diagnostics, code frames
+  syntax/               # lexer, parser, syntax tree
+  check/checker.ts      # Implicit-lambda binding, type inference, overload resolution
+  compile/compiler.ts   # Closure compiler (sync and async-where-needed)
+  runtime/              # Value semantics, per-run state and limits, time zones
+  functions/            # Function/overload model and the built-in library
+  service/              # Language service: completions, hover, diagnostics
+tests/                  # Test files (conformance.test.ts pins the language)
+docs/language.md        # The language reference
 ```
 
 ## Stability Policy
 
-See [docs/stability-policy.md](./docs/stability-policy.md) for what is considered public API and what may change in minor releases.
+See [docs/stability-policy.md](./docs/stability-policy.md) for what is public
+API and what may change in minor releases. Any change to the language must
+update [docs/language.md](./docs/language.md) and `tests/conformance.test.ts`.

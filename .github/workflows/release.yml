@@ -38,17 +38,26 @@ jobs:
       - name: Use repo-pinned npm
         run: echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
 
+      - name: Audit dependencies
+        run: bun audit --audit-level=high
+
       - name: Format
         run: bun run format:check
 
       - name: Lint
         run: bun run lint
 
+      - name: Dead code (knip)
+        run: bun run knip
+
       - name: Typecheck
         run: bun run typecheck
 
+      # test:coverage rather than test: a tag can be cut from a commit that
+      # never went through the pull-request gate, so the release gate enforces
+      # the same coverage floors CI does.
       - name: Test
-        run: bun run test
+        run: bun run test:coverage
 
       - name: Build
         run: bun run build
@@ -62,7 +71,7 @@ jobs:
       - name: Check package exports
         run: |
           npm pack --ignore-scripts --pack-destination /tmp
-          bunx attw /tmp/bonsai-js-*.tgz --ignore-rules no-resolution cjs-resolves-to-esm
+          bun run attw /tmp/bonsai-js-*.tgz --ignore-rules no-resolution cjs-resolves-to-esm
 
       - name: Stage publish to npm
         # Uploads the tarball to npm's stage queue. Provenance is auto-generated

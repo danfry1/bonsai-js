@@ -1,84 +1,27 @@
 <template>
   <div ref="root" class="pg-layout">
-    <!-- Sidebar: examples -->
+    <!-- Sidebar: examples (rendered from playground/examples.ts) -->
     <aside class="pg-sidebar">
       <div class="pg-sidebar-header">Examples</div>
-      <div class="pg-example-list" id="example-list">
-        <div class="pg-group-label">Basics</div>
-        <button class="pg-example active" data-example="hello">
-          <span class="pg-example-title">Hello World</span>
-          <span class="pg-example-code">"hello" |&gt; upper</span>
-        </button>
-        <button class="pg-example" data-example="templates">
-          <span class="pg-example-title">Template Literals</span>
-          <span class="pg-example-code">`Hello ${name}!`</span>
-        </button>
-        <button class="pg-example" data-example="ternary">
-          <span class="pg-example-title">Conditionals</span>
-          <span class="pg-example-code">age &gt;= 18 ? "adult" : "minor"</span>
-        </button>
-        <button class="pg-example" data-example="in-operator">
-          <span class="pg-example-title">In Operator</span>
-          <span class="pg-example-code">role in ["admin", "editor"]</span>
-        </button>
-
-        <div class="pg-group-label">Strings</div>
-        <button class="pg-example" data-example="methods">
-          <span class="pg-example-title">Method Calls</span>
-          <span class="pg-example-code">"hello world".slice(0, 5)</span>
-        </button>
-        <button class="pg-example" data-example="string-format">
-          <span class="pg-example-title">String Formatting</span>
-          <span class="pg-example-code">`${name |&gt; upper} scored…`</span>
-        </button>
-
-        <div class="pg-group-label">Arrays</div>
-        <button class="pg-example" data-example="filtering">
-          <span class="pg-example-title">Filtering</span>
-          <span class="pg-example-code">users |&gt; filter(.age &gt;= 18)</span>
-        </button>
-        <button class="pg-example" data-example="chaining">
-          <span class="pg-example-title">Chained Pipes</span>
-          <span class="pg-example-code">scores |&gt; sort |&gt; reverse |&gt; first</span>
-        </button>
-        <button class="pg-example" data-example="unique-tags">
-          <span class="pg-example-title">Flatten &amp; Unique</span>
-          <span class="pg-example-code">posts |&gt; map(.tags) |&gt; flatten</span>
-        </button>
-        <button class="pg-example" data-example="search">
-          <span class="pg-example-title">Search &amp; Filter</span>
-          <span class="pg-example-code">items |&gt; filter(.name.includes(…))</span>
-        </button>
-
-        <div class="pg-group-label">Math</div>
-        <button class="pg-example" data-example="math">
-          <span class="pg-example-title">Sum Pipeline</span>
-          <span class="pg-example-code">[10, 20, 30] |&gt; sum</span>
-        </button>
-        <button class="pg-example" data-example="grade-calc">
-          <span class="pg-example-title">Grade Calculator</span>
-          <span class="pg-example-code">scores |&gt; avg |&gt; clamp |&gt; round</span>
-        </button>
-
-        <div class="pg-group-label">Objects</div>
-        <button class="pg-example" data-example="null-safety">
-          <span class="pg-example-title">Null Safety</span>
-          <span class="pg-example-code">user?.profile?.avatar ?? …</span>
-        </button>
-        <button class="pg-example" data-example="nested-data">
-          <span class="pg-example-title">Nested Access</span>
-          <span class="pg-example-code">company.departments |&gt; map |&gt; join</span>
-        </button>
-        <button class="pg-example" data-example="data-transform">
-          <span class="pg-example-title">Data Pipeline</span>
-          <span class="pg-example-code">orders |&gt; filter |&gt; avg |&gt; round</span>
-        </button>
+      <div class="pg-example-list">
+        <template v-for="group in groups" :key="group.name">
+          <div class="pg-group-label">{{ group.name }}</div>
+          <button
+            v-for="example in group.examples"
+            :key="example.id"
+            class="pg-example"
+            :class="{ active: example.id === activeId }"
+            :data-example="example.id"
+          >
+            <span class="pg-example-title">{{ example.title }}</span>
+            <span class="pg-example-code">{{ firstLine(example.expression) }}</span>
+          </button>
+        </template>
       </div>
     </aside>
 
     <!-- Main playground area -->
     <main class="pg-main">
-      <!-- Top bar -->
       <div class="pg-topbar">
         <div class="pg-topbar-left">
           <span class="pg-live-badge" id="live-badge">
@@ -99,24 +42,23 @@
         </div>
       </div>
 
-      <!-- Editor grid -->
       <div class="pg-editor-grid">
-        <!-- Left: expression + context -->
         <div class="pg-editor-left">
           <div class="pg-pane pg-expr-pane">
             <div class="pg-pane-header">
               <span class="pg-pane-label">Expression</span>
-              <span class="pg-pane-hint" id="expr-hint">auto-evaluates as you type</span>
+              <span class="pg-pane-hint">type-checked and evaluated as you type</span>
             </div>
             <div class="pg-expr-editor">
               <div class="pg-expr-highlight" id="expr-highlight" aria-hidden="true"></div>
-              <textarea class="pg-expr-input" id="expr-input" spellcheck="false" placeholder="Type an expression...">"hello" |> upper</textarea>
+              <textarea class="pg-expr-input" id="expr-input" spellcheck="false" placeholder="Type an expression..."></textarea>
             </div>
           </div>
 
           <div class="pg-pane pg-ctx-pane" id="ctx-pane">
             <div class="pg-pane-header">
               <span class="pg-pane-label">Context</span>
+              <span class="pg-pane-hint">JSON values; ISO date-times become timestamps</span>
               <button class="pg-ctx-add" id="ctx-add" title="Add variable">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 Add
@@ -129,18 +71,18 @@
           </div>
         </div>
 
-        <!-- Right: result -->
         <div class="pg-editor-right">
           <div class="pg-pane pg-result-pane">
             <div class="pg-pane-header">
               <div class="pg-result-tabs">
                 <button class="pg-result-tab active" data-mode="result">Result</button>
-                <button class="pg-result-tab" data-mode="ast">AST</button>
+                <button class="pg-result-tab" data-mode="ast">Syntax tree</button>
               </div>
-              <span class="pg-result-type" id="result-type"></span>
+              <span class="pg-result-type" id="result-type" title="Static type"></span>
             </div>
             <div class="pg-result-body" id="result-output"></div>
             <div class="pg-error" id="error-output"></div>
+            <div class="pg-error pg-warning" id="warning-output"></div>
           </div>
         </div>
       </div>
@@ -149,309 +91,185 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { bonsai } from 'bonsai-src'
-import { strings, arrays, math, types, dates } from 'bonsai-stdlib'
-import { createAutocomplete } from 'bonsai-autocomplete'
+import { onMounted, onBeforeUnmount, ref } from 'vue'
+import { bonsai, formatType, isBonsaiError, Duration, type Diagnostic, type Environment } from 'bonsai-src'
+import { createLanguageService, type Completion, type LanguageService } from 'bonsai-service'
+import { examples, defaultExample, type Example } from './playground/examples'
+import { buildContext, type ContextRow } from './playground/schema'
 import './playground/playground.css'
 
+// All rendering in this component builds DOM nodes and sets textContent.
+// Expression text, context values, results, types, and messages are never
+// inserted as HTML.
+
 const root = ref<HTMLElement>()
+const activeId = ref<string>(defaultExample.id)
 
-interface TransformInfo {
-  desc: string
-  module: string
-  accepts: string[] | null
+const groups = (() => {
+  const out: { name: string; examples: Example[] }[] = []
+  for (const example of examples) {
+    let group = out.find((g) => g.name === example.group)
+    if (!group) out.push((group = { name: example.group, examples: [] }))
+    group.examples.push(example)
+  }
+  return out
+})()
+
+function firstLine(text: string): string {
+  const line = text.split('\n')[0]
+  return line.length > 44 ? `${line.slice(0, 43)}…` : line
 }
 
-interface ContextVar {
+interface ContextVar extends ContextRow {
   id: number
-  name: string
-  value: string
 }
 
-interface ExampleVar {
-  name: string
-  value: string
-}
-
-interface Example {
-  expression: string
-  vars: ExampleVar[]
-}
-
-interface AcItem {
-  name: string
-  desc: string
-  module: string
-  accepts: string[] | null
-}
+const cleanups: (() => void)[] = []
+onBeforeUnmount(() => {
+  for (const cleanup of cleanups) cleanup()
+})
 
 onMounted(() => {
   const rootEl = root.value
   if (!rootEl) return
 
-  // Scoped DOM lookups (never reach outside the component).
-  const $ = <T extends Element = HTMLElement>(sel: string): T | null =>
-    rootEl.querySelector<T>(sel)
+  const $ = <T extends Element = HTMLElement>(sel: string): T => rootEl.querySelector<T>(sel) as T
   const $all = <T extends Element = HTMLElement>(sel: string): T[] =>
     Array.from(rootEl.querySelectorAll<T>(sel))
 
-  const expr = bonsai()
-  expr.use(strings)
-  expr.use(arrays)
-  expr.use(math)
-  expr.use(types)
-  expr.use(dates)
-
-  // ── Stdlib transform catalog ────────────────────────────────
-  const transforms: Record<string, TransformInfo> = {
-    // strings
-    upper: { desc: 'Convert string to UPPERCASE', module: 'strings', accepts: ['string'] },
-    lower: { desc: 'Convert string to lowercase', module: 'strings', accepts: ['string'] },
-    trim: { desc: 'Remove leading/trailing whitespace', module: 'strings', accepts: ['string'] },
-    split: { desc: 'Split string by separator', module: 'strings', accepts: ['string'] },
-    replace: { desc: 'Replace first occurrence in string', module: 'strings', accepts: ['string'] },
-    replaceAll: { desc: 'Replace all occurrences in string', module: 'strings', accepts: ['string'] },
-    startsWith: { desc: 'Check if string starts with value', module: 'strings', accepts: ['string'] },
-    endsWith: { desc: 'Check if string ends with value', module: 'strings', accepts: ['string'] },
-    includes: { desc: 'Check if string contains value', module: 'strings', accepts: ['string'] },
-    padStart: { desc: 'Pad string start to target length', module: 'strings', accepts: ['string'] },
-    padEnd: { desc: 'Pad string end to target length', module: 'strings', accepts: ['string'] },
-    // arrays
-    count: { desc: 'Count items in array', module: 'arrays', accepts: ['array'] },
-    first: { desc: 'Get first element', module: 'arrays', accepts: ['array'] },
-    last: { desc: 'Get last element', module: 'arrays', accepts: ['array'] },
-    reverse: { desc: 'Reverse array order', module: 'arrays', accepts: ['array'] },
-    flatten: { desc: 'Flatten nested arrays', module: 'arrays', accepts: ['array'] },
-    unique: { desc: 'Remove duplicate values', module: 'arrays', accepts: ['array'] },
-    join: { desc: 'Join array into string', module: 'arrays', accepts: ['array'] },
-    sort: { desc: 'Sort array elements', module: 'arrays', accepts: ['array'] },
-    filter: { desc: 'Keep elements matching predicate', module: 'arrays', accepts: ['array'] },
-    map: { desc: 'Transform each element', module: 'arrays', accepts: ['array'] },
-    find: { desc: 'Find first matching element', module: 'arrays', accepts: ['array'] },
-    some: { desc: 'Check if any element matches', module: 'arrays', accepts: ['array'] },
-    every: { desc: 'Check if all elements match', module: 'arrays', accepts: ['array'] },
-    // math
-    round: { desc: 'Round to nearest integer', module: 'math', accepts: ['number'] },
-    floor: { desc: 'Round down to integer', module: 'math', accepts: ['number'] },
-    ceil: { desc: 'Round up to integer', module: 'math', accepts: ['number'] },
-    abs: { desc: 'Absolute value', module: 'math', accepts: ['number'] },
-    sum: { desc: 'Sum all numbers in array', module: 'math', accepts: ['array'] },
-    avg: { desc: 'Average of numbers in array', module: 'math', accepts: ['array'] },
-    clamp: { desc: 'Clamp value between min and max', module: 'math', accepts: ['number'] },
-    min: { desc: 'Minimum value', module: 'math', accepts: ['array'] },
-    max: { desc: 'Maximum value', module: 'math', accepts: ['array'] },
-    // types (work on any value)
-    isString: { desc: 'Check if value is a string', module: 'types', accepts: null },
-    isNumber: { desc: 'Check if value is a number', module: 'types', accepts: null },
-    isArray: { desc: 'Check if value is an array', module: 'types', accepts: null },
-    isNull: { desc: 'Check if value is null', module: 'types', accepts: null },
-    toBool: { desc: 'Convert to boolean', module: 'types', accepts: null },
-    toNumber: { desc: 'Convert to number', module: 'types', accepts: null },
-    toString: { desc: 'Convert to string', module: 'types', accepts: null },
-    // dates
-    now: { desc: 'Current timestamp (ms)', module: 'dates', accepts: null },
-    formatDate: { desc: 'Format date to string', module: 'dates', accepts: ['number', 'string'] },
-    diffDays: { desc: 'Difference in days between dates', module: 'dates', accepts: ['number', 'string'] },
-  }
-
-  // Autocomplete auto-discovers transform type compatibility via probing — no config needed
-  const ac = createAutocomplete(expr, {})
-
-  // ── Examples ─────────────────────────────────────────────────
-  const examples: Record<string, Example> = {
-    hello: {
-      expression: '"hello" |> upper',
-      vars: [],
-    },
-    filtering: {
-      expression: 'users |> filter(.age >= 18) |> map(.name)',
-      vars: [
-        { name: 'users', value: '[\n  { "name": "Alice", "age": 25 },\n  { "name": "Bob", "age": 15 }\n]' },
-      ],
-    },
-    'null-safety': {
-      expression: 'user?.profile?.avatar ?? "default.png"',
-      vars: [{ name: 'user', value: 'null' }],
-    },
-    math: {
-      expression: '[10, 20, 30] |> sum',
-      vars: [],
-    },
-    templates: {
-      expression: '`Hello ${name}!`',
-      vars: [{ name: 'name', value: '"world"' }],
-    },
-    methods: {
-      expression: '"hello world".slice(0, 5) |> upper',
-      vars: [],
-    },
-    chaining: {
-      expression: 'scores |> sort |> reverse |> first',
-      vars: [{ name: 'scores', value: '[42, 87, 15, 93, 61]' }],
-    },
-    ternary: {
-      expression: 'age >= 18 ? "adult" : "minor"',
-      vars: [{ name: 'age', value: '21' }],
-    },
-    'data-transform': {
-      expression: 'orders |> filter(.total > 50) |> map(.total) |> avg |> round',
-      vars: [
-        { name: 'orders', value: '[\n  { "item": "Book", "total": 29.99 },\n  { "item": "Laptop", "total": 899 },\n  { "item": "Pen", "total": 3.50 },\n  { "item": "Monitor", "total": 349 }\n]' },
-      ],
-    },
-    'string-format': {
-      expression: '`${name |> upper} scored ${score}% - ${score >= 90 ? "Excellent!" : score >= 70 ? "Good" : "Needs work"}`',
-      vars: [
-        { name: 'name', value: '"alice"' },
-        { name: 'score', value: '85' },
-      ],
-    },
-    'in-operator': {
-      expression: 'role in ["admin", "editor"] ? "Can edit" : "Read only"',
-      vars: [{ name: 'role', value: '"editor"' }],
-    },
-    'nested-data': {
-      expression: 'company.departments |> map(.name) |> join(", ") |> upper',
-      vars: [
-        { name: 'company', value: '{\n  "name": "Acme",\n  "departments": [\n    { "name": "Engineering" },\n    { "name": "Sales" },\n    { "name": "Design" }\n  ]\n}' },
-      ],
-    },
-    'unique-tags': {
-      expression: 'posts |> map(.tags) |> flatten |> unique |> sort',
-      vars: [
-        { name: 'posts', value: '[\n  { "title": "Intro", "tags": ["js", "tutorial"] },\n  { "title": "Advanced", "tags": ["js", "deep-dive"] },\n  { "title": "Guide", "tags": ["tutorial", "guide"] }\n]' },
-      ],
-    },
-    'grade-calc': {
-      expression: 'scores |> avg |> clamp(0, 100) |> round',
-      vars: [{ name: 'scores', value: '[88, 92, 76, 95, 81]' }],
-    },
-    search: {
-      expression: 'items |> filter(.name.includes("Pro")) |> map(.name)',
-      vars: [
-        { name: 'items', value: '[\n  { "name": "MacBook Pro" },\n  { "name": "iPad Air" },\n  { "name": "AirPods Pro" }\n]' },
-      ],
-    },
-  }
-
-  // ── DOM ──────────────────────────────────────────────────────
-  const exprInput = $<HTMLTextAreaElement>('#expr-input')!
-  const exprHighlight = $('#expr-highlight')!
-  const ctxVarsEl = $('#ctx-vars')!
-  const ctxEmptyEl = $('#ctx-empty')!
-  const resultOutput = $('#result-output')!
-  const errorOutput = $('#error-output')!
-  const resultType = $('#result-type')!
-  const evalTimeEl = $('#eval-time')!
+  const exprInput = $<HTMLTextAreaElement>('#expr-input')
+  const exprHighlight = $('#expr-highlight')
+  const ctxVarsEl = $('#ctx-vars')
+  const ctxEmptyEl = $('#ctx-empty')
+  const resultOutput = $('#result-output')
+  const errorOutput = $('#error-output')
+  const warningOutput = $('#warning-output')
+  const resultType = $('#result-type')
+  const evalTimeEl = $('#eval-time')
   const exampleBtns = $all<HTMLButtonElement>('.pg-example')
   const resultTabs = $all<HTMLButtonElement>('.pg-result-tab')
-  const shareBtn = $<HTMLButtonElement>('#share-btn')!
-  const resetBtn = $<HTMLButtonElement>('#reset-btn')!
-  const liveBadge = $('#live-badge')!
-  const ctxAddBtn = $<HTMLButtonElement>('#ctx-add')!
-  const ctxEmptyAdd = $<HTMLButtonElement>('#ctx-empty-add')!
+  const shareBtn = $<HTMLButtonElement>('#share-btn')
+  const resetBtn = $<HTMLButtonElement>('#reset-btn')
+  const liveBadge = $('#live-badge')
 
   let currentMode = 'result'
 
-  // ── Context state ────────────────────────────────────────────
+  // ── Environment ─────────────────────────────────────────────
+  // The environment is rebuilt from the context rows: each variable is
+  // declared with a type inferred from its value, so the checker, completions,
+  // and hover know the data's shape.
   let ctxVars: ContextVar[] = []
   let nextVarId = 1
+  let context: Record<string, unknown> = {}
+  let env: Environment<never> = bonsai() as Environment<never>
+  let service: LanguageService = createLanguageService(env)
+  let diagnostics: readonly Diagnostic[] = []
+
+  function rebuildEnvironment() {
+    const built = buildContext(ctxVars)
+    context = built.context
+    env = bonsai({ variables: built.variables, limits: { timeout: 250 } }) as Environment<never>
+    service = createLanguageService(env)
+  }
+
+  // ── Context rows ────────────────────────────────────────────
+  function detectType(raw: string): string {
+    const s = raw.trim()
+    if (s === '' || s === 'null') return 'null'
+    if (s === 'true' || s === 'false') return 'boolean'
+    if (/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(s)) return 'number'
+    if (/^["']\d{4}-\d{2}-\d{2}T/.test(s)) return 'timestamp'
+    if (s.startsWith('"') || s.startsWith("'")) return 'string'
+    if (s.startsWith('[')) return 'list'
+    if (s.startsWith('{')) return 'map'
+    return 'string'
+  }
+
+  const typeClass: Record<string, string> = {
+    null: 'null',
+    boolean: 'boolean',
+    number: 'number',
+    timestamp: 'string',
+    string: 'string',
+    list: 'array',
+    map: 'object',
+  }
+
+  function setBadge(badge: HTMLElement, raw: string) {
+    const kind = detectType(raw)
+    badge.className = `pg-ctx-row-type ctx-type-${typeClass[kind]}`
+    badge.textContent = kind
+  }
+
+  function onContextChanged() {
+    rebuildEnvironment()
+    markStale()
+    scheduleEvaluate()
+  }
 
   function addVar(name = '', value = '', focus = false) {
     const v: ContextVar = { id: nextVarId++, name, value }
     ctxVars.push(v)
     renderVars()
     if (focus) {
-      const row = ctxVarsEl.querySelector(`[data-id="${v.id}"]`)
-      if (row) row.querySelector<HTMLInputElement>('.pg-ctx-row-name')?.focus()
+      ctxVarsEl.querySelector<HTMLInputElement>(`[data-id="${v.id}"] .pg-ctx-row-name`)?.focus()
     }
   }
 
   function removeVar(id: number) {
     ctxVars = ctxVars.filter((v) => v.id !== id)
     renderVars()
-    scheduleEvaluate()
-  }
-
-  function detectType(raw: string): string {
-    const s = raw.trim()
-    if (s === '' || s === 'undefined' || s === 'null') return 'null'
-    if (s === 'true' || s === 'false') return 'boolean'
-    if (/^-?\d+(\.\d+)?$/.test(s)) return 'number'
-    if (s.startsWith('"') || s.startsWith("'")) return 'string'
-    if (s.startsWith('[')) return 'array'
-    if (s.startsWith('{')) return 'object'
-    return 'string'
+    onContextChanged()
   }
 
   function renderVars() {
     ctxVarsEl.textContent = ''
-    const empty = ctxVars.length === 0
-    ;(ctxEmptyEl as HTMLElement).style.display = empty ? '' : 'none'
+    ctxEmptyEl.style.display = ctxVars.length === 0 ? '' : 'none'
 
     for (const v of ctxVars) {
       const row = document.createElement('div')
       row.className = 'pg-ctx-row'
       row.dataset.id = String(v.id)
 
-      // Left: name + separator
       const left = document.createElement('div')
       left.className = 'pg-ctx-row-left'
-
       const nameInput = document.createElement('input')
       nameInput.className = 'pg-ctx-row-name'
       nameInput.type = 'text'
       nameInput.placeholder = 'name'
       nameInput.value = v.name
       nameInput.spellcheck = false
-
       const sep = document.createElement('span')
       sep.className = 'pg-ctx-row-sep'
       sep.textContent = '='
-
       left.append(nameInput, sep)
 
-      // Value: textarea for multi-line
       const valueInput = document.createElement('textarea')
       valueInput.className = 'pg-ctx-row-value'
-      valueInput.placeholder = '"hello", 42, [1,2], { "a": 1 }'
+      valueInput.placeholder = '"hello", 42, [1, 2], { "a": 1 }'
       valueInput.value = v.value
       valueInput.spellcheck = false
       valueInput.rows = 1
 
-      // Meta: type badge + delete
       const meta = document.createElement('div')
       meta.className = 'pg-ctx-row-meta'
-
       const typeBadge = document.createElement('span')
-      const t = detectType(v.value)
-      typeBadge.className = `pg-ctx-row-type ctx-type-${t}`
-      typeBadge.textContent = t
-
+      setBadge(typeBadge, v.value)
       const deleteBtn = document.createElement('button')
       deleteBtn.className = 'pg-ctx-row-delete'
       deleteBtn.title = 'Remove'
       deleteBtn.textContent = '×'
-
       meta.append(typeBadge, deleteBtn)
 
       nameInput.addEventListener('input', () => {
         v.name = nameInput.value
-        markStale()
-        scheduleEvaluate()
-        updateHighlight()
+        onContextChanged()
       })
-
       valueInput.addEventListener('input', () => {
         v.value = valueInput.value
-        const nt = detectType(v.value)
-        typeBadge.className = `pg-ctx-row-type ctx-type-${nt}`
-        typeBadge.textContent = nt
-        markStale()
-        scheduleEvaluate()
+        setBadge(typeBadge, v.value)
+        onContextChanged()
       })
-
       deleteBtn.addEventListener('click', () => removeVar(v.id))
 
       row.append(left, valueInput, meta)
@@ -459,107 +277,52 @@ onMounted(() => {
     }
   }
 
-  function relaxedJsonParse(raw: string): unknown {
-    const s = raw.trim()
-    if (!s) return undefined
-    // Try strict JSON first
-    try {
-      return JSON.parse(s)
-    } catch {
-      /* fall through */
-    }
-    // Normalize JS-style objects: unquoted keys → quoted, single quotes → double
-    try {
-      const normalized = s
-        // Replace single-quoted strings with double-quoted
-        .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, '"$1"')
-        // Quote unquoted keys (word chars before colon)
-        .replace(/(?<=[{,]\s*)(\w+)\s*:/g, '"$1":')
-      return JSON.parse(normalized)
-    } catch {
-      /* fall through */
-    }
-    // Fallback: treat as raw string
-    return raw
-  }
-
-  function buildContext(): Record<string, unknown> {
-    const ctx: Record<string, unknown> = {}
-    for (const v of ctxVars) {
-      const name = v.name.trim()
-      if (!name) continue
-      ctx[name] = relaxedJsonParse(v.value)
-    }
-    return ctx
-  }
-
-  // ── Highlighting ─────────────────────────────────────────────
-  // NOTE: The highlight overlay only marks context variable positions with
-  // transparent-colored spans that add a background tint. The expression text
-  // itself is rendered by the textarea on top, so there is no risk of script
-  // injection - the highlight div has pointer-events:none, aria-hidden, and the
-  // content is built via DOM text nodes (no innerHTML).
+  // ── Highlight overlay ───────────────────────────────────────
+  // The overlay sits behind the transparent-background textarea and only
+  // tints ranges: declared variables, function names, and diagnostic ranges.
   function updateHighlight() {
     const text = exprInput.value
-    const varNames = ctxVars.map((v) => v.name.trim()).filter(Boolean)
+    const marks: string[] = new Array(text.length).fill('')
 
-    // Build combined regex for context vars and transforms
-    const parts: string[] = []
-    const escapedVars = varNames.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    if (escapedVars.length > 0) parts.push(...escapedVars)
-
-    const transformNames = Object.keys(transforms)
-    const escapedTransforms = transformNames.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    parts.push(...escapedTransforms)
-
-    if (parts.length === 0) {
-      exprHighlight.textContent = text
-      return
+    const names = new Set(Object.keys(env.variables ?? {}))
+    for (const match of text.matchAll(/[A-Za-z_$][A-Za-z0-9_$]*/g)) {
+      const start = match.index ?? 0
+      const word = match[0]
+      const before = text.slice(0, start).trimEnd()
+      const afterMember = before.endsWith('.') && !before.endsWith('...')
+      const isCall = /^\s*\(/.test(text.slice(start + word.length))
+      let cls = ''
+      if (isCall && env.describeFunction(word)) cls = 'hl-transform'
+      else if (!afterMember && names.has(word)) cls = 'hl-var'
+      if (cls) for (let i = start; i < start + word.length; i++) marks[i] = cls
+    }
+    for (const d of diagnostics) {
+      const cls = d.severity === 'error' ? 'hl-error' : 'hl-warn'
+      const end = Math.max(d.end, d.start + 1)
+      for (let i = d.start; i < Math.min(end, text.length); i++) marks[i] = `${marks[i]} ${cls}`.trim()
     }
 
-    const re = new RegExp(`\\b(${parts.join('|')})\\b`, 'g')
-    const varSet = new Set(varNames)
-
-    // Build DOM nodes instead of setting raw HTML
     const frag = document.createDocumentFragment()
-    let last = 0
-    for (const match of text.matchAll(re)) {
-      const index = match.index ?? 0
-      if (index > last) {
-        frag.appendChild(document.createTextNode(text.slice(last, index)))
-      }
-      const word = match[0]
-      const span = document.createElement('span')
-
-      // Skip transform highlighting if preceded by `.` (property access, not a transform)
-      const charBefore = index > 0 ? text[index - 1] : ''
-      const isPropertyAccess = charBefore === '.'
-
-      if (varSet.has(word)) {
-        span.className = 'hl-var'
-        span.textContent = word
-        frag.appendChild(span)
-      } else if (transforms[word] && !isPropertyAccess) {
-        const t = transforms[word]
-        span.className = 'hl-transform'
-        span.textContent = word
-        span.dataset.desc = t.desc
-        span.dataset.module = t.module
+    let i = 0
+    while (i < text.length) {
+      const cls = marks[i]
+      let j = i + 1
+      while (j < text.length && marks[j] === cls) j++
+      const chunk = text.slice(i, j)
+      if (cls) {
+        const span = document.createElement('span')
+        span.className = cls
+        span.textContent = chunk
         frag.appendChild(span)
       } else {
-        frag.appendChild(document.createTextNode(word))
+        frag.appendChild(document.createTextNode(chunk))
       }
-      last = index + match[0].length
+      i = j
     }
-    if (last < text.length) {
-      frag.appendChild(document.createTextNode(text.slice(last)))
-    }
+    // A trailing newline needs a character after it to take up a line.
+    frag.appendChild(document.createTextNode('​'))
     exprHighlight.textContent = ''
     exprHighlight.appendChild(frag)
-  }
-
-  function escapeHtml(s: string): string {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   }
 
   exprInput.addEventListener('scroll', () => {
@@ -567,299 +330,185 @@ onMounted(() => {
     exprHighlight.scrollLeft = exprInput.scrollLeft
   })
 
-  // ── Transform tooltip ───────────────────────────────────────
-  // The textarea sits on top of the highlight overlay, so pointer events
-  // don't reach .hl-transform spans. Instead, we listen on the textarea
-  // and extract the word under the mouse from the text content, then
-  // position the tooltip using the matching highlight span's bounds.
+  // ── Geometry helpers (monospace textarea) ───────────────────
+  function metrics() {
+    const style = getComputedStyle(exprInput)
+    return {
+      lineHeight: parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.6,
+      charWidth: parseFloat(style.fontSize) * 0.6,
+      padLeft: parseFloat(style.paddingLeft),
+      padTop: parseFloat(style.paddingTop),
+    }
+  }
+
+  function offsetAtPoint(clientX: number, clientY: number): number | null {
+    const { lineHeight, charWidth, padLeft, padTop } = metrics()
+    const rect = exprInput.getBoundingClientRect()
+    const x = clientX - rect.left - padLeft + exprInput.scrollLeft
+    const y = clientY - rect.top - padTop + exprInput.scrollTop
+    const row = Math.floor(y / lineHeight)
+    const col = Math.floor(x / charWidth)
+    const lines = exprInput.value.split('\n')
+    if (row < 0 || row >= lines.length || col < 0 || col >= lines[row].length) return null
+    let offset = col
+    for (let r = 0; r < row; r++) offset += lines[r].length + 1
+    return offset
+  }
+
+  function pointAtOffset(offset: number): { left: number; top: number } {
+    const { lineHeight, charWidth, padLeft, padTop } = metrics()
+    const lines = exprInput.value.slice(0, offset).split('\n')
+    const row = lines.length - 1
+    const col = lines[row].length
+    const rect = exprInput.getBoundingClientRect()
+    return {
+      left: rect.left + padLeft + col * charWidth - exprInput.scrollLeft,
+      top: rect.top + padTop + row * lineHeight - exprInput.scrollTop,
+    }
+  }
+
+  // ── Hover tooltip (types and signatures from the language service) ──
   const tooltip = document.createElement('div')
   tooltip.className = 'pg-transform-tooltip'
   tooltip.style.display = 'none'
   document.body.appendChild(tooltip)
+  cleanups.push(() => tooltip.remove())
 
+  let hoverKey = ''
   let tooltipTimer: ReturnType<typeof setTimeout> | undefined
-  let activeTransform = ''
-
-  function getWordAtMouse(e: MouseEvent): string | null {
-    // Extract word at approximate character offset from mouse position
-    const text = exprInput.value
-    const rect = exprInput.getBoundingClientRect()
-    const style = getComputedStyle(exprInput)
-    const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.6
-    const charWidth = parseFloat(style.fontSize) * 0.6 // monospace approximation
-    const padLeft = parseFloat(style.paddingLeft)
-    const padTop = parseFloat(style.paddingTop)
-
-    const x = e.clientX - rect.left - padLeft + exprInput.scrollLeft
-    const y = e.clientY - rect.top - padTop + exprInput.scrollTop
-
-    const row = Math.floor(y / lineHeight)
-    const col = Math.floor(x / charWidth)
-
-    // Find the line
-    const lines = text.split('\n')
-    if (row < 0 || row >= lines.length) return null
-    const line = lines[row]
-    if (col < 0 || col >= line.length) return null
-
-    // Extract word at position
-    const wordRe = /\w+/g
-    for (const m of line.matchAll(wordRe)) {
-      const mIndex = m.index ?? 0
-      if (col >= mIndex && col <= mIndex + m[0].length) {
-        return m[0]
-      }
-    }
-    return null
-  }
 
   exprInput.addEventListener('mousemove', (e) => {
-    const word = getWordAtMouse(e)
-    if (!word) {
-      if (activeTransform) {
-        activeTransform = ''
-        hideTooltip()
-      }
-      return
-    }
-
-    // Find the closest matching span to the mouse position
-    function closestSpan(selector: string, textContent: string, mouseX: number): HTMLElement | null {
-      const spans = exprHighlight.querySelectorAll<HTMLElement>(selector)
-      let best: HTMLElement | null = null
-      let bestDist = Infinity
-      for (const s of spans) {
-        if (s.textContent !== textContent) continue
-        const rect = s.getBoundingClientRect()
-        const cx = rect.left + rect.width / 2
-        const dist = Math.abs(mouseX - cx)
-        if (dist < bestDist) {
-          bestDist = dist
-          best = s
-        }
-      }
-      return best
-    }
-
-    // Check if it's a transform
-    if (transforms[word]) {
-      if (word === activeTransform) return
-      activeTransform = word
-      clearTimeout(tooltipTimer)
-      const target = closestSpan('.hl-transform', word, e.clientX)
-      if (target) showTransformTooltip(word, target)
-      return
-    }
-
-    // Check if it's a context variable
-    const ctxVar = ctxVars.find((v) => v.name.trim() === word)
-    if (ctxVar) {
-      if (word === activeTransform) return
-      activeTransform = word
-      clearTimeout(tooltipTimer)
-      const target = closestSpan('.hl-var', word, e.clientX)
-      if (target) showVarTooltip(ctxVar, target)
-      return
-    }
-
-    if (activeTransform) {
-      activeTransform = ''
+    const offset = offsetAtPoint(e.clientX, e.clientY)
+    const info = offset === null ? undefined : service.hover(exprInput.value, offset)
+    if (!info) {
+      hoverKey = ''
       hideTooltip()
+      return
     }
+    const key = `${info.start}:${info.end}:${info.detail}`
+    if (key === hoverKey) return
+    hoverKey = key
+    clearTimeout(tooltipTimer)
+
+    tooltip.textContent = ''
+    const name = document.createElement('span')
+    name.className = 'pg-tt-name'
+    name.textContent = exprInput.value.slice(info.start, info.end)
+    const detail = document.createElement('span')
+    detail.className = 'pg-tt-module'
+    detail.textContent = info.detail
+    tooltip.append(name, detail)
+    if (info.documentation) {
+      const doc = document.createElement('span')
+      doc.className = 'pg-tt-desc'
+      doc.textContent = info.documentation
+      tooltip.append(doc)
+    }
+    const point = pointAtOffset(info.start)
+    tooltip.style.display = ''
+    tooltip.style.left = `${point.left + ((info.end - info.start) * metrics().charWidth) / 2}px`
+    tooltip.style.top = `${point.top - 4}px`
   })
 
   exprInput.addEventListener('mouseleave', () => {
-    activeTransform = ''
+    hoverKey = ''
     hideTooltip()
   })
 
-  function showTransformTooltip(word: string, el: HTMLElement) {
-    const t = transforms[word]
-    if (!t) return
-    tooltip.textContent = ''
-    tooltip.className = 'pg-transform-tooltip'
-
-    const name = document.createElement('span')
-    name.className = 'pg-tt-name'
-    name.textContent = word
-
-    const mod = document.createElement('span')
-    mod.className = 'pg-tt-module'
-    mod.textContent = t.module
-
-    const desc = document.createElement('span')
-    desc.className = 'pg-tt-desc'
-    desc.textContent = t.desc
-
-    tooltip.append(name, mod, desc)
-    positionTooltip(el)
-  }
-
-  function showVarTooltip(v: ContextVar, el: HTMLElement) {
-    tooltip.textContent = ''
-    tooltip.className = 'pg-transform-tooltip pg-var-tooltip'
-
-    const name = document.createElement('span')
-    name.className = 'pg-tt-name pg-tt-var-name'
-    name.textContent = v.name
-
-    const type = document.createElement('span')
-    type.className = 'pg-tt-module pg-tt-var-type'
-    type.textContent = detectType(v.value)
-
-    // Show a compact preview of the value
-    let preview = v.value.trim()
-    if (preview.length > 60) preview = preview.slice(0, 57) + '...'
-    const val = document.createElement('span')
-    val.className = 'pg-tt-desc pg-tt-var-val'
-    val.textContent = preview
-
-    tooltip.append(name, type, val)
-    positionTooltip(el)
-  }
-
-  function positionTooltip(el: HTMLElement) {
-    const rect = el.getBoundingClientRect()
-    tooltip.style.display = ''
-    tooltip.style.left = `${rect.left + rect.width / 2}px`
-    tooltip.style.top = `${rect.top - 4}px`
-  }
-
   function hideTooltip() {
+    clearTimeout(tooltipTimer)
     tooltipTimer = setTimeout(() => {
       tooltip.style.display = 'none'
     }, 150)
   }
 
-  // ── Autocomplete ────────────────────────────────────────────
+  // ── Completions (from the language service) ─────────────────
   const acPanel = document.createElement('div')
   acPanel.className = 'pg-autocomplete'
   acPanel.style.display = 'none'
   document.body.appendChild(acPanel)
+  cleanups.push(() => acPanel.remove())
 
-  let acItems: AcItem[] = []
+  let acItems: Completion[] = []
   let acIndex = -1
-  let acPrefix = ''
-  let acStart = -1 // cursor position where the prefix starts
+  let acFrom = 0
+  let acTo = 0
 
   function updateAutocomplete() {
     const pos = exprInput.selectionStart
     const text = exprInput.value
-
-    // Update autocomplete context with current variables
-    ac.setContext(buildContext())
-
-    const completions = ac.complete(text, pos)
-
+    const result = service.complete(text, pos)
+    const typed = text.slice(result.start, pos)
+    // Only offer completions while a name or member is being typed.
+    const afterDot = /\??\.\s*$/.test(text.slice(0, result.start)) && !/\.\.\.\s*$/.test(text.slice(0, result.start))
+    const items = result.items.filter((item) => item.label !== '.')
     if (
-      completions.length === 0 ||
-      (completions.length === 1 &&
-        completions[0].label === text.slice(pos - completions[0].label.length, pos))
+      items.length === 0 ||
+      (typed === '' && !afterDot) ||
+      (items.length === 1 && items[0].label === typed)
     ) {
       closeAutocomplete()
       return
     }
-
-    // Find prefix start position for insertion
-    const before = text.slice(0, pos)
-    const prefixMatch = before.match(/[\w$]*$/)
-    acPrefix = prefixMatch ? prefixMatch[0] : ''
-    acStart = pos - acPrefix.length
-
-    acItems = completions.slice(0, 12).map((c) => {
-      // Enrich with module info from the playground's transform catalog
-      const catalogEntry = transforms[c.label]
-      return {
-        name: c.label,
-        desc: catalogEntry ? catalogEntry.desc : (c.detail || c.kind),
-        module: catalogEntry ? catalogEntry.module : c.kind,
-        accepts: null,
-      }
-    })
-
+    acItems = items.slice(0, 12)
+    acFrom = result.start
+    acTo = result.end
     acIndex = 0
-    renderAutocomplete()
+    renderAutocomplete(typed)
   }
 
-  function renderAutocomplete() {
+  function renderAutocomplete(typed = exprInput.value.slice(acFrom, exprInput.selectionStart)) {
     acPanel.textContent = ''
-
-    for (let i = 0; i < acItems.length; i++) {
-      const item = acItems[i]
+    acItems.forEach((item, i) => {
       const row = document.createElement('div')
       row.className = 'pg-ac-item' + (i === acIndex ? ' active' : '')
 
       const name = document.createElement('span')
       name.className = 'pg-ac-name'
-      // Highlight matching prefix
-      if (acPrefix.length > 0) {
+      if (typed && item.label.toLowerCase().startsWith(typed.toLowerCase())) {
         const bold = document.createElement('strong')
-        bold.textContent = item.name.slice(0, acPrefix.length)
-        const rest = document.createTextNode(item.name.slice(acPrefix.length))
-        name.append(bold, rest)
+        bold.textContent = item.label.slice(0, typed.length)
+        name.append(bold, document.createTextNode(item.label.slice(typed.length)))
       } else {
-        name.textContent = item.name
+        name.textContent = item.label
       }
 
-      const mod = document.createElement('span')
-      mod.className = 'pg-ac-module'
-      mod.textContent = item.module
+      const kind = document.createElement('span')
+      kind.className = 'pg-ac-module'
+      kind.textContent = item.kind
 
       const desc = document.createElement('span')
       desc.className = 'pg-ac-desc'
-      desc.textContent = item.desc
+      desc.textContent = item.documentation || item.detail.split('\n')[0]
 
-      row.append(name, mod, desc)
+      row.append(name, kind, desc)
       row.addEventListener('pointerdown', (e) => {
         e.preventDefault()
         acIndex = i
         acceptAutocomplete()
       })
       acPanel.appendChild(row)
-    }
+    })
 
-    positionAutocomplete()
+    const point = pointAtOffset(acFrom)
+    acPanel.style.left = `${point.left}px`
+    acPanel.style.top = `${point.top + metrics().lineHeight + 4}px`
     acPanel.style.display = ''
-
-    // Scroll active item into view
-    const activeRow = acPanel.children[acIndex] as HTMLElement | undefined
-    if (activeRow) activeRow.scrollIntoView({ block: 'nearest' })
-  }
-
-  function positionAutocomplete() {
-    // Position below the cursor using a mirror element approach
-    const style = getComputedStyle(exprInput)
-    const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.6
-    const charWidth = parseFloat(style.fontSize) * 0.6
-    const padLeft = parseFloat(style.paddingLeft)
-    const padTop = parseFloat(style.paddingTop)
-
-    // Count line and column of acStart
-    const textBefore = exprInput.value.slice(0, acStart)
-    const lines = textBefore.split('\n')
-    const row = lines.length - 1
-    const col = lines[row].length
-
-    const inputRect = exprInput.getBoundingClientRect()
-    const left = inputRect.left + padLeft + col * charWidth - exprInput.scrollLeft
-    const top = inputRect.top + padTop + (row + 1) * lineHeight - exprInput.scrollTop
-
-    acPanel.style.left = `${left}px`
-    acPanel.style.top = `${top + 4}px`
+    ;(acPanel.children[acIndex] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest' })
   }
 
   function acceptAutocomplete() {
-    if (acIndex < 0 || acIndex >= acItems.length) return
     const item = acItems[acIndex]
-    const before = exprInput.value.slice(0, acStart)
-    const after = exprInput.value.slice(acStart + acPrefix.length)
-    exprInput.value = before + item.name + after
-    const newPos = acStart + item.name.length
-    exprInput.setSelectionRange(newPos, newPos)
+    if (!item) return
+    const text = exprInput.value
+    // Some items (a field inserted as ["first-name"]) replace their own range.
+    const start = item.range?.start ?? acFrom
+    const end = item.range?.end ?? acTo
+    exprInput.value = text.slice(0, start) + item.insertText + text.slice(end)
+    const caret = start + item.insertText.length
+    exprInput.setSelectionRange(caret, caret)
     closeAutocomplete()
-    updateHighlight()
-    markStale()
-    scheduleEvaluate()
+    onExpressionChanged()
   }
 
   function closeAutocomplete() {
@@ -868,14 +517,69 @@ onMounted(() => {
     acIndex = -1
   }
 
-  function isAutocompleteOpen() {
-    return acPanel.style.display !== 'none'
+  const isAutocompleteOpen = () => acPanel.style.display !== 'none'
+
+  // ── Result rendering (DOM nodes only) ───────────────────────
+  function span(cls: string, text: string): HTMLSpanElement {
+    const el = document.createElement('span')
+    el.className = cls
+    el.textContent = text
+    return el
   }
 
-  // ── Evaluate ─────────────────────────────────────────────────
-  // Result rendering: we build color-coded output from evaluator results.
-  // All values come from the sandboxed Bonsai evaluator (no user HTML),
-  // and all string content is escaped via escapeHtml before insertion.
+  function renderValue(value: unknown, depth: number, seen: Set<object> = new Set()): Node {
+    if (value === null || value === undefined) return span('r-null', 'null')
+    if (typeof value === 'string') return span('r-string', JSON.stringify(value))
+    if (typeof value === 'number') return span('r-number', String(value))
+    if (typeof value === 'boolean') return span('r-boolean', String(value))
+    if (value instanceof Date) return span('r-number', value.toISOString())
+    if (value instanceof Duration) return span('r-number', value.toString())
+    if (typeof value !== 'object') return document.createTextNode(String(value))
+    if (seen.has(value) || depth > 20) return span('r-punct', '…')
+    seen.add(value)
+
+    const frag = document.createDocumentFragment()
+    const indent = '  '.repeat(depth + 1)
+    const close = '  '.repeat(depth)
+    const entries: [string | null, unknown][] = Array.isArray(value)
+      ? value.map((item) => [null, item])
+      : Object.entries(value as Record<string, unknown>)
+    const [open, shut] = Array.isArray(value) ? ['[', ']'] : ['{', '}']
+    if (entries.length === 0) {
+      frag.appendChild(span('r-bracket', open + shut))
+      return frag
+    }
+    frag.appendChild(span('r-bracket', open))
+    entries.forEach(([key, item], index) => {
+      frag.appendChild(document.createTextNode(`\n${indent}`))
+      if (key !== null) {
+        frag.appendChild(span('r-key', JSON.stringify(key)))
+        frag.appendChild(span('r-punct', ': '))
+      }
+      frag.appendChild(renderValue(item, depth + 1, seen))
+      if (index < entries.length - 1) frag.appendChild(span('r-punct', ','))
+    })
+    frag.appendChild(document.createTextNode(`\n${close}`))
+    frag.appendChild(span('r-bracket', shut))
+    return frag
+  }
+
+  function setResult(node: Node | null) {
+    resultOutput.textContent = ''
+    if (node) resultOutput.appendChild(node)
+  }
+
+  function showMessages(el: HTMLElement, lines: string[]) {
+    el.textContent = lines.join('\n\n')
+    el.style.display = lines.length > 0 ? 'block' : 'none'
+  }
+
+  function describe(d: Diagnostic, source: string): string {
+    const before = source.slice(0, d.start).split('\n')
+    return `${d.code} (line ${before.length}, column ${before[before.length - 1].length + 1})\n${d.message}`
+  }
+
+  // ── Evaluate ────────────────────────────────────────────────
   let errorTimer: ReturnType<typeof setTimeout> | undefined
 
   function markStale() {
@@ -889,131 +593,78 @@ onMounted(() => {
   }
 
   function evaluate() {
-    const expression = exprInput.value.trim()
-
+    const source = exprInput.value
     clearTimeout(errorTimer)
-    ;(errorOutput as HTMLElement).style.display = 'none'
+    showMessages(errorOutput, [])
+    showMessages(warningOutput, [])
     markLive()
 
-    if (!expression) {
-      resultOutput.textContent = ''
+    if (source.trim() === '') {
+      diagnostics = []
+      updateHighlight()
+      setResult(null)
       resultType.textContent = ''
       evalTimeEl.textContent = ''
       return
     }
 
-    const context = buildContext()
-    const start = performance.now()
+    const check = env.check(source)
+    diagnostics = check.diagnostics
+    updateHighlight()
+    resultType.textContent = check.type ? formatType(check.type) : ''
+    const errors = check.diagnostics.filter((d) => d.severity === 'error')
+    const warnings = check.diagnostics.filter((d) => d.severity === 'warning')
+    showMessages(warningOutput, warnings.map((d) => `warning: ${describe(d, source)}`))
 
     if (currentMode === 'ast') {
       try {
-        const compiled = expr.compile(expression)
-        const elapsed = performance.now() - start
-        setResultHtml(highlightJson(JSON.stringify(compiled.ast, null, 2)))
-        resultType.textContent = 'AST'
-        evalTimeEl.textContent = `${elapsed.toFixed(1)}ms`
-      } catch (e) {
-        // Delay error display to avoid flashing during typing
-        errorTimer = setTimeout(() => {
-          errorOutput.textContent = (e as Error).message
-          ;(errorOutput as HTMLElement).style.display = 'block'
-        }, 500)
-        resultOutput.textContent = ''
+        setResult(renderValue(env.parse(source), 0))
+      } catch {
+        setResult(null)
       }
+    }
+
+    if (errors.length > 0) {
+      if (currentMode === 'result') setResult(null)
+      evalTimeEl.textContent = ''
+      // Delay errors slightly so they do not flash while typing.
+      errorTimer = setTimeout(() => showMessages(errorOutput, errors.map((d) => describe(d, source))), 400)
       return
     }
+    if (currentMode === 'ast') return
 
+    const start = performance.now()
     try {
-      const result = expr.evaluateSync(expression, context)
-      const elapsed = performance.now() - start
-      const type = getType(result)
-      resultType.textContent = type
-      setResultHtml(colorize(result, 0))
-      evalTimeEl.textContent = `${elapsed.toFixed(1)}ms`
-    } catch (e) {
-      // Delay error display to avoid flashing during typing
-      errorTimer = setTimeout(() => {
-        errorOutput.textContent = (e as Error).message
-        ;(errorOutput as HTMLElement).style.display = 'block'
-      }, 500)
-      resultOutput.textContent = ''
-      resultType.textContent = ''
+      const result = env.evaluateSync(source, context as never)
+      evalTimeEl.textContent = `${(performance.now() - start).toFixed(2)}ms`
+      setResult(renderValue(result, 0))
+    } catch (error) {
+      setResult(null)
+      evalTimeEl.textContent = ''
+      const text = isBonsaiError(error) ? `${error.code}\n${error.formatted}` : String(error)
+      errorTimer = setTimeout(() => showMessages(errorOutput, [text]), 400)
     }
   }
 
-  // Safe HTML setter for result output - content is fully escaped evaluator output
-  function setResultHtml(html: string) {
-    // Using a dedicated setter to make the innerHTML usage auditable.
-    // All interpolated strings pass through escapeHtml first.
-    resultOutput.innerHTML = html
-  }
-
-  function getType(value: unknown): string {
-    if (value === null) return 'null'
-    if (value === undefined) return 'undefined'
-    if (Array.isArray(value)) return 'array'
-    return typeof value
-  }
-
-  function colorize(value: unknown, depth: number): string {
-    if (value === null) return '<span class="r-null">null</span>'
-    if (value === undefined) return '<span class="r-null">undefined</span>'
-    if (typeof value === 'string') return `<span class="r-string">"${escapeHtml(value)}"</span>`
-    if (typeof value === 'number') return `<span class="r-number">${value}</span>`
-    if (typeof value === 'boolean') return `<span class="r-boolean">${value}</span>`
-
-    if (Array.isArray(value)) {
-      if (value.length === 0) return '<span class="r-bracket">[]</span>'
-      const indent = '  '.repeat(depth + 1)
-      const close = '  '.repeat(depth)
-      const items = value.map((item) => `${indent}${colorize(item, depth + 1)}`)
-      return `<span class="r-bracket">[</span>\n${items.join('<span class="r-punct">,</span>\n')}\n${close}<span class="r-bracket">]</span>`
-    }
-
-    if (typeof value === 'object') {
-      const obj = value as Record<string, unknown>
-      const keys = Object.keys(obj)
-      if (keys.length === 0) return '<span class="r-bracket">{}</span>'
-      const indent = '  '.repeat(depth + 1)
-      const close = '  '.repeat(depth)
-      const entries = keys.map(
-        (k) =>
-          `${indent}<span class="r-key">"${escapeHtml(k)}"</span><span class="r-punct">:</span> ${colorize(obj[k], depth + 1)}`,
-      )
-      return `<span class="r-bracket">{</span>\n${entries.join('<span class="r-punct">,</span>\n')}\n${close}<span class="r-bracket">}</span>`
-    }
-
-    return escapeHtml(String(value))
-  }
-
-  function highlightJson(json: string): string {
-    // Input is from JSON.stringify (safe structure), escape any HTML entities first
-    const safe = escapeHtml(json)
-    return safe
-      .replace(/&quot;([^&]+)&quot;(?=\s*:)/g, '<span class="r-key">"$1"</span>')
-      .replace(/&quot;([^&]*)&quot;/g, '<span class="r-string">"$1"</span>')
-      .replace(/\b(\d+)\b/g, '<span class="r-number">$1</span>')
-      .replace(/\b(true|false)\b/g, '<span class="r-boolean">$1</span>')
-      .replace(/\bnull\b/g, '<span class="r-null">null</span>')
-  }
-
-  // ── Debounce ─────────────────────────────────────────────────
   let timer: ReturnType<typeof setTimeout> | undefined
   function scheduleEvaluate() {
     clearTimeout(timer)
     timer = setTimeout(evaluate, 150)
   }
 
-  // ── Events ───────────────────────────────────────────────────
-  exprInput.addEventListener('input', () => {
+  function onExpressionChanged() {
     updateHighlight()
     markStale()
     scheduleEvaluate()
+  }
+
+  // ── Events ──────────────────────────────────────────────────
+  exprInput.addEventListener('input', () => {
+    onExpressionChanged()
     updateAutocomplete()
   })
 
   exprInput.addEventListener('keydown', (e) => {
-    // Autocomplete keyboard navigation
     if (isAutocompleteOpen()) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -1038,7 +689,11 @@ onMounted(() => {
         return
       }
     }
-
+    if ((e.ctrlKey || e.metaKey) && e.key === ' ') {
+      e.preventDefault()
+      updateAutocomplete()
+      return
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault()
       clearTimeout(timer)
@@ -1046,109 +701,85 @@ onMounted(() => {
     }
   })
 
-  // Close autocomplete when clicking elsewhere
-  document.addEventListener('pointerdown', (e) => {
-    const target = e.target as Node
-    if (!acPanel.contains(target) && target !== exprInput) {
-      closeAutocomplete()
-    }
-  })
+  exprInput.addEventListener('blur', () => closeAutocomplete())
 
-  ctxAddBtn.addEventListener('click', () => addVar('', '', true))
-  ctxEmptyAdd.addEventListener('click', () => addVar('', '', true))
+  const onDocumentPointerDown = (e: PointerEvent) => {
+    const target = e.target as Node
+    if (!acPanel.contains(target) && target !== exprInput) closeAutocomplete()
+  }
+  document.addEventListener('pointerdown', onDocumentPointerDown)
+  cleanups.push(() => document.removeEventListener('pointerdown', onDocumentPointerDown))
+
+  $<HTMLButtonElement>('#ctx-add').addEventListener('click', () => addVar('', '', true))
+  $<HTMLButtonElement>('#ctx-empty-add').addEventListener('click', () => addVar('', '', true))
+
+  function loadExample(example: Example) {
+    activeId.value = example.id
+    exprInput.value = example.expression
+    ctxVars = example.vars.map((v) => ({ id: nextVarId++, name: v.name, value: v.value }))
+    renderVars()
+    rebuildEnvironment()
+    evaluate()
+  }
 
   for (const btn of exampleBtns) {
     btn.addEventListener('click', () => {
-      const key = btn.dataset.example
-      const example = key ? examples[key] : undefined
-      if (!example) return
-
-      for (const b of exampleBtns) b.classList.remove('active')
-      btn.classList.add('active')
-
-      exprInput.value = example.expression
-      ctxVars = []
-      nextVarId = 1
-      for (const v of example.vars) {
-        ctxVars.push({ id: nextVarId++, name: v.name, value: v.value })
-      }
-      renderVars()
-      updateHighlight()
-      evaluate()
+      const example = examples.find((e) => e.id === btn.dataset.example)
+      if (example) loadExample(example)
     })
   }
 
   for (const tab of resultTabs) {
     tab.addEventListener('click', () => {
       currentMode = tab.dataset.mode ?? 'result'
-      for (const t of resultTabs) t.classList.remove('active')
-      tab.classList.add('active')
+      for (const other of resultTabs) other.classList.toggle('active', other === tab)
       evaluate()
     })
   }
 
   shareBtn.addEventListener('click', () => {
-    const expression = encodeURIComponent(exprInput.value)
-    const ctx = encodeURIComponent(JSON.stringify(buildContext()))
-    const url = `${location.origin}${location.pathname}?expr=${expression}&ctx=${ctx}`
-    navigator.clipboard.writeText(url).then(() => {
+    const vars: Record<string, string> = {}
+    for (const v of ctxVars) if (v.name.trim()) vars[v.name.trim()] = v.value
+    const params = new URLSearchParams({ expr: exprInput.value, ctx: JSON.stringify(vars) })
+    const url = `${location.origin}${location.pathname}?${params}`
+    void navigator.clipboard.writeText(url).then(() => {
       shareBtn.classList.add('copied')
-      const span = shareBtn.querySelector<HTMLElement>('.pg-btn-label')
-      if (span) span.textContent = 'Copied!'
+      const label = shareBtn.querySelector<HTMLElement>('.pg-btn-label')
+      if (label) label.textContent = 'Copied!'
       setTimeout(() => {
         shareBtn.classList.remove('copied')
-        const s = shareBtn.querySelector<HTMLElement>('.pg-btn-label')
-        if (s) s.textContent = 'Share'
+        if (label) label.textContent = 'Share'
       }, 2000)
     })
   })
 
-  resetBtn.addEventListener('click', () => {
-    exprInput.value = '"hello" |> upper'
-    ctxVars = []
-    nextVarId = 1
-    renderVars()
-    updateHighlight()
-    evaluate()
-    for (const b of exampleBtns) b.classList.remove('active')
-    exampleBtns[0]?.classList.add('active')
-  })
+  resetBtn.addEventListener('click', () => loadExample(defaultExample))
 
-  // ── Load from URL params ─────────────────────────────────────
+  // ── Load from URL parameters ────────────────────────────────
   function loadFromUrl(): boolean {
     const params = new URLSearchParams(location.search)
-    const paramExpr = params.get('expr')
-    const paramCtx = params.get('ctx')
-
-    if (!paramExpr) return false
-
-    exprInput.value = paramExpr
+    const expr = params.get('expr')
+    if (expr === null) return false
+    exprInput.value = expr
     ctxVars = []
-    nextVarId = 1
-
-    if (paramCtx) {
-      try {
-        const parsed = JSON.parse(paramCtx)
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          for (const [k, v] of Object.entries(parsed)) {
-            ctxVars.push({ id: nextVarId++, name: k, value: JSON.stringify(v) })
-          }
+    try {
+      const parsed: unknown = JSON.parse(params.get('ctx') ?? '{}')
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        for (const [name, value] of Object.entries(parsed)) {
+          // Current links store the raw text of each value; older links stored JSON values.
+          ctxVars.push({ id: nextVarId++, name, value: typeof value === 'string' ? value : JSON.stringify(value) })
         }
-      } catch {
-        /* ignore */
       }
+    } catch {
+      // ignore a malformed context
     }
-
+    activeId.value = ''
     renderVars()
-    for (const b of exampleBtns) b.classList.remove('active')
+    rebuildEnvironment()
+    evaluate()
     return true
   }
 
-  // ── Init ─────────────────────────────────────────────────────
-  if (!loadFromUrl()) {
-    renderVars()
-  }
-  updateHighlight()
-  evaluate()
+  if (!loadFromUrl()) loadExample(defaultExample)
 })
 </script>
