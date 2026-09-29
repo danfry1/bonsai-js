@@ -183,6 +183,10 @@ function dataFor(zone: string): ZoneData {
   return data
 }
 
+function isUtc(zone: string | null | undefined): zone is 'UTC' | null | undefined {
+  return zone === null || zone === undefined || zone === 'UTC'
+}
+
 /** The offset at the start of span `index`, charged the first time this evaluation uses it. */
 function boundary(zone: EvaluationZone, data: ZoneData, index: number, site: CallSite): number {
   if (!zone.paid.has(index)) {
@@ -246,7 +250,7 @@ function offsetAt(ms: number, zone: string, site: CallSite): number {
 
 export function wallClock(date: Date, zone: string | null | undefined, site: CallSite): WallClock {
   const ms = timeOf(date, site.state, site.span)
-  if (zone === null || zone === undefined || zone === 'UTC') return utcClock(ms)
+  if (isUtc(zone)) return utcClock(ms)
   const shifted = ms + offsetAt(ms, zone, site)
   // At the very ends of the Date range the shifted instant may not exist: read
   // the formatter directly, which costs a probe every time (nothing caches it).
@@ -330,7 +334,7 @@ export function fromWallClock(
   preferOffset?: number,
 ): Date {
   const asUtc = utc(clock)
-  if (zone === null || zone === undefined || zone === 'UTC') return checked(asUtc, site)
+  if (isUtc(zone)) return checked(asUtc, site)
   const before = offsetAt(asUtc - MS_PER_DAY, zone, site)
   const after = offsetAt(asUtc + MS_PER_DAY, zone, site)
   // No transition near (one offset a day either side, and valid): the one candidate.
@@ -348,7 +352,8 @@ export function fromWallClock(
   return checked(asUtc - before, site)
 }
 
-function checked(ms: number, site: CallSite): Date {
+/** The timestamp at `ms`, or INVALID_ARGUMENT when it is outside the Date range. */
+export function checked(ms: number, site: CallSite): Date {
   const date = new Date(ms)
   if (Number.isNaN(date.getTime()))
     throw site.state.error('INVALID_ARGUMENT', 'Timestamp out of range', site.span)
@@ -412,9 +417,7 @@ function zoneOffset(
   zone: string | null | undefined,
   site: CallSite,
 ): number | undefined {
-  return zone === null || zone === undefined || zone === 'UTC'
-    ? undefined
-    : offsetAt(timeOf(date, site.state, site.span), zone, site)
+  return isUtc(zone) ? undefined : offsetAt(timeOf(date, site.state, site.span), zone, site)
 }
 
 /** ISO weekday: Monday = 1 ... Sunday = 7. */

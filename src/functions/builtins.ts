@@ -13,6 +13,7 @@ import {
   fromWallClock,
   isoWeekday,
   parseTimestamp,
+  checked,
   wallClock,
   type WallClock,
 } from '../runtime/time.js'
@@ -1345,12 +1346,7 @@ const TIME_FUNCTIONS: FunctionDef[] = [
       site.state.charge(PARSE_COST)
       return parseTimestamp(s as string, site)
     }),
-    overload([num], ts, ([n], site) => {
-      const date = new Date(n as number)
-      if (Number.isNaN(date.getTime()))
-        throw site.state.error('INVALID_ARGUMENT', 'Timestamp out of range', site.span)
-      return date
-    }),
+    overload([num], ts, ([n], site) => checked(n as number, site)),
     overload([ts], ts, ([d], site) => {
       timeOf(d as Date, site.state, site.span)
       return d
