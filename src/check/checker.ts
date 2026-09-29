@@ -3,9 +3,9 @@ import { RESULT_REFINERS } from '../functions/builtins.js'
 import { isLambdaPosition, type FunctionDef, type Overload } from '../functions/define.js'
 import {
   forEachChild,
+  mapChildren,
   type CallNode,
   type LambdaNode,
-  type MapEntry,
   type Node,
   type SpreadNode,
 } from '../syntax/ast.js'
@@ -516,121 +516,19 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     )
   }
 
+  /** Rewrites implicit lambdas as explicit ones; `free` when a `.` is left unbound. */
   function bind(node: Node): { node: Node; free: boolean } {
-    switch (node.type) {
-      case 'It':
-        return { node, free: true }
-      case 'Literal':
-      case 'Variable':
-      case 'Local':
-        return { node, free: false }
-      case 'Lambda': {
-        // A lambda outside a call argument position (the parser only allows
-        // arguments, so this is a lambda in a non-function parameter).
-        const body = bind(node.body)
-        return { node: { ...node, body: body.node }, free: false }
-      }
-      case 'Call':
-        return bindCall(node)
-      case 'Template': {
-        let free = false
-        const parts = node.parts.map((part) => {
-          if (typeof part === 'string') return part
-          const r = bind(part)
-          free ||= r.free
-          return r.node
-        })
-        return { node: { ...node, parts }, free }
-      }
-      case 'Member': {
-        const object = bind(node.object)
-        return { node: { ...node, object: object.node }, free: object.free }
-      }
-      case 'Index': {
-        const object = bind(node.object)
-        const index = bind(node.index)
-        return {
-          node: { ...node, object: object.node, index: index.node },
-          free: object.free || index.free,
-        }
-      }
-      case 'Unary': {
-        const operand = bind(node.operand)
-        return { node: { ...node, operand: operand.node }, free: operand.free }
-      }
-      case 'Binary': {
-        const left = bind(node.left)
-        const right = bind(node.right)
-        return {
-          node: { ...node, left: left.node, right: right.node },
-          free: left.free || right.free,
-        }
-      }
-      case 'Conditional': {
-        const test = bind(node.test)
-        const then = bind(node.then)
-        const otherwise = bind(node.otherwise)
-        return {
-          node: { ...node, test: test.node, then: then.node, otherwise: otherwise.node },
-          free: test.free || then.free || otherwise.free,
-        }
-      }
-      case 'List': {
-        let free = false
-        const items = node.items.map((item) => {
-          const r = bindSpreadable(item)
-          free ||= r.free
-          return r.node
-        })
-        return { node: { ...node, items }, free }
-      }
-      case 'Map': {
-        let free = false
-        const entries = node.entries.map((entry): MapEntry | SpreadNode => {
-          if (entry.type === 'Spread') {
-            const r = bindSpreadable(entry)
-            free ||= r.free
-            return r.node as SpreadNode
-          }
-          const value = bind(entry.value)
-          free ||= value.free
-          if (typeof entry.key === 'string') return { ...entry, value: value.node }
-          const key = bind(entry.key)
-          free ||= key.free
-          return { ...entry, key: key.node, value: value.node }
-        })
-        return { node: { ...node, entries }, free }
-      }
-      case 'Let': {
-        const value = bind(node.value)
-        const body = bind(node.body)
-        return {
-          node: { ...node, value: value.node, body: body.node },
-          free: value.free || body.free,
-        }
-      }
-      case 'Has': {
-        const target = bind(node.target)
-        return { node: { ...node, target: target.node as typeof node.target }, free: target.free }
-      }
-      case 'Try': {
-        const body = bind(node.body)
-        const fallback = bind(node.fallback)
-        return {
-          node: { ...node, body: body.node, fallback: fallback.node },
-          free: body.free || fallback.free,
-        }
-      }
-    }
-    throw new Error('unreachable')
-  }
-
-  function bindSpreadable(item: Node | SpreadNode): { node: Node | SpreadNode; free: boolean } {
-    if (item.type === 'Spread') {
-      const r = bind(item.argument)
-      return { node: { ...item, argument: r.node }, free: r.free }
-    }
-    return bind(item)
+    if (node.type === 'It') return { node, free: true }
+    if (node.type === 'Call') return bindCall(node)
+    let free = false
+    const out = mapChildren(node, (child) => {
+      const r = bind(child)
+      free ||= r.free
+      return r.node
+    })
+    // A lambda outside a call argument position (the parser only allows
+    // arguments, so this is a lambda in a non-function parameter).
+    return { node: out, free: node.type === 'Lambda' ? false : free }
   }
 
   function bindCall(node: CallNode): { node: Node; free: boolean } {
@@ -640,9 +538,9 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     const args = node.args.map((arg, index): Node | SpreadNode => {
       if (arg.type === 'Spread') {
         sawSpread = true
-        const r = bindSpreadable(arg)
+        const r = bind(arg.argument)
         free ||= r.free
-        return r.node
+        return { ...arg, argument: r.node }
       }
       // An unknown function reports itself; treat its arguments as lambdas so a
       // misspelled filter(.x) does not also report a stray `.`.

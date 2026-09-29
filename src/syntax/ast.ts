@@ -239,3 +239,58 @@ export function forEachChild(node: Node, visit: (child: Node) => void): void {
       break
   }
 }
+
+/**
+ * A shallow copy of `node` with every child replaced by `map(child)` (spreads
+ * and map entries are copied around their contents). Leaves are returned as is.
+ */
+export function mapChildren(node: Node, map: (child: Node) => Node): Node {
+  const item = (arg: Node | SpreadNode): Node | SpreadNode =>
+    arg.type === 'Spread' ? { ...arg, argument: map(arg.argument) } : map(arg)
+  switch (node.type) {
+    case 'Template':
+      return {
+        ...node,
+        parts: node.parts.map((part) => (typeof part === 'string' ? part : map(part))),
+      }
+    case 'Member':
+      return { ...node, object: map(node.object) }
+    case 'Index':
+      return { ...node, object: map(node.object), index: map(node.index) }
+    case 'Call':
+      return { ...node, args: node.args.map(item) }
+    case 'Unary':
+      return { ...node, operand: map(node.operand) }
+    case 'Binary':
+      return { ...node, left: map(node.left), right: map(node.right) }
+    case 'Conditional':
+      return { ...node, test: map(node.test), then: map(node.then), otherwise: map(node.otherwise) }
+    case 'List':
+      return { ...node, items: node.items.map(item) }
+    case 'Map':
+      return {
+        ...node,
+        entries: node.entries.map((entry): MapEntry | SpreadNode => {
+          if (entry.type === 'Spread') return { ...entry, argument: map(entry.argument) }
+          const value = map(entry.value)
+          return typeof entry.key === 'string'
+            ? { ...entry, value }
+            : { ...entry, key: map(entry.key), value }
+        }),
+      }
+    case 'Lambda':
+      return { ...node, body: map(node.body) }
+    case 'Let':
+      return { ...node, value: map(node.value), body: map(node.body) }
+    case 'Has':
+      return { ...node, target: map(node.target) as MemberNode | IndexNode }
+    case 'Try':
+      return { ...node, body: map(node.body), fallback: map(node.fallback) }
+    case 'It':
+    case 'Literal':
+    case 'Local':
+    case 'Variable':
+    default:
+      return node
+  }
+}
