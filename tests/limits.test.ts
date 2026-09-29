@@ -18,10 +18,6 @@ describe('parse limits', () => {
     const nested = `${'`${'.repeat(40)}1${'}`'.repeat(40)}`
     expect(['TOO_DEEP', 'TOO_MANY_NODES']).toContain(codeOf(() => bonsai().evaluateSync(nested)))
   })
-
-  it('fails closed on pathological unary chains', () => {
-    expect(codeOf(() => bonsai().evaluateSync(`${'!'.repeat(10_000)}true`))).toBe('TOO_DEEP')
-  })
 })
 
 describe('step budget', () => {

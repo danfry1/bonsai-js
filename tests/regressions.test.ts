@@ -71,6 +71,7 @@ describe('deep expressions fail closed or balance', () => {
       `x${'.a'.repeat(5000)}`,
       `"a"${'.trim()'.repeat(5000)}`,
       `x${'[0]'.repeat(2000)}`,
+      `${'!'.repeat(10_000)}true`,
     ]) {
       expect(outcome(() => env.evaluateSync(source, { x: null }))).toEqual({ code: 'TOO_DEEP' })
       expect(() => service.diagnostics(source)).not.toThrow()

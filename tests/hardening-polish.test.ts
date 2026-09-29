@@ -10,14 +10,6 @@ describe('blocked names are never callable', () => {
       expect(codeOf(() => bonsai().parse(source))).toBe('SYNTAX')
     },
   )
-
-  it('rejects them as host function names', () => {
-    const one = fn({ params: [], returns: t.number(), run: () => 1 })
-    for (const name of ['constructor', '__proto__', 'prototype']) {
-      expect(() => bonsai({ functions: { [name]: one } })).toThrow(TypeError)
-      expect(() => bonsai().extend({ functions: { [name]: one } })).toThrow(TypeError)
-    }
-  })
 })
 
 describe('the evaluation context', () => {

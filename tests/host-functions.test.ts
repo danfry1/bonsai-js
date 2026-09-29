@@ -232,10 +232,15 @@ describe('host parameters', () => {
 describe('host declarations', () => {
   const noop = fn({ params: [], returns: t.null(), run: () => null })
 
-  it('rejects invalid and reserved function names', () => {
-    expect(() => bonsai({ functions: { 'bad-name': noop } })).toThrow(/Invalid function name/u)
-    expect(() => bonsai({ functions: { has: noop } })).toThrow(/Invalid function name/u)
-    expect(() => bonsai({ functions: { try: noop } })).toThrow(/Invalid function name/u)
+  it('rejects invalid, reserved, and blocked function names, also in extend()', () => {
+    const invalid = expect.objectContaining({
+      name: 'TypeError',
+      message: expect.stringMatching(/Invalid function name/u),
+    })
+    for (const name of ['bad-name', 'has', 'try', 'constructor', '__proto__', 'prototype']) {
+      expect(() => bonsai({ functions: { [name]: noop } }), name).toThrow(invalid)
+      expect(() => bonsai().extend({ functions: { [name]: noop } }), name).toThrow(invalid)
+    }
   })
 
   it('requires a run function', () => {
