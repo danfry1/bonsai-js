@@ -1,4 +1,5 @@
 import { BonsaiLimitError, type Span } from '../errors.js'
+import { BLOCKED_NAMES } from '../syntax/lexer.js'
 import type { State } from './state.js'
 
 export const MS_PER_SECOND = 1000
@@ -120,7 +121,6 @@ const OBJECT_PROTOTYPE: object = Object.prototype
  */
 // oxlint-disable-next-line typescript/unbound-method -- always invoked with .call
 const isEnumerable = Object.prototype.propertyIsEnumerable
-export const BLOCKED_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype'])
 
 /**
  * Whether a value is a map: a plain object, or a class instance, read through
@@ -361,7 +361,7 @@ export function mapKey(key: unknown, s: State, at: Span): string {
     name = key
   } else if (typeof key === 'number' && Number.isFinite(key)) name = String(key)
   else throw s.error('TYPE_ERROR', `A map key must be a string, not ${describeKind(key)}`, at)
-  if (BLOCKED_KEYS.has(name))
+  if (BLOCKED_NAMES.has(name))
     throw s.error('BLOCKED_PROPERTY', `Property "${name}" is not accessible`, at)
   chargeIndexKey(s, name)
   return name
@@ -374,7 +374,7 @@ export function hasKey(object: unknown, key: unknown, s: State, at: Span): boole
     const name = typeof key === 'number' ? String(key) : key
     if (typeof name !== 'string') return false
     chargeKey(s, name)
-    return !BLOCKED_KEYS.has(name) && hasOwn(object, name)
+    return !BLOCKED_NAMES.has(name) && hasOwn(object, name)
   }
   // has() is a read: an opaque value is never read into (as with `in`).
   if (kindOf(object) === 'opaque') {
@@ -526,7 +526,7 @@ export function equals(a: unknown, b: unknown, s: State, depth = 0, at?: Span): 
   if (a instanceof Duration) return b instanceof Duration && a.ms === b.ms
   if (b instanceof Date || b instanceof Duration) return false
   if (!isMap(a) || !isMap(b)) return false
-  const visible = (key: string): boolean => !BLOCKED_KEYS.has(key)
+  const visible = (key: string): boolean => !BLOCKED_NAMES.has(key)
   // Listing keys costs work per key, so each side is charged as it is listed,
   // before the counts can differ and end the comparison early.
   const keys = Object.keys(a)
@@ -632,7 +632,7 @@ export function contains(container: unknown, item: unknown, s: State, at: Span):
     }
     const key = String(item)
     chargeKey(s, key)
-    return !BLOCKED_KEYS.has(key) && hasOwn(container, key)
+    return !BLOCKED_NAMES.has(key) && hasOwn(container, key)
   }
   throw s.error(
     'TYPE_ERROR',

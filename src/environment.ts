@@ -13,6 +13,7 @@ import {
   assertType,
   conforms,
   describeMismatch,
+  isRecord,
   overload,
   type FunctionDef,
   type ValidationBudget,
@@ -20,6 +21,7 @@ import {
 import { DEFAULT_RUNTIME_LIMITS, State, type RuntimeLimits } from './runtime/state.js'
 import { errorText, isMap } from './runtime/values.js'
 import type { Node } from './syntax/ast.js'
+import { isName } from './syntax/lexer.js'
 import { DEFAULT_PARSE_LIMITS, parse, type ParseLimits } from './syntax/parser.js'
 import {
   formatType,
@@ -310,8 +312,6 @@ export function internalsOf(env: Environment<never>): EnvironmentInternals {
 
 /** Compiled programs kept per environment unless `cacheSize` says otherwise. */
 const DEFAULT_CACHE_SIZE = 256
-const RESERVED_FUNCTION_NAMES = new Set(['has', 'try', 'true', 'false', 'null', 'let', 'in', 'not'])
-const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/u
 
 interface Settings {
   readonly variables: Readonly<Record<string, Type>> | undefined
@@ -328,7 +328,8 @@ interface Settings {
 }
 
 function toDef(name: string, host: HostFunction): FunctionDef {
-  if (!IDENTIFIER.test(name) || RESERVED_FUNCTION_NAMES.has(name) || BLOCKED_NAMES.has(name)) {
+  // `has` and `try` read as syntax, so a function with either name could never be called.
+  if (!isName(name) || name === 'has' || name === 'try') {
     throw new TypeError(`Invalid function name "${name}"`)
   }
   assertHostSpec(host, `Function "${name}"`)
@@ -390,11 +391,6 @@ function mergeFunctions(
   return out
 }
 
-/** Words an expression reads as syntax, so a variable with that name could never be referenced. */
-const RESERVED_VARIABLE_NAMES = new Set(['true', 'false', 'null', 'let', 'in', 'not'])
-/** Names no expression may read. */
-const BLOCKED_NAMES = new Set(['__proto__', 'constructor', 'prototype'])
-
 function mergeVariables(
   base: Readonly<Record<string, Type>> | undefined,
   options: EnvironmentOptions,
@@ -404,7 +400,7 @@ function mergeVariables(
     base === undefined && options.variables === undefined ? undefined : { ...base }
   const added = new Map<string, string>()
   const add = (name: string, type: Type, origin: string): void => {
-    if (!IDENTIFIER.test(name) || RESERVED_VARIABLE_NAMES.has(name) || BLOCKED_NAMES.has(name)) {
+    if (!isName(name)) {
       throw new TypeError(`Invalid variable name "${name}" (in ${origin})`)
     }
     const previous = added.get(name)
@@ -423,9 +419,6 @@ function mergeVariables(
   for (const [k, v] of Object.entries(options.variables ?? {})) add(k, v, 'the variables option')
   return out === undefined ? undefined : Object.freeze(out)
 }
-
-/** Limits where 0 means "none"; every other limit must be at least 1. */
-const ZERO_DISABLES = new Set(['maxSteps', 'timeout'])
 
 /** A number option: TypeError when it is not a number, RangeError when out of range. */
 function numberOption(name: string, value: unknown, fallback: number, minimum: number): number {
@@ -458,11 +451,8 @@ const LIMIT_KEYS: ReadonlySet<string> = new Set([
 ])
 const LIBRARY_KEYS = new Set(['name', 'functions', 'variables'])
 
-const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
 function assertKeys(value: unknown, allowed: ReadonlySet<string>, what: string): void {
-  if (!isPlainRecord(value)) throw new TypeError(`${what} must be an object`)
+  if (!isRecord(value)) throw new TypeError(`${what} must be an object`)
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
       throw new TypeError(
@@ -477,9 +467,9 @@ function assertOptions(options: unknown): asserts options is EnvironmentOptions 
   assertKeys(options, OPTION_KEYS, 'Options')
   const o = options as Record<string, unknown>
   if (o.limits !== undefined) assertKeys(o.limits, LIMIT_KEYS, 'Limits')
-  if (o.variables !== undefined && !isPlainRecord(o.variables))
+  if (o.variables !== undefined && !isRecord(o.variables))
     throw new TypeError('variables must be an object of types')
-  if (o.functions !== undefined && !isPlainRecord(o.functions))
+  if (o.functions !== undefined && !isRecord(o.functions))
     throw new TypeError('functions must be an object of fn() declarations')
   if (o.libraries !== undefined) {
     if (!Array.isArray(o.libraries)) throw new TypeError('libraries must be an array')
@@ -490,9 +480,9 @@ function assertOptions(options: unknown): asserts options is EnvironmentOptions 
       if (typeof l.name !== 'string' || l.name === '') throw new TypeError('A library needs a name')
       if (names.has(l.name)) throw new TypeError(`Library "${l.name}" is listed twice`)
       names.add(l.name)
-      if (l.functions !== undefined && !isPlainRecord(l.functions))
+      if (l.functions !== undefined && !isRecord(l.functions))
         throw new TypeError(`functions of library "${l.name}" must be an object`)
-      if (l.variables !== undefined && !isPlainRecord(l.variables))
+      if (l.variables !== undefined && !isRecord(l.variables))
         throw new TypeError(`variables of library "${l.name}" must be an object`)
     }
   }
@@ -506,7 +496,10 @@ function assertOptions(options: unknown): asserts options is EnvironmentOptions 
 
 type Numbers = Readonly<Record<string, number>>
 
-/** The limits in `defaults` (parse or runtime), overridden by `limits` over `current`. */
+/**
+ * The limits in `defaults` (parse or runtime), overridden by `limits` over
+ * `current`. 0 turns `maxSteps` off; every other limit must be at least 1.
+ */
 function pickLimits(
   defaults: object,
   current: object,
@@ -517,7 +510,7 @@ function pickLimits(
     Object.fromEntries(
       Object.keys(defaults).map((name) => [
         name,
-        numberOption(`Limit "${name}"`, limits[name], base[name], ZERO_DISABLES.has(name) ? 0 : 1),
+        numberOption(`Limit "${name}"`, limits[name], base[name], name === 'maxSteps' ? 0 : 1),
       ]),
     ),
   )

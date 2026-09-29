@@ -1,3 +1,4 @@
+import { BLOCKED_NAMES } from '../syntax/lexer.js'
 import { signatureText, type Analysis, type CallPlan } from '../check/checker.js'
 import { BonsaiError, BonsaiLimitError, BonsaiRuntimeError, type Span } from '../errors.js'
 import {
@@ -9,7 +10,6 @@ import {
 } from '../functions/define.js'
 import type { State } from '../runtime/state.js'
 import {
-  BLOCKED_KEYS,
   add,
   chargeKey,
   contains,
@@ -481,7 +481,7 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
         s.charge(keyListCost(keys.length) + mapBuildCost(keys.length))
         for (const k of keys) {
           chargeKey(s, k)
-          if (!BLOCKED_KEYS.has(k)) out[k] = value[k] === undefined ? null : value[k]
+          if (!BLOCKED_NAMES.has(k)) out[k] = value[k] === undefined ? null : value[k]
         }
         return true
       }

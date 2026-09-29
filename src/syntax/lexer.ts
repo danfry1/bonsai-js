@@ -22,7 +22,16 @@ export type TemplatePart =
 // engine stack limit.
 const MAX_TEMPLATE_NESTING = 32
 
-const KEYWORDS = new Set(['true', 'false', 'null', 'let', 'in', 'not'])
+/** Words the lexer reads as keywords, never as names. */
+const KEYWORDS: ReadonlySet<string> = new Set(['true', 'false', 'null', 'let', 'in', 'not'])
+/** Names the language never lets an expression read, bind, or use as a key. */
+export const BLOCKED_NAMES: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype'])
+export const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/u
+
+/** Whether `name` can be written as a name: an identifier that is neither a keyword nor blocked. */
+export function isName(name: string): boolean {
+  return IDENTIFIER.test(name) && !KEYWORDS.has(name) && !BLOCKED_NAMES.has(name)
+}
 
 // Character codes the scanner compares against.
 const CH_TAB = 9

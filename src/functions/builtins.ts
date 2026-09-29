@@ -1,3 +1,4 @@
+import { BLOCKED_NAMES } from '../syntax/lexer.js'
 import { BonsaiLimitError } from '../errors.js'
 import {
   RegexSyntaxError,
@@ -16,7 +17,6 @@ import {
   wallClock,
 } from '../runtime/time.js'
 import {
-  BLOCKED_KEYS,
   Duration,
   chargeIndexKey,
   chargeKey,
@@ -51,7 +51,6 @@ import {
   define,
   fnType,
   overload,
-  type AsyncLambda,
   type CallSite,
   type FunctionDef,
   type Lambda,
@@ -161,10 +160,6 @@ function textOf(value: unknown, site: CallSite): string {
 
 function asLambda(value: unknown): Lambda {
   return value as Lambda
-}
-
-function asAsyncLambda(value: unknown): AsyncLambda {
-  return value as AsyncLambda
 }
 
 function truthy(value: unknown, site: CallSite): boolean {
@@ -435,7 +430,7 @@ function groupKey(key: unknown, site: CallSite): string {
       `A group key must be a string, number, or boolean, not ${describeKind(key)}`,
       site.span,
     )
-  if (BLOCKED_KEYS.has(name))
+  if (BLOCKED_NAMES.has(name))
     throw site.state.error('BLOCKED_PROPERTY', `"${name}" cannot be used as a key`, site.span)
   chargeIndexKey(site.state, name)
   return name
@@ -518,7 +513,7 @@ function canonicalKey(value: unknown, site: CallSite, depth: number, seen: Ident
     let key = '{'
     let first = true
     for (const name of keys) {
-      if (BLOCKED_KEYS.has(name)) continue
+      if (BLOCKED_NAMES.has(name)) continue
       key += `${first ? '' : ','}${name.length}:${name}=${canonicalKey(value[name], site, depth + 1, seen)}`
       first = false
     }
@@ -645,7 +640,7 @@ function extreme(items: readonly unknown[], sign: 1 | -1, site: CallSite): unkno
 function entryList(map: Record<string, unknown>, site: CallSite): string[] {
   const listed = Object.keys(map)
   site.state.charge(keyListCost(listed.length))
-  const keys = listed.filter((key) => !BLOCKED_KEYS.has(key))
+  const keys = listed.filter((key) => !BLOCKED_NAMES.has(key))
   site.state.listLimit(keys.length, site.span)
   return keys
 }
@@ -998,7 +993,7 @@ function hof(
   run: (items: readonly unknown[], fn: Lambda, site: CallSite, extra: unknown[]) => unknown,
   runAsync: (
     items: readonly unknown[],
-    fn: AsyncLambda,
+    fn: Lambda,
     site: CallSite,
     extra: unknown[],
   ) => Promise<unknown>,
@@ -1019,7 +1014,7 @@ function hof(
       ([l, f, ...extra], site) => run(list(l), asLambda(f), site, extra),
       {
         required: 2,
-        runAsync: ([l, f, ...extra], site) => runAsync(list(l), asAsyncLambda(f), site, extra),
+        runAsync: ([l, f, ...extra], site) => runAsync(list(l), asLambda(f), site, extra),
         ...(ordered.length === 0 ? {} : { ordered }),
       },
     ),
@@ -1196,7 +1191,7 @@ const LIST_FUNCTIONS: FunctionDef[] = [
       {
         runAsync: async ([l, f], site) => {
           const items = list(l)
-          const fn = asAsyncLambda(f)
+          const fn = asLambda(f)
           let n = 0
           for (let i = 0; i < items.length; i++) if (truthy(await fn(items[i], i), site)) n++
           return n
@@ -1466,7 +1461,6 @@ const TIME_FUNCTIONS: FunctionDef[] = [
         [ts, str, optZone],
         str,
         ([d, p, z], site) => {
-          timeOf(d as Date, site.state, site.span)
           const text = formatTimestamp(d as Date, p as string, zoneArg(z), site)
           site.state.stringLimit(text.length, site.span)
           return text

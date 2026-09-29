@@ -5,6 +5,7 @@ import {
   type Node,
   type SpreadNode,
 } from './ast.js'
+import { BLOCKED_NAMES, IDENTIFIER, isName } from './lexer.js'
 
 export interface PrintOptions {
   /**
@@ -44,25 +45,15 @@ const BINARY: Readonly<Record<BinaryOperator, number>> = {
 const COMPARISON_LEVELS = new Set([BINARY['=='], BINARY['<']])
 /** Logical operators are associative, so a run of one needs no parentheses. */
 const ASSOCIATIVE = new Set<BinaryOperator>(['&&', '||', '??'])
-const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/u
-const RESERVED = new Set(['true', 'false', 'null', 'let', 'in', 'not'])
-/** Names the language never lets an expression read, bind, or use as a key. */
-const BLOCKED = new Set(['__proto__', 'constructor', 'prototype'])
 /** Call names the parser reads as syntax, not as calls. */
 const SPECIAL_CALLS = new Set(['has', 'try'])
+
+const validName = (name: unknown): name is string => typeof name === 'string' && isName(name)
 
 const invalid = (message: string): never => {
   throw new TypeError(`Cannot print this tree: ${message}`)
 }
 
-const isName = (name: unknown): name is string =>
-  typeof name === 'string' && IDENTIFIER.test(name) && !RESERVED.has(name) && !BLOCKED.has(name)
-
-/**
- * Rejects trees the parser could not have produced, and that would therefore
- * print as source meaning something else (or not parse at all). Trees from
- * `parse()` and `Program.ast` always pass.
- */
 /** Deeper than any tree the parser accepts at practical limits, and still stack-safe. */
 const MAX_PRINT_DEPTH = 2000
 const PRINT_OPTION_KEYS: ReadonlySet<string> = new Set(['calls'])
@@ -99,12 +90,17 @@ function assertShape(root: Node): void {
   }
 }
 
+/**
+ * Rejects trees the parser could not have produced, and that would therefore
+ * print as source meaning something else (or not parse at all). Trees from
+ * `parse()` and `Program.ast` always pass.
+ */
 function assertPrintable(root: Node): void {
   assertShape(root)
   // Names bound by enclosing `let`s and explicit lambdas.
   const scope: string[] = []
   const bind = (name: unknown, what: string): void => {
-    if (!isName(name)) return invalid(`${what} ${JSON.stringify(name)} is not a valid name`)
+    if (!validName(name)) return invalid(`${what} ${JSON.stringify(name)} is not a valid name`)
     if (scope.includes(name)) invalid(`${what} "${name}" is already bound in this scope`)
     scope.push(name)
   }
@@ -123,7 +119,7 @@ function assertPrintable(root: Node): void {
         for (const part of n.parts) if (typeof part !== 'string') visit(part, false)
         return
       case 'Variable':
-        if (!isName(n.name)) invalid(`variable ${JSON.stringify(n.name)} is not a valid name`)
+        if (!validName(n.name)) invalid(`variable ${JSON.stringify(n.name)} is not a valid name`)
         if (scope.includes(n.name))
           invalid(`variable "${n.name}" would print as the local binding of the same name`)
         return
@@ -131,7 +127,7 @@ function assertPrintable(root: Node): void {
         if (!scope.includes(n.name)) invalid(`local ${JSON.stringify(n.name)} is not bound here`)
         return
       case 'Member':
-        if (typeof n.name !== 'string' || BLOCKED.has(n.name))
+        if (typeof n.name !== 'string' || BLOCKED_NAMES.has(n.name))
           invalid(`property ${JSON.stringify(n.name)} is not accessible`)
         visit(n.object, false)
         return
@@ -140,7 +136,7 @@ function assertPrintable(root: Node): void {
         visit(n.index, false)
         return
       case 'Call': {
-        if (!isName(n.name) || SPECIAL_CALLS.has(n.name))
+        if (!validName(n.name) || SPECIAL_CALLS.has(n.name))
           invalid(`${JSON.stringify(n.name)} is not a callable function name`)
         const [first] = n.args
         if (
@@ -178,7 +174,7 @@ function assertPrintable(root: Node): void {
           if (entry.type === 'Spread') visit(entry.argument, false)
           else if (entry.type === 'Entry') {
             if (typeof entry.key === 'string') {
-              if (BLOCKED.has(entry.key)) invalid(`"${entry.key}" cannot be used as a key`)
+              if (BLOCKED_NAMES.has(entry.key)) invalid(`"${entry.key}" cannot be used as a key`)
             } else visit(entry.key, false)
             visit(entry.value, false)
           } else invalid(`unknown map entry ${JSON.stringify((entry as { type?: unknown }).type)}`)
@@ -303,19 +299,13 @@ export function print(node: Node, options: PrintOptions = {}): string {
     return wrap(expr(child), needed)
   }
 
-  function receiver(n: Node): string {
-    // `.` alone as a receiver prints as `.name(...)` without a second dot.
-    return at(n, POSTFIX)
-  }
-
   function args(list: readonly (Node | SpreadNode)[]): string {
     return list
-      .map((arg) => (arg.type === 'Spread' ? `...${expr(arg.argument)}` : argument(arg)))
+      .map((arg) => {
+        if (arg.type === 'Spread') return `...${expr(arg.argument)}`
+        return arg.type === 'Lambda' ? lambda(arg) : expr(arg)
+      })
       .join(', ')
-  }
-
-  function argument(arg: Node): string {
-    return arg.type === 'Lambda' ? lambda(arg) : expr(arg)
   }
 
   function lambda(n: Extract<Node, { type: 'Lambda' }>): string {
@@ -327,20 +317,19 @@ export function print(node: Node, options: PrintOptions = {}): string {
 
   function propertyAccess(object: Node, name: string, optional: boolean): string {
     if (!IDENTIFIER.test(name))
-      return `${receiver(object)}${optional ? '?.' : ''}[${stringLiteral(name)}]`
+      return `${at(object, POSTFIX)}${optional ? '?.' : ''}[${stringLiteral(name)}]`
     if (object.type === 'It' && !optional) return `.${name}`
-    return `${receiver(object)}${optional ? '?.' : '.'}${name}`
+    return `${at(object, POSTFIX)}${optional ? '?.' : '.'}${name}`
   }
 
   function entry(e: MapEntry | SpreadNode): string {
     if (e.type === 'Spread') return `...${expr(e.argument)}`
     if (typeof e.key !== 'string') return `[${expr(e.key)}]: ${expr(e.value)}`
-    const key = IDENTIFIER.test(e.key) || RESERVED.has(e.key) ? e.key : stringLiteral(e.key)
+    const key = IDENTIFIER.test(e.key) ? e.key : stringLiteral(e.key)
+    // Validation proved variable and local names are names (not keywords).
     const shorthand =
-      (e.value.type === 'Variable' || e.value.type === 'Local') &&
-      e.value.name === e.key &&
-      IDENTIFIER.test(e.key)
-    return shorthand && !RESERVED.has(e.key) ? key : `${key}: ${expr(e.value)}`
+      (e.value.type === 'Variable' || e.value.type === 'Local') && e.value.name === e.key
+    return shorthand ? key : `${key}: ${expr(e.value)}`
   }
 
   function expr(n: Node): string {
@@ -357,7 +346,7 @@ export function print(node: Node, options: PrintOptions = {}): string {
       case 'Member':
         return propertyAccess(n.object, n.name, n.optional)
       case 'Index':
-        return `${n.object.type === 'It' && !n.optional ? '.' : receiver(n.object)}${n.optional ? '?.' : ''}[${expr(n.index)}]`
+        return `${n.object.type === 'It' && !n.optional ? '.' : at(n.object, POSTFIX)}${n.optional ? '?.' : ''}[${expr(n.index)}]`
       case 'Call': {
         const [first, ...rest] = n.args
         const asMethod =
@@ -367,7 +356,7 @@ export function print(node: Node, options: PrintOptions = {}): string {
           (style === 'method' || (style === 'preserve' && n.style === 'method') || n.optional)
         if (asMethod) {
           const dot = n.optional ? '?.' : '.'
-          const head = first.type === 'It' && !n.optional ? '.' : `${receiver(first)}${dot}`
+          const head = first.type === 'It' && !n.optional ? '.' : `${at(first, POSTFIX)}${dot}`
           return `${head}${n.name}(${args(rest)})`
         }
         return `${n.name}(${args(n.args)})`

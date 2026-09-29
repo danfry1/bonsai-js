@@ -1,12 +1,11 @@
+import { BLOCKED_NAMES } from '../syntax/lexer.js'
 import type { Span } from '../errors.js'
 import type { State } from '../runtime/state.js'
-import { BLOCKED_KEYS, Duration, isMap, keyListCost } from '../runtime/values.js'
+import { Duration, isMap, keyListCost, shown } from '../runtime/values.js'
 import { formatType, type FunctionType, type Type, type TypeVar } from '../types.js'
 
 /** A lambda as seen by a built-in: called with the item and its index. */
 export type Lambda = (item: unknown, index: number) => unknown
-/** Like Lambda, but may return a promise. */
-export type AsyncLambda = (item: unknown, index: number) => unknown
 
 /** Call-site information handed to a built-in implementation. */
 export interface CallSite {
@@ -160,7 +159,6 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
   }
 }
 
-const MAX_SHOWN_TEXT = 40
 const CLOCK_SAMPLE = 1024
 
 function describeValue(value: unknown): string {
@@ -169,10 +167,7 @@ function describeValue(value: unknown): string {
   if (value instanceof Date)
     return Number.isNaN(value.getTime()) ? 'an invalid Date' : 'a timestamp'
   if (typeof value === 'object') return 'a map'
-  if (typeof value === 'string') {
-    const shown = value.length > MAX_SHOWN_TEXT ? `${value.slice(0, MAX_SHOWN_TEXT)}...` : value
-    return `string ${JSON.stringify(shown)}`
-  }
+  if (typeof value === 'string') return `string ${shown(value)}`
   if (typeof value === 'number' || typeof value === 'boolean')
     return `${typeof value} ${String(value)}`
   return typeof value
@@ -224,7 +219,7 @@ export function describeMismatch(
       if (budget.remaining < 0) budget.onExhausted('steps')
       for (const key of keys) {
         // Keys the language can never read are not part of the data.
-        if (Object.hasOwn(type.fields, key) || BLOCKED_KEYS.has(key)) continue
+        if (Object.hasOwn(type.fields, key) || BLOCKED_NAMES.has(key)) continue
         const problem = describeMismatch(
           actual[key],
           type.rest,
@@ -278,7 +273,7 @@ export function define(
 
 // === validation of host-supplied declarations ===
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 function describe(value: unknown): string {

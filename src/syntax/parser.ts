@@ -10,7 +10,7 @@ import {
   type Node,
   type SpreadNode,
 } from './ast.js'
-import { tokenize, type Token } from './lexer.js'
+import { BLOCKED_NAMES, tokenize, type Token } from './lexer.js'
 
 export interface ParseLimits {
   /** Maximum source length in UTF-16 code units. */
@@ -49,8 +49,6 @@ const BINARY_LEVEL: Readonly<Record<string, number>> = {
 }
 const EQUALITY_LEVEL = BINARY_LEVEL['==']
 const RELATIONAL_LEVEL = BINARY_LEVEL['<']
-
-const BLOCKED_NAMES = new Set(['__proto__', 'constructor', 'prototype'])
 
 /** Parses an expression into a syntax tree. Throws BonsaiSyntaxError or BonsaiLimitError. */
 export function parse(source: string, limits: ParseLimits = DEFAULT_PARSE_LIMITS): Node {
