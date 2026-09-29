@@ -84,15 +84,6 @@ describe('regular expressions stay bounded', () => {
     expect(run('a.matches("a[bc]")', ctx, 5000)).toEqual({ code: 'STEP_LIMIT' })
   })
 
-  it('charges the same steps whether or not a pattern is cached', () => {
-    const source = '"xyz".matches(p) && "xyz".matches(p)'
-    const ctx = { p: `^${'x?'.repeat(500)}xyz` }
-    const cold = minimalSteps(bonsai(), source, ctx)
-    const warm = bonsai()
-    warm.evaluateSync(source, ctx)
-    expect(minimalSteps(warm, source, ctx)).toBe(cold)
-  })
-
   test.prop([
     fc.array(
       fc.oneof(

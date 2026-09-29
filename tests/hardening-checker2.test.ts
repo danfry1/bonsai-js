@@ -191,23 +191,12 @@ describe('false positives', () => {
 })
 
 describe('the check budget bounds time', () => {
-  const timed = (source: string): { ms: number; ok: boolean | string } => {
-    const start = performance.now()
-    let ok: boolean | string
-    try {
-      ok = env.check(source).ok
-    } catch (error) {
-      ok = (error as { code?: string }).code ?? 'threw'
-    }
-    return { ms: performance.now() - start, ok }
-  }
-
   it('checks thousands of generated enum clauses', () => {
     const source = Array.from(
       { length: 2000 },
       (_, k) => `setTz(c ? tz : "Z${k % 300}") != ""`,
     ).join(' && ')
-    expect(timed(source).ok).toBe(true)
+    expect(env.check(source).ok).toBe(true)
   })
 
   it('stops pathological joins quickly', () => {

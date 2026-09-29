@@ -139,13 +139,10 @@ describe('regular expressions', () => {
 
 describe('time', () => {
   it('reports an out-of-range year offset as such', () => {
-    const result = outcome(() => env.evaluateSync('addYears(now(), 1e308)'))
-    expect(result).toEqual({ code: 'INVALID_ARGUMENT' })
-    try {
-      env.evaluateSync('addYears(now(), 1e308)')
-    } catch (error) {
-      expect((error as Error).message).toContain('out of range')
-    }
+    expect(outcome(() => env.evaluateSync('addYears(now(), 1e308)'))).toEqual({
+      code: 'INVALID_ARGUMENT',
+    })
+    expect(() => env.evaluateSync('addYears(now(), 1e308)')).toThrow(/out of range/u)
   })
 })
 

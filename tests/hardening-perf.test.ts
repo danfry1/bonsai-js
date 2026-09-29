@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { bonsai } from '../src/index.js'
 import { compileRegex, searchRegex } from '../src/runtime/regex.js'
+import { minimalSteps } from './helpers.js'
 
 const steps = (pattern: string, text: string): { result: boolean; charged: number } => {
   let charged = 0
@@ -53,21 +54,8 @@ describe('regex literal prefilter', () => {
 
   it('charges the same steps on every run', () => {
     const env = bonsai()
-    const minimal = (): number => {
-      let low = 1
-      let high = 1_000_000
-      while (low < high) {
-        const mid = (low + high) >>> 1
-        try {
-          env.evaluateSync('matches(s, "status=5[0-9]{2}")', { s: line }, { maxSteps: mid })
-          high = mid
-        } catch {
-          low = mid + 1
-        }
-      }
-      return low
-    }
-    expect(minimal()).toBe(minimal())
+    const source = 'matches(s, "status=5[0-9]{2}")'
+    expect(minimalSteps(env, source, { s: line })).toBe(minimalSteps(env, source, { s: line }))
   })
 })
 

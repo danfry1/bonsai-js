@@ -151,13 +151,12 @@ describe('checker soundness', () => {
     expect(env.check(source).ok).toBe(false)
   })
 
-  it.each([
-    ['o.first()?.opt != null ? o.first()?.opt?.length : 0', true],
-    ['[].find(.x)', true],
-    ['[].sum()', true],
-  ])('accepts %s', (source, ok) => {
-    expect(env.check(source).ok).toBe(ok)
-  })
+  it.each(['o.first()?.opt != null ? o.first()?.opt?.length : 0', '[].find(.x)', '[].sum()'])(
+    'accepts %s',
+    (source) => {
+      expect(env.check(source).ok).toBe(true)
+    },
+  )
 })
 
 describe('time and number edge cases', () => {
