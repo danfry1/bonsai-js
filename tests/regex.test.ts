@@ -219,7 +219,8 @@ describe('limits', () => {
 
   it('charges work in proportion to live threads', () => {
     let charged = 0
-    searchRegex(compileRegex('(a|b|c|d|e|f|g|h|i)*z'), 'abcdefghi'.repeat(10), (n) => {
+    // A class (not a literal) at the end, so no literal prefilter can rule the text out.
+    searchRegex(compileRegex('(a|b|c|d|e|f|g|h|i)*[yz]'), 'abcdefghi'.repeat(10), (n) => {
       charged += n
     })
     expect(charged).toBeGreaterThan(90)
@@ -227,7 +228,7 @@ describe('limits', () => {
 
   it('stops a match through the evaluation step budget', () => {
     const env = bonsai({ limits: { maxSteps: 1000 } })
-    expect(() => env.evaluateSync('matches(s, "(a|b)*c")', { s: 'ab'.repeat(5000) })).toThrow(
+    expect(() => env.evaluateSync('matches(s, "(a|b)*[cd]")', { s: 'ab'.repeat(5000) })).toThrow(
       /step limit/u,
     )
   })

@@ -261,7 +261,8 @@ export function truth(value: unknown, s: State, at: Span, what: string): boolean
 
 /** Reads a member. Plain objects, the common case, take the short path first. */
 export function readMember(object: unknown, name: string, s: State, at: Span): unknown {
-  if (typeof object === 'object' && object !== null && isPlainData(object)) {
+  // The plain-object test inline (not via isPlainData), so this stays small enough to inline.
+  if (typeof object === 'object' && object !== null && object.constructor === Object) {
     return hasOwn(object, name) ? ((object as Record<string, unknown>)[name] ?? null) : null
   }
   return readOtherMember(object, name, s, at)
