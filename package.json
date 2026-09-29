@@ -58,6 +58,7 @@
     "test:mutation": "bun run test:mutation:core",
     "test:mutation:core": "stryker run stryker.config.json",
     "fuzz": "bun run scripts/fuzz.ts",
+    "cost-fuzz": "bun run scripts/cost-fuzz.ts",
     "check:bump": "bumpy check",
     "bump": "bumpy add",
     "bump:generate": "bumpy generate",
