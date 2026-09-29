@@ -62,7 +62,6 @@ const CH_BACKSPACE = 8
 const CH_TAB = 9
 const CH_LF = 10
 const CH_CR = 13
-const CH_SPACE = 32
 const CH_0 = 48
 const CH_9 = 57
 const CH_UPPER_A = 65
@@ -70,10 +69,8 @@ const CH_UPPER_Z = 90
 const CH_UNDERSCORE = 95
 const CH_LOWER_A = 97
 const CH_LOWER_Z = 122
-const CH_NBSP = 0xa0
 const CH_LINE_SEPARATOR = 0x2028
 const CH_PARAGRAPH_SEPARATOR = 0x2029
-const CH_BOM = 0xfeff
 /** Distance between an ASCII upper-case letter and its lower-case form. */
 const ASCII_CASE_OFFSET = 32
 /** Generation counters restart before they could overflow an Int32Array slot. */
@@ -85,35 +82,17 @@ const isWord = (c: number): boolean =>
   (c >= CH_UPPER_A && c <= CH_UPPER_Z) ||
   (c >= CH_LOWER_A && c <= CH_LOWER_Z) ||
   c === CH_UNDERSCORE
-/** The characters JavaScript's \s matches besides TAB..CR, from the ECMAScript WhiteSpace and LineTerminator sets. */
-const SPACES = new Set(
-  [
-    CH_SPACE,
-    CH_NBSP,
-    '\u1680',
-    '\u2000',
-    '\u2001',
-    '\u2002',
-    '\u2003',
-    '\u2004',
-    '\u2005',
-    '\u2006',
-    '\u2007',
-    '\u2008',
-    '\u2009',
-    '\u200a',
-    '\u202f',
-    '\u205f',
-    '\u3000',
-  ]
-    .map((c) => (typeof c === 'number' ? c : c.charCodeAt(0)))
-    .concat([CH_LINE_SEPARATOR, CH_PARAGRAPH_SEPARATOR, CH_BOM]),
+/**
+ * What JavaScript's \s matches, as sorted [low, high] pairs: TAB..CR, and the
+ * rest of the ECMAScript WhiteSpace and LineTerminator sets.
+ */
+const SPACE_RANGES: readonly number[] = Array.from(
+  '\t\r  \u00a0\u00a0\u1680\u1680\u2000\u200a\u2028\u2029\u202f\u202f\u205f\u205f\u3000\u3000\ufeff\ufeff',
+  (c) => c.charCodeAt(0),
 )
-const SPACE_RANGES: readonly number[] = normalize([
-  CH_TAB,
-  CH_CR,
-  ...[...SPACES].flatMap((c) => [c, c]),
-])
+
+/** A counted repeat: {n}, {n,}, or {n,m}. */
+const REPEAT = /^\{(?<min>\d+)(?<range>,(?<max>\d*))?\}/u
 
 function lower(c: number): number {
   return c >= CH_UPPER_A && c <= CH_UPPER_Z ? c + ASCII_CASE_OFFSET : c
@@ -267,13 +246,11 @@ export function compileRegex(source: string): Program {
     const ch = pattern[i]
     let min: number
     let max: number
+    let match: RegExpExecArray | null = null
     if (ch === '*') [min, max] = [0, Infinity]
     else if (ch === '+') [min, max] = [1, Infinity]
     else if (ch === '?') [min, max] = [0, 1]
-    else if (ch === '{' && /^\{\d+(?:,\d*)?\}/u.test(pattern.slice(i))) {
-      const match = /^\{(?<min>\d+)(?<range>,(?<max>\d*))?\}/u.exec(
-        pattern.slice(i),
-      ) as RegExpExecArray
+    else if (ch === '{' && (match = REPEAT.exec(pattern.slice(i))) !== null) {
       const groups = match.groups ?? {}
       min = Number(groups.min)
       if (groups.range === undefined) max = min
