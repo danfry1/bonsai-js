@@ -78,7 +78,8 @@ describe('regular expressions stay bounded', () => {
       }),
     ).toBeLessThan(QUICK_MS)
     expect(result).toEqual({ value: false })
-    const repeated = `[${distinct(4000)}a]{1000}b`
+    // Ends in a class, so the literal prefilter cannot rule the text out.
+    const repeated = `[${distinct(4000)}a]{1000}[bc]`
     expect(
       timed(() => {
         result = run('"a".repeat(7000).matches(p)', { p: repeated })
@@ -117,7 +118,7 @@ describe('regular expressions stay bounded', () => {
     const ctx = { a: 'a'.repeat(100_000), b: 'b'.repeat(100_000) }
     expect(run('a.matches("^abc")', ctx, 5000)).toEqual({ value: false })
     expect(run('b.matches("^b|c")', ctx, 5000)).toEqual({ value: true })
-    expect(run('a.matches("abc")', ctx, 5000)).toEqual({ code: 'STEP_LIMIT' })
+    expect(run('a.matches("a[bc]")', ctx, 5000)).toEqual({ code: 'STEP_LIMIT' })
   })
 
   it('charges the same steps whether or not a pattern is cached', () => {

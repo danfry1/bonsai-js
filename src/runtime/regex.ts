@@ -24,7 +24,8 @@ type Inst =
 
 type Ast =
   | { kind: 'empty' }
-  | { kind: 'char'; test: CharTest }
+  /** `lit`: the one code point this matches, when it is a plain literal (used by the prefilter). */
+  | { kind: 'char'; test: CharTest; lit?: number }
   | { kind: 'assert'; assert: '^' | '$' | 'b' | 'B' }
   | { kind: 'concat'; items: Ast[] }
   | { kind: 'alt'; items: Ast[] }
@@ -41,6 +42,10 @@ export interface Program {
   readonly anchored: boolean
   /** Instructions plus class ranges: what the compiled program costs to keep. */
   readonly size: number
+  /** Every match contains at least one of these strings (absent: unknown). */
+  readonly required?: readonly string[]
+  /** Every match begins with this text (after zero-width assertions), when known. */
+  readonly prefix?: string
   /** Scratch space reused across searches (one search runs at a time). */
   scratch?: Scratch
 }
@@ -113,6 +118,8 @@ const SPACE_RANGES: readonly number[] = normalize([
 function lower(c: number): number {
   return c >= CH_UPPER_A && c <= CH_UPPER_Z ? c + ASCII_CASE_OFFSET : c
 }
+
+const isCaseless = (c: number): boolean => lower(c) === c && !(c >= CH_LOWER_A && c <= CH_LOWER_Z)
 
 type Atom =
   | { readonly code: number }
@@ -225,6 +232,12 @@ export function compileRegex(source: string): Program {
 
   const literal = (code: number): CharTest =>
     ignoreCase ? (c) => c === code || lower(c) === lower(code) : (c) => c === code
+  /** A literal char node; under (?i) only a character without case stays a plain literal. */
+  const literalNode = (code: number): Ast => ({
+    kind: 'char',
+    test: literal(code),
+    ...(!ignoreCase || isCaseless(code) ? { lit: code } : {}),
+  })
 
   /** Reads one code point of the pattern. */
   const readCodePoint = (): number => {
@@ -314,7 +327,9 @@ export function compileRegex(source: string): Program {
       case '\\': {
         const atom = parseEscape(false)
         if ('assert' in atom) return { kind: 'assert', assert: atom.assert }
-        return { kind: 'char', test: 'code' in atom ? literal(atom.code) : rangeTest(atom.ranges) }
+        return 'code' in atom
+          ? literalNode(atom.code)
+          : { kind: 'char', test: rangeTest(atom.ranges) }
       }
       case '*':
       case '+':
@@ -327,7 +342,7 @@ export function compileRegex(source: string): Program {
       case '}':
         return fail(`Escape "${ch}" to match it literally (\\${ch})`)
       default:
-        return { kind: 'char', test: literal(readCodePoint()) }
+        return literalNode(readCodePoint())
     }
   }
 
@@ -505,7 +520,86 @@ export function compileRegex(source: string): Program {
 
   gen(ast)
   emit({ op: 'match' })
-  return { insts, anchored: anchoredAtStart(ast), size: insts.length + rangeCount }
+  const required = requiredLiterals(ast)
+  const prefix = literalPrefix(ast)
+  return {
+    insts,
+    anchored: anchoredAtStart(ast),
+    size: insts.length + rangeCount,
+    ...(required === undefined ? {} : { required }),
+    ...(prefix === '' ? {} : { prefix }),
+  }
+}
+
+/** Most alternatives the prefilter checks for. */
+const MAX_REQUIRED = 8
+
+/** Strings of which every match contains at least one (undefined: none known). */
+function requiredLiterals(node: Ast): string[] | undefined {
+  switch (node.kind) {
+    case 'char':
+      return node.lit === undefined ? undefined : [String.fromCodePoint(node.lit)]
+    case 'repeat':
+      return node.min > 0 ? requiredLiterals(node.item) : undefined
+    case 'alt': {
+      const all = new Set<string>()
+      for (const item of node.items) {
+        const found = requiredLiterals(item)
+        if (found === undefined) return undefined
+        for (const text of found) all.add(text)
+      }
+      return all.size <= MAX_REQUIRED ? [...all] : undefined
+    }
+    case 'concat': {
+      // Runs of literals (across nested groups) and each other item's set are
+      // candidates; the best has the longest shortest string.
+      let best: string[] | undefined
+      const consider = (set: string[] | undefined): void => {
+        if (set !== undefined && (best === undefined || score(set) > score(best))) best = set
+      }
+      let run = ''
+      const walk = (items: readonly Ast[]): void => {
+        for (const item of items) {
+          if (item.kind === 'concat') walk(item.items)
+          else if (item.kind === 'char' && item.lit !== undefined)
+            run += String.fromCodePoint(item.lit)
+          else {
+            if (run !== '') consider([run])
+            run = ''
+            consider(requiredLiterals(item))
+          }
+        }
+      }
+      walk(node.items)
+      if (run !== '') consider([run])
+      return best
+    }
+    case 'assert':
+    case 'empty':
+    default:
+      return undefined
+  }
+}
+
+/** How selective a required set is: its shortest string, fewer alternatives breaking ties. */
+function score(set: readonly string[]): number {
+  return Math.min(...set.map((text) => text.length)) * MAX_REQUIRED * 2 - set.length
+}
+
+/** The literal text every match begins with, after any leading assertions. */
+function literalPrefix(node: Ast): string {
+  let text = ''
+  const walk = (item: Ast): boolean => {
+    if (item.kind === 'concat') return item.items.every(walk)
+    if (item.kind === 'assert' && text === '') return true
+    if (item.kind === 'char' && item.lit !== undefined) {
+      text += String.fromCodePoint(item.lit)
+      return true
+    }
+    return false
+  }
+  walk(node)
+  return text
 }
 
 /** Whether every match of `node` must begin at the start of the text. */
@@ -560,7 +654,21 @@ function sizeOf(node: Ast): number {
  * work of a search is accounted as it happens.
  */
 export function searchRegex(program: Program, text: string, charge: (n: number) => void): boolean {
-  const { insts, anchored } = program
+  const { insts, anchored, required, prefix } = program
+  // A text containing none of the required strings cannot match (an anchored
+  // search stops within a few characters anyway, so it skips this).
+  if (required !== undefined && !anchored && text.length >= PREFILTER_MIN_TEXT) {
+    let found = false
+    for (const needle of required) {
+      const index = text.indexOf(needle)
+      charge(searchCost(index < 0 ? text.length : index + needle.length, needle.length))
+      if (index >= 0) {
+        found = true
+        break
+      }
+    }
+    if (!found) return false
+  }
   const n = insts.length
   program.scratch ??= {
     current: new Int32Array(n),
@@ -614,6 +722,18 @@ export function searchRegex(program: Program, text: string, charge: (n: number) 
     // Matching steps over code points, so a character outside the BMP is one
     // character (as in JavaScript's `u` mode).
     for (let at = 0; ;) {
+      // With no thread under way and every match beginning with `prefix`, the
+      // next match can only start where `prefix` next occurs: jump there.
+      if (currentCount === 0 && prefix !== undefined && !anchored && at > 0) {
+        const index = text.indexOf(prefix, at)
+        charge(searchCost((index < 0 ? text.length : index + prefix.length) - at, prefix.length))
+        if (index < 0) return false
+        if (index > at) {
+          // Marks from the old position must not hide states at the new one.
+          at = index
+          generation = ++scratch.generation
+        }
+      }
       // Restart the search at every position (unanchored match). `seen` still
       // holds this generation's marks from building `current`, so the start
       // thread is not added twice. An anchored pattern starts only at 0.
@@ -644,6 +764,15 @@ export function searchRegex(program: Program, text: string, charge: (n: number) 
     scratch.current = current
     scratch.next = next
   }
+}
+
+/** Texts shorter than this skip the prefilter (it would not pay off). */
+const PREFILTER_MIN_TEXT = 32
+
+/** Steps for scanning `scanned` characters for a `length`-character string, as for the text built-ins. */
+function searchCost(scanned: number, length: number): number {
+  // oxlint-disable-next-line no-magic-numbers -- n/64 + n*m/512, the text built-ins' rate
+  return 1 + (scanned >>> 6) + ((scanned * length) >>> 9)
 }
 
 function assertion(kind: '^' | '$' | 'b' | 'B', text: string, at: number): boolean {

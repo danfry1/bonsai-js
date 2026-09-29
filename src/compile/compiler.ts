@@ -263,7 +263,13 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
     if (names.length === 1 && (base.type === 'It' || base.type === 'Local')) {
       const slot = (base.type === 'It' ? scope.it : scope.locals.get(base.name)) as number
       const name = names[0]
-      return sync((s) => readMember(s.locals[slot], name, s, node))
+      // `.field` in a lambda over a list of plain objects: read inline.
+      return sync((s) => {
+        const o = s.locals[slot] as { constructor?: unknown } | null | undefined
+        if (o?.constructor === Object)
+          return Object.hasOwn(o, name) ? ((o as Record<string, unknown>)[name] ?? null) : null
+        return readMember(o, name, s, node)
+      })
     }
     const object = compile(base, scope)
     if (names.length === 1) {
