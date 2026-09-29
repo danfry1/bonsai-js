@@ -1,15 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { BonsaiError, bonsai, fn, t } from '../src/index.js'
+import { bonsai, fn, t } from '../src/index.js'
+import { outcome } from './helpers.js'
 import { createLanguageService } from '../src/service/index.js'
-
-const outcome = (f: () => unknown): unknown => {
-  try {
-    return { value: f() }
-  } catch (error) {
-    expect(error).toBeInstanceOf(BonsaiError)
-    return { code: (error as BonsaiError).code }
-  }
-}
 
 describe('context that does not match its declared types', () => {
   const env = bonsai({ variables: { s: t.string(), d: t.timestamp(), xs: t.list(t.string()) } })

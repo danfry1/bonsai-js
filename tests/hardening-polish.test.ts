@@ -1,15 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { bonsai, fn, formatType, print, t, type Node } from '../src/index.js'
+import { codeOf } from './helpers.js'
 import { createLanguageService } from '../src/service/index.js'
-
-const codeOf = (run: () => unknown): string | undefined => {
-  try {
-    run()
-    return undefined
-  } catch (error) {
-    return (error as { code?: string }).code ?? (error as Error).constructor.name
-  }
-}
 
 describe('blocked names are never callable', () => {
   it.each(['constructor(1)', 'x.prototype()', '__proto__(1)', 'x?.constructor()'])(

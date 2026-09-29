@@ -1,25 +1,7 @@
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 import { BonsaiError, bonsai, fn, t } from '../src/index.js'
-
-/** The value, or the error code, of an evaluation. Anything but a BonsaiError fails the test. */
-function outcome(f: () => unknown): unknown {
-  try {
-    return { value: f() }
-  } catch (error) {
-    expect(error).toBeInstanceOf(BonsaiError)
-    return { code: (error as BonsaiError).code }
-  }
-}
-
-async function outcomeAsync(f: () => Promise<unknown>): Promise<unknown> {
-  try {
-    return { value: await f() }
-  } catch (error) {
-    expect(error).toBeInstanceOf(BonsaiError)
-    return { code: (error as BonsaiError).code }
-  }
-}
+import { minimalSteps, outcome, outcomeAsync, run } from './helpers.js'
 
 /** "value", or the code of a Bonsai error: a trap may or may not be reached, but nothing raw escapes. */
 function settled(f: () => unknown): string {
@@ -30,26 +12,6 @@ function settled(f: () => unknown): string {
 }
 
 const env = bonsai()
-const run = (source: string, ctx: Record<string, unknown> = {}, maxSteps?: number): unknown =>
-  outcome(() => env.evaluateSync(source, ctx, maxSteps === undefined ? undefined : { maxSteps }))
-
-/** The smallest step budget with which `source` completes. */
-function minimalSteps(
-  e: ReturnType<typeof bonsai>,
-  source: string,
-  ctx: Record<string, unknown>,
-): number {
-  let low = 1
-  let high = 10_000_000
-  while (low < high) {
-    const mid = Math.floor((low + high) / 2)
-    const result = outcome(() => e.evaluateSync(source, ctx, { maxSteps: mid }))
-    if ((result as { code?: string }).code === 'STEP_LIMIT') low = mid + 1
-    else high = mid
-  }
-  return low
-}
-
 describe('compiled patterns are always paid for', () => {
   it('charges a pattern by its compiled size, not its length', () => {
     // 14 characters that compile to about 5000 instructions.

@@ -1,15 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { bonsai } from '../src/index.js'
+import { codeOf } from './helpers.js'
 
 const env = bonsai()
-const code = (f: () => unknown): string | undefined => {
-  try {
-    f()
-  } catch (error) {
-    return (error as { code?: string }).code
-  }
-  return undefined
-}
 
 describe('sandbox', () => {
   it('blocks prototype navigation in every syntactic position', () => {
@@ -21,10 +14,10 @@ describe('sandbox', () => {
       '{ constructor: 1 }',
       'let constructor = 1; constructor',
     ]) {
-      expect(['SYNTAX', 'CHECK']).toContain(code(() => env.evaluateSync(source, { x: {} })))
+      expect(['SYNTAX', 'CHECK']).toContain(codeOf(() => env.evaluateSync(source, { x: {} })))
     }
     for (const source of ['x["__proto__"]', 'x["constru" + "ctor"]', '{ [k]: 1 }']) {
-      expect(code(() => env.evaluateSync(source, { x: {}, k: '__proto__' }))).toBe(
+      expect(codeOf(() => env.evaluateSync(source, { x: {}, k: '__proto__' }))).toBe(
         'BLOCKED_PROPERTY',
       )
     }
@@ -58,10 +51,10 @@ describe('sandbox', () => {
       },
       obj: { trim: () => ((called = true), 'x') },
     }
-    expect(code(() => env.evaluateSync('evil()', ctx))).toBe('CHECK')
+    expect(codeOf(() => env.evaluateSync('evil()', ctx))).toBe('CHECK')
     expect(env.evaluateSync('obj.trim', ctx)).toBeTypeOf('function')
-    expect(code(() => env.evaluateSync('obj.trim()', ctx))).toBe('NO_OVERLOAD')
-    expect(code(() => env.evaluateSync('[1].map(evil)', ctx))).toBe('CHECK')
+    expect(codeOf(() => env.evaluateSync('obj.trim()', ctx))).toBe('NO_OVERLOAD')
+    expect(codeOf(() => env.evaluateSync('[1].map(evil)', ctx))).toBe('CHECK')
     expect(called).toBe(false)
   })
 

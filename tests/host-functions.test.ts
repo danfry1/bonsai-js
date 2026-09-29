@@ -3,16 +3,7 @@
 // errors, and context validation (validateContext) for every Type kind.
 import { describe, expect, it } from 'vitest'
 import { BonsaiError, Duration, bonsai, fn, t, withContext, type Type } from '../src/index.js'
-
-function code(run: () => unknown): string {
-  try {
-    run()
-  } catch (error) {
-    if (error instanceof BonsaiError) return error.code
-    throw error
-  }
-  return 'OK'
-}
+import { codeOf } from './helpers.js'
 
 /** An environment with one host function `f` that accepts `type` and echoes a marker. */
 function accepting(type: Type, limits: Parameters<typeof bonsai>[0] = {}) {
@@ -68,7 +59,7 @@ describe('host argument validation', () => {
       for (const value of good) expect(env.evaluateSync('f(v)', { v: value }), name).toBe(true)
       for (const value of bad) {
         expect(
-          code(() => env.evaluateSync('f(v)', { v: value })),
+          codeOf(() => env.evaluateSync('f(v)', { v: value })),
           `${name}: ${String(value)}`,
         ).toMatch(/^(?:NO_OVERLOAD|NULL_RECEIVER)$/u)
       }
@@ -84,17 +75,17 @@ describe('host argument validation', () => {
     const deep = t.list(t.list(t.list(t.number())))
     const env = accepting(deep, { limits: { maxValueDepth: 2 } })
     expect(env.evaluateSync('f(v)', { v: [[]] })).toBe(true)
-    expect(code(() => env.evaluateSync('f(v)', { v: [[[1]]] }))).toBe('NO_OVERLOAD')
+    expect(codeOf(() => env.evaluateSync('f(v)', { v: [[[1]]] }))).toBe('NO_OVERLOAD')
   })
 
   it('charges steps for validating large arguments', () => {
     const env = accepting(t.list(t.number()), { limits: { maxSteps: 100 } })
-    expect(code(() => env.evaluateSync('f(v)', { v: Array.from({ length: 500 }, () => 1) }))).toBe(
-      'STEP_LIMIT',
-    )
+    expect(
+      codeOf(() => env.evaluateSync('f(v)', { v: Array.from({ length: 500 }, () => 1) })),
+    ).toBe('STEP_LIMIT')
     const maps = accepting(t.record(t.number()), { limits: { maxSteps: 100 } })
     const wide = Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`k${i}`, i]))
-    expect(code(() => maps.evaluateSync('f(v)', { v: wide }))).toBe('STEP_LIMIT')
+    expect(codeOf(() => maps.evaluateSync('f(v)', { v: wide }))).toBe('STEP_LIMIT')
   })
 
   it('names the actual kinds in NO_OVERLOAD messages', () => {
@@ -121,8 +112,8 @@ describe('host results', () => {
   })
 
   it('rejects results that break the declared type with HOST_CONTRACT', () => {
-    expect(code(() => returning(t.number(), '1').evaluateSync('g()'))).toBe('HOST_CONTRACT')
-    expect(code(() => returning(t.string(), undefined).evaluateSync('g()'))).toBe('HOST_CONTRACT')
+    expect(codeOf(() => returning(t.number(), '1').evaluateSync('g()'))).toBe('HOST_CONTRACT')
+    expect(codeOf(() => returning(t.string(), undefined).evaluateSync('g()'))).toBe('HOST_CONTRACT')
     expect(() => returning(t.boolean(), 1).evaluateSync('g()')).toThrow(
       /g\(\) returned a number, which does not match its declared type boolean/u,
     )
@@ -196,7 +187,7 @@ describe('host parameters', () => {
     expect(env.evaluateSync('total()')).toBe(0)
     expect(env.evaluateSync('total(1, 2, 3)')).toBe(6)
     expect(env.evaluateSync('total(...xs)', { xs: [4, 5] })).toBe(9)
-    expect(code(() => env.evaluateSync('total(...xs)', { xs: [1, 'a'] }))).toBe('NO_OVERLOAD')
+    expect(codeOf(() => env.evaluateSync('total(...xs)', { xs: [1, 'a'] }))).toBe('NO_OVERLOAD')
     expect(env.describeFunction('total')?.signatures[0]?.rest).toEqual(t.number())
   })
 
@@ -239,7 +230,7 @@ describe('host parameters', () => {
       },
     })
     await expect(env.evaluate('userId()', { user: { id: 'u1' } })).resolves.toBe('u1')
-    expect(code(() => env.evaluateSync('userId()', { user: { id: 'u1' } }))).toBe('ASYNC_IN_SYNC')
+    expect(codeOf(() => env.evaluateSync('userId()', { user: { id: 'u1' } }))).toBe('ASYNC_IN_SYNC')
   })
 })
 

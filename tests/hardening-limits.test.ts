@@ -1,30 +1,9 @@
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
-import { BonsaiError, bonsai, fn, t } from '../src/index.js'
-
-/** The value, or the error code, of an evaluation. Anything but a BonsaiError fails the test. */
-function outcome(f: () => unknown): unknown {
-  try {
-    return { value: f() }
-  } catch (error) {
-    expect(error).toBeInstanceOf(BonsaiError)
-    return { code: (error as BonsaiError).code }
-  }
-}
-
-async function outcomeAsync(f: () => Promise<unknown>): Promise<unknown> {
-  try {
-    return { value: await f() }
-  } catch (error) {
-    expect(error).toBeInstanceOf(BonsaiError)
-    return { code: (error as BonsaiError).code }
-  }
-}
+import { bonsai, fn, t } from '../src/index.js'
+import { minimalSteps, outcome, outcomeAsync, run } from './helpers.js'
 
 const env = bonsai()
-const run = (source: string, ctx: Record<string, unknown> = {}, maxSteps?: number): unknown =>
-  outcome(() => env.evaluateSync(source, ctx, maxSteps === undefined ? undefined : { maxSteps }))
-
 /** Wall time of `f` in milliseconds. */
 function timed(f: () => void): number {
   const start = performance.now()
@@ -36,23 +15,6 @@ const ASCII_MAX = 0x7f
 
 // Generous bounds: the point is minutes-long work is now impossible, not a precise budget.
 const QUICK_MS = 1500
-
-/** The smallest step budget with which `source` completes. */
-function minimalSteps(
-  e: ReturnType<typeof bonsai>,
-  source: string,
-  ctx: Record<string, unknown>,
-): number {
-  let low = 1
-  let high = 10_000_000
-  while (low < high) {
-    const mid = Math.floor((low + high) / 2)
-    const result = outcome(() => e.evaluateSync(source, ctx, { maxSteps: mid }))
-    if ((result as { code?: string }).code === 'STEP_LIMIT') low = mid + 1
-    else high = mid
-  }
-  return low
-}
 
 /** `n` distinct non-ASCII characters, for patterns with large classes. */
 function distinct(n: number): string {

@@ -1,29 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { BonsaiError, bonsai, fn, t } from '../src/index.js'
-
-/** The value, or the error code, of an evaluation. Anything but a BonsaiError fails the test. */
-function outcome(f: () => unknown): unknown {
-  try {
-    return { value: f() }
-  } catch (error) {
-    expect(error).toBeInstanceOf(BonsaiError)
-    return { code: (error as BonsaiError).code }
-  }
-}
-
-async function outcomeAsync(f: () => Promise<unknown>): Promise<unknown> {
-  try {
-    return { value: await f() }
-  } catch (error) {
-    expect(error).toBeInstanceOf(BonsaiError)
-    return { code: (error as BonsaiError).code }
-  }
-}
+import { bonsai, fn, t } from '../src/index.js'
+import { outcome, outcomeAsync, run } from './helpers.js'
 
 const env = bonsai()
-const run = (source: string, ctx: Record<string, unknown> = {}, maxSteps?: number): unknown =>
-  outcome(() => env.evaluateSync(source, ctx, maxSteps === undefined ? undefined : { maxSteps }))
-
 describe('text an expression produces is charged by its length', () => {
   it('stops building long strings at the step limit, holding little memory', () => {
     // Each iteration builds (and, by indexing, flattens) a new 100,000-character string.
