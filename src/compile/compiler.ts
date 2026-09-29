@@ -364,12 +364,18 @@ export function compileProgram(analysis: Analysis, mode: 'sync' | 'async'): Comp
         break
     }
 
-    if (!anyAsync) {
-      const fast = binaryFast(op, l, r, at)
-      if (fast !== undefined) return sync(fast)
-    }
-    const combine = binaryCombiner(op, at)
-    return strict2(left, right, combine)
+    if (!anyAsync) return sync(binaryOp(op, l, r, at))
+    // Rare: the operands are awaited, then combined by the same closure.
+    return asyncCode(async (s) => {
+      const a = await l(s)
+      const b = await r(s)
+      return binaryOp(
+        op,
+        () => a,
+        () => b,
+        at,
+      )(s)
+    })
   }
 
   function compileList(items: readonly (Node | SpreadNode)[], scope: Scope, at: Span): Code {
@@ -984,8 +990,11 @@ function sizeOf(node: Node): number {
   return size
 }
 
-/** Single-closure versions of the hottest operators (sync only). */
-function binaryFast(op: BinaryNode['operator'], l: Fn, r: Fn, at: Span): Fn | undefined {
+/**
+ * One closure per strict operator, reading both operands itself: a shared
+ * combinator would be a megamorphic call site (about 2x slower arithmetic).
+ */
+function binaryOp(op: BinaryNode['operator'], l: Fn, r: Fn, at: Span): Fn {
   switch (op) {
     case '==':
       return (s) => {
@@ -1061,86 +1070,22 @@ function binaryFast(op: BinaryNode['operator'], l: Fn, r: Fn, at: Span): Fn | un
         }
         return multiply(a, b, s, at)
       }
-    case '%':
-    case '&&':
-    case '**':
     case '/':
-    case '??':
-    case 'in':
-    case 'not in':
-    case '||':
-    default:
-      return undefined
-  }
-}
-
-function binaryCombiner(
-  op: BinaryNode['operator'],
-  at: Span,
-): (s: State, a: unknown, b: unknown) => unknown {
-  switch (op) {
-    case '==':
-      return (s, a, b) => isEqual(a, b, s)
-    case '!=':
-      return (s, a, b) => !isEqual(a, b, s)
-    case '<':
-      return (s, a, b) => {
-        if (typeof a === 'number' && typeof b === 'number') return a < b
-        const r = order(a, b, s, at)
-        return r !== undefined && r < 0
-      }
-    case '<=':
-      return (s, a, b) => {
-        if (typeof a === 'number' && typeof b === 'number') return a <= b
-        const r = order(a, b, s, at)
-        return r !== undefined && r <= 0
-      }
-    case '>':
-      return (s, a, b) => {
-        if (typeof a === 'number' && typeof b === 'number') return a > b
-        const r = order(a, b, s, at)
-        return r !== undefined && r > 0
-      }
-    case '>=':
-      return (s, a, b) => {
-        if (typeof a === 'number' && typeof b === 'number') return a >= b
-        const r = order(a, b, s, at)
-        return r !== undefined && r >= 0
-      }
-    case 'in':
-      return (s, a, b) => contains(b, a, s, at)
-    case 'not in':
-      return (s, a, b) => !contains(b, a, s, at)
-    case '+':
-      return (s, a, b) => {
-        if (typeof a === 'number' && typeof b === 'number') {
-          const r = a + b
-          if (Number.isFinite(r)) return r
-        }
-        return add(a, b, s, at)
-      }
-    case '-':
-      return (s, a, b) => {
-        if (typeof a === 'number' && typeof b === 'number') {
-          const r = a - b
-          if (Number.isFinite(r)) return r
-        }
-        return subtract(a, b, s, at)
-      }
-    case '*':
-      return (s, a, b) => {
-        if (typeof a === 'number' && typeof b === 'number') {
-          const r = a * b
-          if (Number.isFinite(r)) return r
-        }
-        return multiply(a, b, s, at)
-      }
-    case '/':
-      return (s, a, b) => divide(a, b, s, at)
+      return (s) => divide(l(s), r(s), s, at)
     case '%':
-      return (s, a, b) => remainder(a, b, s, at)
+      return (s) => remainder(l(s), r(s), s, at)
     case '**':
-      return (s, a, b) => power(a, b, s, at)
+      return (s) => power(l(s), r(s), s, at)
+    case 'in':
+      return (s) => {
+        const a = l(s)
+        return contains(r(s), a, s, at)
+      }
+    case 'not in':
+      return (s) => {
+        const a = l(s)
+        return !contains(r(s), a, s, at)
+      }
     case '&&':
     case '||':
     case '??':
