@@ -38,6 +38,7 @@ import {
   isTimestamp,
   kindOf,
   order,
+  SCAN_SHIFT,
   sortOrder,
   timeOf,
   toText,
@@ -56,8 +57,6 @@ import {
   type Lambda,
 } from './define.js'
 
-/** String work charges one extra step per 2^6 = 64 characters. */
-const CHARS_PER_STEP_SHIFT = 6
 const MAX_ROUND_DIGITS = 15
 const MAX_FIXED_DIGITS = 100
 const MONTHS_PER_YEAR = 12
@@ -321,7 +320,7 @@ function replaceText(
     from = at + find.length
     if (!all) break
   }
-  site.state.charge(1 + (text.length >>> CHARS_PER_STEP_SHIFT))
+  site.state.charge(1 + (text.length >>> SCAN_SHIFT))
   return out + text.slice(from)
 }
 
@@ -337,7 +336,7 @@ function pad(
   const filler = typeof fill === 'string' ? fill : ' '
   if (target <= text.length || filler === '') return text
   site.state.stringLimit(target, site.span)
-  site.state.charge(1 + (target >>> CHARS_PER_STEP_SHIFT))
+  site.state.charge(1 + (target >>> SCAN_SHIFT))
   return atStart ? text.padStart(target, filler) : text.padEnd(target, filler)
 }
 
@@ -474,7 +473,7 @@ function canonicalKey(value: unknown, site: CallSite, depth: number, seen: Ident
       if (Number.isNaN(value)) return `N${seen.next++}`
       return `d${value === 0 ? 0 : value}`
     case 'string':
-      s.charge(value.length >>> CHARS_PER_STEP_SHIFT)
+      s.charge(value.length >>> SCAN_SHIFT)
       return `s${value.length}:${value}`
     case 'bigint':
       // Bigints compare by value (1n == 1n).
@@ -508,7 +507,7 @@ function canonicalKey(value: unknown, site: CallSite, depth: number, seen: Ident
     // Sorting compares keys: about log2(k) comparisons each, linear in the key length.
     let text = 0
     for (const name of keys) text += name.length
-    s.charge(keys.length + Math.ceil(Math.log2(keys.length + 1)) * (text >>> CHARS_PER_STEP_SHIFT))
+    s.charge(keys.length + Math.ceil(Math.log2(keys.length + 1)) * (text >>> SCAN_SHIFT))
     if (keys.length > 1) keys.sort()
     let key = '{'
     let first = true
@@ -529,7 +528,7 @@ function canonicalKey(value: unknown, site: CallSite, depth: number, seen: Ident
 
 /** A key built at each nesting level copies its children's keys: charge the copy. */
 function charged(key: string, site: CallSite): string {
-  site.state.charge(key.length >>> CHARS_PER_STEP_SHIFT)
+  site.state.charge(key.length >>> SCAN_SHIFT)
   return key
 }
 
@@ -786,7 +785,7 @@ const STRING_FUNCTIONS: FunctionDef[] = [
       const count = nonNegativeInteger(n, 'Count', site)
       const text = s as string
       site.state.stringLimit(text.length * count, site.span)
-      site.state.charge(1 + ((text.length * count) >>> CHARS_PER_STEP_SHIFT))
+      site.state.charge(1 + ((text.length * count) >>> SCAN_SHIFT))
       return text.repeat(count)
     }),
   ]),

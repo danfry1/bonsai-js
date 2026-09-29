@@ -62,8 +62,6 @@ interface Scope {
   readonly it: number | undefined
 }
 
-/** Built-ins charge one extra step per 2^5 = 32 characters of string arguments. */
-const ARGUMENT_COST_SHIFT = 5
 /**
  * Steps charged per host function call unless the function declares its own
  * `cost`. Host calls often do real I/O, so one evaluation cannot make more
@@ -778,7 +776,7 @@ function matches(s: State, overload: Overload, args: unknown[], host: boolean): 
  */
 function chargeArguments(s: State, args: unknown[]): void {
   let cost = 1
-  for (const arg of args) if (typeof arg === 'string') cost += arg.length >>> ARGUMENT_COST_SHIFT
+  for (const arg of args) if (typeof arg === 'string') cost += arg.length >>> TEXT_SHIFT
   s.charge(cost)
 }
 

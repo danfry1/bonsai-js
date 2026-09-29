@@ -8,8 +8,9 @@ export const MS_PER_HOUR = 3_600_000
 export const MS_PER_DAY = 86_400_000
 export const MS_PER_WEEK = 604_800_000
 
-/** Characters scanned per step charged when searching or comparing strings. */
-const SEARCH_CHARS_PER_STEP = 64
+/** Searching, comparing, or scanning text costs one step per 2^6 = 64 characters. */
+export const SCAN_SHIFT = 6
+const SCAN_CHARS = 1 << SCAN_SHIFT
 /**
  * A computed property name longer than KEY_FREE_CHARS costs one step per
  * 2^3 = 8 characters: the engine flattens, hashes, and interns it.
@@ -22,10 +23,10 @@ const KEY_FREE_CHARS = 64
  * interrupted, so the worst case is charged before it runs.
  */
 const SEARCH_COMPARISONS_PER_STEP = 512
-const SEARCH_SHIFT = 6
 /**
  * Producing text costs one step per 2^5 = 32 characters of the result (a
- * concatenation, a template, a built-in's output). Engines join strings
+ * concatenation, a template, a built-in's output), as does passing text to a
+ * built-in. Engines join strings
  * lazily, but a later read flattens the whole string into new memory, so the
  * text an evaluation creates, and so the memory it can hold, is bounded by
  * the budget: at most about 32 million characters at the default.
@@ -393,16 +394,14 @@ export function hasKey(object: unknown, key: unknown, s: State, at: Span): boole
  */
 export function chargeSearch(s: State, text: number, needle: number): void {
   s.charge(
-    1 +
-      Math.ceil(text / SEARCH_CHARS_PER_STEP) +
-      Math.floor((text * needle) / SEARCH_COMPARISONS_PER_STEP),
+    1 + Math.ceil(text / SCAN_CHARS) + Math.floor((text * needle) / SEARCH_COMPARISONS_PER_STEP),
   )
 }
 
 /** Charges comparing two strings (linear in the shorter). */
 function chargeCompare(s: State, a: string, b: string): void {
   const shorter = a.length < b.length ? a.length : b.length
-  if (shorter > SEARCH_CHARS_PER_STEP) s.charge(shorter >>> SEARCH_SHIFT)
+  if (shorter > SCAN_CHARS) s.charge(shorter >>> SCAN_SHIFT)
 }
 
 // === Produced values ===
@@ -486,8 +485,7 @@ function ownValues(map: Readonly<Record<string, unknown>>): unknown[] {
 /** `==`: identical values take the fast path, but equal strings still pay for comparing. */
 export function isEqual(a: unknown, b: unknown, s: State): boolean {
   if (a === b) {
-    if (typeof a === 'string' && a.length > SEARCH_CHARS_PER_STEP)
-      s.charge(a.length >>> SEARCH_SHIFT)
+    if (typeof a === 'string' && a.length > SCAN_CHARS) s.charge(a.length >>> SCAN_SHIFT)
     return true
   }
   return equals(a, b, s)
@@ -592,7 +590,7 @@ export function contains(container: unknown, item: unknown, s: State, at: Span):
     // Comparing with a string element is linear in the shorter string.
     s.charge(
       container.length *
-        (1 + (typeof item === 'string' ? Math.floor(item.length / SEARCH_CHARS_PER_STEP) : 0)),
+        (1 + (typeof item === 'string' ? Math.floor(item.length / SCAN_CHARS) : 0)),
     )
     if (item === null || item === undefined || typeof item !== 'object') {
       // oxlint-disable-next-line typescript/prefer-for-of -- indexing never invokes a host array's own Symbol.iterator
