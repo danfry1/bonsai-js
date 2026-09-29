@@ -1,5 +1,4 @@
 import { BLOCKED_NAMES } from '../syntax/lexer.js'
-import { BonsaiLimitError } from '../errors.js'
 import {
   RegexSyntaxError,
   compileRegex,
@@ -230,10 +229,10 @@ function compiledPattern(pattern: string, site: CallSite): RegexProgram {
 function regexFor(pattern: string, site: CallSite): RegexProgram {
   const s = site.state
   if (pattern.length > s.limits.maxPatternLength) {
-    throw new BonsaiLimitError(
+    throw s.limit(
       'PATTERN_LIMIT',
       `Pattern of length ${pattern.length} exceeds the limit of ${s.limits.maxPatternLength}`,
-      { source: s.source, span: { start: site.span.start, end: site.span.end } },
+      site.span,
     )
   }
   // Compiling reads the pattern (charged first, so a failing pattern pays too)
@@ -472,10 +471,10 @@ function canonicalKey(value: unknown, site: CallSite, depth: number, seen: Ident
       break
   }
   if (depth > s.limits.maxValueDepth) {
-    throw new BonsaiLimitError(
+    throw s.limit(
       'TOO_DEEP',
       `Values nest deeper than ${s.limits.maxValueDepth} (is the data cyclic?)`,
-      { source: s.source, span: { start: site.span.start, end: site.span.end } },
+      site.span,
     )
   }
   s.charge(1)

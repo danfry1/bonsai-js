@@ -1,4 +1,4 @@
-import { BonsaiLimitError, type Span } from '../errors.js'
+import type { Span } from '../errors.js'
 import { BLOCKED_NAMES } from '../syntax/lexer.js'
 import type { State } from './state.js'
 
@@ -465,10 +465,7 @@ export function track(
     return
   }
   if (depth + 1 > s.limits.maxValueDepth) {
-    throw new BonsaiLimitError('TOO_DEEP', `A value nests deeper than ${s.limits.maxValueDepth}`, {
-      source: s.source,
-      span: at === undefined ? undefined : { start: at.start, end: at.end },
-    })
+    throw s.limit('TOO_DEEP', `A value nests deeper than ${s.limits.maxValueDepth}`, at)
   }
   if (nested > 0) s.charge(nested)
   ;(s.shapes ??= new WeakMap()).set(out, (1 + count + nested) * DEPTH_SLOTS + depth + 1)
@@ -502,10 +499,10 @@ export function equals(a: unknown, b: unknown, s: State, depth = 0, at?: Span): 
   }
   if (typeof a !== 'object' || typeof b !== 'object') return false
   if (depth > s.limits.maxValueDepth) {
-    throw new BonsaiLimitError(
+    throw s.limit(
       'TOO_DEEP',
       `Values nest deeper than ${s.limits.maxValueDepth} (is the data cyclic?)`,
-      { source: s.source, span: at === undefined ? undefined : { start: at.start, end: at.end } },
+      at,
     )
   }
   s.charge(1)

@@ -930,7 +930,7 @@ function raceLimits(s: State, promise: PromiseLike<unknown>): Promise<unknown> {
           // The timer is set for the deadline, so it has passed even if the
           // clock reads a hair earlier (timers and performance.now() differ).
           finish(() => {
-            reject(new BonsaiLimitError('TIMEOUT', 'Evaluation timed out', { source: s.source }))
+            reject(s.limit('TIMEOUT', 'Evaluation timed out'))
           })
         },
         Math.min(MAX_TIMER_DELAY, Math.max(0, wait) + 1),

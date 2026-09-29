@@ -112,13 +112,7 @@ export class State {
   /** Slow path of {@link charge}: enforce the step limit, then sample the clock. */
   sample(): void {
     if (this.maxSteps > 0 && this.steps > this.maxSteps) {
-      throw new BonsaiLimitError(
-        'STEP_LIMIT',
-        `Evaluation exceeded the step limit of ${this.maxSteps}`,
-        {
-          source: this.source,
-        },
-      )
+      throw this.limit('STEP_LIMIT', `Evaluation exceeded the step limit of ${this.maxSteps}`)
     }
     this.checkTime()
     this.scheduleSample()
@@ -132,7 +126,7 @@ export class State {
   /** Checks the deadline and abort signal now. */
   checkTime(): void {
     if (this.deadline !== 0 && performance.now() > this.deadline) {
-      throw new BonsaiLimitError('TIMEOUT', 'Evaluation timed out', { source: this.source })
+      throw this.limit('TIMEOUT', 'Evaluation timed out')
     }
     if (this.signal !== undefined && isAborted(this)) throw abortError(this)
   }
@@ -176,22 +170,27 @@ export class State {
 
   stringLimit(length: number, at?: Span): void {
     if (length > this.limits.maxStringLength) {
-      throw new BonsaiLimitError(
+      throw this.limit(
         'STRING_LIMIT',
         `String of length ${length} exceeds the limit of ${this.limits.maxStringLength}`,
-        { source: this.source, span: spanOf(at) },
+        at,
       )
     }
   }
 
   listLimit(length: number, at?: Span): void {
     if (length > this.limits.maxListLength) {
-      throw new BonsaiLimitError(
+      throw this.limit(
         'LIST_LIMIT',
         `List of length ${length} exceeds the limit of ${this.limits.maxListLength}`,
-        { source: this.source, span: spanOf(at) },
+        at,
       )
     }
+  }
+
+  /** A limit error at `at`. Unlike {@link error}, it is not charged: the evaluation is over. */
+  limit(code: ErrorCode, message: string, at?: Span): BonsaiLimitError {
+    return new BonsaiLimitError(code, message, { source: this.source, span: spanOf(at) })
   }
 
   error(code: ErrorCode, message: string, at?: Span, cause?: unknown): BonsaiRuntimeError {
