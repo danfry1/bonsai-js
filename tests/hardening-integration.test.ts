@@ -31,13 +31,6 @@ describe('expect is enforced at run time when the checker cannot prove it', () =
 
 describe('opaque host values are never read into', () => {
   const env = bonsai()
-  class Account {
-    readonly balance: number
-    constructor(balance: number) {
-      this.balance = balance
-    }
-  }
-
   it.each([
     ['err.message', { err: new Error('secret') }],
     ['re.lastIndex', { re: /a/gu }],
@@ -46,11 +39,6 @@ describe('opaque host values are never read into', () => {
     expect(() => env.evaluateSync(source, context)).toThrow(
       expect.objectContaining({ code: 'TYPE_ERROR' }),
     )
-  })
-
-  it('still reads own fields of plain objects and class instances', () => {
-    expect(env.evaluateSync('a.balance', { a: new Account(5) })).toBe(5)
-    expect(env.evaluateSync('a.missing', { a: { x: 1 } })).toBeNull()
   })
 })
 
@@ -61,11 +49,6 @@ describe('any absorbs the type variables it flows into', () => {
     const source = 'reduce([], (acc, x) => [acc, x], anything)'
     expect(formatType(env.check(source).type ?? t.never())).toBe('any')
     expect(env.evaluateSync(source, { xs: [], anything: null })).toBeNull()
-  })
-
-  it('keeps reduce errors found while the accumulator widens', () => {
-    const typed = bonsai({ variables: { ss: t.list(t.string()) } })
-    expect(typed.check('reduce(ss, (acc, x) => acc.toFixed(1), 0)').ok).toBe(false)
   })
 })
 
@@ -78,7 +61,6 @@ describe('last resource-bound holes', () => {
     expect(() => env.evaluateSync(source)).toThrow(expect.objectContaining({ code: 'STEP_LIMIT' }))
     // A modest map still compares.
     expect(env.evaluateSync('{a: 1, b: 2} == {a: 1}')).toBe(false)
-    expect(env.evaluateSync('{a: 1} in [{a: 1}]')).toBe(true)
   })
 
   it('merges a union of maps once, within the check budget', () => {

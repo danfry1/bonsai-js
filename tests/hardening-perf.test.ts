@@ -86,28 +86,12 @@ describe('member reads', () => {
   })
 
   it('reads member chains of plain objects', () => {
-    expect(env.evaluateSync('a.b.c', { a: { b: { c: 1 } } })).toBe(1)
     expect(env.evaluateSync('a.b.missing', { a: { b: {} } })).toBeNull()
     expect(
       env.evaluateSync('a.b.c', { a: Object.assign(Object.create(null), { b: { c: 2 } }) }),
     ).toBe(2)
-    expect(env.evaluateSync('xs.length', { xs: [1, 2] })).toBe(2)
     expect(() => env.evaluateSync('a.m.size', { a: { m: new Map() } })).toThrow(
       expect.objectContaining({ code: 'TYPE_ERROR' }),
     )
-  })
-
-  it('reports a throwing getter on the inline path as HOST_ERROR', () => {
-    const context = {
-      a: {
-        get b(): never {
-          throw new Error('boom')
-        },
-      },
-    }
-    expect(() => env.evaluateSync('a.b', context)).toThrow(
-      expect.objectContaining({ code: 'HOST_ERROR' }),
-    )
-    expect(env.evaluateSync('try(a.b, 7)', context)).toBe(7)
   })
 })

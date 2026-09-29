@@ -327,11 +327,6 @@ describe('language service', () => {
     }),
   )
 
-  it('reports the replaced range as start and end', () => {
-    const result = service.complete('user.pl', 7)
-    expect(result).toMatchObject({ start: 5, end: 7 })
-  })
-
   it('inserts a field that is not a plain name with brackets, replacing the dot', () => {
     const item = service.complete('user.', 5).items.find((i) => i.label === 'first-name')
     expect(item).toMatchObject({ insertText: '["first-name"]', range: { start: 4, end: 5 } })

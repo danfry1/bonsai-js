@@ -115,7 +115,7 @@ describe('print', () => {
 
   it('rejects numbers that have no source form', () => {
     expect(() => print({ type: 'Literal', value: Number.NaN, start: 0, end: 0 })).toThrow(
-      /non-finite/u,
+      expect.objectContaining({ name: 'TypeError', message: expect.stringMatching(/non-finite/u) }),
     )
   })
 })

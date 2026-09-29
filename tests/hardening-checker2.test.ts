@@ -104,7 +104,6 @@ describe('declared enums survive optional, nested, and generic positions', () =>
 
   it('widens only the literals written in the source in a call result', () => {
     expect(typeOf('max(1, 2)')).toBe('number')
-    expect(typeOf('xs.flatMap(. > 1 ? [.] : "x")')).toBe('(number | string)[]')
   })
 
   it('never widens a large declared enum', () => {

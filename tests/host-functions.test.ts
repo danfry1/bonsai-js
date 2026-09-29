@@ -255,7 +255,7 @@ describe('host declarations', () => {
       required: 1,
       run: () => 1,
     } as never
-    expect(() => bonsai({ functions: { f: optionalNumber } })).toThrow(/t\.optional/u)
+    expect(() => bonsai({ functions: { f: optionalNumber } })).toThrow(/declare it as t\.optional/u)
   })
 
   it('rejects a name defined twice across libraries and functions', () => {

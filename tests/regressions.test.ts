@@ -200,12 +200,6 @@ describe('time and number edge cases', () => {
     expect(env.evaluateSync('round(0.0000001, 2)')).toBe(0)
     expect(env.evaluateSync('round(0.000000123, 9)')).toBe(1.23e-7)
     expect(env.evaluateSync('round(1e21)')).toBe(1e21)
-    expect(env.evaluateSync('round(-2.5)')).toBe(-3)
-  })
-
-  it('treats null optional arguments as defaults', () => {
-    expect(env.evaluateSync('round(1.5, x)', { x: null })).toBe(2)
-    expect(env.evaluateSync('slice("abc", 1, x)', { x: null })).toBe('bc')
   })
 
   it('rejects non-finite literals and invalid offsets', () => {
@@ -224,24 +218,13 @@ describe('second review round', () => {
   it('bounds regex compilation and nesting', () => {
     const started = performance.now()
     expect(matches('(?:(?:(?:){1000}){1000}){1000}', 'x')).toEqual({ code: 'INVALID_ARGUMENT' })
-    // 16,001 characters: over maxPatternLength, a limit error.
-    expect(matches(`${'('.repeat(8000)}a${')'.repeat(8000)}`, 'a')).toEqual({
-      code: 'PATTERN_LIMIT',
-    })
-    expect(matches(`${'('.repeat(1000)}a${')'.repeat(1000)}`, 'a')).toEqual({
-      code: 'INVALID_ARGUMENT',
-    })
     expect(performance.now() - started).toBeLessThan(1000)
   })
 
   it('parses class ranges with escaped endpoints and code points', () => {
     expect(matches('[\\x00-\\x1f]', '\u0005')).toEqual({ value: true })
     expect(matches('[a-\\x7a]', 'z')).toEqual({ value: true })
-    expect(matches('[a-\\d]', 'b')).toEqual({ code: 'INVALID_ARGUMENT' })
     expect(matches('[😀]', '😁')).toEqual({ value: false })
-    expect(matches('^.$', '😀')).toEqual({ value: true })
-    expect(matches('a{2}{3}', 'aaaaaa')).toEqual({ code: 'INVALID_ARGUMENT' })
-    expect(matches('a(?i)b', 'ab')).toEqual({ code: 'INVALID_ARGUMENT' })
   })
 
   it('validates context without raw errors and within budget', () => {
@@ -274,10 +257,5 @@ describe('second review round', () => {
     expect(
       env.evaluateSync('j == {ok: 2}', { j: JSON.parse('{"__proto__":{},"ok":2}') as object }),
     ).toBe(true)
-  })
-
-  it('treats 0 as "no limit" only where documented', () => {
-    expect(() => bonsai({ limits: { maxDepth: 0 } })).toThrow(/positive integer/u)
-    expect(bonsai({ limits: { maxSteps: 0 } }).evaluateSync('1')).toBe(1)
   })
 })

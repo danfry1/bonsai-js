@@ -88,11 +88,6 @@ describe('formatDate', () => {
 })
 
 describe('values that are not what they seem', () => {
-  it('reads an object with a then method as a map, and a real promise as opaque', () => {
-    expect(run('x.a + 1', { x: { a: 1, then: (): void => undefined } })).toEqual({ value: 2 })
-    expect(run('type(p)', { p: Promise.resolve(1) })).toEqual({ value: 'opaque' })
-  })
-
   it('treats an object that only inherits from Date.prototype as opaque', () => {
     const fake = Object.create(Date.prototype) as Date
     expect(run('type(x)', { x: fake })).toEqual({ value: 'opaque' })

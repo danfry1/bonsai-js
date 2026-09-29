@@ -132,7 +132,6 @@ describe('print() rejects trees that would not reparse to the same tree', () => 
       'a lambda outside a call',
       { type: 'Lambda', params: ['x'], implicit: false, body: lit(1), ...at },
     ],
-    ['a non-finite number', { type: 'Literal', value: Number.NaN, ...at }],
   ])('%s', (_, tree) => {
     expect(() => print(tree as Node)).toThrow(TypeError)
   })

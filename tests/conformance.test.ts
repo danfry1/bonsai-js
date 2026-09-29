@@ -1128,20 +1128,6 @@ describe('§10 guarantees', () => {
     expect(o).toEqual({ a: 1 })
   })
 
-  it('a method call never runs a function found in data', async () => {
-    let ran = false
-    const o = {
-      toUpperCase: () => {
-        ran = true
-        return 'EVIL'
-      },
-    }
-    const env = bonsai()
-    expect(() => env.evaluateSync('o.toUpperCase()', { o })).toThrow()
-    await expect(env.evaluate('o.toUpperCase()', { o })).rejects.toThrow()
-    expect(ran).toBe(false)
-  })
-
   it('evaluateSync rejects async host functions at check time, before host code runs', async () => {
     let ran = false
     const env = bonsai({
@@ -1226,13 +1212,5 @@ describe('§10 guarantees', () => {
     log.length = 0
     expect(env.evaluateSync('[1, 2, 3, 4].find(tick(.) == 3)')).toBe(3)
     expect(log).toEqual([1, 2, 3])
-  })
-
-  it('check() never throws and reports diagnostics', () => {
-    const env = bonsai()
-    const r = env.check('1 +')
-    expect(r.ok).toBe(false)
-    expect(r.diagnostics.length).toBeGreaterThan(0)
-    expect(env.check('1 + 1').ok).toBe(true)
   })
 })

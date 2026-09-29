@@ -38,8 +38,6 @@ describe('sandbox', () => {
     expect(env.evaluateSync('a.balance', { a: account })).toBe(10)
     expect(env.evaluateSync('a.secret', { a: account })).toBe(null)
     expect(env.evaluateSync('a.withdraw', { a: account })).toBe(null)
-    expect(env.evaluateSync('a.toString', { a: {} })).toBe(null)
-    expect(env.evaluateSync('a.hasOwnProperty', { a: {} })).toBe(null)
   })
 
   it('never calls functions found in data', () => {

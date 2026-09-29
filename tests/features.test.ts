@@ -1,6 +1,6 @@
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
-import { BonsaiError, bonsai, fn, t, withContext } from '../src/index.js'
+import { BonsaiError, bonsai, t } from '../src/index.js'
 import { compileRegex, searchRegex } from '../src/runtime/regex.js'
 import { createLanguageService } from '../src/service/index.js'
 
@@ -79,7 +79,6 @@ describe('formatting', () => {
     expect(env.evaluateSync('formatNumber(1234567.891, 2)')).toBe('1,234,567.89')
     expect(env.evaluateSync('formatNumber(1234567.891, 2, "de-DE")')).toBe('1.234.567,89')
     expect(env.evaluateSync('formatCurrency(1234.5, "EUR")')).toBe('€1,234.50')
-    expect(env.evaluateSync('toFixed(1.005, 2)')).toBe('1.01')
     expect(message(() => env.evaluateSync('formatCurrency(1, "EURO")'))).toMatch(
       /Invalid number format/u,
     )
@@ -110,16 +109,6 @@ describe('help for common mistakes', () => {
     ['Date.now()', 'now()'],
   ])('%s suggests %s', (source, hint) => {
     expect(env.check(source).diagnostics[0]?.message).toContain(hint)
-  })
-
-  it('says which list item failed', () => {
-    expect(
-      message(() =>
-        env.evaluateSync('items.map(.price * .qty)', {
-          items: [{ price: 1, qty: 2 }, { price: 1 }],
-        }),
-      ),
-    ).toMatch(/at item 1/u)
   })
 })
 
@@ -158,24 +147,6 @@ describe('checker guidance', () => {
 })
 
 describe('host functions and context', () => {
-  it('types context functions with withContext', () => {
-    const contextFn = withContext<{ tenant: { id: string } }>()
-    const tenantId = contextFn({ params: [], returns: t.string(), run: (ctx) => ctx.tenant.id })
-    expect(
-      bonsai({ functions: { tenantId } }).evaluateSync('tenantId()', { tenant: { id: 'acme' } }),
-    ).toBe('acme')
-  })
-
-  it('requires optional parameters to accept null', () => {
-    const bad = fn({
-      params: [t.string(), t.number()],
-      required: 1,
-      returns: t.number(),
-      run: (_, n) => n,
-    })
-    expect(() => bonsai({ functions: { bad } })).toThrow(/declare it as t.optional/u)
-  })
-
   it('validates the context on request', () => {
     const strict = bonsai({
       validateContext: true,

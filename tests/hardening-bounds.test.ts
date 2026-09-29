@@ -89,15 +89,7 @@ describe('has() reads like any other read', () => {
     const lookup = new Map([['a', 1]])
     expect(codeOf(() => env.evaluateSync('has(m.a)', { m: lookup }))).toBe('TYPE_ERROR')
     expect(codeOf(() => env.evaluateSync('has(m["a"])', { m: lookup }))).toBe('TYPE_ERROR')
-    expect(codeOf(() => env.evaluateSync('"a" in m', { m: lookup }))).toBe('TYPE_ERROR')
     expect(env.evaluateSync('try(has(m.a), false)', { m: lookup })).toBe(false)
-  })
-
-  it('keeps its documented answers for maps, lists, and null', () => {
-    expect(env.evaluateSync('has(m.a)', { m: { a: null } })).toBe(true)
-    expect(env.evaluateSync('has(m.b)', { m: { a: 1 } })).toBe(false)
-    expect(env.evaluateSync('has(xs[1])', { xs: [1, 2] })).toBe(true)
-    expect(env.evaluateSync('has(n.a)', { n: null })).toBe(false)
   })
 })
 

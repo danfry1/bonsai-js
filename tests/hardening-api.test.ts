@@ -61,7 +61,12 @@ describe('option validation', () => {
   it('uses TypeError for a wrong type and RangeError for an out-of-range number', () => {
     expect(() => bonsai({ limits: { maxSteps: '10' } } as never)).toThrow(TypeError)
     expect(() => bonsai({ limits: { maxSteps: -1 } })).toThrow(RangeError)
-    expect(() => bonsai({ limits: { maxDepth: 0 } })).toThrow(RangeError)
+    expect(() => bonsai({ limits: { maxDepth: 0 } })).toThrow(
+      expect.objectContaining({
+        name: 'RangeError',
+        message: expect.stringMatching(/positive integer/u),
+      }),
+    )
     expect(() => bonsai({ limits: { timeout: 1.5 } })).toThrow(RangeError)
     expect(bonsai({ limits: { maxSteps: 0, timeout: 0 } }).evaluateSync('1 + 1')).toBe(2)
   })
