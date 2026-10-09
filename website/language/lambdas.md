@@ -61,13 +61,14 @@ orders.filter(o => o.lines.some(.sku == o.promoSku)).map(.id) // => ["A1"]
 - `.` directly inside an explicit lambda body is an error: use the parameter instead.
 - `.` outside any function argument is an error.
 - A lambda anywhere other than a function argument is a syntax error.
-- A lambda whose parameter must return a boolean (as in `filter`) may return `null`, which counts as `false`. Any other non-boolean result is a type error.
+- A lambda whose parameter must return a boolean (as in `filter`) may return `null`, which counts as `false`, so a boolean field missing from some items filters them out. Any other non-boolean result is a type error: test whether a field is present with `!= null`, not by returning the field itself.
 
 ```bonsai
 .age // error: INVALID_LAMBDA
 users.map(u => .age) // error: INVALID_LAMBDA
 [x => x] // error: SYNTAX
-users.filter(.nickname).length // => 0
+users.filter(.vip).length // => 0
+users.filter(.nickname != null).length // => 0
 users.filter(.age) // error: TYPE_ERROR
 ```
 

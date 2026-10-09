@@ -2,7 +2,7 @@
 
 # Numbers
 
-Arithmetic helpers. A result that is not a finite number (for example `sqrt(-1)`) is a `NON_FINITE` error rather than `NaN`.
+Arithmetic helpers. A result that is not a finite number (for example `sqrt(-1)`) is a `NON_FINITE` error rather than `NaN`. `formatNumber` and `formatCurrency` produce text for display: separators and spacing come from the locale data of the JavaScript runtime (some locales use a non-breaking space, and runtimes may differ), so compare numbers, not formatted text.
 
 Every function can be called as `f(x, ...)` or as a method, `x.f(...)`. In the signatures, `T` and `U` stand for any type, `T[]` is a list, `?` marks an optional parameter, and `(T, number) => boolean` is a lambda parameter.
 

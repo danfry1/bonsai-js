@@ -29,7 +29,7 @@ if (result.status === 'residual') {
 ## Uses
 
 - **Decide early.** A `value` result means the missing data cannot change the outcome (a free user never passes this rule).
-- **Precompute.** Evaluate the per-user part of a rule once, store the residual, and evaluate only the per-request part later.
+- **Precompute.** Evaluate the per-tenant or per-user part of a rule once, keep the result, and evaluate only the per-request part later. A residual does less work than the original program and evaluates faster.
 - **Push filters down.** The residual refers only to the unknown data, so it can be translated to a database query.
 
 ## Results
@@ -44,7 +44,7 @@ The residual is exact: evaluating it with the full data gives the same value or 
 
 ## Bindings
 
-Short primitives (numbers, booleans, `null`, strings up to 200 characters) are written into the residual. Other known values, such as lists, maps, dates, and durations, are kept by reference in `result.bindings` and named in the residual (`order.sku in __known1`). `result.evaluateSync(context)` and `result.evaluate(context)` add the bindings for you. To store a residual, store `source` together with `bindings`.
+Short primitives (numbers, booleans, `null`, strings up to 200 characters) are written into the residual. Other known values, such as lists, maps, dates, and durations, are kept by reference in `result.bindings` and named in the residual (`order.sku in __known1`). `result.evaluateSync(context)` and `result.evaluate(context)` supply the bindings for you; to store a residual instead, see Storing a residual below.
 
 ## Options
 
@@ -63,6 +63,6 @@ Limit errors (steps, time) are thrown from `partial()` rather than guessed. Ever
 - **Host functions** are called only with `callHostFunctions: true`, never when they are async, and functions declared `call: true` only when you also pass `unknown: []`, since they can read variables the expression does not name.
 - **With an explicit `unknown` list**, a variable that is neither in `known` nor listed reads as `null`, as it would in normal evaluation.
 - **`expect` still applies.** A program compiled with `expect` checks a decided `value` against it (a mismatch is a `TYPE_ERROR` result), and its residual checks results the same way.
-- **Context getters run against the merged context.** The residual reads variables from your context plus the bindings, copied property by property (getters are copied, not run). A getter that relies on `this` being your original object (a private field, a `WeakMap` lookup) sees the merged object instead. Host functions declared `call: true` receive your original context as `call.context`, as they do in evaluation.
-- **Storing a residual.** `result.evaluateSync` and `result.evaluate` are the reliable way to run it. If you store `source` and `bindings` and compile them yourself, use a non-strict environment (the binding names are not declared variables) and pass the bindings in the context; inlined values can also make a type error in an untaken branch visible to the checker.
+- **The residual reads your context as it is.** The bindings are compiled into the residual, so evaluating it copies nothing: getters run on your own object, and host functions declared `call: true` receive it as `call.context`, as they do in evaluation.
+- **Storing a residual.** `result.evaluateSync` and `result.evaluate` are the reliable way to run it; keep the result in memory where you can. If you store `source` and `bindings` and compile them yourself, use a non-strict environment (the binding names are not declared variables) and pass the bindings in the context. Bindings are live values: JSON turns a date or a duration into ISO-8601 text, so restore dates with `new Date(text)` (or store bindings in a format that keeps them) before evaluating. Inlined values can also make a type error in an untaken branch visible to the checker.
 

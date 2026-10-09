@@ -50,7 +50,7 @@ const AREAS: Area[] = [
     file: 'numbers',
     title: 'Numbers',
     intro:
-      'Arithmetic helpers. A result that is not a finite number (for example `sqrt(-1)`) is a `NON_FINITE` error rather than `NaN`.',
+      'Arithmetic helpers. A result that is not a finite number (for example `sqrt(-1)`) is a `NON_FINITE` error rather than `NaN`. `formatNumber` and `formatCurrency` produce text for display: separators and spacing come from the locale data of the JavaScript runtime (some locales use a non-breaking space, and runtimes may differ), so compare numbers, not formatted text.',
     names: [
       'round', 'floor', 'ceil', 'trunc', 'abs', 'sqrt', 'clamp', 'toFixed', 'formatNumber',
       'formatCurrency', 'min', 'max', 'sum', 'avg',

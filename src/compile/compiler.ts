@@ -112,6 +112,11 @@ export interface CompileOptions {
    * values in `state.locals` before running.
    */
   readonly locals?: readonly string[]
+  /**
+   * Variables with fixed values (a partial-evaluation residual's bindings).
+   * Reading one returns its value without looking in the context.
+   */
+  readonly constants?: ReadonlyMap<string, unknown>
 }
 
 export function compileProgram(
@@ -175,6 +180,10 @@ export function compileProgram(
       }
       case 'Variable': {
         const name = node.name
+        if (options.constants?.has(name) === true) {
+          const value = options.constants.get(name)
+          return sync(() => value)
+        }
         return sync((s) => {
           const ctx = s.ctx
           if (!Object.hasOwn(ctx, name)) return null
@@ -833,7 +842,7 @@ export function compileProgram(
       try {
         if (def.call === true) {
           controller = new AbortController()
-          const call = Object.freeze({ context: s.hostCtx, signal: controller.signal })
+          const call = Object.freeze({ context: s.ctx, signal: controller.signal })
           result = overload.run([call, ...args], site)
         } else {
           result = overload.run(args, site)
