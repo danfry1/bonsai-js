@@ -186,21 +186,21 @@ describe('host parameters', () => {
     expect(env.describeFunction('total')?.signatures[0]?.rest).toEqual(t.number())
   })
 
-  it('passes the evaluation context to context functions', () => {
+  it('passes the evaluation context to call functions', () => {
     const env = bonsai({
       functions: {
         tenant: fn({
           params: [],
           returns: t.string(),
-          context: true,
-          run: (ctx) => String(ctx.tenant),
+          call: true,
+          run: (call) => String(call.context.tenant),
         }),
         scoped: fn({
           params: [t.optional(t.string())],
           returns: t.string(),
           required: 0,
-          context: true,
-          run: (ctx, suffix) => `${String(ctx.tenant)}${suffix ?? ''}`,
+          call: true,
+          run: (call, suffix) => `${String(call.context.tenant)}${suffix ?? ''}`,
         }),
       },
     })
@@ -209,7 +209,7 @@ describe('host parameters', () => {
     expect(env.evaluateSync('scoped("-eu")', { tenant: 'acme' })).toBe('acme-eu')
   })
 
-  it('supports async context functions typed with withContext', async () => {
+  it('supports async call functions typed with withContext', async () => {
     const contextFn = withContext<{ user: { id: string } }>()
     const env = bonsai({
       functions: {
@@ -217,15 +217,121 @@ describe('host parameters', () => {
           params: [],
           returns: t.string(),
           async: true,
-          run: async (ctx) => {
+          run: async (call) => {
             await Promise.resolve()
-            return ctx.user.id
+            return call.context.user.id
           },
         }),
       },
     })
     await expect(env.evaluate('userId()', { user: { id: 'u1' } })).resolves.toBe('u1')
     expect(codeOf(() => env.evaluateSync('userId()', { user: { id: 'u1' } }))).toBe('ASYNC_IN_SYNC')
+  })
+
+  it('points a context: true declaration to call: true', () => {
+    expect(() =>
+      fn({ params: [], returns: t.string(), context: true, run: () => '' } as never),
+    ).toThrow(/"context: true" is now "call: true"/u)
+  })
+})
+
+describe('the host call signal', () => {
+  /** An async call function that waits until its signal aborts, recording what it saw. */
+  const waiting = () => {
+    const seen: { aborted?: boolean; reason?: unknown; finished?: boolean } = {}
+    const env = bonsai({
+      functions: {
+        slow: fn({
+          params: [],
+          returns: t.number(),
+          async: true,
+          call: true,
+          run: (call) =>
+            new Promise<number>((resolve) => {
+              call.signal.addEventListener('abort', () => {
+                seen.aborted = call.signal.aborted
+                seen.reason = call.signal.reason
+                resolve(0)
+              })
+              setTimeout(() => {
+                seen.finished = true
+                resolve(1)
+              }, 2000)
+            }),
+        }),
+      },
+    })
+    return { env, seen }
+  }
+
+  it('aborts the host call when the evaluation times out', async () => {
+    const { env, seen } = waiting()
+    await expect(env.evaluate('slow()', {}, { timeout: 20 })).rejects.toMatchObject({
+      code: 'TIMEOUT',
+    })
+    expect(seen.aborted).toBe(true)
+    expect(seen.reason).toMatchObject({ code: 'TIMEOUT' })
+    expect(seen.finished).toBeUndefined()
+  })
+
+  it('aborts the host call when the caller cancels', async () => {
+    const { env, seen } = waiting()
+    const controller = new AbortController()
+    const pending = env.evaluate('slow()', {}, { signal: controller.signal })
+    setTimeout(() => {
+      controller.abort()
+    }, 10)
+    await expect(pending).rejects.toMatchObject({ code: 'ABORTED' })
+    expect(seen.aborted).toBe(true)
+    expect(seen.reason).toMatchObject({ code: 'ABORTED' })
+  })
+
+  it('stops waiting at once for a signal aborted before the call', async () => {
+    const controller = new AbortController()
+    let aborted = false
+    const env = bonsai({
+      functions: {
+        slow: fn({
+          params: [],
+          returns: t.number(),
+          async: true,
+          call: true,
+          run: async (call) => {
+            controller.abort()
+            await Promise.resolve()
+            aborted = call.signal.aborted
+            return new Promise<number>(() => {
+              // Never settles: the evaluation must stop waiting on its own.
+            })
+          },
+        }),
+      },
+    })
+    await expect(env.evaluate('slow()', {}, { signal: controller.signal })).rejects.toMatchObject({
+      code: 'ABORTED',
+    })
+    expect(aborted).toBe(true)
+  })
+
+  it('leaves the signal alone when the call completes, and freezes the call', async () => {
+    let call: { signal: { aborted: boolean } } | undefined
+    const env = bonsai({
+      functions: {
+        quick: fn({
+          params: [],
+          returns: t.number(),
+          async: true,
+          call: true,
+          run: (received) => {
+            call = received
+            expect(Object.isFrozen(received)).toBe(true)
+            return Promise.resolve(1)
+          },
+        }),
+      },
+    })
+    await expect(env.evaluate('quick()', {}, { timeout: 1000 })).resolves.toBe(1)
+    expect(call?.signal.aborted).toBe(false)
   })
 })
 
@@ -387,7 +493,7 @@ describe('context validation', () => {
 
   it('bounds validation by depth, steps, and time', () => {
     const deep = validating({ v: t.list(t.list(t.list(t.number()))) }, { maxValueDepth: 2 })
-    expect(message(() => deep.evaluateSync('true', { v: [[[1]]] }))).toMatch(/^TOO_DEEP/u)
+    expect(message(() => deep.evaluateSync('true', { v: [[[1]]] }))).toMatch(/^VALUE_DEPTH_LIMIT/u)
 
     const steps = validating({ v: t.list(t.number()) }, { maxSteps: 10 })
     expect(

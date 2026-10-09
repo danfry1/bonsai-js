@@ -142,7 +142,7 @@ name || "Anonymous" // error: TYPE_ERROR
 | `bonsai<AppCtx>()` | The context type is inferred from `variables`. Without `variables`, the context is any object, so a value typed by an interface (`const ctx: AppCtx = ...`) is accepted as is. |
 | `expr.use(strings).use(arrays)`, `bonsai-js/stdlib` | Nothing to import: every built-in is always available. |
 | `expr.addFunction('f', fn)` | `bonsai({ functions: { f: fn({ params, returns, run }) } })` |
-| `expr.addContextFunction('f', (ctx, ...) => ...)` | `fn({ params, returns, context: true, run: (ctx, ...args) => ... })`, or `withContext<Ctx>()` for a typed context. |
+| `expr.addContextFunction('f', (ctx, ...) => ...)` | `fn({ params, returns, call: true, run: (call, ...args) => ... })`, reading `call.context`, or `withContext<Ctx>()` for a typed context. |
 | `expr.addTransform('f', fn)` | A host function. Call it as `x.f()`. |
 | `expr.removeFunction()`, `expr.removeTransform()` | Environments are immutable: create an environment without the function. |
 | Plugins (`BonsaiPlugin`) | A `Library`: `{ name, functions, variables }`, passed as `libraries: [lib]`. |
@@ -208,7 +208,7 @@ Every error is a `BonsaiError` with a stable `code`, `source`, `span` (`{ start,
 | `BonsaiTypeError` | `BonsaiCheckError` (code `CHECK`, with `diagnostics`) at compile time, `BonsaiRuntimeError` (`TYPE_ERROR`, `NO_OVERLOAD`, ...) at run time |
 | `BonsaiReferenceError` (unknown function) | an `UNKNOWN_FUNCTION` diagnostic in a `BonsaiCheckError` |
 | `BonsaiSecurityError` `TIMEOUT` | `BonsaiLimitError` `TIMEOUT` |
-| `BonsaiSecurityError` `MAX_DEPTH` | `BonsaiLimitError` `TOO_DEEP` |
+| `BonsaiSecurityError` `MAX_DEPTH` | `BonsaiLimitError` `TOO_DEEP` (syntax nesting) or `VALUE_DEPTH_LIMIT` (nested data) |
 | `BonsaiSecurityError` `MAX_ARRAY_LENGTH` | `BonsaiLimitError` `LIST_LIMIT` |
 | `BonsaiSecurityError` `MAX_STRING_LENGTH` | `BonsaiLimitError` `STRING_LIMIT` |
 | `BonsaiSecurityError` `BLOCKED_PROPERTY` | `SYNTAX` for a literal key, `BLOCKED_PROPERTY` for a computed one |
@@ -240,8 +240,8 @@ const env = bonsai({
     hasPermission: fn({
       params: [t.string()],
       returns: t.boolean(),
-      context: true,
-      run: (ctx, action) => (ctx.perms as string[]).includes(action),
+      call: true,
+      run: (call, action) => (call.context.perms as string[]).includes(action),
     }),
   },
 })

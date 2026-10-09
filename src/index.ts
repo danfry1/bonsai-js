@@ -11,6 +11,7 @@ export type {
   ExplainOptions,
   Explanation,
   FunctionInfo,
+  HostCall,
   HostFunction,
   Library,
   Limits,
@@ -38,7 +39,6 @@ export type {
   UnionType,
 } from './types.js'
 export { Duration } from './runtime/values.js'
-export type { RuntimeLimits } from './runtime/state.js'
 export {
   BonsaiError,
   BonsaiSyntaxError,
@@ -47,7 +47,7 @@ export {
   BonsaiRuntimeError,
   isBonsaiError,
 } from './errors.js'
-export type { Diagnostic, DiagnosticCode, ErrorCode, ErrorInit, Span } from './errors.js'
+export type { Diagnostic, DiagnosticCode, ErrorCode, Span } from './errors.js'
 export { forEachChild } from './syntax/ast.js'
 export type {
   BinaryNode,
@@ -74,7 +74,6 @@ export type {
   UnaryOperator,
   VariableNode,
 } from './syntax/ast.js'
-export type { ParseLimits } from './syntax/parser.js'
 export { print } from './syntax/printer.js'
 export type { PartialOptions, PartialResult, ResidualResult } from './partial.js'
 export type { Iteration, Trace } from './runtime/trace.js'

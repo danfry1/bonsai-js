@@ -141,14 +141,14 @@ fn({
   rest: t.number(), // optional variadic type
   returns: t.boolean(),
   async: false, // true: run returns a promise; evaluateSync rejects the expression with ASYNC_IN_SYNC; a promise from a non-async function is HOST_CONTRACT
-  context: false, // true: run(ctx, ...args)
+  call: false, // true: run(call, ...args), call = { context, signal }; signal aborts when the evaluation times out or is cancelled while waiting
   description: 'Shown in listFunctions and editor hovers',
   cost: 32, // steps charged per call (default 32); lower for cheap pure helpers
   run: (name, count) => true,
 })
 ```
 
-Arguments are validated before `run`; results are checked deeply against `returns` (`HOST_CONTRACT` otherwise, not caught by `try`); exceptions (even a `BonsaiError`) become `HOST_ERROR` with `cause`. `withContext<Ctx>()` returns an `fn` variant whose `run` receives a typed context.
+Arguments are validated before `run`; results are checked deeply against `returns` (`HOST_CONTRACT` otherwise, not caught by `try`); exceptions (even a `BonsaiError`) become `HOST_ERROR` with `cause`. `withContext<Ctx>()` returns an `fn` variant whose `run` receives the call with `call.context` typed. Libraries: `{ name, functions, variables } satisfies Library`; their variables join the environment's context type.
 
 ### Types (t)
 
@@ -156,10 +156,10 @@ Arguments are validated before `run`; results are checked deeply against `return
 
 ### Errors
 
-All errors from checking and evaluating extend `BonsaiError` with `code`, `source`, `span` (`{ start, end }`), `position` (1-based), `formatted` (message + code frame); exceptions from host code (functions, getters, Proxies, including a `BonsaiError` a host function throws) are wrapped as `HOST_ERROR`. Invalid configuration throws `TypeError` or `RangeError` (a wrong type or unknown option key is a `TypeError`, a value out of range a `RangeError`) from `bonsai()`, `fn()`, `compile()`/`check()`, `evaluate*()` and `explain*()` (per-evaluation options), `partial()`, `toSQL()`/`toMongo()`, and `print()` (trees the parser could not produce).
+All errors from checking and evaluating extend `BonsaiError` with `code`, `source`, `span` (`{ start, end }`), `position` (1-based), `formatted` (message + code frame); exceptions from host code (functions, getters, Proxies, including a `BonsaiError` a host function throws) are wrapped as `HOST_ERROR`. Invalid configuration throws `TypeError` or `RangeError` (a wrong type or unknown option key is a `TypeError`, a value out of range a `RangeError`) from `bonsai()`, `fn()`, `compile()`/`check()`, `evaluate*()` and `explain*()` (per-evaluation options, or a context that is not an object), `partial()`, `toSQL()`/`toMongo()`, and `print()` (trees the parser could not produce).
 - `BonsaiSyntaxError`: `SYNTAX`
 - `BonsaiCheckError`: `CHECK` (`.diagnostics`)
-- `BonsaiLimitError`: `SOURCE_TOO_LONG`, `TOO_DEEP`, `TOO_MANY_NODES`, `TOO_COMPLEX`, `STEP_LIMIT`, `STRING_LIMIT`, `LIST_LIMIT`, `PATTERN_LIMIT`, `TIMEOUT`, `ABORTED`
+- `BonsaiLimitError`: `SOURCE_TOO_LONG`, `TOO_DEEP` (syntax), `TOO_MANY_NODES`, `TOO_COMPLEX`, `STEP_LIMIT`, `STRING_LIMIT`, `LIST_LIMIT`, `VALUE_DEPTH_LIMIT` (nested data), `PATTERN_LIMIT`, `TIMEOUT`, `ABORTED`
 - `BonsaiTranslationError` (from `bonsai-js/query`): `UNTRANSLATABLE`
 - `BonsaiRuntimeError`: `TYPE_ERROR`, `NO_OVERLOAD`, `NULL_RECEIVER`, `DIVISION_BY_ZERO`, `NON_FINITE`, `BLOCKED_PROPERTY`, `INVALID_ARGUMENT`, `ASYNC_IN_SYNC`, `HOST_ERROR`, `HOST_CONTRACT`, `INVALID_CONTEXT`
 
@@ -177,7 +177,7 @@ Expression text is untrusted; context data and host functions are trusted. Expre
 
 ## Migrating from 0.x
 
-`a |> f(b)` -> `a.f(b)`; `upper`/`lower` -> `toUpperCase`/`toLowerCase`; `flatten` -> `flat`; stdlib plugins -> built in; `addFunction` -> `functions: { name: fn({...}) }`; `addContextFunction` -> `fn({ context: true, ... })`; `validate()` -> `check()`; `evaluateExpression` -> `bonsai().evaluateSync`; `allowedProperties` -> pass only the data expressions may read; `x == null` now includes missing values; `&&`/`||` are strict booleans (use `??` for defaults). Results that changed silently: `round` rounds halves away from zero and honors digits; `avg([])` is null; `unique` compares by value; templates render null as empty text and dates as ISO-8601; `toNumber` of invalid text is an error; division and remainder by zero are errors; `sort()` is numeric; `includes`/`indexOf`/`in` and `Date` equality compare by value; `replace` inserts its replacement literally; `substring` -> `slice` and `charAt` -> `at` differ for reversed or negative positions. Requires Node.js 22+. Full guide: https://danfry1.github.io/bonsai-js/guide/migrating
+`a |> f(b)` -> `a.f(b)`; `upper`/`lower` -> `toUpperCase`/`toLowerCase`; `flatten` -> `flat`; stdlib plugins -> built in; `addFunction` -> `functions: { name: fn({...}) }`; `addContextFunction` -> `fn({ call: true, run: (call, ...args) => ... })` reading `call.context`; `validate()` -> `check()`; `evaluateExpression` -> `bonsai().evaluateSync`; `allowedProperties` -> pass only the data expressions may read; `x == null` now includes missing values; `&&`/`||` are strict booleans (use `??` for defaults). Results that changed silently: `round` rounds halves away from zero and honors digits; `avg([])` is null; `unique` compares by value; templates render null as empty text and dates as ISO-8601; `toNumber` of invalid text is an error; division and remainder by zero are errors; `sort()` is numeric; `includes`/`indexOf`/`in` and `Date` equality compare by value; `replace` inserts its replacement literally; `substring` -> `slice` and `charAt` -> `at` differ for reversed or negative positions. Requires Node.js 22+. Full guide: https://danfry1.github.io/bonsai-js/guide/migrating
 
 ## Built-in functions
 

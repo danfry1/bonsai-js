@@ -483,7 +483,7 @@ function canonicalKey(value: unknown, site: CallSite, depth: number, seen: Ident
   }
   if (depth > s.limits.maxValueDepth) {
     throw s.limit(
-      'TOO_DEEP',
+      'VALUE_DEPTH_LIMIT',
       `Values nest deeper than ${s.limits.maxValueDepth} (is the data cyclic?)`,
       site.span,
     )

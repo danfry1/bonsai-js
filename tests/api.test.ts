@@ -1,12 +1,13 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import {
   BonsaiCheckError,
-  BonsaiRuntimeError,
   BonsaiSyntaxError,
   bonsai,
   fn,
   t,
+  type Environment,
   type Library,
+  type Program,
 } from '../src/index.js'
 
 describe('environment', () => {
@@ -111,8 +112,10 @@ describe('environment', () => {
     expect(env.evaluateSync('f()')).toBe(2)
   })
 
-  it('rejects a non-object context', () => {
-    expect(() => bonsai().evaluateSync('1', 5 as never)).toThrow(BonsaiRuntimeError)
+  it('rejects a non-object context as a TypeError, like invalid options', async () => {
+    expect(() => bonsai().evaluateSync('1', 5 as never)).toThrow(TypeError)
+    await expect(bonsai().evaluate('1', 'x' as never)).rejects.toThrow(TypeError)
+    await expect(bonsai().explain('1', 5 as never)).rejects.toThrow(TypeError)
   })
 
   it('programs are reentrant', () => {
@@ -180,6 +183,64 @@ describe('host functions', () => {
     expect(() => bonsai({ libraries: [a, { name: 'c', functions: { one: f } }] })).toThrow(
       /both library "a" and library "c"/u,
     )
+  })
+
+  it('types a residual by the program context', () => {
+    const env = bonsai({
+      variables: { user: t.object({ age: t.number() }), limit: t.number() },
+    })
+    const result = env.compile('user.age > limit', { expect: t.boolean() }).partial({ limit: 18 })
+    if (result.status !== 'residual') throw new Error('expected a residual')
+    expect(result.evaluateSync({ user: { age: 30 } })).toBe(true)
+    // @ts-expect-error: `usr` is not a context variable (untyped, `user` would read as null)
+    expect(result.evaluateSync({ usr: { age: 30 } })).toBe(false)
+    expectTypeOf(result.evaluateSync).returns.toEqualTypeOf<boolean>()
+  })
+
+  it('publishes explanation traces as read-only data', () => {
+    const explanation = bonsai().explainSync('1 + 2')
+    const trace = explanation.trace
+    // @ts-expect-error: traces are read-only
+    trace.value = 4
+    // @ts-expect-error: their children are read-only too
+    trace.children.push(trace)
+    // @ts-expect-error: and so is the list of reasons
+    explanation.reasons().push(trace)
+  })
+
+  it('stores typed programs and environments as the general types', () => {
+    const env = bonsai({ variables: { a: t.number() } })
+    const program = env.compile('a > 1', { expect: t.boolean() })
+    const programs: Program[] = [program]
+    const environments: Environment[] = [env]
+    const run = program.evaluateSync
+    expect(run({ a: 2 })).toBe(true)
+    expect(programs[0]?.evaluateSync({ a: 0 })).toBe(false)
+    expect(environments.length).toBe(1)
+  })
+
+  it('includes library variables in the context type', () => {
+    const tenancy = { name: 'tenancy', variables: { tenant: t.string() } } satisfies Library
+    const env = bonsai({ libraries: [tenancy] })
+    expectTypeOf<Parameters<typeof env.evaluateSync>[1]>().toEqualTypeOf<{
+      readonly tenant: string
+    }>()
+    // @ts-expect-error: the library declares `tenant`, so a context is required
+    expect(env.evaluateSync('tenant == "x"')).toBe(false)
+    expect(env.evaluateSync('tenant == "x"', { tenant: 'x' })).toBe(true)
+
+    const both = bonsai({ variables: { user: t.string() }, libraries: [tenancy] })
+    expectTypeOf<Parameters<typeof both.evaluateSync>[1]>().toEqualTypeOf<{
+      readonly user: string
+      readonly tenant: string
+    }>()
+    // @ts-expect-error: `tenant` is missing
+    both.evaluateSync('user', { user: 'u' })
+
+    const extended = bonsai({ variables: { user: t.string() } }).extend({ libraries: [tenancy] })
+    expectTypeOf<Parameters<typeof extended.evaluateSync>[1]>().toEqualTypeOf<
+      { readonly user: string } & { readonly tenant: string }
+    >()
   })
 
   it('extend adds variables and functions', () => {

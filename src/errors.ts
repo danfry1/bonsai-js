@@ -13,6 +13,7 @@ export type ErrorCode =
   | 'STRING_LIMIT'
   | 'PATTERN_LIMIT'
   | 'LIST_LIMIT'
+  | 'VALUE_DEPTH_LIMIT'
   | 'TIMEOUT'
   | 'ABORTED'
   // evaluation

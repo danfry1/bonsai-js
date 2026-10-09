@@ -476,7 +476,7 @@ export function track(
     return
   }
   if (depth + 1 > s.limits.maxValueDepth) {
-    throw s.limit('TOO_DEEP', `A value nests deeper than ${s.limits.maxValueDepth}`, at)
+    throw s.limit('VALUE_DEPTH_LIMIT', `A value nests deeper than ${s.limits.maxValueDepth}`, at)
   }
   if (nested > 0) s.charge(nested)
   ;(s.shapes ??= new WeakMap()).set(out, (1 + count + nested) * DEPTH_SLOTS + depth + 1)
@@ -511,7 +511,7 @@ export function equals(a: unknown, b: unknown, s: State, depth = 0, at?: Span): 
   if (typeof a !== 'object' || typeof b !== 'object') return false
   if (depth > s.limits.maxValueDepth) {
     throw s.limit(
-      'TOO_DEEP',
+      'VALUE_DEPTH_LIMIT',
       `Values nest deeper than ${s.limits.maxValueDepth} (is the data cyclic?)`,
       at,
     )

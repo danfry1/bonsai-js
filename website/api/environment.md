@@ -115,7 +115,7 @@ await typed.evaluate('a * b', { a: 3, b: 4 }) // => 12
 await typed.evaluate('a *', { a: 3, b: 4 }) // throws: SYNTAX
 ```
 
-The context must be a plain object or class instance (or omitted when no variable is required); anything else, such as a `Map` or an array, is an `INVALID_ARGUMENT` error. Its own properties are the variables. In an open environment the context's TypeScript type is `object`, so a value typed by an interface is accepted as is. A function that takes any environment, whatever its context type, can declare its parameter as `Environment<never>`. `options` are per-evaluation overrides, validated like `limits` (an unknown key or invalid value makes `evaluateSync()` throw a `TypeError` or `RangeError`, and `evaluate()` reject with one):
+The context must be a plain object or class instance (or omitted when no variable is required); anything else, such as a `Map` or an array, is a `TypeError`, like invalid options. Its own properties are the variables. In an open environment the context's TypeScript type is `object`, so a value typed by an interface is accepted as is. A function that takes any environment, whatever its context type, can declare its parameter as a bare `Environment`. `options` are per-evaluation overrides, validated like `limits` (an unknown key or invalid value makes `evaluateSync()` throw a `TypeError` or `RangeError`, and `evaluate()` reject with one):
 
 | Option | Type | Description |
 | --- | --- | --- |

@@ -49,7 +49,7 @@ What is offered depends on the cursor:
 | After `.` or `?.` | the fields of the receiver's type, `length` for strings and lists, and the functions whose first parameter accepts the receiver (as methods) |
 | Inside a string or comment, or after a digit | nothing |
 
-Items are filtered by what has been typed so far (prefix matches first, then substring matches) and ordered by kind: locals, properties, variables, methods, functions, keywords. The service completes incomplete expressions by guessing the missing closing brackets, so it works in the middle of typing.
+Items are filtered by what has been typed so far (prefix matches first, then substring matches) and ordered by kind: locals, properties, variables, methods, functions, keywords. New kinds may be added in a minor release, so handle unknown ones. The service completes incomplete expressions by guessing the missing closing brackets, so it works in the middle of typing.
 
 ```ts
 import { bonsai, t } from 'bonsai-js'

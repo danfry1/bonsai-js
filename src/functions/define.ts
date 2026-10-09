@@ -41,8 +41,8 @@ export interface FunctionDef {
   readonly overloads: readonly Overload[]
   /** Host functions: returns a promise and must be awaited. */
   readonly async?: boolean
-  /** Host functions: receives the evaluation context as its first argument. */
-  readonly context?: boolean
+  /** Host functions: receives a HostCall (context and signal) as its first argument. */
+  readonly call?: boolean
   readonly host?: boolean
   /** Host functions: steps charged per call (default 32). */
   readonly cost?: number
@@ -365,7 +365,7 @@ const HOST_SPEC_KEYS = new Set([
   'required',
   'rest',
   'async',
-  'context',
+  'call',
   'description',
   'cost',
   'run',
@@ -378,6 +378,11 @@ const HOST_SPEC_KEYS = new Set([
 export function assertHostSpec(spec: unknown, label: string): void {
   if (!isRecord(spec)) throw new TypeError(`${label} must be declared with fn()`)
   for (const key of Object.keys(spec)) {
+    if (key === 'context') {
+      throw new TypeError(
+        `${label}: "context: true" is now "call: true"; run receives { context, signal } first`,
+      )
+    }
     if (!HOST_SPEC_KEYS.has(key)) throw new TypeError(`${label} has an unknown option "${key}"`)
   }
   if (!Array.isArray(spec.params)) throw new TypeError(`${label} needs a params array`)
@@ -394,7 +399,7 @@ export function assertHostSpec(spec: unknown, label: string): void {
       )
   }
   if (spec.rest !== undefined) assertType(spec.rest, `The rest type of ${label}`)
-  for (const flag of ['async', 'context'] as const) {
+  for (const flag of ['async', 'call'] as const) {
     if (spec[flag] !== undefined && typeof spec[flag] !== 'boolean')
       throw new TypeError(`"${flag}" of ${label} must be a boolean`)
   }

@@ -1057,7 +1057,7 @@ describe('§10 guarantees', () => {
       name: 'cyclic host data equality is bounded by depth',
       source: 'a == b',
       context: { a: cycA, b: cycB },
-      error: ['TOO_DEEP'],
+      error: ['VALUE_DEPTH_LIMIT'],
     },
     { name: 'deep nesting is bounded', source: deep, error: 'TOO_DEEP' },
     {

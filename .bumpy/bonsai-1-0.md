@@ -19,15 +19,15 @@ A redesign of the language and the engine. Expressions and host code written for
 
 - `bonsai({ variables, strict, functions, libraries, limits, cacheSize, clock, validateContext })` creates an immutable environment; `extend()` derives one. `use()`, plugins, `addFunction`, `addContextFunction`, `addTransform`, `remove*`, `has*`, `isContextFunction`, `getPolicy`, and `clearCache` are removed.
 - Declaring `variables` makes an environment strict: undeclared names are check errors unless `strict: false`.
-- Host functions are declared with `fn({ params, returns, run })`, validated on every call, and must be marked `async` to be awaited. A result that does not match the declared type, or a promise from a function not marked `async`, is a `HOST_CONTRACT` error that `try()` does not catch.
-- `env.compile(source, { expect })` type-checks and returns a `Program`; `env.check()` replaces `validate()` and returns every diagnostic without throwing. The context type comes from `variables` instead of `bonsai<Ctx>()`.
+- Host functions are declared with `fn({ params, returns, run })`, validated on every call, and must be marked `async` to be awaited. With `call: true`, `run` first receives `{ context, signal }`: the read-only context, and a signal that aborts when the evaluation times out or is cancelled while waiting on the call. A result that does not match the declared type, or a promise from a function not marked `async`, is a `HOST_CONTRACT` error that `try()` does not catch.
+- `env.compile(source, { expect })` type-checks and returns a `Program`; `env.check()` replaces `validate()` and returns every diagnostic without throwing. The context type comes from `variables` and the variables of the `libraries` used, instead of `bonsai<Ctx>()`. A context that is not an object is a `TypeError`.
 - `bonsai-js/service` (`createLanguageService`) replaces `bonsai-js/autocomplete`; the `stdlib` and `autocomplete` subpaths are removed.
 - `print(tree, { calls })` turns a syntax tree back into source, round-tripping with `env.parse`. Syntax tree node types are renamed.
 - `program.explain(context)` (and `explainSync`, `env.explain`, `env.explainSync`) evaluates and returns a trace of every sub-expression's value, with skipped branches and per-item lambda runs; `reasons()` lists the conditions that decided the result.
 - `program.partial(known, { unknown })` evaluates what the known data decides and returns a value, an error, or a residual expression over the unknown variables, to pre-evaluate rules once per tenant or request.
 - `bonsai-js/query` (`toSQL`, `toMongo`) translates a filter over a declared record into a parameterized SQL `WHERE` clause (Postgres, SQLite) or a MongoDB filter that selects exactly the records the filter accepts.
 - Errors are `BonsaiError` subclasses with stable codes and `{ start, end }` spans. `ExpressionError`, `BonsaiTypeError`, `BonsaiReferenceError`, `BonsaiSecurityError`, `formatError`, `formatBonsaiError`, `evaluateExpression`, `tokenize`, `parse`, and `compile` are removed, as are the `allowedProperties` and `deniedProperties` options.
-- Limits move under `limits`; `maxArrayLength` is now `maxListLength`, and `maxDepth` now bounds syntax nesting.
+- Limits move under `limits`; `maxArrayLength` is now `maxListLength`, and `maxDepth` now bounds syntax nesting (`TOO_DEEP`); nested data is bounded by `maxValueDepth` (`VALUE_DEPTH_LIMIT`).
 - Requires Node.js 22 or newer.
 
 **Engine**

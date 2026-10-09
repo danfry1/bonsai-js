@@ -1,6 +1,6 @@
 # Errors
 
-Every error Bonsai throws is a `BonsaiError` with a stable, machine-readable `code`. Messages are for people and may change between releases; codes are part of the API (adding a code is a minor change, renaming one is major).
+Every error Bonsai throws is a `BonsaiError` with a stable, machine-readable `code`. Messages are for people and may change between releases; codes are part of the API (adding a code is a minor change, renaming one is major). Because codes can be added, a `switch` over `ErrorCode` (or `DiagnosticCode`, or a diagnostic's `severity`) needs a `default` branch: an exhaustiveness check against `never` would stop compiling when a minor release adds a member.
 
 ```ts
 import { bonsai, BonsaiError, BonsaiRuntimeError, isBonsaiError } from 'bonsai-js'
@@ -35,7 +35,7 @@ try {
 | `formatted` | `string` | The message followed by a code frame, when a span is known. |
 | `cause` | `unknown` | For `HOST_ERROR`, the error your host function (or a getter or Proxy in the context) threw. |
 
-`isBonsaiError(value)` is a type guard for `BonsaiError`. Checking and evaluating an expression only ever throw `BonsaiError`s, including when your own code fails: a host function that throws (even a `BonsaiError`, for example from an evaluation it runs itself), or a getter, Proxy trap, or `then` hook in the context that throws when read (including while `validateContext` or an `expect` check reads it), becomes a `HOST_ERROR` with the original error as its `cause`. Any other error escaping from Bonsai is a bug. Invalid configuration is reported differently, as a `TypeError` or `RangeError` thrown synchronously: by `bonsai()`, `extend()`, or `fn()` (an unknown option or limit, a limit out of range, a malformed parameter list, a duplicate or invalid name), for invalid per-evaluation options (an unknown key, a negative `maxSteps`, a `signal` that is not an `AbortSignal`: `evaluateSync()` throws, and `evaluate()` returns a rejected promise), and by `print()` for a tree the parser could not have produced.
+`isBonsaiError(value)` is a type guard for `BonsaiError`. Checking and evaluating an expression only ever throw `BonsaiError`s, including when your own code fails: a host function that throws (even a `BonsaiError`, for example from an evaluation it runs itself), or a getter, Proxy trap, or `then` hook in the context that throws when read (including while `validateContext` or an `expect` check reads it), becomes a `HOST_ERROR` with the original error as its `cause`. Any other error escaping from Bonsai is a bug. Invalid configuration is reported differently, as a `TypeError` or `RangeError` thrown synchronously: by `bonsai()`, `extend()`, or `fn()` (an unknown option or limit, a limit out of range, a malformed parameter list, a duplicate or invalid name), for invalid per-evaluation options and a context that is not an object (an unknown key, a negative `maxSteps`, a `signal` that is not an `AbortSignal`, a `Map` or a string as the context: `evaluateSync()` throws, and `evaluate()` returns a rejected promise), and by `print()` for a tree the parser could not have produced.
 
 ## Classes and codes
 
@@ -44,12 +44,13 @@ try {
 | `BonsaiSyntaxError` | `SYNTAX` | The text is not valid Bonsai. |
 | `BonsaiCheckError` | `CHECK` | Static checking failed; see `.diagnostics`. |
 | `BonsaiLimitError` | `SOURCE_TOO_LONG` | The source exceeds `maxSourceLength`. |
-| | `TOO_DEEP` | The syntax nests deeper than `maxDepth`, or equality walked values deeper than `maxValueDepth` (for example cyclic data). |
+| | `TOO_DEEP` | The syntax nests deeper than `maxDepth`. |
 | | `TOO_MANY_NODES` | The syntax tree exceeds `maxNodes`. |
 | | `TOO_COMPLEX` | Checking the expression would take too long (its types grow too large), even within the parse limits. |
 | | `STEP_LIMIT` | Evaluation exceeded the step budget. |
 | | `STRING_LIMIT` | A produced string would exceed `maxStringLength`. |
 | | `LIST_LIMIT` | A produced list would exceed `maxListLength`. |
+| | `VALUE_DEPTH_LIMIT` | A value nests deeper than `maxValueDepth`: one an expression builds, one equality, templates, or `unique` walk (for example cyclic data), or the context `validateContext` checks. |
 | | `PATTERN_LIMIT` | A regular expression pattern passed to `matches` exceeds `maxPatternLength`. |
 | | `TIMEOUT` | Evaluation exceeded the timeout. |
 | | `ABORTED` | The `AbortSignal` was aborted. |
@@ -59,7 +60,7 @@ try {
 | | `DIVISION_BY_ZERO` | Division or remainder by zero. |
 | | `NON_FINITE` | A result would be `NaN` or infinite. |
 | | `BLOCKED_PROPERTY` | A computed key is `__proto__`, `constructor`, or `prototype`. |
-| | `INVALID_ARGUMENT` | An argument has the right type but an invalid value (an unparsable timestamp, an unknown time zone, a non-integer count, a regular expression the engine does not support), or the context is not an object. |
+| | `INVALID_ARGUMENT` | An argument has the right type but an invalid value (an unparsable timestamp, an unknown time zone, a non-integer count, a regular expression the engine does not support). |
 | | `ASYNC_IN_SYNC` | `evaluateSync()` (or `explainSync()`) on an expression that calls a host function declared `async: true`. |
 | | `HOST_ERROR` | A host function threw (anything, including a `BonsaiError` from a nested evaluation), or reading the context ran host code (a getter or Proxy) that threw. |
 | | `HOST_CONTRACT` | Host code broke its contract: a host function returned a value that does not match `returns` (checked deeply) or a promise without `async: true`, or the `clock` returned something other than a valid `Date`. |

@@ -61,7 +61,7 @@ describe('cyclic and deep data', () => {
     a.self = a
     const b: Record<string, unknown> = { v: 1 }
     b.self = b
-    expect(codeOf(() => bonsai().evaluateSync('a == b', { a, b }))).toBe('TOO_DEEP')
+    expect(codeOf(() => bonsai().evaluateSync('a == b', { a, b }))).toBe('VALUE_DEPTH_LIMIT')
     expect(bonsai().evaluateSync('a == a', { a })).toBe(true)
   })
 })

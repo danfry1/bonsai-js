@@ -22,7 +22,7 @@ describe('the evaluation context', () => {
   it('rejects opaque values as the context', () => {
     const env = bonsai({ variables: { size: t.number() } })
     const context = new Map([['size', 1]]) as unknown as { size: number }
-    expect(codeOf(() => env.evaluateSync('size', context))).toBe('INVALID_ARGUMENT')
+    expect(() => env.evaluateSync('size', context)).toThrow(TypeError)
   })
 })
 

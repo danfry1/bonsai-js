@@ -10,7 +10,7 @@ Every limit is on by default except `timeout`. The `limits` option of `bonsai()`
 | `maxSteps` | 1000000 | Work per evaluation. See [Steps](#steps). |
 | `maxStringLength` | 100000 | Length of any string an expression produces. |
 | `maxListLength` | 100000 | Length of any list an expression produces. |
-| `maxValueDepth` | 64 | Nesting of lists and maps an expression builds, and of values walked by equality, templates, and `unique`. Cyclic data fails here instead of looping. |
+| `maxValueDepth` | 64 | Nesting of lists and maps an expression builds, and of values walked by equality, templates, `unique`, and `validateContext`. Cyclic data fails here (`VALUE_DEPTH_LIMIT`) instead of looping. |
 | `maxPatternLength` | 4096 | Length of a regular expression pattern passed to `matches` (`PATTERN_LIMIT`). |
 | `timeout` | 0 (none) | Wall-clock milliseconds per evaluation. |
 
