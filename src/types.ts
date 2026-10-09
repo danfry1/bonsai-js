@@ -146,6 +146,7 @@ export const t = Object.freeze({
   object: <const F extends Readonly<Record<string, Type>>>(fields: F): MapType<F, undefined> =>
     Object.freeze({ kind: 'map', fields: Object.freeze({ ...fields }) }),
   /** An open record: every key has type `value`. */
+  // oxlint-disable-next-line typescript/no-generated-empty-object-type -- no declared fields
   record: <V extends Type>(value: V): MapType<Record<never, never>, V> =>
     Object.freeze({ kind: 'map', fields: Object.freeze({}), rest: value }),
   union: <const M extends readonly Type[]>(...types: M): UnionType<M> =>

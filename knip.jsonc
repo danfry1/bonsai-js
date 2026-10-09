@@ -12,11 +12,10 @@
     // website entry pattern only produces a "no matches" hint.
   ],
   "project": ["src/**/*.ts"],
-  // npm and ATTW are consumed by release/CI workflows, which knip does not
-  // trace. They remain devDependencies so CI executes lockfile-pinned,
-  // integrity-checked binaries instead of registry fallbacks (OSSF Scorecard
-  // Pinned-Dependencies).
-  "ignoreDependencies": ["npm", "@arethetypeswrong/cli"],
+  // npm is consumed by the release workflow, which knip does not trace. It
+  // remains a devDependency so CI executes a lockfile-pinned, integrity-checked
+  // binary instead of a registry fallback (OSSF Scorecard Pinned-Dependencies).
+  "ignoreDependencies": ["npm"],
   "rules": {
     // Unused *value* exports are real dead code and fail the gate. Unused *type*
     // exports are not: for a parser library the exported AST/error interfaces are

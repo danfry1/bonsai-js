@@ -39,6 +39,8 @@
     "max-depth": "off",
     "sort-keys": "off",
     "sort-imports": "off",
+    "one-var": "off",
+    "no-multi-assign": "off",
     "func-style": "off",
     "no-ternary": "off",
     "no-continue": "off",
