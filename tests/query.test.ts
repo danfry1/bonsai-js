@@ -233,11 +233,9 @@ describe('relative dates', () => {
     expect(await agree('!(order.placed + days(1) > d0)', edge, { postgres: false })).toEqual([])
   })
 
-  it('refuses a duration that is not a whole number of milliseconds', () => {
-    const program = bonsai({ clock: () => now }).compile('now() - order.placed < milliseconds(0.5)')
-    expect(() => toSQL(program, { row: 'order', columns, dialect: 'sqlite', known, now })).toThrow(
-      BonsaiTranslationError,
-    )
+  it('translates a fractional duration as the whole milliseconds Bonsai rounds it to', async () => {
+    const edge = [row(1, { placed: new Date(now.getTime() - 1) }), row(2, { placed: now })]
+    expect(await agree('now() - order.placed < milliseconds(0.5)', edge, options)).toEqual([2])
   })
 })
 

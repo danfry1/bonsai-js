@@ -606,9 +606,6 @@ function lower(
         node,
       )
     }
-    // Timestamps are whole milliseconds; a fractional duration would round differently.
-    if (!Number.isInteger(shift.offset) || !Number.isInteger(known.ms))
-      return fail('Durations are translated in whole milliseconds', node)
     // sign * column + offset <op> known, solved for the column.
     const boundMs = shift.sign === 1 ? known.ms - shift.offset : shift.offset - known.ms
     if (Math.abs(boundMs) > MAX_TIME)
