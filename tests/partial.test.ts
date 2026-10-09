@@ -326,17 +326,20 @@ describe('partial on the hardened engine', () => {
   })
 
   it('reports unreadable host data as Bonsai errors', () => {
+    // Only the variables the expression reads are read from `known`.
     const hostile = new Proxy(
-      {},
+      { x: 1 },
       {
-        ownKeys() {
-          throw new Error('ownKeys trap')
+        get() {
+          throw new Error('get trap')
         },
       },
     )
-    expect(() => open.compile('x + y').partial(hostile, { unknown: ['y'] })).toThrow(
-      expect.objectContaining({ code: 'HOST_ERROR' }),
-    )
+    for (const options of [{ unknown: ['y'] }, {}]) {
+      expect(() => open.compile('x + y').partial(hostile, options)).toThrow(
+        expect.objectContaining({ code: 'HOST_ERROR' }),
+      )
+    }
     const result = open.compile('x + y').partial({ x: 1 })
     if (result.status !== 'residual') throw new Error('expected a residual')
     expect(() => result.evaluateSync(new Map([['y', 1]]) as never)).toThrow(TypeError)

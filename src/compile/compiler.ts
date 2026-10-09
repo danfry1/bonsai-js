@@ -842,7 +842,7 @@ export function compileProgram(
       try {
         if (def.call === true) {
           controller = new AbortController()
-          const call = Object.freeze({ context: s.ctx, signal: controller.signal })
+          const call = Object.freeze({ context: s.hostCtx, signal: controller.signal })
           result = overload.run([call, ...args], site)
         } else {
           result = overload.run(args, site)

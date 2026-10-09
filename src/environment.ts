@@ -21,6 +21,9 @@ import {
 } from './functions/define.js'
 import {
   partiallyEvaluate,
+  residualTexts,
+  KNOWN_KEYS_PER_STEP,
+  RESIDUAL_CHARS_PER_STEP,
   type PartialData,
   type PartialOptions,
   type PartialResult,
@@ -41,7 +44,6 @@ import {
 import { forEachChild, type CallNode, type Node } from './syntax/ast.js'
 import { isName } from './syntax/lexer.js'
 import { DEFAULT_PARSE_LIMITS, parse, type ParseLimits } from './syntax/parser.js'
-import { print } from './syntax/printer.js'
 import {
   formatType,
   isNullable,
@@ -778,6 +780,55 @@ class ProgramCache<V> {
 }
 
 const EMPTY_CONTEXT: Record<string, unknown> = Object.freeze({})
+const NO_DIAGNOSTICS: readonly Diagnostic[] = Object.freeze([])
+
+/**
+ * What check() found. `ok`, `type`, and `diagnostics` are the JSON form; the
+ * tree is read on demand (a prototype getter), so an editor checking on every
+ * keystroke pays only for what it uses.
+ */
+class CheckFailure {
+  readonly ok: boolean = false
+  readonly type: Type | undefined
+  readonly diagnostics: readonly Diagnostic[]
+  /** The inferred type of a node of `ast`, or undefined for another tree's node. */
+  readonly typeOf: (node: Node) => Type | undefined
+  readonly #analysis: Analysis | undefined
+
+  constructor(type: Type | undefined, diagnostics: readonly Diagnostic[], analysis?: Analysis) {
+    this.type = type
+    this.diagnostics = diagnostics
+    this.#analysis = analysis
+    this.typeOf = (node) => {
+      const found = analysis?.types.get(node)
+      return found === undefined ? undefined : deepFreeze(found)
+    }
+  }
+
+  get ast(): Node | undefined {
+    return this.#analysis === undefined ? undefined : deepFreeze(this.#analysis.root)
+  }
+}
+
+/** A check that passed: also the compiled program, made the first time it is read. */
+class CheckSuccess extends CheckFailure {
+  override readonly ok: boolean = true
+  readonly #program: () => unknown
+
+  constructor(
+    type: Type,
+    diagnostics: readonly Diagnostic[],
+    analysis: Analysis,
+    program: () => unknown,
+  ) {
+    super(type, diagnostics, analysis)
+    this.#program = program
+  }
+
+  get program(): unknown {
+    return this.#program()
+  }
+}
 
 const EVALUATE_OPTION_KEYS = new Set(['timeout', 'maxSteps', 'signal', 'now'])
 
@@ -1085,7 +1136,13 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       for (const name of BUILTINS.keys()) if (!settings.host.has(name)) yield name
     },
   }
-  const cache = new ProgramCache<Program<Ctx>>(settings.cacheSize)
+  // Each entry records the source and expected type it was compiled for: a key
+  // alone could collide (a comment may end a source with what looks like a type).
+  const cache = new ProgramCache<{
+    readonly program: Program<Ctx>
+    readonly source: string
+    readonly expect: string | undefined
+  }>(settings.cacheSize)
 
   function parseSource(source: string): Node {
     if (typeof source !== 'string') throw new TypeError('An expression must be a string')
@@ -1109,6 +1166,28 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     }
   }
 
+  /**
+   * The declared type of a context path (`cart.total`), when the environment
+   * declares one: through object fields (an optional object's too), not
+   * through open records or lists.
+   */
+  function declaredAt(path: string): Type | undefined {
+    const variables = settings.variables
+    if (variables === undefined) return undefined
+    const [name, ...rest] = path.split('.')
+    let type: Type | undefined =
+      name !== undefined && Object.hasOwn(variables, name) ? variables[name] : undefined
+    for (const segment of rest) {
+      if (type === undefined) return undefined
+      const maps: Type[] =
+        type.kind === 'union' ? type.types.filter((member) => member.kind === 'map') : [type]
+      const map = maps.length === 1 ? maps[0] : undefined
+      if (map?.kind !== 'map' || !Object.hasOwn(map.fields, segment)) return undefined
+      type = map.fields[segment]
+    }
+    return type
+  }
+
   /** How a partial-evaluation residual runs and explains, with the caller's context. */
   interface ResidualRunner {
     runSync: (ctx: unknown, options: unknown) => unknown
@@ -1123,6 +1202,14 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     expect?: Type,
     asResidual?: (runner: ResidualRunner) => void,
     constants?: ReadonlyMap<string, unknown>,
+    /**
+     * For a residual: its printed source (the text of its explanations) and
+     * the known data `call: true` host functions see under the caller's context.
+     */
+    residualOf?: {
+      readonly source: string
+      readonly known: Readonly<Record<string, unknown>> | undefined
+    },
   ): Program<Ctx, R> {
     // When the checker cannot prove the result matches `expect` (part of it is
     // `any`, or an open object may hold an unlisted key), it is checked at run
@@ -1172,6 +1259,17 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       }
       state.reset(ctx, source, locals, limits.maxSteps, limits.timeout, limits.signal)
       if (limits.now !== undefined) state.nowValue = limits.now
+      const known = residualOf?.known
+      if (known !== undefined) {
+        // The residual's call: true functions read the known data the partial
+        // evaluation had, overlaid with the context the residual was given:
+        // that context itself (prototype included) when it already has every
+        // known key, otherwise a copy with the known keys it lacks added.
+        const names = Object.keys(known)
+        state.charge(1 + Math.ceil(names.length / KNOWN_KEYS_PER_STEP))
+        if (names.some((name) => !Object.hasOwn(ctx, name)))
+          state.hostCtx = Object.freeze({ ...known, ...ctx })
+      }
     }
 
     function runSync(context: unknown, options: EvaluateOptions | undefined): R {
@@ -1285,6 +1383,22 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       return { ok: false, error: hostDataFailure(error, source) }
     }
 
+    // A residual's nodes keep the original's offsets (or none, for known
+    // values), so their text comes from the printed residual instead: mapped
+    // once, the first time the residual is explained.
+    let residualText: ReadonlyMap<Node, string> | undefined
+    const residualTextMap = (printed: string): ReadonlyMap<Node, string> =>
+      (residualText ??= residualTexts(analysis.root, printed, {
+        maxSourceLength: Math.max(settings.parseLimits.maxSourceLength, printed.length),
+        // Printing adds parentheses (and unary minus for negative literals).
+        maxDepth: settings.parseLimits.maxDepth * 4,
+        maxNodes: settings.parseLimits.maxNodes * 4,
+      }))
+    const textOfResidual =
+      residualOf === undefined
+        ? undefined
+        : (node: Node): string => residualTextMap(residualOf.source).get(node) ?? ''
+
     function tracerFor(explain: ExplainSettings): Tracer {
       return new Tracer(
         source,
@@ -1292,18 +1406,23 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         explain.maxIterations,
         explain.maxNodes,
         explain.exhaustive,
-        // A residual's nodes keep the original's offsets (or none, for known
-        // values), so their text is printed rather than sliced from the source.
-        asResidual === undefined ? undefined : (node) => print(node),
+        textOfResidual,
       )
+    }
+
+    /** Explaining a residual reads its printed source: charged like printing it. */
+    function chargeResidualText(state: State): void {
+      if (residualOf === undefined) return
+      state.charge(1 + Math.ceil(residualOf.source.length / RESIDUAL_CHARS_PER_STEP))
+      residualTextMap(residualOf.source)
+      state.checkTime()
     }
 
     function explainSync(context: unknown, options: ExplainOptions | undefined): Explanation<R> {
       const explain = explainSettings(options)
-      const tracer = tracerFor(explain)
       if (analysis.async) {
         return explanation(
-          tracer,
+          tracerFor(explain),
           failure(
             new BonsaiRuntimeError(
               'ASYNC_IN_SYNC',
@@ -1320,15 +1439,20 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       const limits = evaluationLimits(explain.evaluate, settings)
       const ctx = contextOf(context)
       const state = new State(settings.runtimeLimits, settings.clock)
+      // Made after prepare, so a residual's text (read when its tracer is
+      // made) is within the evaluation's deadline.
+      let tracer: Tracer | undefined
       try {
         prepare(state, ctx, limits, code.localCount)
+        chargeResidualText(state)
+        tracer = tracerFor(explain)
         state.tracer = tracer
         const value = code.run(state) as R
         checked(value, state)
         state.checkTime()
         return explanation(tracer, { ok: true, value })
       } catch (error) {
-        return explanation(tracer, failure(error))
+        return explanation(tracer ?? tracerFor(explain), failure(error))
       } finally {
         state.release()
       }
@@ -1340,7 +1464,6 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     ): Promise<Explanation<R>> {
       if (!analysis.async) return explainSync(context, options)
       const explain = explainSettings(options)
-      const tracer = tracerFor(explain)
       const code = (traceAsync ??= compileProgram(analysis, 'async', {
         ...compileOptions,
         trace: true,
@@ -1348,15 +1471,18 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       const limits = evaluationLimits(explain.evaluate, settings)
       const ctx = contextOf(context)
       const state = new State(settings.runtimeLimits, settings.clock)
+      let tracer: Tracer | undefined
       try {
         prepare(state, ctx, limits, code.localCount)
+        chargeResidualText(state)
+        tracer = tracerFor(explain)
         state.tracer = tracer
         const value = settle((await code.run(state)) as R)
         checked(value, state)
         state.checkTime()
         return explanation(tracer, { ok: true, value })
       } catch (error) {
-        return explanation(tracer, failure(error))
+        return explanation(tracer ?? tracerFor(explain), failure(error))
       } finally {
         state.release()
       }
@@ -1444,8 +1570,21 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
                 ? undefined
                 : { async: def.async === true, call: def.call === true }
             },
-            charge: () => {
-              state.charge(1)
+            charge: (steps = 1) => {
+              state.charge(steps)
+            },
+            checkTime: () => {
+              state.checkTime()
+            },
+            maxSourceLength: settings.parseLimits.maxSourceLength,
+            incomplete: (path, value) => {
+              const type = declaredAt(path)
+              return (
+                type !== undefined &&
+                value !== null &&
+                typeof value === 'object' &&
+                !conforms(value, type, state)
+              )
             },
             evaluate: (node, locals) => {
               const key = locals.map(([name]) => name).join('\u0000')
@@ -1468,7 +1607,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
                 throw hostDataFailure(error, source)
               }
             },
-            compileResidual: (residual, bindings) => {
+            compileResidual: (residual, bindings, residualSource, residualKnown) => {
               // The original expression passed the checker; inlining known
               // values can make a failing branch statically visible, and that
               // failure must happen at run time, as it would have, so findings
@@ -1489,6 +1628,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
                   runner = made
                 },
                 new Map(Object.entries(bindings)),
+                { source: residualSource, known: residualKnown },
               )
               return runner as ResidualRunner
             },
@@ -1550,30 +1690,20 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     return makeProgram<R>(source, analysis, expect)
   }
 
-  /** Adds check()'s tree accessors, kept out of the JSON form. */
-  function withTree<T extends object>(
-    result: T,
-    ast: (() => Node) | undefined,
-    typeOf: (node: Node) => Type | undefined,
-  ): T & { readonly ast: Node | undefined; readonly typeOf: (node: Node) => Type | undefined } {
-    Object.defineProperty(result, 'ast', { get: () => ast?.() })
-    Object.defineProperty(result, 'typeOf', { value: typeOf })
-    return result as T & { ast: Node | undefined; typeOf: (node: Node) => Type | undefined }
-  }
-
   /**
    * compile(), through the program cache: programs are immutable, so the same
    * source with an equal expected type (types are plain JSON data) shares one.
    */
   function cachedCompile<R>(source: string, expect: Type | undefined): Program<Ctx, R> {
     if (typeof source !== 'string') throw new TypeError('An expression must be a string')
-    const key = expect === undefined ? source : `${source}\u0000${JSON.stringify(expect)}`
-    let program = cache.get(key)
-    if (program === undefined) {
-      program = compile(source, expect)
-      cache.set(key, program)
-    }
-    return program as Program<Ctx, R>
+    const expectKey = expect === undefined ? undefined : JSON.stringify(expect)
+    const key = expectKey === undefined ? source : `${source}\u0000${expectKey}`
+    const entry = cache.get(key)
+    if (entry !== undefined && entry.source === source && entry.expect === expectKey)
+      return entry.program as Program<Ctx, R>
+    const program = compile<R>(source, expect)
+    cache.set(key, { program, source, expect: expectKey })
+    return program
   }
 
   function cached(source: string): Program<Ctx> {
@@ -1618,26 +1748,20 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
             end: error.span?.end ?? source.length,
           },
         ])
-        return withTree({ ok: false, type: undefined, diagnostics }, undefined, () => undefined)
+        return new CheckFailure(undefined, diagnostics, undefined) as CheckResult<Ctx, Infer<E>>
       }
-      const diagnostics = locate(source, analysis.diagnostics)
+      const diagnostics =
+        analysis.diagnostics.length === 0 ? NO_DIAGNOSTICS : locate(source, analysis.diagnostics)
       const type = deepFreeze(analysis.type)
-      // The tree, a node's type, and the program are read on demand, so an
-      // editor checking on every keystroke pays only for what it uses.
-      const typeOf = (node: Node): Type | undefined => {
-        const found = analysis.types.get(node)
-        return found === undefined ? undefined : deepFreeze(found)
-      }
-      const ast = (): Node => deepFreeze(analysis.root)
-      if (analysis.diagnostics.some((d) => d.severity === 'error')) {
-        return withTree({ ok: false, type, diagnostics }, ast, typeOf)
-      }
+      if (analysis.diagnostics.some((d) => d.severity === 'error'))
+        return new CheckFailure(type, diagnostics, analysis) as CheckResult<Ctx, Infer<E>>
       let program: Program<Ctx, Infer<E>> | undefined
-      const result = withTree({ ok: true as const, type, diagnostics }, ast, typeOf)
-      Object.defineProperty(result, 'program', {
-        get: () => (program ??= makeProgram<Infer<E>>(source, analysis, expect)),
-      })
-      return result as typeof result & { readonly program: Program<Ctx, Infer<E>> }
+      return new CheckSuccess(
+        type,
+        diagnostics,
+        analysis,
+        () => (program ??= makeProgram<Infer<E>>(source, analysis, expect)),
+      ) as CheckResult<Ctx, Infer<E>>
     },
     compile: <E extends Type = AnyType>(source: string, options?: CompileOptions<E>) =>
       cachedCompile<Infer<E>>(source, compileExpect(options)),
