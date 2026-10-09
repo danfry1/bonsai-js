@@ -33,5 +33,5 @@ A redesign of the language and the engine. Expressions and host code written for
 **Engine**
 
 - Expressions compile to closures. Async code is generated only for subtrees that reach an async host function.
-- The package ships one module per source file, so bundlers drop what an app does not reach: importing only `t` or the error classes adds under 1 KB gzipped. A minimal browser bundle that evaluates expressions is about 56 KB gzipped.
+- The package ships one module per source file, so bundlers drop what an app does not reach: importing only `t` or the error classes adds under 1 KB gzipped. A minimal browser bundle that evaluates expressions is about 60 KB gzipped.
 - Every limit is on by default: source size, depth, node count, a deterministic step budget charged by the real cost of each operation, produced string and list sizes, value depth, regular expression pattern length, plus an optional timeout and `AbortSignal`.

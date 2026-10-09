@@ -543,6 +543,32 @@ describe('review regressions', () => {
     expect(await agree('order.name.startsWith("a_\\\\")', rows)).toEqual([3])
   })
 
+  it('reads a known Date by its real time, never through an overridden getTime', () => {
+    class Lying extends Date {
+      override getTime(): number {
+        return 0
+      }
+    }
+    const when = new Lying('2026-01-01T00:00:00Z')
+    const program = bonsai({
+      variables: { order: t.object({ placed: t.timestamp() }), when: t.timestamp() },
+    }).compile('order.placed > when')
+    const sql = toSQL(program, {
+      row: 'order',
+      columns: { placed: 'timestamp' },
+      dialect: 'sqlite',
+      known: { when },
+    })
+    expect(sql.params).toEqual([Date.UTC(2026, 0, 1)])
+    const pgSql = toSQL(program, {
+      row: 'order',
+      columns: { placed: 'timestamp' },
+      dialect: 'postgres',
+      known: { when },
+    })
+    expect(pgSql.params).toEqual(['2026-01-01T00:00:00.000Z'])
+  })
+
   it('rejects MongoDB patterns over the length limit', () => {
     const program = env.compile('order.name.startsWith(long)')
     expect(() =>
