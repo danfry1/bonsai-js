@@ -2,7 +2,12 @@ import type { Analysis } from './check/checker.js'
 import { BonsaiRuntimeError, type BonsaiError } from './errors.js'
 import { forEachChild, type LambdaNode, type Node, type SpreadNode } from './syntax/ast.js'
 import { print } from './syntax/printer.js'
-import type { EvaluateOptions } from './environment.js'
+import type {
+  AbortSignalLike,
+  EvaluateOptions,
+  ExplainOptions,
+  Explanation,
+} from './environment.js'
 import type { Duration } from './runtime/values.js'
 
 // === dependencies ===
@@ -172,7 +177,7 @@ export type PartialData<T> = T extends
   | ((...args: never) => unknown)
   ? T
   : T extends object
-    ? { [K in keyof T]?: PartialData<T[K]> }
+    ? { [K in keyof T]?: PartialData<T[K]> | undefined }
     : T
 
 export type PartialResult<R, Ctx = object> =
@@ -203,6 +208,17 @@ export interface ResidualResult<R, Ctx = object> {
    */
   readonly evaluateSync: (context?: PartialData<Ctx>, options?: EvaluateOptions) => R
   readonly evaluate: (context?: PartialData<Ctx>, options?: EvaluateOptions) => Promise<R>
+  /**
+   * Explains the residual with the (full) context, like Program.explain;
+   * bindings are supplied for you. Each trace node's text is the residual's
+   * own (printed) text; its offsets refer to the original expression, and are
+   * 0 for values filled in from the known data.
+   */
+  readonly explain: (
+    context?: PartialData<Ctx>,
+    options?: ExplainOptions,
+  ) => Promise<Explanation<R>>
+  readonly explainSync: (context?: PartialData<Ctx>, options?: ExplainOptions) => Explanation<R>
 }
 
 export interface PartialOptions {
@@ -219,6 +235,12 @@ export interface PartialOptions {
   readonly callHostFunctions?: boolean | undefined
   /** The time now() returns. Default: now() stays in the residual. */
   readonly now?: Date | undefined
+  /** Step budget for the whole partial evaluation (0 = none), as in evaluation. */
+  readonly maxSteps?: number | undefined
+  /** Wall-clock budget for the whole partial evaluation in milliseconds (0 = none). */
+  readonly timeout?: number | undefined
+  /** Cancels the partial evaluation. */
+  readonly signal?: AbortSignalLike | undefined
 }
 
 /** How the partial evaluator reaches the engine. */
@@ -244,6 +266,8 @@ export interface PartialEngine {
   ) => {
     runSync: (ctx: unknown, options: unknown) => unknown
     runAsync: (ctx: unknown, options: unknown) => Promise<unknown>
+    explainSync: (ctx: unknown, options: unknown) => Explanation<unknown>
+    explainAsync: (ctx: unknown, options: unknown) => Promise<Explanation<unknown>>
   }
 }
 
@@ -549,6 +573,10 @@ export function partiallyEvaluate<R>(
       compiled.runSync(context, evaluateOptions) as R,
     evaluate: async (context?: object, evaluateOptions?: EvaluateOptions) =>
       (await compiled.runAsync(context, evaluateOptions)) as R,
+    explainSync: (context?: object, explainOptions?: ExplainOptions) =>
+      compiled.explainSync(context, explainOptions) as Explanation<R>,
+    explain: (context?: object, explainOptions?: ExplainOptions) =>
+      compiled.explainAsync(context, explainOptions) as Promise<Explanation<R>>,
   })
 }
 

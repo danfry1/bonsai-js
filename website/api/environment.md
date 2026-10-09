@@ -94,7 +94,7 @@ program?.evaluateSync({ a: 2, b: 0 }) // => 3
 
 ## env.compile(source, options?)
 
-Parses, checks, and compiles. Returns a [Program](/api/programs). Throws `BonsaiSyntaxError`, `BonsaiCheckError`, or `BonsaiLimitError`.
+Parses, checks, and compiles. Returns a [Program](/api/programs). Throws `BonsaiSyntaxError`, `BonsaiCheckError`, or `BonsaiLimitError`. Programs are immutable, so compiling goes through the environment's program cache (the one `evaluate(source)` uses, with the same `cacheSize` and size bounds): the same source with an equal `expect` returns the same program.
 
 <!-- no-run -->
 ```ts
@@ -133,15 +133,30 @@ The context must be a plain object or class instance (or omitted when no variabl
 | `timeout` | `number` | Wall-clock budget in milliseconds for this evaluation (`0` for none). |
 | `maxSteps` | `number` | Step budget for this evaluation, replacing the environment's (`0` for none). |
 | `signal` | `AbortSignal` | Cancels the evaluation with an `ABORTED` error. |
+| `now` | `Date` | The time `now()` returns in this evaluation, instead of the environment's `clock`. A value that is not a valid `Date` is a `TypeError`. |
 
 <!-- continue -->
 ```ts
 typed.evaluateSync('a + b', { a: 1, b: 2 }, { timeout: 50, maxSteps: 10_000 }) // => 3
+bonsai().evaluateSync('year(now())', {}, { now: new Date('2030-06-01T00:00:00Z') }) // => 2030
 ```
+
+With `strict: false`, the context's TypeScript type accepts keys beyond the declared variables, matching what evaluation allows; declared variables stay typed.
 
 ## env.explain(source, context?, options?) and env.explainSync(source, context?, options?)
 
 Compile through the cache and [explain](/api/explain) the result: `explain()` returns a promise, like `evaluate()`, and rejects for syntax and check errors; `explainSync()` returns the explanation and throws them.
+
+## env.partial(source, known, options?)
+
+Compiles through the cache and [partially evaluates](/api/partial): the same as `env.compile(source).partial(known, options)`. Syntax and check errors are thrown, as from `evaluateSync()`.
+
+<!-- continue -->
+```ts
+const priced = bonsai({ variables: { total: t.number(), minTotal: t.number() } })
+const pricedPartial = priced.partial('total > minTotal', { minTotal: 100 })
+pricedPartial.status // => "residual"
+```
 
 ## env.extend(options)
 

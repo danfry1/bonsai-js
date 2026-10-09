@@ -78,6 +78,8 @@ export class Tracer {
   extraDepth = 0
 
   private readonly source: string
+  /** The text of a node, when it is not the source between its offsets (a residual's). */
+  private readonly textOf: ((node: Node) => string) | undefined
   private readonly maxIterations: number
   private readonly maxNodes: number
   /** Evaluate both sides of && and || so every deciding condition is recorded. */
@@ -89,8 +91,10 @@ export class Tracer {
     maxIterations: number,
     maxNodes: number,
     exhaustive: boolean,
+    textOf?: (node: Node) => string,
   ) {
     this.source = source
+    this.textOf = textOf
     this.maxIterations = maxIterations
     this.maxNodes = maxNodes
     this.exhaustive = exhaustive
@@ -110,7 +114,7 @@ export class Tracer {
       kind: node.type,
       start: node.start,
       end: node.end,
-      text: this.source.slice(node.start, node.end),
+      text: this.textOf === undefined ? this.source.slice(node.start, node.end) : this.textOf(node),
       evaluated: true,
       children: [],
     }

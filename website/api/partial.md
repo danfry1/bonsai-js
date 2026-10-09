@@ -38,7 +38,7 @@ if (result.status === 'residual') {
 |---|---|
 | `value` | The known data decides the result: `value` |
 | `error` | Evaluation fails whatever the unknown data is: `error` |
-| `residual` | `residual` (syntax tree), `source`, `bindings`, `dependsOn`, `hostFunctions` (host functions the residual still calls), and `evaluateSync(context, options?)` / `evaluate(context, options?)`, which take the same evaluation options as a program (`timeout`, `maxSteps`, `signal`); `context` is typed as any part of the program's context, so a misspelled variable does not compile |
+| `residual` | `residual` (syntax tree), `source`, `bindings`, `dependsOn`, `hostFunctions` (host functions the residual still calls), and `evaluateSync(context, options?)` / `evaluate(context, options?)`, which take the same evaluation options as a program (`timeout`, `maxSteps`, `signal`, `now`); `context` is typed as any part of the program's context, so a misspelled variable does not compile. `explainSync(context, options?)` / `explain(context, options?)` [explain](/api/explain) the residual the same way: each trace node's text is the residual's own (printed) text, and its offsets refer to the original expression (0 for values filled in from the known data) |
 
 The residual is exact: evaluating it with the full data gives the same value or error as evaluating the original expression with the full data. Simplifications that would change a result (for example turning `x && false` into `false` when `x` could fail) are not made.
 
@@ -53,8 +53,11 @@ Short primitives (numbers, booleans, `null`, strings up to 200 characters) are w
 | `unknown` | variables missing from `known` | Variables or dotted paths (`order`, `user.riskScore`) to treat as unknown; unknown wins over a value you passed |
 | `callHostFunctions` | `false` | Call host functions whose inputs are known (only synchronous ones); otherwise they stay in the residual |
 | `now` | none | The time `now()` returns; otherwise `now()` stays in the residual (the environment's `clock` is not used, so a stored residual reads the time when it is evaluated) |
+| `maxSteps` | the environment's | Step budget for the whole partial evaluation (`0` for none) |
+| `timeout` | the environment's | Wall-clock budget in milliseconds for the whole partial evaluation (`0` for none) |
+| `signal` | none | Cancels the partial evaluation with an `ABORTED` error |
 
-Limit errors (steps, time) are thrown from `partial()` rather than guessed. Every sub-expression evaluated during one `partial()` call shares one step budget. Options follow the same rules as everywhere else: an unknown option or a wrong type is a `TypeError`. With `validateContext`, the variables in `known` are validated as evaluation validates them (a mismatch is an `INVALID_CONTEXT` result), so a known object must have all its declared fields; a missing field would otherwise be read as `null`. To leave part of an object unknown, list its path in `unknown` (`user.riskScore`): a variable with an unknown path inside it is not validated.
+Limit errors (steps, time, cancellation) are thrown from `partial()` rather than guessed. Every sub-expression evaluated during one `partial()` call shares one step budget and one deadline. `env.partial(source, known, options?)` compiles through the environment's cache and does the same. Options follow the same rules as everywhere else: an unknown option or a wrong type is a `TypeError`. With `validateContext`, the variables in `known` are validated as evaluation validates them (a mismatch is an `INVALID_CONTEXT` result), so a known object must have all its declared fields; a missing field would otherwise be read as `null`. To leave part of an object unknown, list its path in `unknown` (`user.riskScore`): a variable with an unknown path inside it is not validated.
 
 ## Details
 
