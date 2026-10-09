@@ -103,8 +103,53 @@ export class BonsaiSyntaxError extends BonsaiError {
   }
 }
 
+/**
+ * The option that bounds a limit error: a key of `limits` (or the
+ * per-evaluation `timeout`), or `signal` for a cancellation.
+ */
+export type LimitName =
+  | 'maxSourceLength'
+  | 'maxDepth'
+  | 'maxNodes'
+  | 'maxSteps'
+  | 'maxStringLength'
+  | 'maxListLength'
+  | 'maxValueDepth'
+  | 'maxPatternLength'
+  | 'timeout'
+  | 'signal'
+
+const LIMIT_OF: Partial<Record<ErrorCode, LimitName>> = {
+  SOURCE_TOO_LONG: 'maxSourceLength',
+  TOO_DEEP: 'maxDepth',
+  TOO_MANY_NODES: 'maxNodes',
+  STEP_LIMIT: 'maxSteps',
+  STRING_LIMIT: 'maxStringLength',
+  LIST_LIMIT: 'maxListLength',
+  VALUE_DEPTH_LIMIT: 'maxValueDepth',
+  PATTERN_LIMIT: 'maxPatternLength',
+  TIMEOUT: 'timeout',
+  ABORTED: 'signal',
+}
+
 /** A resource limit, timeout, or cancellation stopped parsing or evaluation. */
-export class BonsaiLimitError extends BonsaiError {}
+export class BonsaiLimitError extends BonsaiError {
+  /**
+   * The option that bounds this limit, so a caller can tell which to raise:
+   * undefined for a fixed internal bound (TOO_COMPLEX, template nesting).
+   */
+  readonly limit: LimitName | undefined
+
+  constructor(
+    code: ErrorCode,
+    message: string,
+    init: ErrorInit & { readonly limit?: LimitName | null } = {},
+  ) {
+    super(code, message, init)
+    // `null` marks a bound that is not configurable even though the code usually is.
+    this.limit = init.limit === null ? undefined : (init.limit ?? LIMIT_OF[code])
+  }
+}
 
 /** Evaluation failed: a type mismatch, invalid argument, or host failure. */
 export class BonsaiRuntimeError extends BonsaiError {}

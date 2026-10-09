@@ -25,12 +25,12 @@ env.evaluateSync('(200).discount(0.25)') // => 150
 | Field | Type | Description |
 | --- | --- | --- |
 | `params` | `Type[]` | Parameter types, in order. The types of `run`'s arguments are inferred from them. |
-| `returns` | `Type` | The declared result type. The result is checked deeply against it at run time. |
+| `returns` | `Type` | The declared result type. The result is checked deeply against it at run time. When it is nullable (`t.optional(...)`), `run` may also return `undefined`, which reads as `null`. |
 | `run` | function | The implementation. |
 | `required` | `number` | How many leading parameters are required (default: all). Missing optional arguments arrive as `null`, so optional parameters must be declared with `t.optional(...)`. |
-| `rest` | `Type` | The type of further variadic arguments. |
+| `rest` | `Type` | The type of further variadic arguments; `run`'s rest parameter is typed from it. |
 | `async` | `boolean` | `run` returns a promise. The expression must be evaluated with `evaluate()`. |
-| `context` | `boolean` | `run` receives the evaluation context as its first argument. |
+| `call` | `boolean` | `run` receives a `{ context, signal }` call object before its arguments. See [The call](#the-call-context-and-cancellation). |
 | `description` | `string` | Shown by `listFunctions()` and in editor completions and hover. |
 | `cost` | `number` | Steps charged per call, a non-negative integer (default 32). Lower it for cheap pure helpers so they do not use up the budget; raise it for calls that reach a database or network. |
 

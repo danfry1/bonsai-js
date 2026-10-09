@@ -359,6 +359,8 @@ function readTemplate(
     throw new BonsaiLimitError('TOO_DEEP', `Templates nest deeper than ${MAX_TEMPLATE_NESTING}`, {
       source,
       span: { start, end: start + 1 },
+      // A fixed bound, not maxDepth.
+      limit: null,
     })
   }
   const parts: TemplatePart[] = []

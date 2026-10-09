@@ -110,7 +110,7 @@ Environment members:
 - `listFunctions()`, `describeFunction(name)` -> `{ name, description, host, async, signatures: [{ params, required, rest?, returns }] }`.
 - `parse(src)` -> syntax tree; `variables`; `strict`.
 
-Evaluation options: `timeout` (ms), `maxSteps`, `signal` (AbortSignal).
+Evaluation options: `timeout` (ms), `maxSteps`, `signal` (AbortSignal), `now` (Date: the time `now()` returns in this evaluation). `compile(src, { expect })` is cached: the same source and expected type return the same program. `env.partial(src, known, options?)` compiles through the cache and partially evaluates.
 
 ### Program
 
@@ -122,7 +122,7 @@ Evaluation options: `timeout` (ms), `maxSteps`, `signal` (AbortSignal).
 
 ### Partial evaluation
 
-`program.partial(known, options?)` evaluates what `known` decides. Options: `unknown` (variables or dotted paths; default: variables missing from `known`), `callHostFunctions` (default false), `now` (the time `now()` returns; otherwise `now()` stays in the residual). Returns `{ status: 'value', value }`, `{ status: 'error', error }` (fails whatever the unknown data is), or `{ status: 'residual', residual, source, bindings, dependsOn, hostFunctions, evaluate(ctx, options?), evaluateSync(ctx, options?) }`. The residual is exact: evaluating it with the full context gives the same value or error as the original. Known values that are not short primitives are referenced as `__knownN` bindings; `evaluate`/`evaluateSync` supply them. Known variables are validated when `validateContext` is on.
+`program.partial(known, options?)` evaluates what `known` decides. Options: `unknown` (variables or dotted paths; default: variables missing from `known`), `callHostFunctions` (default false), `now` (the time `now()` returns; otherwise `now()` stays in the residual), `maxSteps`, `timeout`, `signal` (one budget for the whole partial evaluation). Returns `{ status: 'value', value }`, `{ status: 'error', error }` (fails whatever the unknown data is), or `{ status: 'residual', residual, source, bindings, dependsOn, hostFunctions, evaluate(ctx, options?), evaluateSync(ctx, options?), explain(ctx, options?), explainSync(ctx, options?) }`. The residual is exact: evaluating it with the full context gives the same value or error as the original. Known values that are not short primitives are referenced as `__knownN` bindings; `evaluate`/`evaluateSync` supply them. Known variables are validated when `validateContext` is on.
 
 ### Query translation (bonsai-js/query)
 
@@ -159,7 +159,7 @@ Arguments are validated before `run`; results are checked deeply against `return
 All errors from checking and evaluating extend `BonsaiError` with `code`, `source`, `span` (`{ start, end }`), `position` (1-based), `formatted` (message + code frame); diagnostics (`check().diagnostics`, `BonsaiCheckError.diagnostics`, `program.warnings`) carry `code`, `message`, `severity`, `start`, `end`, `span`, `position`, `formatted`, and `suggestion` (the name to use instead, for unknown names); `check()` also returns `ast` (the checked tree), `typeOf(node)`, and, when ok, `program` (compiled on first read); exceptions from host code (functions, getters, Proxies, including a `BonsaiError` a host function throws) are wrapped as `HOST_ERROR`. Invalid configuration throws `TypeError` or `RangeError` (a wrong type or unknown option key is a `TypeError`, a value out of range a `RangeError`) from `bonsai()`, `fn()`, `compile()`/`check()`, `evaluate*()` and `explain*()` (per-evaluation options, or a context that is not an object), `partial()`, `toSQL()`/`toMongo()`, and `print()` (trees the parser could not produce).
 - `BonsaiSyntaxError`: `SYNTAX`
 - `BonsaiCheckError`: `CHECK` (`.diagnostics`)
-- `BonsaiLimitError`: `SOURCE_TOO_LONG`, `TOO_DEEP` (syntax), `TOO_MANY_NODES`, `TOO_COMPLEX`, `STEP_LIMIT`, `STRING_LIMIT`, `LIST_LIMIT`, `VALUE_DEPTH_LIMIT` (nested data), `PATTERN_LIMIT`, `TIMEOUT`, `ABORTED`
+- `BonsaiLimitError`: `SOURCE_TOO_LONG`, `TOO_DEEP` (syntax), `TOO_MANY_NODES`, `TOO_COMPLEX`, `STEP_LIMIT`, `STRING_LIMIT`, `LIST_LIMIT`, `VALUE_DEPTH_LIMIT` (nested data), `PATTERN_LIMIT`, `TIMEOUT`, `ABORTED`; `.limit` names the option to raise (`maxSteps`, `timeout`, `signal`, ...; undefined for fixed bounds)
 - `BonsaiTranslationError` (from `bonsai-js/query`): `UNTRANSLATABLE`
 - `BonsaiRuntimeError`: `TYPE_ERROR`, `NO_OVERLOAD`, `NULL_RECEIVER`, `DIVISION_BY_ZERO`, `NON_FINITE`, `BLOCKED_PROPERTY`, `INVALID_ARGUMENT`, `ASYNC_IN_SYNC`, `HOST_ERROR`, `HOST_CONTRACT`, `INVALID_CONTEXT`
 

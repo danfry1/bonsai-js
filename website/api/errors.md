@@ -69,6 +69,21 @@ try {
 
 `try(expr, fallback)` in an expression catches `BonsaiRuntimeError`s except `HOST_CONTRACT`, which is a bug in host code rather than a condition an expression should recover from. It never catches syntax, check, or limit errors.
 
+A `BonsaiLimitError` also names the option that bounds it in `limit`, so you can tell which one to raise: `'maxSourceLength'`, `'maxDepth'`, `'maxNodes'`, `'maxSteps'`, `'maxStringLength'`, `'maxListLength'`, `'maxValueDepth'`, `'maxPatternLength'`, `'timeout'`, or `'signal'` (for `ABORTED`). It is `undefined` for a fixed internal bound: `TOO_COMPLEX`, and `TOO_DEEP` from template nesting. The `LimitName` type lists the values; like codes, values may be added in a minor release.
+
+<!-- continue -->
+```ts
+import { BonsaiLimitError } from 'bonsai-js'
+
+let limitName: string | undefined
+try {
+  bonsai({ limits: { maxSteps: 5 } }).evaluateSync('[1, 2, 3, 4, 5, 6].map(x => x)')
+} catch (error) {
+  if (error instanceof BonsaiLimitError) limitName = error.limit
+}
+limitName // => "maxSteps"
+```
+
 ## Diagnostics
 
 `env.check()` returns, and `BonsaiCheckError.diagnostics`, `program.warnings`, and the language service carry, a list of findings. Each one locates itself the way a `BonsaiError` does:

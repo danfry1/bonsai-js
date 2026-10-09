@@ -1,5 +1,6 @@
 import { BonsaiLimitError, type DiagnosticCode, type Finding } from '../errors.js'
 import { RESULT_REFINERS } from '../functions/builtins.js'
+import { closest, didYouMean } from '../suggest.js'
 import {
   isItemLambdaPosition,
   isLambdaPosition,
@@ -794,8 +795,13 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
               if (mapped.rest !== undefined)
                 rest = rest === undefined ? mapped.rest : unionOf([rest, mapped.rest])
               else if (!spreadExact) exact = false
-            } else if (nonNull(spread).kind === 'any') rest = ANY
-            else if (nonNull(spread).kind === 'never') continue
+            } else if (nonNull(spread).kind === 'any') {
+              // An unknown map may overwrite every earlier field.
+              const keys = Object.keys(fields)
+              chargeTypeWork(keys.length)
+              for (const key of keys) fields[key] = ANY
+              rest = ANY
+            } else if (nonNull(spread).kind === 'never') continue
             else
               report(
                 'TYPE_ERROR',
@@ -2146,47 +2152,11 @@ const JS_GLOBALS: Readonly<Record<string, string>> = {
  * only, each against a bounded number of candidates.
  */
 const MAX_SUGGESTIONS = 16
-const MAX_SUGGESTION_CANDIDATES = 1000
 let suggestionsLeft = MAX_SUGGESTIONS
 
-/** The message suffix for a suggestion, or nothing. */
-function didYouMean(suggestion: string | undefined): string {
-  return suggestion === undefined ? '' : `; did you mean "${suggestion}"?`
-}
-
-/** The closest candidate by edit distance, if one is close enough. */
+/** The closest candidate by edit distance, if one is close enough, within this check's budget. */
 function suggest(name: string, candidatesOf: () => Iterable<string>): string | undefined {
   if (suggestionsLeft <= 0) return undefined
   suggestionsLeft--
-  const candidates = candidatesOf()
-  let best: string | undefined
-  let bestDistance = Math.max(2, Math.floor(name.length / 3)) + 1
-  let examined = 0
-  for (const candidate of candidates) {
-    if (++examined > MAX_SUGGESTION_CANDIDATES) break
-    const distance = editDistance(name.toLowerCase(), candidate.toLowerCase())
-    if (distance < bestDistance) {
-      best = candidate
-      bestDistance = distance
-    }
-  }
-  return best
-}
-
-/** Any distance larger than every suggestion threshold. */
-const FAR_APART = 99
-
-function editDistance(a: string, b: string): number {
-  if (Math.abs(a.length - b.length) > 3) return FAR_APART
-  const row = Array.from({ length: b.length + 1 }, (_, i) => i)
-  for (let i = 1; i <= a.length; i++) {
-    let previous = row[0]
-    row[0] = i
-    for (let j = 1; j <= b.length; j++) {
-      const current = row[j]
-      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1))
-      previous = current
-    }
-  }
-  return row[b.length]
+  return closest(name, candidatesOf())
 }

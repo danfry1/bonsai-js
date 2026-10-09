@@ -13,6 +13,7 @@
 import { BonsaiError, type Span } from '../errors.js'
 import type { PartialOptions, PartialResult } from '../partial.js'
 import { Duration } from '../runtime/values.js'
+import { closest, didYouMean } from '../suggest.js'
 import type { BinaryNode, CallNode, Node, SpreadNode } from '../syntax/ast.js'
 
 /** A compiled program (from `env.compile`) whose predicate is translated. */
@@ -156,40 +157,9 @@ const COLUMN_TYPES: ReadonlySet<string> = new Set(['text', 'number', 'boolean', 
 /** The largest distance from the epoch a Date can hold, in milliseconds. */
 const MAX_TIME = 8.64e15
 
-/** At most this many names are compared for a "did you mean" hint. */
-const MAX_HINT_CANDIDATES = 1000
-/** A distance larger than any hint threshold. */
-const FAR_APART = 99
-
-function editDistance(a: string, b: string): number {
-  if (Math.abs(a.length - b.length) > 3) return FAR_APART
-  const row = Array.from({ length: b.length + 1 }, (_, i) => i)
-  for (let i = 1; i <= a.length; i++) {
-    let previous = row[0]
-    row[0] = i
-    for (let j = 1; j <= b.length; j++) {
-      const current = row[j]
-      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1))
-      previous = current
-    }
-  }
-  return row[b.length]
-}
-
 /** `; did you mean "x"?` for the closest candidate, or nothing. */
 function hint(name: string, candidates: Iterable<string>): string {
-  let best: string | undefined
-  let bestDistance = Math.max(2, Math.floor(name.length / 3)) + 1
-  let examined = 0
-  for (const candidate of candidates) {
-    if (++examined > MAX_HINT_CANDIDATES) break
-    const distance = editDistance(name.toLowerCase(), candidate.toLowerCase())
-    if (distance < bestDistance) {
-      best = candidate
-      bestDistance = distance
-    }
-  }
-  return best === undefined ? '' : `; did you mean "${best}"?`
+  return didYouMean(closest(name, candidates))
 }
 
 /** What Bonsai's text function returns for known text. */

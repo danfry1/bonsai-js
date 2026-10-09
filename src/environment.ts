@@ -41,6 +41,7 @@ import {
 import { forEachChild, type CallNode, type Node } from './syntax/ast.js'
 import { isName } from './syntax/lexer.js'
 import { DEFAULT_PARSE_LIMITS, parse, type ParseLimits } from './syntax/parser.js'
+import { print } from './syntax/printer.js'
 import {
   formatType,
   isNullable,
@@ -79,12 +80,22 @@ export interface EvaluateOptions {
   readonly maxSteps?: number | undefined
   /** Cancels the evaluation. */
   readonly signal?: AbortSignalLike | undefined
+  /** The time now() returns in this evaluation, instead of the environment's clock. */
+  readonly now?: Date | undefined
 }
 
 type InferParams<P extends readonly Type[]> = Extract<
   { -readonly [K in keyof P]: Infer<P[K]> },
   unknown[]
 >
+
+/** The arguments `run` receives: the declared parameters, then any rest arguments. */
+type RunArgs<P extends readonly Type[], RT> = RT extends Type
+  ? [...InferParams<P>, ...Infer<RT>[]]
+  : InferParams<P>
+
+/** What `run` may return: a nullable result also accepts `undefined`, which reads as null. */
+type RunResult<R extends Type> = null extends Infer<R> ? Infer<R> | undefined : Infer<R>
 
 /**
  * The standard `AbortSignal` when the consumer's types declare one (DOM or
@@ -121,7 +132,11 @@ export interface HostFunction {
 }
 
 /** The declaration passed to {@link fn}, without `run`, `async`, and `call`. */
-export interface FnSpec<P extends readonly Type[] = readonly Type[], R extends Type = Type> {
+export interface FnSpec<
+  P extends readonly Type[] = readonly Type[],
+  R extends Type = Type,
+  RT extends Type | undefined = Type | undefined,
+> {
   /** Parameter types, in order. */
   readonly params: P
   /** Declared result type; results are checked against its kind. */
@@ -129,7 +144,7 @@ export interface FnSpec<P extends readonly Type[] = readonly Type[], R extends T
   /** Number of required leading parameters (default: all). Missing optional arguments arrive as null. */
   readonly required?: number | undefined
   /** Type of further variadic arguments. */
-  readonly rest?: Type | undefined
+  readonly rest?: RT
   readonly description?: string | undefined
   /**
    * Steps charged per call (default 32), so one evaluation makes at most
@@ -149,28 +164,32 @@ export interface FnSpec<P extends readonly Type[] = readonly Type[], R extends T
  *   run: async (call, id) => (await fetch(`/stock/${id}`, { signal: call.signal })).json() })
  * ```
  */
-export function fn<const P extends readonly Type[], R extends Type>(
-  spec: FnSpec<P, R> &
+export function fn<
+  const P extends readonly Type[],
+  R extends Type,
+  RT extends Type | undefined = undefined,
+>(
+  spec: FnSpec<P, R, RT> &
     (
       | {
-          readonly async?: false
-          readonly call?: false
-          readonly run: (...args: InferParams<P>) => Infer<R>
+          readonly async?: false | undefined
+          readonly call?: false | undefined
+          readonly run: (...args: RunArgs<P, RT>) => RunResult<R>
         }
       | {
           readonly async: true
-          readonly call?: false
-          readonly run: (...args: InferParams<P>) => Promise<Infer<R>>
+          readonly call?: false | undefined
+          readonly run: (...args: RunArgs<P, RT>) => Promise<RunResult<R>>
         }
       | {
-          readonly async?: false
+          readonly async?: false | undefined
           readonly call: true
-          readonly run: (call: HostCall, ...args: InferParams<P>) => Infer<R>
+          readonly run: (call: HostCall, ...args: RunArgs<P, RT>) => RunResult<R>
         }
       | {
           readonly async: true
           readonly call: true
-          readonly run: (call: HostCall, ...args: InferParams<P>) => Promise<Infer<R>>
+          readonly run: (call: HostCall, ...args: RunArgs<P, RT>) => Promise<RunResult<R>>
         }
     ),
 ): HostFunction {
@@ -188,16 +207,16 @@ export function fn<const P extends readonly Type[], R extends Type>(
  * ```
  */
 export function withContext<Ctx>() {
-  return <const P extends readonly Type[], R extends Type>(
-    spec: FnSpec<P, R> &
+  return <const P extends readonly Type[], R extends Type, RT extends Type | undefined = undefined>(
+    spec: FnSpec<P, R, RT> &
       (
         | {
-            readonly async?: false
-            readonly run: (call: HostCall<Ctx>, ...args: InferParams<P>) => Infer<R>
+            readonly async?: false | undefined
+            readonly run: (call: HostCall<Ctx>, ...args: RunArgs<P, RT>) => RunResult<R>
           }
         | {
             readonly async: true
-            readonly run: (call: HostCall<Ctx>, ...args: InferParams<P>) => Promise<Infer<R>>
+            readonly run: (call: HostCall<Ctx>, ...args: RunArgs<P, RT>) => Promise<RunResult<R>>
           }
       ),
   ): HostFunction => {
@@ -233,8 +252,14 @@ type LibraryVariables<L> = L extends readonly [infer First, ...infer Rest]
       LibraryVariables<Rest>
   : NoVariables
 
-/** The context type of an environment with variables `V` and libraries `L`. */
-type ContextFor<V, L> = ContextOf<V & LibraryVariables<L>>
+/**
+ * The context type of an environment with variables `V` and libraries `L`.
+ * With `strict: false` (`S`), undeclared variables are allowed, so the context
+ * may carry keys beyond the declared ones.
+ */
+type ContextFor<V, L, S = undefined> = [S] extends [false]
+  ? ContextOf<V & LibraryVariables<L>> & Readonly<Record<string, unknown>>
+  : ContextOf<V & LibraryVariables<L>>
 
 export interface EnvironmentOptions<
   V extends Readonly<Record<string, Type>> = Readonly<Record<string, Type>>,
@@ -337,10 +362,7 @@ export interface Program<Ctx = any, R = unknown> {
    * syntax tree) that needs only the unknown data. Evaluating the residual with
    * the full data gives the same result as evaluating this program.
    */
-  partial: (
-    known: PartialData<Ctx> & Record<string, unknown>,
-    options?: PartialOptions,
-  ) => PartialResult<R, Ctx>
+  partial: (known: PartialData<Ctx> & object, options?: PartialOptions) => PartialResult<R, Ctx>
 }
 
 export interface ExplainOptions extends EvaluateOptions {
@@ -419,11 +441,20 @@ export interface Environment<Ctx = any> {
     source: string,
     options?: CompileOptions<E>,
   ) => CheckResult<Ctx, Infer<E>>
-  /** Parses, checks, and compiles. Throws BonsaiSyntaxError / BonsaiCheckError / BonsaiLimitError. */
+  /**
+   * Parses, checks, and compiles. Throws BonsaiSyntaxError / BonsaiCheckError /
+   * BonsaiLimitError. Cached: the same source and expected type return the same program.
+   */
   compile: <E extends Type = AnyType>(
     source: string,
     options?: CompileOptions<E>,
   ) => Program<Ctx, Infer<E>>
+  /** Compiles (cached) and partially evaluates; see Program.partial. Throws only for syntax and check errors. */
+  partial: <R = unknown>(
+    source: string,
+    known: PartialData<Ctx> & object,
+    options?: PartialOptions,
+  ) => PartialResult<R, Ctx>
   /** Compiles (cached) and evaluates asynchronously. */
   evaluate: <R = unknown>(source: string, ...args: Args<Ctx>) => Promise<R>
   /** Compiles (cached) and evaluates synchronously. */
@@ -440,9 +471,10 @@ export interface Environment<Ctx = any> {
   extend: <
     const V2 extends Readonly<Record<string, Type>> = NoVariables,
     const L2 extends readonly Library[] = [],
+    const S2 extends boolean | undefined = undefined,
   >(
-    options: EnvironmentOptions<V2, L2>,
-  ) => Environment<Ctx & ContextFor<V2, L2>>
+    options: EnvironmentOptions<V2, L2> & { readonly strict?: S2 },
+  ) => Environment<Ctx & ContextFor<V2, L2, S2>>
 }
 
 /**
@@ -747,12 +779,23 @@ class ProgramCache<V> {
 
 const EMPTY_CONTEXT: Record<string, unknown> = Object.freeze({})
 
-const EVALUATE_OPTION_KEYS = new Set(['timeout', 'maxSteps', 'signal'])
+const EVALUATE_OPTION_KEYS = new Set(['timeout', 'maxSteps', 'signal', 'now'])
 
 interface EvaluationLimits {
   readonly maxSteps: number
   readonly timeout: number
   readonly signal: AbortSignal | undefined
+  /** The time now() returns, when the caller fixed it. */
+  readonly now: Date | undefined
+}
+
+/** Whether a value is a valid Date (an object that only inherits from Date.prototype is not). */
+function isValidDate(value: unknown): value is Date {
+  try {
+    return value instanceof Date && !Number.isNaN(Date.prototype.getTime.call(value))
+  } catch {
+    return false
+  }
 }
 
 /** Whether a value has an AbortSignal's members; a signal whose getters throw does not. */
@@ -776,6 +819,7 @@ function evaluationLimits(options: unknown, settings: Settings): EvaluationLimit
       maxSteps: settings.runtimeLimits.maxSteps,
       timeout: settings.timeout,
       signal: undefined,
+      now: undefined,
     }
   }
   // Options are the caller's own object; one whose getters or Proxy traps throw
@@ -784,7 +828,7 @@ function evaluationLimits(options: unknown, settings: Settings): EvaluationLimit
   try {
     assertKeys(options, EVALUATE_OPTION_KEYS, 'Evaluate option')
     const read = options as Record<string, unknown>
-    o = { maxSteps: read.maxSteps, timeout: read.timeout, signal: read.signal }
+    o = { maxSteps: read.maxSteps, timeout: read.timeout, signal: read.signal, now: read.now }
   } catch (error) {
     if (error instanceof TypeError || error instanceof RangeError) throw error
     throw new TypeError(`Evaluate options could not be read: ${errorText(error)}`, { cause: error })
@@ -796,11 +840,13 @@ function evaluationLimits(options: unknown, settings: Settings): EvaluationLimit
   ) {
     throw new TypeError('signal must be an AbortSignal')
   }
+  if (o.now !== undefined && !isValidDate(o.now)) throw new TypeError('now must be a valid Date')
   return {
     maxSteps: numberOption('maxSteps', o.maxSteps, settings.runtimeLimits.maxSteps, 0),
     timeout: numberOption('timeout', o.timeout, settings.timeout, 0),
     // A structurally checked AbortSignalLike; evaluation only reads the members checked above.
     signal: signal as AbortSignal | undefined,
+    now: o.now,
   }
 }
 
@@ -971,7 +1017,14 @@ function compileExpect(options: unknown): Type | undefined {
   return expect
 }
 
-const PARTIAL_OPTION_KEYS: ReadonlySet<string> = new Set(['unknown', 'callHostFunctions', 'now'])
+const PARTIAL_OPTION_KEYS: ReadonlySet<string> = new Set([
+  'unknown',
+  'callHostFunctions',
+  'now',
+  'maxSteps',
+  'timeout',
+  'signal',
+])
 const PATH = /^[^.]+(?:\.[^.]+)*$/u
 
 /** Reads partial() options once, with the same TypeError rules as the other options. */
@@ -1001,14 +1054,8 @@ function partialOptions(options: unknown): PartialOptions {
     throw new TypeError('Partial option "unknown" must be a list of variable names or dotted paths')
   if (copy.callHostFunctions !== undefined && typeof copy.callHostFunctions !== 'boolean')
     throw new TypeError('Partial option "callHostFunctions" must be a boolean')
-  const now = copy.now
-  let validNow = now === undefined
-  try {
-    validNow ||= now instanceof Date && !Number.isNaN(Date.prototype.getTime.call(now))
-  } catch {
-    // An object that only inherits from Date.prototype is not a Date.
-  }
-  if (!validNow) throw new TypeError('Partial option "now" must be a valid Date')
+  if (copy.now !== undefined && !isValidDate(copy.now))
+    throw new TypeError('Partial option "now" must be a valid Date')
   return copy
 }
 
@@ -1055,16 +1102,19 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         throw new BonsaiLimitError(error.code, error.message, {
           source,
           ...(error.span === undefined ? {} : { span: error.span }),
+          limit: error.limit ?? null,
         })
       }
       throw error
     }
   }
 
-  /** How a partial-evaluation residual runs, with the caller's context. */
+  /** How a partial-evaluation residual runs and explains, with the caller's context. */
   interface ResidualRunner {
     runSync: (ctx: unknown, options: unknown) => unknown
     runAsync: (ctx: unknown, options: unknown) => Promise<unknown>
+    explainSync: (ctx: unknown, options: unknown) => Explanation<unknown>
+    explainAsync: (ctx: unknown, options: unknown) => Promise<Explanation<unknown>>
   }
 
   function makeProgram<R>(
@@ -1121,6 +1171,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         })
       }
       state.reset(ctx, source, locals, limits.maxSteps, limits.timeout, limits.signal)
+      if (limits.now !== undefined) state.nowValue = limits.now
     }
 
     function runSync(context: unknown, options: EvaluateOptions | undefined): R {
@@ -1241,6 +1292,9 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         explain.maxIterations,
         explain.maxNodes,
         explain.exhaustive,
+        // A residual's nodes keep the original's offsets (or none, for known
+        // values), so their text is printed rather than sliced from the source.
+        asResidual === undefined ? undefined : (node) => print(node),
       )
     }
 
@@ -1259,7 +1313,10 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
           ),
         )
       }
-      const code = (traceSync ??= compileProgram(analysis, 'sync', { trace: true }))
+      const code = (traceSync ??= compileProgram(analysis, 'sync', {
+        ...compileOptions,
+        trace: true,
+      }))
       const limits = evaluationLimits(explain.evaluate, settings)
       const ctx = contextOf(context)
       const state = new State(settings.runtimeLimits, settings.clock)
@@ -1284,7 +1341,10 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       if (!analysis.async) return explainSync(context, options)
       const explain = explainSettings(options)
       const tracer = tracerFor(explain)
-      const code = (traceAsync ??= compileProgram(analysis, 'async', { trace: true }))
+      const code = (traceAsync ??= compileProgram(analysis, 'async', {
+        ...compileOptions,
+        trace: true,
+      }))
       const limits = evaluationLimits(explain.evaluate, settings)
       const ctx = contextOf(context)
       const state = new State(settings.runtimeLimits, settings.clock)
@@ -1340,13 +1400,18 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
 
     function partial(known: Record<string, unknown>, rawOptions: unknown): PartialResult<R, Ctx> {
       const options = partialOptions(rawOptions)
+      // One budget for the whole partial evaluation, validated as evaluation's is.
+      const limits = evaluationLimits(
+        { maxSteps: options.maxSteps, timeout: options.timeout, signal: options.signal },
+        settings,
+      )
       const context = contextOf(known)
       const now = options.now
       const state = new State(
         settings.runtimeLimits,
         now === undefined ? settings.clock : () => now,
       )
-      state.reset(context, source, 0, settings.runtimeLimits.maxSteps, settings.timeout, undefined)
+      state.reset(context, source, 0, limits.maxSteps, limits.timeout, limits.signal)
       try {
         // Known variables are validated as evaluation validates them; a variable
         // with an unknown path inside it is incomplete by design, so it is not.
@@ -1362,8 +1427,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
           try {
             validateContext(context, knownVariables, source, {
               maxDepth: settings.runtimeLimits.maxValueDepth,
-              maxSteps: settings.runtimeLimits.maxSteps,
-              timeout: settings.timeout,
+              maxSteps: limits.maxSteps,
+              timeout: limits.timeout,
             })
           } catch (error) {
             if (error instanceof BonsaiRuntimeError) return { status: 'error', error }
@@ -1453,13 +1518,15 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     asResidual?.({
       runSync: (ctx, options) => runSync(ctx, options as EvaluateOptions | undefined),
       runAsync: (ctx, options) => runAsync(ctx, options as EvaluateOptions | undefined),
+      explainSync: (ctx, options) => explainSync(ctx, options as ExplainOptions | undefined),
+      explainAsync: (ctx, options) => explainAsync(ctx, options as ExplainOptions | undefined),
     })
     // Programs are shared: the tree compiles lazily, so it must not change afterwards.
     return Object.freeze({
       explain: (...args: ExplainArgs<Ctx>) => explainAsync(args[0], args[1]),
       explainSync: (...args: ExplainArgs<Ctx>) => explainSync(args[0], args[1]),
-      partial: (known: Record<string, unknown>, options?: PartialOptions) =>
-        partial(known, options),
+      partial: (known: object, options?: PartialOptions) =>
+        partial(known as Record<string, unknown>, options),
       source,
       ast: deepFreeze(analysis.root),
       type: deepFreeze(analysis.type),
@@ -1494,13 +1561,23 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     return result as T & { ast: Node | undefined; typeOf: (node: Node) => Type | undefined }
   }
 
-  function cached(source: string): Program<Ctx> {
-    let program = cache.get(source)
+  /**
+   * compile(), through the program cache: programs are immutable, so the same
+   * source with an equal expected type (types are plain JSON data) shares one.
+   */
+  function cachedCompile<R>(source: string, expect: Type | undefined): Program<Ctx, R> {
+    if (typeof source !== 'string') throw new TypeError('An expression must be a string')
+    const key = expect === undefined ? source : `${source}\u0000${JSON.stringify(expect)}`
+    let program = cache.get(key)
     if (program === undefined) {
-      program = compile(source, undefined)
-      cache.set(source, program)
+      program = compile(source, expect)
+      cache.set(key, program)
     }
-    return program
+    return program as Program<Ctx, R>
+  }
+
+  function cached(source: string): Program<Ctx> {
+    return cachedCompile(source, undefined)
   }
 
   function info(def: FunctionDef): FunctionInfo {
@@ -1563,7 +1640,9 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       return result as typeof result & { readonly program: Program<Ctx, Infer<E>> }
     },
     compile: <E extends Type = AnyType>(source: string, options?: CompileOptions<E>) =>
-      compile<Infer<E>>(source, compileExpect(options)),
+      cachedCompile<Infer<E>>(source, compileExpect(options)),
+    partial: <R>(source: string, known: PartialData<Ctx> & object, options?: PartialOptions) =>
+      cached(source).partial(known, options) as PartialResult<R, Ctx>,
     evaluate<R>(source: string, ...args: Args<Ctx>): Promise<R> {
       try {
         return cached(source).evaluate(...args) as Promise<R>
@@ -1589,10 +1668,12 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     listFunctions(): FunctionInfo[] {
       return [...checkEnv.functionNames()].map((name) => info(checkEnv.lookup(name) as FunctionDef))
     },
-    extend<V2 extends Readonly<Record<string, Type>>, L2 extends readonly Library[]>(
-      options: EnvironmentOptions<V2, L2>,
-    ) {
-      return createEnvironment<Ctx & ContextFor<V2, L2>>(settingsFrom(settings, options))
+    extend<
+      V2 extends Readonly<Record<string, Type>>,
+      L2 extends readonly Library[],
+      S2 extends boolean | undefined,
+    >(options: EnvironmentOptions<V2, L2> & { readonly strict?: S2 }) {
+      return createEnvironment<Ctx & ContextFor<V2, L2, S2>>(settingsFrom(settings, options))
     },
   })
   internals.set(env, { checkEnv, parseLimits: settings.parseLimits })
@@ -1612,6 +1693,9 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
 export function bonsai<
   const V extends Readonly<Record<string, Type>> = NoVariables,
   const L extends readonly Library[] = [],
->(options: EnvironmentOptions<V, L> = {}): Environment<ContextFor<V, L>> {
-  return createEnvironment<ContextFor<V, L>>(settingsFrom(undefined, options))
+  const S extends boolean | undefined = undefined,
+>(
+  options: EnvironmentOptions<V, L> & { readonly strict?: S } = {},
+): Environment<ContextFor<V, L, S>> {
+  return createEnvironment<ContextFor<V, L, S>>(settingsFrom(undefined, options))
 }
