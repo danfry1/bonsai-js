@@ -69,17 +69,25 @@ function codeFrame(
 ): string {
   const start = Math.min(Math.max(span.start, 0), source.length)
   const lineStart = start - (column - 1)
-  const from = start - lineStart > FRAME_WIDTH - FRAME_LEAD ? start - FRAME_LEAD : lineStart
+  let from = start - lineStart > FRAME_WIDTH - FRAME_LEAD ? start - FRAME_LEAD : lineStart
+  // Never start or end the window between the halves of a surrogate pair.
+  if (from > lineStart && LOW_SURROGATE.test(source[from] ?? '')) from++
   const window = source.slice(from, from + FRAME_WIDTH + 1)
   const newline = window.indexOf('\n')
-  const to = from + (newline === -1 ? Math.min(window.length, FRAME_WIDTH) : newline)
-  const cutLeft = from > lineStart ? '...' : ''
+  let to = from + (newline === -1 ? Math.min(window.length, FRAME_WIDTH) : newline)
   const cutRight = newline === -1 && window.length > FRAME_WIDTH ? '...' : ''
+  if (cutRight !== '' && LOW_SURROGATE.test(source[to] ?? '')) to--
+  const cutLeft = from > lineStart ? '...' : ''
   const text = `${cutLeft}${source.slice(from, to)}${cutRight}`
-  const width = Math.max(1, Math.min(span.end, to) - start)
+  // The caret lines up by characters, not UTF-16 units, and a tab stays a tab.
+  const lead = source.slice(from, Math.min(start, to)).replace(/[^\t]/gu, ' ')
+  const width = Math.max(1, Array.from(source.slice(start, Math.min(span.end, to))).length)
   const gutter = String(line)
-  return `${gutter} | ${text}\n${' '.repeat(gutter.length)} | ${' '.repeat(cutLeft.length + start - from)}${'^'.repeat(width)}`
+  return `${gutter} | ${text}\n${' '.repeat(gutter.length)} | ${' '.repeat(cutLeft.length)}${lead}${'^'.repeat(width)}`
 }
+
+/** One UTF-16 unit that is the second half of a surrogate pair (with u, only a lone one matches). */
+const LOW_SURROGATE = /^[\uDC00-\uDFFF]$/u
 
 /**
  * The JSON form of a {@link BonsaiError} (`JSON.stringify(error)`), the same

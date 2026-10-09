@@ -66,6 +66,13 @@ const NULLISH_MIXED = Object.keys(BINARY_LEVEL).filter(
 /** Number literals written with an exponent, such as `1e308`: no one expects their digits exact. */
 const exponentLiterals = new WeakSet<Node>()
 
+/** The significant digits of a decimal number's text: `1.50e3` and `15e2` both give "15". */
+const significantDigits = (text: string): string =>
+  (text.replaceAll('_', '').split(/[eE]/u)[0] ?? '')
+    .replace('.', '')
+    .replace(/^[+-]?0*/u, '')
+    .replace(/0+$/u, '')
+
 /** Whether a parsed number literal was written with an exponent. */
 export const writtenWithExponent = (node: Node): boolean => exponentLiterals.has(node)
 
@@ -560,8 +567,13 @@ function parseTree(source: string, limits: ParseLimits): Node {
           start: token.start,
           end: token.end,
         })
-        // 1e308, not 0xE (whose E is a digit).
-        if (/[eE]/u.test(token.value) && !/^0[xXoObB]/u.test(token.value))
+        // 1e308, not 0xE (whose E is a digit), and only when the number keeps
+        // every digit written: 9007199254740993e0 reads as ...992.
+        if (
+          /[eE]/u.test(token.value) &&
+          !/^0[xXoObB]/u.test(token.value) &&
+          significantDigits(token.value) === significantDigits(String(token.number))
+        )
           exponentLiterals.add(literal)
         return literal
       }

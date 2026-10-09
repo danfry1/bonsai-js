@@ -925,13 +925,20 @@ export function formatType(type: Type, maxLength = MAX_TYPE_TEXT): string {
   return formatTypeText(type, maxLength)
 }
 
+const HIGH_SURROGATE_FIRST = 0xd800
+const HIGH_SURROGATE_LAST = 0xdbff
+
 function formatTypeText(type: Type, maxLength: number): string {
   let out = ''
   let full = false
   const emit = (text: string): boolean => {
     if (full) return false
     if (out.length + text.length > maxLength) {
-      out += `${text.slice(0, Math.max(0, maxLength - out.length))}…`
+      let keep = Math.max(0, maxLength - out.length)
+      // Never end between the halves of a surrogate pair.
+      const last = text.charCodeAt(keep - 1)
+      if (keep > 0 && last >= HIGH_SURROGATE_FIRST && last <= HIGH_SURROGATE_LAST) keep--
+      out += `${text.slice(0, keep)}…`
       full = true
       return false
     }

@@ -120,10 +120,12 @@ describe('checker guidance', () => {
     },
   })
 
-  it('does not warn when an ordering may see null, which is defined as false', () => {
+  it('warns on an ordering that may see null only where its false becomes a verdict', () => {
+    expect(typed.check('events.filter(.durationMs < 5000)').diagnostics).toEqual([])
+    // every() counts an event without a duration as a failure.
     const result = typed.check('events.every(.durationMs < 5000)')
     expect(result.ok).toBe(true)
-    expect(result.diagnostics).toEqual([])
+    expect(result.diagnostics.map((d) => d.code)).toEqual(['MAYBE_NULL'])
     expect(
       typed.check('events.every(.durationMs != null && .durationMs < 5000)').diagnostics,
     ).toEqual([])

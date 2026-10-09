@@ -2,6 +2,7 @@ import { BonsaiLimitError, type DiagnosticCode, type Finding } from '../errors.j
 import { RESULT_REFINERS } from '../functions/builtins.js'
 import { isStackOverflow, tooDeep } from '../runtime/overflow.js'
 import { closest, didYouMean } from '../suggest.js'
+import { BLOCKED_NAMES } from '../syntax/lexer.js'
 import { writtenWithExponent } from '../syntax/parser.js'
 import {
   isItemLambdaPosition,
@@ -14,6 +15,7 @@ import {
   mapChildren,
   type CallNode,
   type LambdaNode,
+  type MemberNode,
   type Node,
   type SpreadNode,
 } from '../syntax/ast.js'
@@ -85,6 +87,8 @@ export interface Analysis {
   }
   /** The scope at the probe variable, when one was requested and reached. */
   readonly probeScope?: ProbeScope | undefined
+  /** For `object.probe`: what reading each field the object lists gives there. */
+  readonly probeMembers?: ReadonlyMap<string, Type> | undefined
 }
 
 export interface CheckOptions {
@@ -441,6 +445,8 @@ function mapOf(type: Type): MapType | undefined {
   return merged
 }
 
+const ORDERING: ReadonlySet<string> = new Set(['<', '<=', '>', '>='])
+
 /** The map a union of maps reads as: fields every member has, the rest optional. */
 function mergeMaps(type: Type & { kind: 'union' }): MapType | undefined {
   const members = unionMembers(type)
@@ -494,9 +500,19 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
   const calls = new Map<CallNode, CallPlan>()
   const types = new Map<Node, Type>()
   const asyncNodes = new Set<Node>()
+  // Ordering comparisons whose false (from a null side) becomes a verdict, not a skip.
+  const verdicts = new WeakSet<Node>()
+  const nullFalseMatters = (node: Node): void => {
+    if (node.type !== 'Binary') return
+    if (node.operator === '&&' || node.operator === '||') {
+      nullFalseMatters(node.left)
+      nullFalseMatters(node.right)
+    } else if (ORDERING.has(node.operator)) verdicts.add(node)
+  }
   const variables = new Set<string>()
   const functions = new Set<string>()
   let probeScope: ProbeScope | undefined
+  let probeMembers: ReadonlyMap<string, Type> | undefined
 
   const reported = new Set<string>()
   const report = (
@@ -650,6 +666,30 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     return result
   }
 
+  /**
+   * What `object.name` reads as here, for each field the object's maps list:
+   * the type check() would give that read, narrowing included (for completions).
+   */
+  function readsOf(probe: MemberNode, objectType: Type, scope: Scope): Map<string, Type> {
+    const names = new Set<string>()
+    for (const member of unionMembers(nonNull(objectType))) {
+      if (member.kind === 'map') for (const name of Object.keys(member.fields)) names.add(name)
+    }
+    chargeTypeWork(names.size)
+    const reads = new Map<string, Type>()
+    const mark = diagnostics.length
+    for (const name of names) {
+      const read: MemberNode = { ...probe, name }
+      let readType = memberType(objectType, name, read)
+      const key = scope.nonNull === undefined ? undefined : pathKey(read)
+      if (key !== undefined && hasFact(scope.nonNull, key)) readType = nonNull(readType)
+      reads.set(name, readType)
+    }
+    // Reading a candidate is not a finding about the source.
+    truncate(mark)
+    return reads
+  }
+
   function markAsync(node: Node, child: Node): void {
     if (asyncNodes.has(child)) asyncNodes.add(node)
   }
@@ -739,6 +779,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       case 'Member': {
         const objectType = check(node.object, scope)
         markAsync(node, node.object)
+        if (node.name === options.probe) probeMembers = readsOf(node, objectType, scope)
         return memberType(objectType, node.name, node)
       }
       case 'Index': {
@@ -751,6 +792,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       case 'Call':
         return checkCall(node, scope, expected)
       case 'Unary': {
+        if (node.operator === '!') nullFalseMatters(node.operand)
         const operand = check(node.operand, scope)
         markAsync(node, node.operand)
         if (node.operator === '!') {
@@ -770,6 +812,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       case 'Binary':
         return checkBinary(node, scope, expected)
       case 'Conditional': {
+        nullFalseMatters(node.test)
         const test = check(node.test, scope)
         expectLogic(test, node.test, 'A condition')
         const a = check(node.then, withFacts(scope, nonNullFacts(node.test, true)), expected)
@@ -834,17 +877,20 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
                 }
               }
               chargeTypeWork(Object.keys(mapped.fields).length)
+              // What a key not listed so far may already hold: the computed and
+              // record entries' values, or anything after an open declared object.
+              const unlisted = exact ? rest : ANY
               if (mayBeNull(spread)) {
                 // A null spread adds nothing: its keys may be absent.
                 for (const [key, field] of Object.entries(mapped.fields)) {
                   fields[key] = Object.hasOwn(fields, key)
                     ? unionOf([fields[key], field])
-                    : t.optional(rest === undefined ? field : unionOf([rest, field]))
+                    : t.optional(unlisted === undefined ? field : unionOf([unlisted, field]))
                 }
               } else {
                 for (const [key, field] of Object.entries(mapped.fields)) {
                   // An optional field may be absent and leave an earlier value in place.
-                  const earlier = Object.hasOwn(fields, key) ? fields[key] : rest
+                  const earlier = Object.hasOwn(fields, key) ? fields[key] : unlisted
                   fields[key] =
                     earlier !== undefined && mayBeNull(field) ? unionOf([earlier, field]) : field
                 }
@@ -875,9 +921,11 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
           markAsync(node, entry.value)
           if (typeof entry.key === 'string') fields[entry.key] = valueType
           else if (entry.key.type === 'Literal' && typeof entry.key.value === 'string') {
-            // ["a"]: a constant key is a static one.
+            // ["a"]: a constant key is a static one. A blocked one fails at run time.
             check(entry.key, scope)
-            fields[entry.key.value] = valueType
+            if (BLOCKED_NAMES.has(entry.key.value)) {
+              report('BLOCKED_PROPERTY', `"${entry.key.value}" cannot be used as a key`, entry.key)
+            } else fields[entry.key.value] = valueType
           } else {
             const keyType = check(entry.key, scope)
             markAsync(node, entry.key)
@@ -1047,6 +1095,13 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     expected: Type | undefined,
   ): Type {
     const nullish = node.operator === '??'
+    // x == false (or != true) reads a null comparison's false as a verdict.
+    if (node.operator === '==' || node.operator === '!=') {
+      const negates = node.operator === '!='
+      const negating = (n: Node): boolean => n.type === 'Literal' && n.value === negates
+      if (negating(node.right)) nullFalseMatters(node.left)
+      else if (negating(node.left)) nullFalseMatters(node.right)
+    }
     // Joining lists: an expected list type (or the other operand's) is the
     // context for list literals, so plans + ["free"] stays a list of plans.
     const listContext =
@@ -1101,8 +1156,24 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
           )
           return BOOLEAN
         }
-        // A side that may be null is not a warning: `users.filter(.age >= 18)`
-        // skipping users without an age is the defined, idiomatic behavior.
+        // A side that may be null is not a warning where false means "skip"
+        // (`users.filter(.age >= 18)`), only where false becomes a verdict:
+        // `user.age < 18 ? "deny" : "allow"` allows a user with no age.
+        if (verdicts.has(node)) {
+          for (const [side, sideType] of [
+            [node.left, left],
+            [node.right, right],
+          ] as const) {
+            if (mayBeNull(sideType)) {
+              report(
+                'MAYBE_NULL',
+                'This value may be null, and a comparison with null is false; check it first (x != null && ...) or use ??',
+                side,
+                'warning',
+              )
+            }
+          }
+        }
         const a = widen(nonNull(left))
         const b = widen(nonNull(right))
         const comparable = ['number', 'string', 'timestamp', 'duration']
@@ -1326,6 +1397,10 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       if (!open) return ANY
     }
     const def = env.lookup(node.name)
+    // every() and none() turn an item a null comparison skips into a verdict.
+    if (def?.host !== true && (node.name === 'every' || node.name === 'none')) {
+      for (const arg of node.args) if (arg.type === 'Lambda') nullFalseMatters(arg.body)
+    }
     // With one signature, a parameter type is the context for its argument, so
     // setPlans(["pro"]) keeps the literal a plan enum needs.
     const only = def?.overloads.length === 1 ? def.overloads[0] : undefined
@@ -1782,6 +1857,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     checkResult,
     references: { variables: [...variables], functions: [...functions] },
     probeScope,
+    probeMembers,
   }
 }
 

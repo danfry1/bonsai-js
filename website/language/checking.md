@@ -52,7 +52,7 @@ An expression with errors does not compile: `env.compile()` throws a `BonsaiChec
 | `TYPE_ERROR` | An operator applied to incompatible types. |
 | `NULLABLE_RECEIVER` | A possibly-null value where `null` is not accepted, such as a method call without `?.`. |
 | `INVALID_LAMBDA` | `.` outside a function argument, `.` inside an explicit lambda, or a spread into a function that takes a lambda. |
-| `BLOCKED_PROPERTY` | A blocked key (`__proto__`, `constructor`, `prototype`) as a static computed key. |
+| `BLOCKED_PROPERTY` | A blocked key (`__proto__`, `constructor`, `prototype`) as a constant computed key, such as `{["__proto__"]: 1}`. A computed key known only at run time fails there instead. |
 | `EXPECTED_TYPE` | The result does not match the type passed as `expect` (a warning when a map literal only adds fields). |
 | `INVALID_ARGUMENT` | A literal argument with an invalid value, such as an unknown `formatDate` pattern letter. |
 
@@ -101,7 +101,14 @@ env.compile('items.length ?? 0').warnings[0].message // => 'The left side of "??
 env.compile('user.age > 18').warnings // => []
 ```
 
-An ordering with a value that may be `null` is not a warning: it is `false` when the value is `null`, by definition, so `users.filter(.age >= 18)` skips users without an age.
+An ordering with a value that may be `null` is `false` when the value is `null`, by definition. Where that `false` means "skip", it is not a warning: `users.filter(.age >= 18)` skips users without an age, and so do `find`, `some`, and `count`, a top-level comparison, and an `&&` or `||` operand of one. Where the `false` becomes a verdict, the operand that may be `null` gets a `MAYBE_NULL` warning:
+
+- under `!`: `users.filter(!(.age >= 18))` keeps users without an age;
+- as the test of `?:`: `user.age < 18 ? "deny" : "allow"` allows a user without an age;
+- as the predicate of `every` or `none`: `users.every(.age >= 18)` is false when one user has no age;
+- compared with `false` (`== false`) or `true` (`!= true`).
+
+Check the value first (`user.age != null && user.age < 18`) or give it a default (`(user.age ?? 0) < 18`) to say what a missing value means.
 
 Warnings have their own codes (`ALWAYS_FALSE`, `ALWAYS_TRUE`, `NEVER_NULL`, `MAYBE_NULL`, `UNSAFE_INTEGER`; see [Errors](/api/errors#diagnostics)) and `severity: "warning"`, except an extra field for an expected type, which keeps the `EXPECTED_TYPE` code.
 
