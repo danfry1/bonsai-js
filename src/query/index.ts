@@ -215,6 +215,11 @@ const COMPARISONS = new Set(['==', '!=', '<', '<=', '>', '>=', 'in', 'not in', '
 /** The largest distance from the epoch a Date can hold, in milliseconds. */
 const MAX_TIME = 8.64e15
 
+/** A host Date's time, read through the prototype so an overridden getTime never runs. */
+function msOf(date: Date): number {
+  return Date.prototype.getTime.call(date)
+}
+
 /** `; did you mean "x"?` for the closest candidate, or nothing. */
 function hint(name: string, candidates: Iterable<string>): string {
   return didYouMean(closest(name, candidates))
@@ -246,7 +251,7 @@ function constantKind(v: Primitive): ColumnType | 'null' {
 /** Bonsai's `==` on two known primitives. */
 function sameValue(a: Primitive, b: Primitive): boolean {
   if (constantKind(a) !== constantKind(b)) return false
-  if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime()
+  if (a instanceof Date && b instanceof Date) return msOf(a) === msOf(b)
   if (a instanceof Duration && b instanceof Duration) return a.ms === b.ms
   return a === b
 }
@@ -254,7 +259,7 @@ function sameValue(a: Primitive, b: Primitive): boolean {
 /** Bonsai's ordering of two known primitives of the same orderable kind. */
 function ordered(a: Primitive, op: '<' | '<=' | '>' | '>=', b: Primitive): boolean {
   const number = (v: Primitive): number => {
-    if (v instanceof Date) return v.getTime()
+    if (v instanceof Date) return msOf(v)
     if (v instanceof Duration) return v.ms
     return v as number
   }
@@ -796,7 +801,7 @@ function lower(
   /** A known timestamp or duration, in milliseconds. */
   const knownTime = (node: Node): { kind: 'timestamp' | 'duration'; ms: number } | undefined => {
     const constant = constOf(node)
-    if (constant instanceof Date) return { kind: 'timestamp', ms: constant.getTime() }
+    if (constant instanceof Date) return { kind: 'timestamp', ms: msOf(constant) }
     const bound = node.type === 'Variable' ? knownValue(node.name) : undefined
     return bound instanceof Duration ? { kind: 'duration', ms: bound.ms } : undefined
   }
@@ -1306,7 +1311,7 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
   const quote = (name: string): string =>
     pg ? `"${name.replaceAll('"', '""')}"` : `\`${name.replaceAll('`', '``')}\``
   const encode = (value: Exclude<Primitive, null>): unknown => {
-    if (value instanceof Date) return pg ? value.toISOString() : value.getTime()
+    if (value instanceof Date) return pg ? new Date(msOf(value)).toISOString() : msOf(value)
     if (value instanceof Duration) return value.ms
     if (typeof value === 'boolean' && !pg) return value ? 1 : 0
     return value

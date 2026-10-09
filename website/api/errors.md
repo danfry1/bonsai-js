@@ -103,7 +103,7 @@ interface Diagnostic {
 }
 ```
 
-An admin screen can show `formatted` as it is, and an editor quick-fix can replace the range with `suggestion`:
+An admin screen can show `formatted` as it is, and an editor quick-fix can replace the range with `suggestion`: for these codes the range is the misspelled name itself (for `order.totl`, only `totl`). A name the source does not spell out plainly, such as an escaped key in `x["..."]`, has no `suggestion`:
 
 <!-- continue -->
 ```ts

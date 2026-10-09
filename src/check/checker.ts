@@ -199,6 +199,26 @@ function expectationProblem(actual: Type, expected: Type): string | undefined {
   return `Expected the expression to produce ${formatType(expected)} but it produces ${formatType(actual)}`
 }
 
+/**
+ * Where `name` is written in a member read: the name after `.`, or the text
+ * inside the quotes of `x["name"]`. Undefined when the source does not spell
+ * it out (an escaped key, a computed one), so no quick-fix is offered.
+ */
+function nameSpan(at: Node, name: string): { start: number; end: number } | undefined {
+  if (at.type === 'Member') {
+    if (at.nameStart === undefined || at.nameEnd === undefined) return undefined
+    return at.nameEnd - at.nameStart === name.length
+      ? { start: at.nameStart, end: at.nameEnd }
+      : undefined
+  }
+  if (at.type === 'Index' && at.index.type === 'Literal' && typeof at.index.value === 'string') {
+    // The literal's source is the name between two quotes only when nothing is escaped.
+    const { start, end } = at.index
+    return end - start - 2 === name.length ? { start: start + 1, end: end - 1 } : undefined
+  }
+  return undefined
+}
+
 function suggestAll(names: readonly string[], candidates: readonly string[]): string {
   return names.map((name) => didYouMean(suggest(name, () => candidates))).join('')
 }
@@ -708,8 +728,9 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
           expectLogic(operand, node.operand, '!')
           return BOOLEAN
         }
-        // Negation takes numbers and durations; an unknown operand may be either.
-        if (operand.kind === 'any' || operand.kind === 'var') return NUMBER_OR_DURATION
+        // An unknown operand gives an unknown result, checked when it runs (as
+        // x - 1 does): typing it number | duration would reject round(-x).
+        if (operand.kind === 'any' || operand.kind === 'var') return ANY
         if (operand.kind === 'never') return operand
         if (isAssignable(operand, NUMBER)) return NUMBER
         if (isAssignable(operand, t.duration())) return t.duration()
@@ -912,12 +933,14 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       // A map literal holds no other keys; a declared object may.
       if (quiet) return isExact(objectType) ? NULL : ANY
       const suggestion = suggest(name, () => Object.keys(objectType.fields))
+      // The span is the name itself, so a quick-fix can replace it with the suggestion.
+      const span = nameSpan(at, name)
       report(
         'UNKNOWN_PROPERTY',
         `Property "${name}" does not exist on ${formatType(objectType)}${didYouMean(suggestion)}`,
-        at,
+        span ?? at,
         'error',
-        suggestion,
+        span === undefined ? undefined : suggestion,
       )
       return ANY
     }
@@ -1186,7 +1209,14 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     if (nullable) {
       const retry = arithmeticQuiet(op, nonNull(a), nonNull(b))
       if (retry !== undefined) {
-        report('TYPE_ERROR', `An operand of "${op}" may be null; use ?? to supply a default`, node)
+        // Underline the operand that may be null, not the whole expression.
+        let culprit: Node = node
+        if (node.type === 'Binary') culprit = isNullable(a) ? node.left : node.right
+        report(
+          'TYPE_ERROR',
+          `An operand of "${op}" may be null; use ?? to supply a default`,
+          culprit,
+        )
         return retry
       }
     }

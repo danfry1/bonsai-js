@@ -860,18 +860,21 @@ export function compileProgram(
           } catch {
             // A hostile thenable; nothing more to clean up.
           }
-          if (def.async === true) {
-            throw s.error(
-              'ASYNC_IN_SYNC',
-              `${def.name}() is async; use evaluate() instead of evaluateSync()`,
-              span,
-            )
-          }
-          throw s.error(
-            'HOST_CONTRACT',
-            `${def.name}() returned a promise but is not declared async`,
-            span,
-          )
+          const error =
+            def.async === true
+              ? s.error(
+                  'ASYNC_IN_SYNC',
+                  `${def.name}() is async; use evaluate() instead of evaluateSync()`,
+                  span,
+                )
+              : s.error(
+                  'HOST_CONTRACT',
+                  `${def.name}() returned a promise but is not declared async`,
+                  span,
+                )
+          // Nothing waits on that promise: tell the host function to stop its work.
+          controller?.abort(error)
+          throw error
         }
         return result
       }

@@ -33,7 +33,7 @@ Node.js 22 and newer, current Bun, and modern browsers with ES2022 and `Intl.Dat
 
 ## Bundle size
 
-In a browser bundle, an app that evaluates expressions adds about 56 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. The `query` and `service` entry points are separate, and unused modules are tree-shaken: importing only `t` or the error classes adds under 1 KB. CI enforces these budgets.
+In a browser bundle, an app that evaluates expressions adds about 60 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. The `query` and `service` entry points are separate, and unused modules are tree-shaken: importing only `t` or the error classes adds under 1 KB. CI enforces these budgets.
 
 ## First evaluation
 

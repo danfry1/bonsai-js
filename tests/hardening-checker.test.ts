@@ -233,8 +233,8 @@ describe('soundness', () => {
     expect(typeOf('(c ? [["a"]] : [1]).flat()')).toBe('string[] | number[]')
   })
 
-  it('types negation of an unknown value as number or duration', () => {
-    expect(typeOf('-anyv')).toBe('number | duration')
+  it('types negation of an unknown value as unknown, and of a union as the union', () => {
+    expect(typeOf('-anyv')).toBe('any')
     expect(typeOf('-nd')).toBe('number | duration')
     expect(typeOf('(anyv % 2)')).toBe('number')
   })

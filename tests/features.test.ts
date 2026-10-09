@@ -80,7 +80,7 @@ describe('formatting', () => {
     expect(env.evaluateSync('formatNumber(1234567.891, 2, "de-DE")')).toBe('1.234.567,89')
     expect(env.evaluateSync('formatCurrency(1234.5, "EUR")')).toBe('€1,234.50')
     expect(message(() => env.evaluateSync('formatCurrency(1, "EURO")'))).toMatch(
-      /Invalid number format/u,
+      /Currency codes are three letters/u,
     )
   })
 })

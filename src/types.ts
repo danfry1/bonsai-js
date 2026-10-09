@@ -122,6 +122,13 @@ export function unionMembers(type: Type): readonly Type[] {
 }
 
 /** Type builders. */
+/** A literal type's value: a string, a boolean, or a finite number (NaN and infinities are never values). */
+function literalValue<V extends string | number | boolean>(value: V): V {
+  if (typeof value === 'number' && !Number.isFinite(value))
+    throw new TypeError(`A literal type must be a finite number, not ${String(value)}`)
+  return value
+}
+
 export const t = Object.freeze({
   any: (): AnyType => ANY,
   never: (): NeverType => NEVER,
@@ -132,14 +139,16 @@ export const t = Object.freeze({
   timestamp: (): TimestampType => TIMESTAMP,
   duration: (): DurationType => DURATION,
   literal: <const V extends string | number | boolean>(value: V): LiteralType<V> =>
-    Object.freeze({ kind: 'literal', value }),
+    Object.freeze({ kind: 'literal', value: literalValue(value) }),
   /** A union of literals: `t.enum('free', 'pro')`. */
   enum: <const V extends readonly (string | number | boolean)[]>(
     ...values: V
   ): UnionType<{ [K in keyof V]: LiteralType<V[K]> }> =>
     Object.freeze({
       kind: 'union',
-      types: Object.freeze(values.map((value) => Object.freeze({ kind: 'literal', value }))),
+      types: Object.freeze(
+        values.map((value) => Object.freeze({ kind: 'literal', value: literalValue(value) })),
+      ),
     }) as unknown as UnionType<{ [K in keyof V]: LiteralType<V[K]> }>,
   list: <E extends Type>(element: E): ListType<E> => Object.freeze({ kind: 'list', element }),
   /** A closed record with known fields. */

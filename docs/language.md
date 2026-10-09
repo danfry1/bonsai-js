@@ -83,9 +83,11 @@ From loosest to tightest:
 | 11 | `!` `-` (prefix) | |
 | 12 | `.` `?.` `[]` `?.[]` calls | |
 
-Parse errors instead of silent groupings: `??` mixed with `&&`/`||` without
-parentheses; a prefix operator directly left of `**` (`-x ** 2`); chained
-comparisons (`a < b < c`, `a == b == c`).
+Parse errors instead of silent groupings: an operand of `??` that is another
+binary operation (anything but `??`) without parentheses, so `a ?? b == c`,
+`a ?? b + 1`, and `a ?? b && c` are errors and `(a ?? b) == c` or
+`a ?? (b == c)` say which grouping is meant; a prefix operator directly left
+of `**` (`-x ** 2`); chained comparisons (`a < b < c`, `a == b == c`).
 
 ### Equality
 
@@ -281,7 +283,8 @@ context variable but not another binding or parameter.
 ## 9. Time
 
 Timestamps are instants. Durations are exact lengths in whole milliseconds (a
-day is 24 hours). Calendar operations take an optional time zone, `"UTC"` or
+day is 24 hours), within ±(2^53 - 1) ms, about 285,000 years; a result outside
+that range, such as `days(1e300)`, is `INVALID_ARGUMENT`. Calendar operations take an optional time zone, `"UTC"` or
 an IANA `Area/Location` name in the tz database's spelling (anything else is
 `INVALID_ARGUMENT`), and default to UTC:
 `addMonths(t, 1, "Europe/Berlin")`, `startOfDay(t, tz)`, `year(t, tz)`, ...
