@@ -858,7 +858,7 @@ function checkExplain(
   context: Record<string, unknown>,
   expected: Outcome,
 ): void {
-  const explained = capture('explain', () => env.explain(source, context))
+  const explained = capture('explain', () => env.explainSync(source, context))
   if (!explained.ok) {
     // Only syntax and check errors may throw, and evaluation must throw the same.
     if (expected.ok || expected.code !== explained.code) {

@@ -254,12 +254,12 @@ export interface Program<Ctx = object, R = unknown> {
   evaluateSync: (...args: Args<Ctx>) => R
   /**
    * Evaluates and records the value of every sub-expression, so you can show
-   * why the result came out as it did. Never throws for evaluation errors:
-   * they are returned in the explanation. Slower than evaluateSync.
+   * why the result came out as it did. Never rejects for evaluation errors:
+   * they are returned in the explanation. Slower than evaluate.
    */
-  explain: (...args: ExplainArgs<Ctx>) => Explanation<R>
-  /** Like explain, for expressions that call async host functions. */
-  explainAsync: (...args: ExplainArgs<Ctx>) => Promise<Explanation<R>>
+  explain: (...args: ExplainArgs<Ctx>) => Promise<Explanation<R>>
+  /** Like explain, synchronously; an expression that calls an async host function is an ASYNC_IN_SYNC error. */
+  explainSync: (...args: ExplainArgs<Ctx>) => Explanation<R>
   /**
    * Evaluates what can be evaluated from partial data. Returns the value when
    * the known data decides it, or a simplified residual expression (source and
@@ -349,10 +349,10 @@ export interface Environment<Ctx = object> {
   evaluate: <R = unknown>(source: string, ...args: Args<Ctx>) => Promise<R>
   /** Compiles (cached) and evaluates synchronously. */
   evaluateSync: <R = unknown>(source: string, ...args: Args<Ctx>) => R
-  /** Compiles (cached) and explains; see Program.explain. Throws only for syntax and check errors. */
-  explain: <R = unknown>(source: string, ...args: ExplainArgs<Ctx>) => Explanation<R>
-  /** Compiles (cached) and explains asynchronously. */
-  explainAsync: <R = unknown>(source: string, ...args: ExplainArgs<Ctx>) => Promise<Explanation<R>>
+  /** Compiles (cached) and explains; see Program.explain. Rejects only for syntax and check errors. */
+  explain: <R = unknown>(source: string, ...args: ExplainArgs<Ctx>) => Promise<Explanation<R>>
+  /** Compiles (cached) and explains synchronously. Throws only for syntax and check errors. */
+  explainSync: <R = unknown>(source: string, ...args: ExplainArgs<Ctx>) => Explanation<R>
   /** Looks up a function (host or built-in). */
   describeFunction: (name: string) => FunctionInfo | undefined
   /** Every callable function, host functions first. */
@@ -1158,7 +1158,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
           failure(
             new BonsaiRuntimeError(
               'ASYNC_IN_SYNC',
-              'This expression calls an async function; use explainAsync()',
+              'This expression calls an async function; use explain() instead of explainSync()',
               { source },
             ),
           ),
@@ -1338,8 +1338,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     })
     // Programs are shared: the tree compiles lazily, so it must not change afterwards.
     return Object.freeze({
-      explain: (...args: ExplainArgs<Ctx>) => explainSync(args[0], args[1]),
-      explainAsync: (...args: ExplainArgs<Ctx>) => explainAsync(args[0], args[1]),
+      explain: (...args: ExplainArgs<Ctx>) => explainAsync(args[0], args[1]),
+      explainSync: (...args: ExplainArgs<Ctx>) => explainSync(args[0], args[1]),
       partial: (known: Record<string, unknown>, options?: PartialOptions) =>
         partial(known, options),
       source,
@@ -1424,10 +1424,15 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     },
     evaluateSync: <R>(source: string, ...args: Args<Ctx>) =>
       cached(source).evaluateSync(...args) as R,
-    explain: <R>(source: string, ...args: ExplainArgs<Ctx>) =>
-      cached(source).explain(...args) as Explanation<R>,
-    explainAsync: <R>(source: string, ...args: ExplainArgs<Ctx>) =>
-      cached(source).explainAsync(...args) as Promise<Explanation<R>>,
+    explain<R>(source: string, ...args: ExplainArgs<Ctx>): Promise<Explanation<R>> {
+      try {
+        return cached(source).explain(...args) as Promise<Explanation<R>>
+      } catch (error) {
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    },
+    explainSync: <R>(source: string, ...args: ExplainArgs<Ctx>) =>
+      cached(source).explainSync(...args) as Explanation<R>,
     describeFunction(name: string): FunctionInfo | undefined {
       const def = checkEnv.lookup(name)
       return def === undefined ? undefined : info(def)

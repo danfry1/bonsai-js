@@ -172,7 +172,7 @@ All callable as `f(x, ...)` or `x.f(...)`.
 import { bonsai } from 'bonsai-js'
 
 const rule = bonsai().compile('user.age >= 18 && user.plan == "pro"')
-const explanation = rule.explain({ user: { age: 25, plan: 'free' } })
+const explanation = rule.explainSync({ user: { age: 25, plan: 'free' } })
 
 explanation.ok // true
 if (explanation.ok) explanation.value // false
@@ -192,11 +192,11 @@ import { bonsai } from 'bonsai-js'
 const rule = bonsai().compile('user.age >= 18 && user.plan == "pro"')
 const user = { age: 16, plan: 'free' }
 
-rule.explain({ user }, { exhaustive: true }).reasons().map((r) => r.text)
+rule.explainSync({ user }, { exhaustive: true }).reasons().map((r) => r.text)
 // ['user.age >= 18', 'user.plan == "pro"']
 ```
 
-`explanation.trace` is the full tree: each node has an `id`, `kind`, `text`, `start`/`end` source offsets, `value` or `error`, and `children`. Parts skipped by short-circuiting are marked `evaluated: false`, and lambdas record each item they ran on under `iterations` (up to `maxIterations`, default 20; `maxTraceNodes` caps the whole trace). `JSON.stringify(explanation)` gives a bounded, cycle-safe snapshot that never runs getters. Evaluation errors are returned (`ok: false`, `error`) with the failing node marked, never thrown; invalid options or context throw, as with `evaluate()`. Use `explainAsync()` for expressions that call async host functions. Explaining uses a separately compiled program, so ordinary evaluation is not slowed down.
+`explanation.trace` is the full tree: each node has an `id`, `kind`, `text`, `start`/`end` source offsets, `value` or `error`, and `children`. Parts skipped by short-circuiting are marked `evaluated: false`, and lambdas record each item they ran on under `iterations` (up to `maxIterations`, default 20; `maxTraceNodes` caps the whole trace). `JSON.stringify(explanation)` gives a bounded, cycle-safe snapshot that never runs getters. Evaluation errors are returned (`ok: false`, `error`) with the failing node marked, never thrown; invalid options or context throw, as with `evaluate()`. Like `evaluate()` and `evaluateSync()`, `explain()` returns a promise (and supports async host functions) and `explainSync()` returns the explanation directly. Explaining uses a separately compiled program, so ordinary evaluation is not slowed down.
 
 ## Partial evaluation
 
