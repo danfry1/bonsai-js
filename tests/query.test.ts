@@ -494,7 +494,8 @@ describe('production hardening', () => {
       expect(planText, `${source}: ${q.sql}`).toMatch(/Index|Bitmap/u)
     }
     await db.close()
-  })
+    // Starting PGlite and seeding 20,000 rows takes about 4 s on a CI runner under coverage.
+  }, 30_000)
 
   it('produces conditions SQLite can answer from an index', () => {
     const db = new DatabaseSync(':memory:')
