@@ -66,7 +66,7 @@ Invalid options (an unknown option key, an unknown `dialect` or column type, a m
 | `"text" in order.name` | substring test |
 | `order.name in text` | substring test, SQL only |
 | `order.a == order.b`, `order.a < order.b` | comparing two columns, SQL only |
-| `+ - *`, unary `-` | numbers, SQL only; a null operand or a non-finite result fails, so the record is excluded |
+| `+ - *`, unary `-` | numbers, SQL only; a null operand or a non-finite result fails, so the record is excluded (in Postgres, a result out of the double range fails the query instead; see Caveats) |
 | `now() - order.placed < days(14)`, `order.placed + days(3) > now()` | relative dates: a timestamp column shifted by a known duration, or its distance from a known time, compared with a known timestamp or duration (either way round) |
 | `order.placed != null && now() - order.placed < days(14)` | relative dates on an optional timestamp column (the checker rejects the subtraction without the test; a `??` default does not translate) |
 
@@ -142,6 +142,6 @@ Parameters are always numbered (`$1` in Postgres, `?1` in SQLite) because a tran
 
 ## Caveats
 
-- Numbers: Postgres raises an error where double arithmetic overflows (and where a product rounds to zero), so in Postgres each `+`, `-`, and `*` is written as a small subquery that tests exactly whether the operation would overflow or round to zero before running it. A record whose arithmetic overflows is excluded, as in Bonsai, and a product that rounds to zero is 0, as in Bonsai; the query never fails on the record's values. The cost is a subquery per operation per row, so arithmetic is slower than in hand-written SQL. SQLite computes infinities instead of raising, and needs no such test.
+- Numbers: in Postgres, when a record's arithmetic overflows a double (`order.total * 2` with a total of `1e308`), or a nonzero product rounds to zero (`order.qty * order.qty` with a quantity of `1e-200`), the whole query fails with the error `value out of range: overflow` (or `underflow`). It fails loudly and never returns a different set of rows. Bonsai and SQLite exclude a record whose arithmetic overflows, and compute 0 for a product that rounds to zero. To avoid the failure, keep stored numbers within the range the filters' arithmetic can take (a `CHECK` constraint such as `CHECK (abs(total) < 1e150)` does this), or exclude large values with a comparison in the filter (`order.total < 1e300 && order.total * 2 > limit`). Postgres does not promise the order in which it checks the parts of a condition, so only the first way is guaranteed; the second avoids the error in practice. SQLite computes infinities and zeros instead of raising, so there a filter never fails on its values.
 - Timestamps: known timestamps sent to Postgres must fall in the years 0001 to 9999.
 - MongoDB: pass `options` to `find()` so string comparison is binary even if the collection has a case-insensitive default collation.

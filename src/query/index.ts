@@ -1806,93 +1806,6 @@ function failable(value: Value): boolean {
   return value.kind === 'arith' || value.kind === 'ms'
 }
 
-/** A product by 0, 1, or -1, which can neither overflow nor underflow. */
-function plainProduct(value: Extract<Value, { kind: 'arith' }>): boolean {
-  if (value.op !== '*') return false
-  const constant = value.left.kind === 'const' ? value.left : value.right
-  return (
-    constant.kind === 'const' &&
-    typeof constant.value === 'number' &&
-    (constant.value === 0 || Math.abs(constant.value) === 1)
-  )
-}
-
-/** An exact float8 literal: JavaScript writes the shortest text that reads back as the same double. */
-const float8 = (value: number): string => `${String(value)}::float8`
-const PG_INFINITY = `'Infinity'::float8`
-// Powers of two, each written as the shortest decimal that reads back as exactly that power.
-/** 2^1023, half of the overflow bound: `a/2 ± b/2` reaching it means `a ± b` overflows. */
-const HALF_OVERFLOW = 8.98846567431158e307
-/** 2^-512: scales two operands above 1 so their product stays finite and rounds as theirs would. */
-const SCALE_DOWN = 7.458340731200207e-155
-/** 2^-500: both operands of a product at least this large keep it far from rounding to zero. */
-const NO_UNDERFLOW = 3.054936363499605e-151
-/** 2^537 and 2^538: scale the smaller and larger operand so their product is 1 exactly at 2^-1075. */
-const SCALE_SMALL = 4.4989137945431964e161
-const SCALE_LARGE = 8.997827589086393e161
-/** Veltkamp's splitting constant for doubles, 2^27 + 1. */
-const SPLITTER = 134_217_729
-
-/**
- * Postgres arithmetic that gives the double Bonsai computes, or NULL where
- * Bonsai's fails (a null or non-finite operand, or an overflowing result),
- * without ever running an operation Postgres rejects: float8 `+`, `-`, and
- * `*` raise "value out of range" on overflow, and `*` also on a nonzero
- * product that rounds to zero, where JavaScript gives Infinity and 0.
- *
- * The operands are bound once in a subquery (`OFFSET 0` keeps the planner
- * from copying them into every use, and from folding a constant operand into
- * an expression it would evaluate while planning), and each test is exact:
- * - `a ± b` overflows only when both are at least 1, and then halving both is
- *   exact, so it overflows exactly when `a/2 ± b/2` reaches 2^1023.
- * - `a * b` overflows only when both exceed 1, and then
- *   `(a·2^-512)(b·2^-512)` rounds as `ab` does, scaled, so it overflows
- *   exactly when that reaches 1 (2^1024 - 2^970 rounds up to Infinity).
- * - `a * b` rounds to zero only when both are below 1 and one is below
- *   2^-500, exactly when `ab ≤ 2^-1075`, that is when `xp·yp ≤ 1` for
- *   `xp = min·2^537` and `yp = max·2^538` (both exact). Their rounded product
- *   decides unless it is exactly 1; then Dekker's exact product error does.
- */
-function pgArithmetic(op: '+' | '-' | '*', left: string, right: string): string {
-  const a = '_bonsai_a'
-  const b = '_bonsai_b'
-  const finite = `(abs(${a}) < ${PG_INFINITY} AND abs(${b}) < ${PG_INFINITY})`
-  let body: string
-  if (op === '*') {
-    const product = `(${a} * ${b})`
-    const xp = `least(abs(${a}), abs(${b})) * ${float8(SCALE_SMALL)}`
-    const yp = `greatest(abs(${a}), abs(${b})) * ${float8(SCALE_LARGE)}`
-    const split = (x: string, high: string): string =>
-      `${x} * ${float8(SPLITTER)} - (${x} * ${float8(SPLITTER)} - ${x}) AS ${high}`
-    // The exact error of p = xp * yp: Dekker's product with Veltkamp's split.
-    const error =
-      '(((_bonsai_xh * _bonsai_yh - _bonsai_p) + _bonsai_xh * _bonsai_yl) + _bonsai_xl * _bonsai_yh) + _bonsai_xl * _bonsai_yl'
-    const underflow =
-      `(SELECT CASE WHEN _bonsai_p < 1 THEN 0::float8 WHEN _bonsai_p > 1 THEN ${product}` +
-      ` WHEN ${error} <= 0 THEN 0::float8 ELSE ${product} END` +
-      ' FROM (SELECT _bonsai_xh, _bonsai_xp - _bonsai_xh AS _bonsai_xl, _bonsai_yh,' +
-      ' _bonsai_yp - _bonsai_yh AS _bonsai_yl, _bonsai_xp * _bonsai_yp AS _bonsai_p' +
-      ` FROM (SELECT _bonsai_xp, _bonsai_yp, ${split('_bonsai_xp', '_bonsai_xh')},` +
-      ` ${split('_bonsai_yp', '_bonsai_yh')}` +
-      ` FROM (SELECT ${xp} AS _bonsai_xp, ${yp} AS _bonsai_yp OFFSET 0) AS _bonsai_s` +
-      ' OFFSET 0) AS _bonsai_h OFFSET 0) AS _bonsai_e)'
-    body =
-      `CASE WHEN ${a} IS NULL OR ${b} IS NULL THEN NULL` +
-      ` WHEN NOT ${finite} THEN NULL` +
-      ` WHEN ${a} = 0 OR ${b} = 0 THEN ${product}` +
-      ` WHEN abs(${a}) > 1 AND abs(${b}) > 1 THEN CASE WHEN` +
-      ` (abs(${a}) * ${float8(SCALE_DOWN)}) * (abs(${b}) * ${float8(SCALE_DOWN)}) < 1 THEN ${product} END` +
-      ` WHEN abs(${a}) >= 1 OR abs(${b}) >= 1 OR least(abs(${a}), abs(${b})) >= ${float8(NO_UNDERFLOW)}` +
-      ` THEN ${product} ELSE ${underflow} END`
-  } else {
-    body =
-      `CASE WHEN NOT ${finite} THEN NULL` +
-      ` WHEN abs(${a}) < 1 OR abs(${b}) < 1 THEN (${a} ${op} ${b})` +
-      ` WHEN abs(${a} * 0.5::float8 ${op} ${b} * 0.5::float8) < ${float8(HALF_OVERFLOW)} THEN (${a} ${op} ${b}) END`
-  }
-  return `(SELECT ${body} FROM (SELECT ${left} AS ${a}, ${right} AS ${b} OFFSET 0) AS _bonsai_o)`
-}
-
 const tooLarge = (source: string): BonsaiTranslationError =>
   new BonsaiTranslationError('The translated query is too large', source, {
     start: 0,
@@ -2109,12 +2022,7 @@ export function toSQL<Dialect extends SQLOptions['dialect']>(
         break
       case 'arith':
       default:
-        sql =
-          pg && !plainProduct(value)
-            ? pgArithmetic(value.op, val(value.left), val(value.right))
-            : `(${operand(value.left)} ${value.op} ${operand(value.right)})`
-        charge(textCost(sql))
-        if (sql.length > MAX_SQL_LENGTH) throw tooLarge(program.source)
+        sql = `(${operand(value.left)} ${value.op} ${operand(value.right)})`
     }
     rendered.set(value, sql)
     return sql

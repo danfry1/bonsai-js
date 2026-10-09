@@ -245,7 +245,7 @@ toMongo(filter, { row: 'order', fields: columns, known: { minTotal: 100 } })
 // { filter: { $and: [{ status: { $eq: 'paid' } }, { total: { $gt: 100 } }] }, options: { collation: { locale: 'simple' } } }
 ```
 
-The query selects exactly the records for which the filter evaluates to `true` in Bonsai, including null handling (SQL's three-valued logic is made two-valued) and records where the filter would fail (they are excluded). Only declared columns can be queried, values are always parameters, and anything without an exact database equivalent throws a `BonsaiTranslationError` pointing at it. This is checked by differential tests against real SQLite, Postgres, and a MongoDB query engine.
+The query selects exactly the records for which the filter evaluates to `true` in Bonsai, including null handling (SQL's three-valued logic is made two-valued) and records where the filter would fail (they are excluded). One exception: in Postgres, a record whose arithmetic overflows a double (or whose nonzero product rounds to zero) makes the whole query fail with `value out of range`, an error rather than a different set of rows, where SQLite excludes the record; keep stored numbers within range to avoid it (see the query guide's caveats). Only declared columns can be queried, values are always parameters, and anything without an exact database equivalent throws a `BonsaiTranslationError` pointing at it. This is checked by differential tests against real SQLite, Postgres, and a MongoDB query engine.
 
 ## Syntax trees and visual editors
 

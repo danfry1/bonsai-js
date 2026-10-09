@@ -109,14 +109,21 @@ async function agree(
     }
   }
   if (postgres !== undefined) {
-    // Arithmetic that overflows or rounds to zero never raises: the query answers every row.
-    const pgIds = (
-      await pg.query<{ id: number }>(
-        `select id from t where ${postgres.sql} order by id`,
-        postgres.params,
-      )
-    ).rows.map((r) => r.id)
-    expect(pgIds, `postgres: ${postgres.sql}`).toEqual(want)
+    try {
+      const pgIds = (
+        await pg.query<{ id: number }>(
+          `select id from t where ${postgres.sql} order by id`,
+          postgres.params,
+        )
+      ).rows.map((r) => r.id)
+      expect(pgIds, `postgres: ${postgres.sql}`).toEqual(want)
+    } catch (error) {
+      // Documented: Postgres float8 arithmetic raises "value out of range" when a row's
+      // arithmetic overflows a double, or a nonzero product rounds to zero. The query then
+      // fails as a whole, which is allowed; returning different rows is not. Guarding every
+      // operation in SQL made arithmetic filters 7 to 10 times slower, for operands beyond 1e154.
+      if (!/value out of range: (?:overflow|underflow)/u.test(String(error))) throw error
+    }
   }
 
   let mongo: ReturnType<typeof toMongo> | undefined
