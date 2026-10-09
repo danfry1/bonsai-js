@@ -36,7 +36,7 @@ rule.explainSync({ cart }).reasons().map((r) => r.text)
 
 The same condition can appear more than once when several sub-expressions reach it (with `exhaustive`, for example); de-duplicate by `id` when listing reasons in a UI.
 
-By default `&&` stops at the first false condition, so there is one reason. Pass `exhaustive: true` to evaluate the remaining conditions for the explanation, and every failing one is listed. Those parts are marked `extra: true`, and an error in them (a failing comparison, a throwing getter) is ignored, so the result does not change. The extra work counts toward the step budget and other limits, so a limit error there does fail the explanation. Host functions on those parts do run.
+By default `&&` stops at the first false condition, so there is one reason. Pass `exhaustive: true` to evaluate the remaining conditions for the explanation, and every failing one is listed. Those parts are marked `extra: true`, and an error in them (a failing comparison, a throwing getter) is ignored, so the result does not change. The extra work spends from the same step and time budget as the rest, so a limit reached there (`STEP_LIMIT`, `TIMEOUT`, a size limit such as `STRING_LIMIT`) fails the explanation, even when `evaluate` alone would finish inside the budget. Host functions on those parts do run.
 
 ```ts
 import { bonsai } from 'bonsai-js'

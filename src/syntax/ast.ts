@@ -278,10 +278,10 @@ export function mapChildren(node: Node, map: (child: Node) => Node): Node {
         ...node,
         entries: node.entries.map((entry): MapEntry | SpreadNode => {
           if (entry.type === 'Spread') return { ...entry, argument: map(entry.argument) }
-          const value = map(entry.value)
+          // Key before value: the order forEachChild visits them and evaluation runs.
           return typeof entry.key === 'string'
-            ? { ...entry, value }
-            : { ...entry, key: map(entry.key), value }
+            ? { ...entry, value: map(entry.value) }
+            : { ...entry, key: map(entry.key), value: map(entry.value) }
         }),
       }
     case 'Lambda':

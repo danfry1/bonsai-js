@@ -1,6 +1,13 @@
 import type { Analysis } from './check/checker.js'
 import { BonsaiLimitError, BonsaiRuntimeError, type BonsaiError } from './errors.js'
-import { forEachChild, type LambdaNode, type Node, type SpreadNode } from './syntax/ast.js'
+import {
+  forEachChild,
+  mapChildren as mapEachChild,
+  type IndexNode,
+  type LambdaNode,
+  type MemberNode,
+  type Node,
+} from './syntax/ast.js'
 import { parse, type ParseLimits } from './syntax/parser.js'
 import { print } from './syntax/printer.js'
 import { MAX_TRACE_TEXT, capTraceText } from './runtime/trace.js'
@@ -74,12 +81,28 @@ function segmentOf(node: Node): string | undefined {
 /** Characters of a path built or tested per step charged for it. */
 const PATH_CHARS_PER_STEP = 64
 
+/** What the traversal of a program's tree found, reused by its later partial() calls. */
+interface DepsSeed {
+  readonly memo: ReadonlyMap<Node, Deps>
+  readonly paths: ReadonlyMap<Node, string | undefined>
+  /** The steps the traversal charged, charged again on each reuse. */
+  readonly steps: number
+  /** The segments of each path the expression reads. */
+  readonly segments: ReadonlyMap<string, readonly string[]>
+}
+
+/** Per program: its tree and its environment's host functions never change. */
+const ROOT_DEPS = new WeakMap<Analysis, DepsSeed>()
+
 function dependencies(
   hostKind: (name: string) => HostKind | undefined,
   charge: (steps: number) => void,
+  seed?: DepsSeed,
 ): {
   readonly deps: (node: Node) => Deps
   readonly staticPath: (node: Node) => string | undefined
+  readonly memo: ReadonlyMap<Node, Deps>
+  readonly paths: ReadonlyMap<Node, string | undefined>
 } {
   const memo = new Map<Node, Deps>()
   // The static context path a chain of reads names (`user.address.city`), if
@@ -88,6 +111,7 @@ function dependencies(
   const staticPath = (node: Node): string | undefined => {
     if (node.type === 'Variable') return node.name
     if (paths.has(node)) return paths.get(node)
+    if (seed?.paths.has(node) === true) return seed.paths.get(node)
     const segment = segmentOf(node)
     let path: string | undefined
     if (segment !== undefined && (node.type === 'Member' || node.type === 'Index')) {
@@ -131,7 +155,7 @@ function dependencies(
     }
   }
   const visit = (node: Node): Deps => {
-    const cached = memo.get(node)
+    const cached = memo.get(node) ?? seed?.memo.get(node)
     if (cached !== undefined) return cached
     const children = (): Deps[] => {
       const out: Deps[] = []
@@ -199,7 +223,7 @@ function dependencies(
     memo.set(node, deps)
     return deps
   }
-  return { deps: visit, staticPath }
+  return { deps: visit, staticPath, memo, paths }
 }
 
 interface PathTrie {
@@ -221,12 +245,13 @@ function unknownIndex(
   unknown: Iterable<string>,
   missing: Iterable<string>,
   charge: (steps: number) => void,
+  segmentsOf: (path: string) => readonly string[],
 ): (path: string) => boolean {
   const root: PathTrie = { under: false, next: new Map() }
   const add = (path: string): PathTrie => {
     charge(1 + Math.floor(path.length / PATH_CHARS_PER_STEP))
     let node = root
-    for (const segment of path.split('.')) {
+    for (const segment of segmentsOf(path)) {
       let child = node.next.get(segment)
       if (child === undefined) node.next.set(segment, (child = { under: false, next: new Map() }))
       node = child
@@ -237,7 +262,7 @@ function unknownIndex(
   for (const path of missing) add(path)
   return (path) => {
     let node = root
-    for (const segment of path.split('.')) {
+    for (const segment of segmentsOf(path)) {
       const child = node.next.get(segment)
       if (child === undefined) return false
       if (child.under) return true
@@ -320,7 +345,8 @@ export interface PartialOptions {
   /**
    * Variables or dotted paths (`order`, `user.riskScore`) whose values are not
    * known yet. Unknown wins over a value present in `known`, and everything
-   * else in `known` is taken as complete. Default: everything `known` does not
+   * else in `known` is taken as complete; an object above a listed path that
+   * `known` leaves out is unknown as a whole. Default: everything `known` does not
    * give: variables and fields it leaves out, and any object it gives that the
    * expression reads whole (a spread, `keys()`, `==`, a `let` holding it).
    */
@@ -334,7 +360,7 @@ export interface PartialOptions {
   readonly now?: Date | undefined
   /** Step budget for the whole partial evaluation (0 = none), as in evaluation. */
   readonly maxSteps?: number | undefined
-  /** Wall-clock budget for the whole partial evaluation in milliseconds (0 = none). */
+  /** Wall-clock budget for the whole partial evaluation in milliseconds (0 = none; fractions allowed). */
   readonly timeout?: number | undefined
   /** Cancels the partial evaluation. */
   readonly signal?: AbortSignalLike | undefined
@@ -350,6 +376,11 @@ export interface PartialEngine {
   readonly checkTime: () => void
   /** The longest residual source allowed: the environment's maxSourceLength. */
   readonly maxSourceLength: number
+  /**
+   * Runs a read of the known data, which is host data: a throwing getter or
+   * Proxy trap becomes a HOST_ERROR.
+   */
+  readonly readKnown: <T>(read: () => T) => T
   /**
    * Evaluates a subtree against the known context with the given free locals,
    * sharing one step budget and deadline across the whole partial evaluation.
@@ -396,8 +427,6 @@ const at = { start: 0, end: 0 }
 const MAX_INLINE_STRING = 16
 /** Steps charged per character of residual printed or compiled. */
 export const RESIDUAL_CHARS_PER_STEP = 16
-/** Known keys copied per step for a residual's call: true functions. */
-export const KNOWN_KEYS_PER_STEP = 8
 const BOOLEAN_OPERATORS = new Set(['==', '!=', '<', '<=', '>', '>=', 'in', 'not in', '&&', '||'])
 
 function literalFor(value: unknown): Node | undefined {
@@ -423,31 +452,62 @@ export function partiallyEvaluate<R>(
   options: PartialOptions,
 ): PartialResult<R> {
   const root = engine.analysis.root
-  const { deps: depsOf, staticPath } = dependencies(engine.hostKind, engine.charge)
+  // The tree's dependencies are the same on every call: found once per program,
+  // and charged on each call as if found again, so budgets behave the same.
+  let seed = ROOT_DEPS.get(engine.analysis)
+  if (seed !== undefined) engine.charge(seed.steps)
+  let traversed = 0
+  const {
+    deps: depsOf,
+    staticPath,
+    memo: rootMemo,
+    paths: rootPaths,
+  } = dependencies(
+    engine.hostKind,
+    seed === undefined
+      ? (steps) => {
+          traversed += steps
+          engine.charge(steps)
+        }
+      : engine.charge,
+    seed,
+  )
   const rootDeps = depsOf(root)
-  const unknown =
-    options.unknown ??
-    [...new Set([...rootDeps.paths].map((path) => path.split('.')[0]))].filter(
-      // A known value of undefined is absent, as a host key holding undefined is.
-      (name) => !Object.hasOwn(known, name) || known[name] === undefined,
-    )
+  if (seed === undefined) {
+    const segments = new Map<string, readonly string[]>()
+    for (const path of rootDeps.paths) segments.set(path, path.split('.'))
+    seed = { memo: new Map(rootMemo), paths: new Map(rootPaths), steps: traversed, segments }
+    ROOT_DEPS.set(engine.analysis, seed)
+  }
+  const rootSegments = seed.segments
+  const segmentsOf = (path: string): readonly string[] => rootSegments.get(path) ?? path.split('.')
+  const unknown = engine.readKnown(() =>
+    options.unknown === undefined
+      ? [...new Set([...rootDeps.paths].map((path) => segmentsOf(path)[0]))].filter(
+          // A known value of undefined is absent, as a host key holding undefined is.
+          (name) => !Object.hasOwn(known, name) || known[name] === undefined,
+        )
+      : withAbsentParents(options.unknown),
+  )
   const callHost = options.callHostFunctions === true
   const nowKnown = options.now !== undefined
   // Without an explicit unknown list, anything not given is unknown: a property
   // a known object leaves out, and any known object read whole (its keys, a
   // spread, ==, a let alias), since the caller may not have given all of it.
   const missing = options.unknown === undefined ? missingPaths(rootDeps.paths) : NO_NAMES
-  const touchesUnknown = unknownIndex(unknown, missing, engine.charge)
+  const touchesUnknown = unknownIndex(unknown, missing, engine.charge, segmentsOf)
 
   const bindings: Record<string, unknown> = {}
   // Binding names must not shadow a variable the expression reads or a name it
   // binds; known data the expression never reads is irrelevant.
-  const taken = new Set([...rootDeps.paths].map((path) => path.split('.')[0]))
+  const taken = new Set([...rootDeps.paths].map((path) => segmentsOf(path)[0]))
   for (const name of boundNames(root)) taken.add(name)
   let bindingCount = 0
   const freshName = (base: string): string => {
     let name = base
     for (let i = 2; taken.has(name); i++) name = `${base}${i}`
+    // Taken from now on: a lambda made explicit inside another must not reuse it.
+    taken.add(name)
     return name
   }
   // One binding per value, however often it is used.
@@ -479,18 +539,46 @@ export function partiallyEvaluate<R>(
 
   function missingAt(path: string): boolean {
     engine.charge(1 + Math.floor(path.length / PATH_CHARS_PER_STEP))
-    const segments = path.split('.')
-    let value: unknown = known[segments[0]]
-    // A variable known does not give is unknown already.
-    if (value === undefined) return false
-    for (let i = 1; i < segments.length; i++) {
-      // At null, a list, or another value, evaluation decides.
-      if (value === null || !isMap(value)) return false
-      const segment = segments[i]
-      value = Object.hasOwn(value, segment) ? value[segment] : undefined
-      if (value === undefined) return true
+    const segments = segmentsOf(path)
+    return engine.readKnown(() => {
+      let value: unknown = known[segments[0]]
+      // A variable known does not give is unknown already.
+      if (value === undefined) return false
+      for (let i = 1; i < segments.length; i++) {
+        // At null, a list, or another value, evaluation decides.
+        if (value === null || !isMap(value)) return false
+        const segment = segments[i]
+        value = Object.hasOwn(value, segment) ? value[segment] : undefined
+        if (value === undefined) return true
+      }
+      return isMap(value)
+    })
+  }
+
+  /**
+   * The unknown list, plus each variable or object the known data leaves out
+   * on the way to a listed path: listing `cart.items` says `cart` exists, so
+   * when `known` does not give `cart`, its other fields are unknown, not null.
+   */
+  function withAbsentParents(listed: readonly string[]): readonly string[] {
+    const out = [...listed]
+    for (const path of listed) {
+      engine.charge(1 + Math.floor(path.length / PATH_CHARS_PER_STEP))
+      const segments = path.split('.')
+      let value: Record<string, unknown> = known
+      for (let i = 0; i < segments.length - 1; i++) {
+        const segment = segments[i]
+        const next = Object.hasOwn(value, segment) ? value[segment] : undefined
+        if (next === undefined) {
+          out.push(segments.slice(0, i + 1).join('.'))
+          break
+        }
+        // At null, a list, or another value, the known data decides.
+        if (next === null || !isMap(next)) break
+        value = next
+      }
     }
-    return isMap(value)
+    return out
   }
 
   // Whether a node's context reads are all given, once per node (each path's
@@ -772,14 +860,17 @@ export function partiallyEvaluate<R>(
   // context as it is: no per-call copy, and getters see their own object.
   let knownCopy: Readonly<Record<string, unknown>> | undefined
   if (readsContext) {
-    engine.charge(1 + Math.ceil(Object.keys(known).length / KNOWN_KEYS_PER_STEP))
-    knownCopy = Object.freeze({ ...known })
+    knownCopy = engine.readKnown(() => {
+      const names = Object.keys(known)
+      engine.charge(1 + names.length)
+      return Object.freeze({ ...known })
+    })
   }
   // `x.length` reads a list's or a string's length when x is one, so the data
   // the caller supplies is the path above the first `length`.
   const dependsOn = new Set<string>()
   for (const path of residualDeps.paths) {
-    const segments = path.split('.')
+    const segments = segmentsOf(path)
     if (Object.hasOwn(frozenBindings, segments[0])) continue
     const cut = segments.indexOf('length', 1)
     dependsOn.add(cut === -1 ? path : segments.slice(0, cut).join('.'))
@@ -869,62 +960,12 @@ function hostCalls(root: Node, hostKind: PartialEngine['hostKind']): string[] {
 /** Rebuilds `node` with each child replaced; lambda arguments are passed with their node. */
 function mapChildren(node: Node, f: (child: Node, lambda?: LambdaNode) => Node): Node {
   const one = (child: Node): Node => (child.type === 'Lambda' ? f(child, child) : f(child))
-  const spreadable = (item: Node | SpreadNode): Node | SpreadNode =>
-    item.type === 'Spread' ? { ...item, argument: one(item.argument) } : one(item)
-  switch (node.type) {
-    case 'Template':
-      return {
-        ...node,
-        parts: node.parts.map((part) => (typeof part === 'string' ? part : one(part))),
-      }
-    case 'Member':
-      return { ...node, object: one(node.object) }
-    case 'Index':
-      return { ...node, object: one(node.object), index: one(node.index) }
-    case 'Call':
-      return { ...node, args: node.args.map(spreadable) }
-    case 'Unary':
-      return { ...node, operand: one(node.operand) }
-    case 'Binary':
-      return { ...node, left: one(node.left), right: one(node.right) }
-    case 'Conditional':
-      return { ...node, test: one(node.test), then: one(node.then), otherwise: one(node.otherwise) }
-    case 'List':
-      return { ...node, items: node.items.map(spreadable) }
-    case 'Map':
-      return {
-        ...node,
-        entries: node.entries.map((entry) =>
-          entry.type === 'Spread'
-            ? { ...entry, argument: one(entry.argument) }
-            : {
-                ...entry,
-                key: typeof entry.key === 'string' ? entry.key : one(entry.key),
-                value: one(entry.value),
-              },
-        ),
-      }
-    case 'Lambda':
-      return f(node, node)
-    case 'Let':
-      return { ...node, value: one(node.value), body: one(node.body) }
-    case 'Has': {
-      // has() tests a path without reading it: keep the path's shape, but
-      // rewrite what the path is built from.
-      const target = node.target
-      return target.type === 'Member'
-        ? { ...node, target: { ...target, object: one(target.object) } }
-        : { ...node, target: { ...target, object: one(target.object), index: one(target.index) } }
-    }
-    case 'Try':
-      return { ...node, body: one(node.body), fallback: one(node.fallback) }
-    case 'Literal':
-    case 'Variable':
-    case 'Local':
-    case 'It':
-    default:
-      return node
-  }
+  if (node.type === 'Lambda') return f(node, node)
+  // has() tests a path without reading it: keep the path's shape, but rewrite
+  // what the path is built from.
+  if (node.type === 'Has')
+    return { ...node, target: mapEachChild(node.target, one) as MemberNode | IndexNode }
+  return mapEachChild(node, one)
 }
 
 /** Every let name and lambda parameter in the tree. */

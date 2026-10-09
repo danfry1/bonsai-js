@@ -1027,7 +1027,7 @@ function checkHostResult(
   if (!conforms(value, overload.result, s)) {
     throw s.error(
       'HOST_CONTRACT',
-      `${def.name}() returned ${describeKind(value)}, which does not match its declared type ${formatType(overload.result)}`,
+      `${def.name}() returned ${result === undefined ? 'undefined' : describeKind(value)}, which does not match its declared type ${formatType(overload.result)}`,
       span,
     )
   }

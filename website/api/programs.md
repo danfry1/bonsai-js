@@ -93,7 +93,7 @@ Both accept per-evaluation options:
 | `signal` | An `AbortSignal`. Aborting stops the evaluation with an `ABORTED` error, including while waiting on an async host function. |
 | `now` | A `Date`: the time `now()` returns in this evaluation, instead of the environment's `clock`. |
 
-They are validated like `limits`: `timeout` and `maxSteps` must be non-negative integers (`0` turns the limit off), `signal` must be an `AbortSignal`, `now` must be a valid `Date`, and an unknown key or invalid value throws a `TypeError` or `RangeError` before anything runs, so a miscalculated budget can never turn the limit off by accident.
+They are validated like `limits`: `maxSteps` must be a non-negative integer and `timeout` a non-negative number of milliseconds, fractions included (`0` turns either limit off), `signal` must be an `AbortSignal`, `now` must be a valid `Date`, and an unknown key or invalid value throws a `TypeError` or `RangeError` before anything runs. A negative, `NaN`, or infinite budget throws rather than meaning no limit. To run under a shared deadline, pass the remaining time unrounded (`deadline - performance.now()`): rounding it down would reach `0`, which is no limit, in the last millisecond, while a deadline already passed gives a negative value, which throws.
 
 <!-- continue -->
 ```ts
