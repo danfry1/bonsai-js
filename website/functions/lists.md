@@ -26,7 +26,7 @@ const context = { items: [{ name: "Pen", price: 2, qty: 3 }, { name: "Book", pri
 | [`reduce`](#reduce) | Folds a list into one value: reduce(list, (acc, item) => ..., initial). Name both parameters; "." is not allowed, since the first one is the accumulator. |
 | [`sort`](#sort) | Sorts numbers, text, timestamps, or durations; pass "desc" to reverse. |
 | [`sortBy`](#sortby) | Sorts by a key; pass "desc" to reverse. Nulls sort first ("asc") or last ("desc"). |
-| [`groupBy`](#groupby) | Groups items into a map of lists by a key. |
+| [`groupBy`](#groupby) | Groups items into a map of lists by a key. Map keys are text, so a key is its text form: 1 and "1", or true and "true", share a group. A key must be a string, number, or boolean (null is an error). Keys are listed integer-like first, ascending, then in first-seen order. |
 | [`reverse`](#reverse) | The items in reverse order. |
 | [`unique`](#unique) | The items without duplicates (by value), in first-seen order. |
 | [`flat`](#flat) | Flattens nested lists one level. |
@@ -183,7 +183,7 @@ items.sortBy(.price, "desc").map(.name) // => ["Bag", "Book", "Pen"]
 
 ## groupBy
 
-Groups items into a map of lists by a key.
+Groups items into a map of lists by a key. Map keys are text, so a key is its text form: 1 and "1", or true and "true", share a group. A key must be a string, number, or boolean (null is an error). Keys are listed integer-like first, ascending, then in first-seen order.
 
 - `groupBy(T[], (T, number) => string | number | boolean): { [key: string]: T[] }`
 
@@ -191,6 +191,8 @@ Groups items into a map of lists by a key.
 ```bonsai
 items.groupBy(.qty > 1 ? "bulk" : "single").keys() // => ["bulk", "single"]
 [1, 2, 3, 4].groupBy(. % 2 == 0 ? "even" : "odd") // => { odd: [1, 3], even: [2, 4] }
+[1, "1", 2].groupBy(.) // => { "1": [1, "1"], "2": [2] }
+["b", "10", "a", "2"].groupBy(.).keys() // => ["2", "10", "b", "a"]
 ```
 
 ## reverse

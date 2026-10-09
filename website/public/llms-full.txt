@@ -69,7 +69,7 @@ Syntax errors instead of silent groupings: `??` mixed with `&&`/`||` without par
 - `a[k]`: string keys on maps (numbers become decimal text), integer indices on lists and strings (out of range, negative, or fractional is `null`; use `at(-1)`), `null` receiver or key gives `null`.
 - `?.` equals `.` for reads. For calls it makes that one call return `null` when the receiver is `null`; it does not skip the rest of the chain: write `a?.trim()?.toUpperCase()`.
 - Calling a function with `null` as the first argument, when no overload accepts null, is a `NULL_RECEIVER` error.
-- `__proto__`, `constructor`, `prototype` are never readable or valid keys.
+- `__proto__`, `constructor`, `prototype` are never data: not valid literal keys, a computed read is `null`, and writing one as a computed key is `BLOCKED_PROPERTY`.
 - `has(a.b)` / `has(a[k])`: whether the own key (or list index) exists, even if the value is `null`.
 
 ## Functions and lambdas
@@ -89,11 +89,11 @@ Syntax errors instead of silent groupings: `??` mixed with `&&`/`||` without par
 
 ## Time
 
-Timestamps are instants; durations are exact (a day is 24 hours). Calendar functions take an optional IANA time zone and default to UTC: `year(t, tz)`, `startOfDay(t, tz)`, `addMonths(t, 1, tz)`, `formatDate(t, pattern, tz)`. `now()` is read once per evaluation from the environment clock. `addDays` keeps wall-clock time across DST; `+ days(n)` keeps exact length.
+Timestamps are instants; durations are exact, in whole milliseconds (a day is 24 hours; a fraction of a millisecond rounds, halves away from zero). Calendar functions take an optional time zone, "UTC" or an IANA Area/Location name in the tz database spelling (abbreviations like "EST", other spellings like "utc", and offsets like "+05:30" are INVALID_ARGUMENT), and default to UTC: `year(t, tz)`, `startOfDay(t, tz)`, `addMonths(t, 1, tz)`, `formatDate(t, pattern, tz)`. `now()` is read once per evaluation from the environment clock. `addDays` keeps wall-clock time across DST; `+ days(n)` keeps exact length.
 
 ## Static checking
 
-Gradual: unknown values are `any` (open environments, undeclared variables in non-strict environments, open records, and `values()`/`entries()`/computed reads on declared objects, which may carry extra keys). Declaring `variables` makes an environment strict unless `strict: false`. Errors: `UNKNOWN_VARIABLE` (strict), `UNKNOWN_PROPERTY` (closed records and map literals), `UNKNOWN_FUNCTION`, `NO_OVERLOAD`, `TYPE_ERROR`, `NULLABLE_RECEIVER`, `INVALID_LAMBDA`, `BLOCKED_PROPERTY`, `EXPECTED_TYPE`, `INVALID_ARGUMENT`, plus `SYNTAX` and `LIMIT` from `check()`. Warnings (severity "warning"): `ALWAYS_FALSE` (comparisons that can never hold), `MAYBE_NULL` (ordering comparisons with possibly-null values, lambdas that may return null where a boolean is expected), `NEVER_NULL` (`??` on never-null values).
+Gradual: unknown values are `any` (open environments, undeclared variables in non-strict environments, open records, and `values()`/`entries()`/computed reads on declared objects, which may carry extra keys). Declaring `variables` makes an environment strict unless `strict: false`. Errors: `UNKNOWN_VARIABLE` (strict), `UNKNOWN_PROPERTY` (closed records and map literals), `UNKNOWN_FUNCTION`, `NO_OVERLOAD`, `TYPE_ERROR`, `NULLABLE_RECEIVER`, `INVALID_LAMBDA`, `BLOCKED_PROPERTY`, `EXPECTED_TYPE`, `INVALID_ARGUMENT`, plus `SYNTAX` and `LIMIT` from `check()`. Warnings (severity "warning"): `ALWAYS_FALSE` (comparisons that can never hold), `ALWAYS_TRUE` (`!=` or `not in` that always holds), `MAYBE_NULL` (a possibly-null value in an ordering comparison, under `!`, `&&`, `||`, as a `?:` condition, or returned by a lambda where a boolean is expected), `NEVER_NULL` (`??` on never-null values), `UNSAFE_INTEGER` (number literals past 2^53).
 
 ## API
 
@@ -223,7 +223,7 @@ Every built-in is callable as `f(x, ...)` or `x.f(...)`. `?` marks an optional p
 - reduce(T[], (U, T) => U, U): U: Folds a list into one value: reduce(list, (acc, item) => ..., initial). Name both parameters; "." is not allowed, since the first one is the accumulator.
 - sort(T[], ("asc" | "desc")?): T[]: Sorts numbers, text, timestamps, or durations; pass "desc" to reverse.
 - sortBy(T[], (T, number) => K, ("asc" | "desc")?): T[]: Sorts by a key; pass "desc" to reverse. Nulls sort first ("asc") or last ("desc").
-- groupBy(T[], (T, number) => string | number | boolean): { [key: string]: T[] }: Groups items into a map of lists by a key.
+- groupBy(T[], (T, number) => string | number | boolean): { [key: string]: T[] }: Groups items into a map of lists by a key. Map keys are text, so a key is its text form: 1 and "1", or true and "true", share a group. A key must be a string, number, or boolean (null is an error). Keys are listed integer-like first, ascending, then in first-seen order.
 - reverse(T[]): T[]: The items in reverse order.
 - unique(T[]): T[]: The items without duplicates (by value), in first-seen order.
 - flat(any[]): any[]: Flattens nested lists one level.
@@ -276,7 +276,7 @@ Every built-in is callable as `f(x, ...)` or `x.f(...)`. `?` marks an optional p
 - hours(number): duration: A duration of n hours.
 - minutes(number): duration: A duration of n minutes.
 - seconds(number): duration: A duration of n seconds.
-- milliseconds(number): duration: A duration of n milliseconds.
+- milliseconds(number): duration: A duration of n milliseconds. Durations are whole milliseconds: a fraction rounds to the nearest one, halves away from zero.
 - inDays(duration): number: A duration as a (fractional) number of days.
 - inHours(duration): number: A duration as a number of hours.
 - inMinutes(duration): number: A duration as a number of minutes.

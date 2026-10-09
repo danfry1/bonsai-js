@@ -15,7 +15,7 @@ Every function can be called as `f(x, ...)` or as a method, `x.f(...)`. In the s
 | [`hours`](#hours) | A duration of n hours. |
 | [`minutes`](#minutes) | A duration of n minutes. |
 | [`seconds`](#seconds) | A duration of n seconds. |
-| [`milliseconds`](#milliseconds) | A duration of n milliseconds. |
+| [`milliseconds`](#milliseconds) | A duration of n milliseconds. Durations are whole milliseconds: a fraction rounds to the nearest one, halves away from zero. |
 | [`inDays`](#indays) | A duration as a (fractional) number of days. |
 | [`inHours`](#inhours) | A duration as a number of hours. |
 | [`inMinutes`](#inminutes) | A duration as a number of minutes. |
@@ -123,13 +123,14 @@ seconds(0.5) // => PT0.5S
 
 ## milliseconds
 
-A duration of n milliseconds.
+A duration of n milliseconds. Durations are whole milliseconds: a fraction rounds to the nearest one, halves away from zero.
 
 - `milliseconds(number): duration`
 
 <!-- context: { items: [{ name: "Pen", price: 2, qty: 3 }, { name: "Book", price: 12, qty: 1 }, { name: "Bag", price: 30, qty: 1 }] } -->
 ```bonsai
 milliseconds(1500) // => PT1.5S
+milliseconds(0.5) == milliseconds(1) // => true
 ```
 
 ## inDays

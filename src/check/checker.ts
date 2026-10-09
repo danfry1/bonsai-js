@@ -631,6 +631,18 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
   function checkNode(node: Node, scope: Scope, expected: Type | undefined): Type {
     switch (node.type) {
       case 'Literal':
+        if (
+          typeof node.value === 'number' &&
+          Number.isInteger(node.value) &&
+          Math.abs(node.value) > Number.MAX_SAFE_INTEGER
+        ) {
+          report(
+            'UNSAFE_INTEGER',
+            'This number is past 2^53, where neighbouring integers are not all distinct (9007199254740993 reads as ...992)',
+            node,
+            'warning',
+          )
+        }
         return node.value === null ? NULL : freshLiteral(node.value)
       case 'Template':
         for (const part of node.parts) {
@@ -853,6 +865,14 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
   function expectLogic(actual: Type, at: Node, what: string): void {
     if (!isAssignable(actual, OPTIONAL_BOOLEAN)) {
       report('TYPE_ERROR', `${what} expects a boolean but got ${formatType(actual)}`, at)
+    } else if (mayBeNull(actual)) {
+      // Null counts as false here, which ! turns into true: say which one is meant.
+      report(
+        'MAYBE_NULL',
+        `This value may be null, and ${what === 'A condition' ? 'a condition' : what} treats null as false; write x == true or x == false to say what null means`,
+        at,
+        'warning',
+      )
     }
   }
 
@@ -986,7 +1006,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       case '!=':
         if (!overlaps(left, right)) {
           report(
-            'ALWAYS_FALSE',
+            op === '==' ? 'ALWAYS_FALSE' : 'ALWAYS_TRUE',
             `This comparison is always ${op === '==' ? 'false' : 'true'}: ${formatType(left)} and ${formatType(right)} have no values in common`,
             node,
             'warning',
@@ -1086,9 +1106,10 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         report('TYPE_ERROR', `"in" on a map needs a string key, not ${formatType(left)}`, node.left)
     } else if (container.kind === 'list') {
       if (!overlaps(left, container.element) && container.element.kind !== 'never') {
+        const negated = node.operator === 'not in'
         report(
-          'ALWAYS_FALSE',
-          `${formatType(left)} can never be in ${formatType(container)}`,
+          negated ? 'ALWAYS_TRUE' : 'ALWAYS_FALSE',
+          `${formatType(left)} can never be in ${formatType(container)}, so this is always ${negated ? 'true' : 'false'}`,
           node,
           'warning',
         )

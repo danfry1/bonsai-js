@@ -1167,7 +1167,7 @@ const LIST_FUNCTIONS: FunctionDef[] = [
   ),
   hof(
     'groupBy',
-    'Groups items into a map of lists by a key.',
+    'Groups items into a map of lists by a key. Map keys are text, so a key is its text form: 1 and "1", or true and "true", share a group. A key must be a string, number, or boolean (null is an error). Keys are listed integer-like first, ascending, then in first-seen order.',
     t.record(listT),
     (items, fn, site) => {
       const out: Record<string, unknown[]> = {}
@@ -1385,7 +1385,11 @@ const TIME_FUNCTIONS: FunctionDef[] = [
   durationUnit('hours', MS_PER_HOUR, 'A duration of n hours.'),
   durationUnit('minutes', MS_PER_MINUTE, 'A duration of n minutes.'),
   durationUnit('seconds', MS_PER_SECOND, 'A duration of n seconds.'),
-  durationUnit('milliseconds', 1, 'A duration of n milliseconds.'),
+  durationUnit(
+    'milliseconds',
+    1,
+    'A duration of n milliseconds. Durations are whole milliseconds: a fraction rounds to the nearest one, halves away from zero.',
+  ),
   durationIn('inDays', MS_PER_DAY, 'A duration as a (fractional) number of days.'),
   durationIn('inHours', MS_PER_HOUR, 'A duration as a number of hours.'),
   durationIn('inMinutes', MS_PER_MINUTE, 'A duration as a number of minutes.'),

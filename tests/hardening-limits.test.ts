@@ -531,7 +531,9 @@ describe('values', () => {
   })
 
   it('prints durations as ISO-8601 at any magnitude', () => {
-    expect(env.evaluateSync('`${milliseconds(0.0001)}`')).toBe('PT0.0000001S')
+    // Durations are whole milliseconds.
+    expect(env.evaluateSync('`${milliseconds(1)}`')).toBe('PT0.001S')
+    expect(env.evaluateSync('`${milliseconds(0.0001)}`')).toBe('PT0S')
     expect(env.evaluateSync('`${milliseconds(5e-324)}`')).toBe('PT0S')
     expect(env.evaluateSync('`${seconds(59.9999999999)}`')).toBe('PT1M')
     expect(env.evaluateSync('`${days(1e300)}`')).toMatch(/^P1\d{300}D$/u)

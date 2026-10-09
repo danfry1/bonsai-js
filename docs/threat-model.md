@@ -52,9 +52,10 @@ declared functions, never on `x`.
   `ArrayBuffer` and typed arrays, errors, boxed primitives, functions),
   including ones from another realm, are opaque: reading into them is a type
   error.
-- `__proto__`, `constructor`, and `prototype` are rejected wherever they appear:
-  as syntax (including as function or method names), as computed keys, as host
-  function names, and in keys spread from host data.
+- `__proto__`, `constructor`, and `prototype` are never data: they are
+  rejected as syntax (including as function or method names), as computed keys
+  an expression writes, and as host function names; skipped in keys spread from
+  host data; and a computed read of one is `null`, never the prototype.
 - Produced maps never contain `__proto__`, `constructor`, or `prototype` keys, even when spread from host data parsed with `JSON.parse`.
 - `matches()` uses a linear-time regular expression engine (JavaScript syntax
   without backreferences or lookaround), so a user-written pattern cannot

@@ -73,7 +73,7 @@ order.email?.endsWith("@acme.com") ?? false // => false
 (order.email ?? "").endsWith("@acme.com") // => false
 ```
 
-Relative dates need `now`, from the `now` option (or a known timestamp in its place); the comparison is rewritten as the column against a fixed instant, so it can use an index. A null timestamp fails the subtraction, so the record is excluded from the filter and from its negation, as in Bonsai, and so is a record that a shift would push past the range of dates. Durations must be whole milliseconds; anything else is rejected as `UNTRANSLATABLE`.
+Relative dates need `now`, from the `now` option (or a known timestamp in its place); the comparison is rewritten as the column against a fixed instant, so it can use an index. A null timestamp fails the subtraction, so the record is excluded from the filter and from its negation, as in Bonsai, and so is a record that a shift would push past the range of dates. Durations are whole milliseconds, like timestamps, so the bound is exact.
 
 Anything else throws a `BonsaiTranslationError` (code `UNTRANSLATABLE`) with the span of the part that has no exact equivalent, including calls to host functions (which may replace a built-in of the same name). Deliberately not translated: ordering text (databases order by code point, Bonsai by UTF-16 unit), `toLowerCase`/`toUpperCase` (databases do not match JavaScript's Unicode case mapping), and division (databases differ on division by zero). Text with a lone surrogate is rejected, since drivers send it as U+FFFD.
 

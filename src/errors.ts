@@ -203,8 +203,10 @@ export function locate(source: string, findings: readonly Finding[]): Diagnostic
 export type DiagnosticCode =
   // warnings
   | 'ALWAYS_FALSE'
+  | 'ALWAYS_TRUE'
   | 'NEVER_NULL'
   | 'MAYBE_NULL'
+  | 'UNSAFE_INTEGER'
   // errors
   | 'SYNTAX'
   | 'LIMIT'

@@ -59,7 +59,7 @@ try {
 | | `NULL_RECEIVER` | A function received `null` as its first argument without `?.`. |
 | | `DIVISION_BY_ZERO` | Division or remainder by zero. |
 | | `NON_FINITE` | A result would be `NaN` or infinite. |
-| | `BLOCKED_PROPERTY` | A computed key is `__proto__`, `constructor`, or `prototype`. |
+| | `BLOCKED_PROPERTY` | A map literal writes a computed key that is `__proto__`, `constructor`, or `prototype` (reading one is `null`). |
 | | `INVALID_ARGUMENT` | An argument has the right type but an invalid value (an unparsable timestamp, an unknown time zone, a non-integer count, a regular expression the engine does not support). |
 | | `ASYNC_IN_SYNC` | `evaluateSync()` (or `explainSync()`) on an expression that calls a host function declared `async: true`. |
 | | `HOST_ERROR` | A host function threw (anything, including a `BonsaiError` from a nested evaluation), or reading the context ran host code (a getter or Proxy) that threw. |
@@ -123,8 +123,10 @@ Errors have `severity: "error"` and make `check()` return `ok: false`. Warnings 
 | `EXPECTED_TYPE` | error | The result does not match `expect`. |
 | `INVALID_ARGUMENT` | error | A literal argument with an invalid value, such as an unknown `formatDate` pattern letter. |
 | `ALWAYS_FALSE` | warning | A comparison or membership test that can never hold, such as `plan == "premium"` when `plan` is `"free" \| "pro"`. |
+| `ALWAYS_TRUE` | warning | The negation of one: `!=` or `not in` that always holds, such as `plan != "premium"`. |
 | `NEVER_NULL` | warning | `??` applied to a value that is never `null`. |
-| `MAYBE_NULL` | warning | An ordering comparison on a value that may be `null` (it is `false` when it is), or a lambda that may return `null` where a boolean is expected. |
+| `MAYBE_NULL` | warning | A value that may be `null` where it decides something: an ordering comparison (it is `false`), the operand of `!`, `&&`, or `\|\|`, a `?:` condition, or what a lambda returns where a boolean is expected (null counts as `false`, which `!` turns into `true`). |
+| `UNSAFE_INTEGER` | warning | A number literal past 2^53, where neighbouring integers are not all distinct: `9007199254740993` reads as `9007199254740992`. |
 
 The same mistake can surface statically or at run time depending on what the checker knows. With declared types, `"a" + price` is a `TYPE_ERROR` diagnostic and the expression does not compile. With an untyped `price`, it compiles and fails at run time with `TYPE_ERROR`.
 

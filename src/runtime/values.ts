@@ -33,17 +33,21 @@ const SEARCH_COMPARISONS_PER_STEP = 512
  */
 export const TEXT_SHIFT = 5
 /** Durations print at most nanosecond precision. */
-const DURATION_FRACTION_DIGITS = 9
-const NS_PER_MS = 1_000_000
-/** Beyond this many milliseconds, sub-nanosecond digits no longer exist in a double. */
-const NANO_ROUNDING_LIMIT = 1e12
+/** Durations are whole milliseconds, so seconds have at most three decimals. */
+const DURATION_FRACTION_DIGITS = 3
 
-/** An exact span of time. Durations are immutable values compared by length. */
+/**
+ * An exact span of time in whole milliseconds, the resolution of timestamps.
+ * Durations are immutable values compared by length.
+ */
 export class Duration {
   readonly ms: number
 
   constructor(ms: number) {
-    this.ms = ms === 0 ? 0 : ms
+    // Rounded once, halves away from zero, so duration arithmetic stays exact
+    // and adding one to a timestamp never depends on which side of 1970 it is.
+    const whole = ms < 0 ? -Math.round(-ms) : Math.round(ms)
+    this.ms = whole === 0 ? 0 : whole
     Object.freeze(this)
   }
 
@@ -315,7 +319,10 @@ export function readIndex(object: unknown, key: unknown, s: State, at: Span): un
     return value === undefined ? null : value
   }
   if (isMap(object)) {
-    const name = mapKey(key, s, at)
+    const name = keyName(key, s, at)
+    // A blocked name is never data (in, has, and keys skip it too), so reading it is null.
+    if (BLOCKED_NAMES.has(name)) return null
+    chargeIndexKey(s, name)
     if (!hasOwn(object, name)) return null
     const value = object[name]
     return value === undefined ? null : value
@@ -366,13 +373,19 @@ export function chargeIndexKey(s: State, name: string): void {
   if (name.length <= INDEX_KEY_MAX_LENGTH && INDEX_KEY.test(name)) s.charge(INDEX_KEY_COST)
 }
 
-export function mapKey(key: unknown, s: State, at: Span): string {
-  let name: string
+/** A computed key as a property name (a string, or a finite number as text). */
+function keyName(key: unknown, s: State, at: Span): string {
   if (typeof key === 'string') {
     chargeKey(s, key)
-    name = key
-  } else if (typeof key === 'number' && Number.isFinite(key)) name = String(key)
-  else throw s.error('TYPE_ERROR', `A map key must be a string, not ${describeKind(key)}`, at)
+    return key
+  }
+  if (typeof key === 'number' && Number.isFinite(key)) return String(key)
+  throw s.error('TYPE_ERROR', `A map key must be a string, not ${describeKind(key)}`, at)
+}
+
+/** A computed key to write into a map: a blocked name is an error, since it could never be read. */
+export function mapKey(key: unknown, s: State, at: Span): string {
+  const name = keyName(key, s, at)
   if (BLOCKED_NAMES.has(name))
     throw s.error('BLOCKED_PROPERTY', `Property "${name}" is not accessible`, at)
   chargeIndexKey(s, name)
@@ -833,15 +846,13 @@ function formatDuration(ms: number): string {
   if (ms === 0) return 'PT0S'
   const sign = ms < 0 ? '-' : ''
   let rest = Math.abs(ms)
-  // Round to the nanosecond first, so 59.9999999999s carries into a minute.
-  if (rest < NANO_ROUNDING_LIMIT) rest = Math.round(rest * NS_PER_MS) / NS_PER_MS
   const days = Math.floor(rest / MS_PER_DAY)
   rest -= days * MS_PER_DAY
   const hours = Math.floor(rest / MS_PER_HOUR)
   rest -= hours * MS_PER_HOUR
   const minutes = Math.floor(rest / MS_PER_MINUTE)
   rest -= minutes * MS_PER_MINUTE
-  // Fixed notation (never 1e-7), trimmed: 0.000000100 -> 0.0000001.
+  // Fixed notation, trimmed: 1.500 -> 1.5.
   const seconds = (rest / MS_PER_SECOND).toFixed(DURATION_FRACTION_DIGITS).replace(/\.?0+$/u, '')
   let time = ''
   if (hours > 0) time += `${hours}H`
@@ -849,7 +860,7 @@ function formatDuration(ms: number): string {
   if (seconds !== '0') time += `${seconds}S`
   // Whole days can exceed 2^53 (and would print as 1e+300); BigInt prints every digit.
   const dayText = days > 0 ? `${days < Number.MAX_SAFE_INTEGER ? days : BigInt(days)}D` : ''
-  // A duration below a nanosecond rounds to zero seconds.
+  // Only a length that is not a number (from host data) prints nothing above.
   if (dayText === '' && time === '') return 'PT0S'
   return `${sign}P${dayText}${time === '' ? '' : `T${time}`}`
 }

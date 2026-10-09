@@ -15,12 +15,13 @@ Bonsai is designed to evaluate expression text written by people you do not full
 
 **Run code.** There is no `eval`, `new Function`, or generated code. The only callable things are built-in functions and the host functions you declared. A function value found in data can be compared but never called, and `x.f()` always resolves `f` among the declared functions, never on `x`.
 
-**Reach prototypes or globals.** A property read returns an own property of a plain object or class instance. Inherited members, class methods, and prototype getters never resolve, and private class fields (`#field`) are not properties at all. Host collections and other built-in objects (`Map`, `Set`, `RegExp`, promises, typed arrays, errors), including ones from another realm, are opaque; a plain object with a `then` method is an ordinary map, never awaited: an expression can compare them and pass them to host functions but not read into them. `__proto__`, `constructor`, and `prototype` are rejected as syntax, as computed keys, and in keys spread from host data. Maps created by expressions are ordinary objects that never contain those keys.
+**Reach prototypes or globals.** A property read returns an own property of a plain object or class instance. Inherited members, class methods, and prototype getters never resolve, and private class fields (`#field`) are not properties at all. Host collections and other built-in objects (`Map`, `Set`, `RegExp`, promises, typed arrays, errors), including ones from another realm, are opaque; a plain object with a `then` method is an ordinary map, never awaited: an expression can compare them and pass them to host functions but not read into them. `__proto__`, `constructor`, and `prototype` are never data: they are rejected as syntax and as keys an expression writes, a computed read of one is `null`, and they are skipped in keys spread from host data. Maps created by expressions are ordinary objects that never contain those keys.
 
-<!-- context: { user: { name: "Ada" } } -->
+<!-- context: { user: { name: "Ada" }, k: "constructor" } -->
 ```bonsai
 user.__proto__ // error: SYNTAX
-user["constructor"] // error: BLOCKED_PROPERTY
+user["constructor"] // => null
+{[k]: 1} // error: BLOCKED_PROPERTY
 user.toString // => null
 ```
 

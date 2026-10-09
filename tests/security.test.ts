@@ -16,11 +16,13 @@ describe('sandbox', () => {
     ]) {
       expect(['SYNTAX', 'CHECK']).toContain(codeOf(() => env.evaluateSync(source, { x: {} })))
     }
-    for (const source of ['x["__proto__"]', 'x["constru" + "ctor"]', '{ [k]: 1 }']) {
-      expect(codeOf(() => env.evaluateSync(source, { x: {}, k: '__proto__' }))).toBe(
-        'BLOCKED_PROPERTY',
-      )
+    // A computed read of a blocked name is null (never the prototype); writing one is an error.
+    for (const source of ['x["__proto__"]', 'x["constru" + "ctor"]', 'x[k]']) {
+      expect(env.evaluateSync(source, { x: {}, k: '__proto__' })).toBe(null)
     }
+    expect(codeOf(() => env.evaluateSync('{ [k]: 1 }', { k: '__proto__' }))).toBe(
+      'BLOCKED_PROPERTY',
+    )
   })
 
   it('never reads inherited members', () => {

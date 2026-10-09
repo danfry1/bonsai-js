@@ -123,10 +123,27 @@ interface EvaluationZone {
 
 const zoneData = new Map<string, ZoneData>()
 
+/**
+ * An IANA zone name (`Area/Location`, more segments allowed, each starting with
+ * a capital or digit as in the tz database). Abbreviations and legacy names
+ * (`EST`, `GB`), lowercase spellings, and offsets (`+05:30`) are rejected: which
+ * of them a runtime accepts, and what it maps them to, differs between engines.
+ */
+const ZONE_NAME = /^[A-Z][\w+-]*(?:\/[A-Z0-9][\w+-]*)+$/u
+
+function unknownZone(zone: string, site: CallSite): Error {
+  return site.state.error(
+    'INVALID_ARGUMENT',
+    `Unknown time zone ${shown(zone)}; use "UTC" or an IANA name such as "Europe/London"`,
+    site.span,
+  )
+}
+
 function formatterFor(zone: string, site: CallSite): Intl.DateTimeFormat {
   return site.state.resource(`f${zone}`, ZONE_FORMAT_COST, () => {
     let formatter = formatters.get(zone)
     if (formatter !== undefined) return formatter
+    if (!ZONE_NAME.test(zone)) throw unknownZone(zone, site)
     try {
       formatter = new Intl.DateTimeFormat('en-US', {
         timeZone: zone,
@@ -140,7 +157,16 @@ function formatterFor(zone: string, site: CallSite): Intl.DateTimeFormat {
         second: 'numeric',
       })
     } catch {
-      throw site.state.error('INVALID_ARGUMENT', `Unknown time zone ${shown(zone)}`, site.span)
+      throw unknownZone(zone, site)
+    }
+    // The tz database's own spelling only: Europe/LONDON names the same zone in a different case.
+    const resolved = formatter.resolvedOptions().timeZone
+    if (resolved !== zone && resolved.toLowerCase() === zone.toLowerCase()) {
+      throw site.state.error(
+        'INVALID_ARGUMENT',
+        `Write the time zone as ${shown(resolved)}, not ${shown(zone)}`,
+        site.span,
+      )
     }
     if (formatters.size >= MAX_CACHED_ZONES)
       formatters.delete(formatters.keys().next().value as string)
