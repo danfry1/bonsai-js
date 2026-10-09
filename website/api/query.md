@@ -62,11 +62,11 @@ Invalid options (an unknown option key, an unknown `dialect` or column type, a m
 | `(order.email ?? "").endsWith(x)` | a text call on a column with a known text default |
 | `(order.total ?? 0) >= 500`, `(order.code ?? "") == x`, `(order.qty ?? 1) in [...]` | a column with a known default of its type, compared with a known value or list; against another column or in arithmetic, SQL only |
 | `order.wait > minutes(5)`, `order.wait in [...]` | duration columns, compared with known durations |
-| `inMilliseconds(order.wait) > 100`, `order.wait?.inMilliseconds()` | the milliseconds of a duration column; without `?.` a null duration fails, which only SQL can express |
+| `inMilliseconds(order.wait) > 100`, `order.wait?.inMilliseconds()` | the milliseconds of a duration column; without `?.` (a field the environment does not declare optional) a null duration fails, which only SQL can express; the checker asks for `?.` on an optional field |
 | `"text" in order.name` | substring test |
 | `order.name in text` | substring test, SQL only |
 | `order.a == order.b`, `order.a < order.b` | comparing two columns, SQL only |
-| `+ - *` | numbers, SQL only; a null operand or a non-finite result fails |
+| `+ - *`, unary `-` | numbers, SQL only; a null operand or a non-finite result fails |
 | `now() - order.placed < days(14)`, `order.placed + days(3) > now()` | relative dates: a timestamp column shifted by a known duration, or its distance from a known time, compared with a known timestamp or duration (either way round) |
 
 A text function on a nullable column has three exact forms. With a declared environment the checker rejects `order.email.endsWith(x)` on an optional field and suggests `?.` or `??`; all of these translate:
@@ -84,7 +84,7 @@ Anything else throws a `BonsaiTranslationError` (code `UNTRANSLATABLE`) with the
 
 A failing `&&` or `||` repeats part of its left side in the query, so deeply nested filters grow quickly; a translation larger than 1,000,000 characters of SQL or 100,000 MongoDB filter nodes is rejected, as is one needing more parameters than the database accepts (65,535 in Postgres, 32,766 in SQLite), more than 1,000,000 entries in Postgres array parameters, or more than 16,000,000 characters of SQL parameter text. In a MongoDB filter, every 160 characters of text count as one node toward its limit, so the filter stays near the 16 MB a MongoDB document can hold. In SQL, a known value is sent once however often the filter uses it: a parameter is reused wherever the same value (with the same type) appears.
 
-A filter that fails whatever the record is (say `limit / 0 > 1` with `limit` known) throws that `BonsaiRuntimeError` instead of translating to a query that selects nothing. When the failing part comes after a read of the record (`order.total > 1e308 * limit`), that read could fail first, so the part is left untranslated and reported as `UNTRANSLATABLE`. The environment's runtime limits (`maxSteps`, `timeout`), or the `maxSteps`, `timeout`, and `signal` options of a translation, apply to translating, not to the database. Writing the query is charged too: `maxSteps` (1,000,000 when not given) bounds the work of reading known lists and text and writing them into the query, and `timeout` and `signal` cover the whole translation, so a filter that uses a large known list many times stops with `STEP_LIMIT`, `TIMEOUT`, or `ABORTED` instead of running long. A filter that would exceed them per record in Bonsai (for example over a known list of millions of items) still matches rows in the database. Translating evaluates every known part of the filter up front, so a known part that evaluation would skip by short-circuiting still counts toward the limit.
+A filter that fails whatever the record is (say `limit / 0 > 1` with `limit` known) throws that `BonsaiRuntimeError` instead of translating to a query that selects nothing. When the failing part comes after a read of the record (`order.total > 1e308 * limit`), that read could fail first, so the part is left untranslated and reported as `UNTRANSLATABLE`. The `maxSteps`, `timeout`, and `signal` options of a translation apply to translating, not to the database. They are one budget for the whole translation: checking the known values, the partial evaluation it runs, and writing the query, so a filter that uses a large known list many times stops with `STEP_LIMIT`, `TIMEOUT`, or `ABORTED` instead of running long. Without `maxSteps`, the partial evaluation uses the environment's own limit and the rest of the work is bounded by 1,000,000 steps; without `timeout`, the partial evaluation uses the environment's timeout. A filter that would exceed them per record in Bonsai (for example over a known list of millions of items) still matches rows in the database. Translating evaluates every known part of the filter up front, so a known part that evaluation would skip by short-circuiting still counts toward the limit.
 
 ## Host functions
 
@@ -133,7 +133,7 @@ Translated conditions are plain comparisons wherever Bonsai's semantics allow, s
 | `dialect` | SQL | `'postgres'` or `'sqlite'` |
 | `known` | both | Values for the other variables |
 | `now` | both | The time `now()` returns |
-| `maxSteps`, `timeout`, `signal` | both | Budget and cancellation for translating, including the partial evaluation it runs, as for `partial()` |
+| `maxSteps`, `timeout`, `signal` | both | One budget and cancellation for the whole translation, including the partial evaluation it runs; validated as for `partial()` |
 | `callHostFunctions` | both | Call sync host functions whose inputs are all known before translating, as for `partial()`. Default `false` |
 | `paramOffset` | SQL | Parameters already used, so numbering (`$n`, `?n`) continues |
 
