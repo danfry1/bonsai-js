@@ -18,6 +18,7 @@ import {
   type FunctionDef,
   type ValidationBudget,
 } from './functions/define.js'
+import { partiallyEvaluate, type PartialOptions, type PartialResult } from './partial.js'
 import { DEFAULT_RUNTIME_LIMITS, State, type RuntimeLimits } from './runtime/state.js'
 import { errorText, isMap } from './runtime/values.js'
 import {
@@ -259,6 +260,16 @@ export interface Program<Ctx = object, R = unknown> {
   explain: (...args: ExplainArgs<Ctx>) => Explanation<R>
   /** Like explain, for expressions that call async host functions. */
   explainAsync: (...args: ExplainArgs<Ctx>) => Promise<Explanation<R>>
+  /**
+   * Evaluates what can be evaluated from partial data. Returns the value when
+   * the known data decides it, or a simplified residual expression (source and
+   * syntax tree) that needs only the unknown data. Evaluating the residual with
+   * the full data gives the same result as evaluating this program.
+   */
+  partial: (
+    known: Partial<Ctx> & Record<string, unknown>,
+    options?: PartialOptions,
+  ) => PartialResult<R>
 }
 
 export interface ExplainOptions extends EvaluateOptions {
@@ -856,6 +867,47 @@ function explainSettings(options: unknown): ExplainSettings {
   }
 }
 
+const PARTIAL_OPTION_KEYS: ReadonlySet<string> = new Set(['unknown', 'callHostFunctions', 'now'])
+const PATH = /^[^.]+(?:\.[^.]+)*$/u
+
+/** Reads partial() options once, with the same TypeError rules as the other options. */
+function partialOptions(options: unknown): PartialOptions {
+  if (options === undefined) return {}
+  if (typeof options !== 'object' || options === null || Array.isArray(options))
+    throw new TypeError('Partial options must be an object')
+  let copy: Record<string, unknown>
+  try {
+    copy = { ...(options as Record<string, unknown>) }
+    if (Array.isArray(copy.unknown)) copy.unknown = [...(copy.unknown as unknown[])]
+  } catch {
+    throw new TypeError('Partial options could not be read')
+  }
+  for (const key of Object.keys(copy)) {
+    if (!PARTIAL_OPTION_KEYS.has(key)) {
+      throw new TypeError(
+        `Unknown partial option key "${key}" (expected one of: ${[...PARTIAL_OPTION_KEYS].join(', ')})`,
+      )
+    }
+  }
+  const unknown = copy.unknown
+  if (
+    unknown !== undefined &&
+    (!Array.isArray(unknown) || !unknown.every((p) => typeof p === 'string' && PATH.test(p)))
+  )
+    throw new TypeError('Partial option "unknown" must be a list of variable names or dotted paths')
+  if (copy.callHostFunctions !== undefined && typeof copy.callHostFunctions !== 'boolean')
+    throw new TypeError('Partial option "callHostFunctions" must be a boolean')
+  const now = copy.now
+  let validNow = now === undefined
+  try {
+    validNow ||= now instanceof Date && !Number.isNaN(Date.prototype.getTime.call(now))
+  } catch {
+    // An object that only inherits from Date.prototype is not a Date.
+  }
+  if (!validNow) throw new TypeError('Partial option "now" must be a valid Date')
+  return copy
+}
+
 function contextOf(value: unknown): Record<string, unknown> {
   if (value === undefined || value === null) return EMPTY_CONTEXT
   let map: boolean
@@ -1134,10 +1186,101 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       }
     }
 
+    // Sub-trees compiled on their own for partial evaluation, by free locals.
+    const subtrees = new WeakMap<Node, Map<string, CompiledProgram>>()
+
+    function partial(known: Record<string, unknown>, rawOptions: unknown): PartialResult<R> {
+      const options = partialOptions(rawOptions)
+      const context = contextOf(known)
+      const now = options.now
+      const state = new State(
+        settings.runtimeLimits,
+        now === undefined ? settings.clock : () => now,
+      )
+      state.reset(context, source, 0, settings.runtimeLimits.maxSteps, settings.timeout, undefined)
+      try {
+        const result = partiallyEvaluate<R>(
+          {
+            analysis,
+            contextOf,
+            hostKind: (name) => {
+              const def = settings.host.get(name)
+              return def === undefined
+                ? undefined
+                : { async: def.async === true, context: def.context === true }
+            },
+            charge: () => {
+              state.charge(1)
+            },
+            evaluate: (node, locals) => {
+              const key = locals.map(([name]) => name).join('\u0000')
+              let byLocals = subtrees.get(node)
+              if (byLocals === undefined) subtrees.set(node, (byLocals = new Map()))
+              let code = byLocals.get(key)
+              if (code === undefined) {
+                code = compileProgram({ ...analysis, root: node }, 'sync', {
+                  locals: locals.map(([name]) => name),
+                })
+                byLocals.set(key, code)
+              }
+              state.ensureLocals(code.localCount)
+              locals.forEach(([, value], slot) => {
+                state.locals[slot] = value
+              })
+              try {
+                return code.run(state)
+              } catch (error) {
+                throw hostDataFailure(error, source)
+              }
+            },
+            compileResidual: (residual) => {
+              // The original expression passed the checker; inlining known
+              // values can make a failing branch statically visible, and that
+              // failure must happen at run time, as it would have.
+              // Analyzed as a tree (not re-parsed), so the printer's parentheses
+              // cannot push it past the parse depth limit.
+              const program = makeProgram<unknown>(
+                source,
+                analyze(
+                  residual,
+                  { ...checkEnv, variables: undefined, strict: false },
+                  { expected: expect },
+                ),
+                expect,
+              )
+              return {
+                evaluateSync: (ctx) => (program as Program).evaluateSync(ctx),
+                evaluate: (ctx) => (program as Program).evaluate(ctx),
+              }
+            },
+          },
+          context,
+          options,
+        )
+        // A decided result still has to match `expect`, as evaluation would check it.
+        if (result.status === 'value') {
+          try {
+            checked(result.value, state)
+          } catch (error) {
+            if (error instanceof BonsaiRuntimeError) return { status: 'error', error }
+            throw error
+          }
+        }
+        return result
+      } catch (error) {
+        // Reading `known` is reading host data: a throwing Proxy or getter is a HOST_ERROR.
+        throw hostDataFailure(error, source)
+      } finally {
+        state.release()
+      }
+    }
+
     // Programs are shared: the tree compiles lazily, so it must not change afterwards.
     return Object.freeze({
       explain: (...args: ExplainArgs<Ctx>) => explainSync(args[0], args[1]),
       explainAsync: (...args: ExplainArgs<Ctx>) => explainAsync(args[0], args[1]),
+      partial: (known: Record<string, unknown>, options?: PartialOptions) =>
+        partial(known, options),
       source,
       ast: deepFreeze(analysis.root),
       type: deepFreeze(analysis.type),

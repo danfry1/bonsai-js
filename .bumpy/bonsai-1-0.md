@@ -24,6 +24,7 @@ A redesign of the language and the engine. Expressions and host code written for
 - `bonsai-js/service` (`createLanguageService`) replaces `bonsai-js/autocomplete`; the `stdlib` and `autocomplete` subpaths are removed.
 - `print(tree, { calls })` turns a syntax tree back into source, round-tripping with `env.parse`. Syntax tree node types are renamed.
 - `program.explain(context)` (and `explainAsync`, `env.explain`) evaluates and returns a trace of every sub-expression's value, with skipped branches and per-item lambda runs; `reasons()` lists the conditions that decided the result.
+- `program.partial(known, { unknown })` evaluates what the known data decides and returns a value, an error, or a residual expression over the unknown variables, to pre-evaluate rules once per tenant or request.
 - Errors are `BonsaiError` subclasses with stable codes and `{ start, end }` spans. `ExpressionError`, `BonsaiTypeError`, `BonsaiReferenceError`, `BonsaiSecurityError`, `formatError`, `formatBonsaiError`, `evaluateExpression`, `tokenize`, `parse`, and `compile` are removed, as are the `allowedProperties` and `deniedProperties` options.
 - Limits move under `limits`; `maxArrayLength` is now `maxListLength`, and `maxDepth` now bounds syntax nesting.
 - Requires Node.js 22 or newer.
