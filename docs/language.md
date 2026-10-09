@@ -35,7 +35,7 @@ put in the context (see §10).
 |---|---|
 | `null` | The single absent value. A missing property, a missing variable, and a host `undefined` all read as `null`. |
 | boolean | `true`, `false` |
-| number | IEEE-754 double. Operations never produce `NaN` or `±Infinity`: a computation that would is a `NON_FINITE` error. A non-finite host value can be read, compared with `==`, and passed to host functions; arithmetic, ordering (`sort`, `min`, `max`), and numeric built-ins on it are `NON_FINITE` errors. |
+| number | IEEE-754 double. Operations never produce `NaN` or `±Infinity`: a computation that would is a `NON_FINITE` error. A non-finite host value can be read, compared with `==` and with `<`, `<=`, `>`, `>=` (see Ordering), converted with `toString()`, passed through `toNumber()` unchanged, and passed to host functions; arithmetic, sorting and `min`/`max` (including `sortBy` and the list forms), `sum`, and built-ins that compute a number from it (`abs`, `round`, `floor`, `clamp`, `toFixed`, `formatNumber`, ...) are `NON_FINITE` errors. |
 | string | UTF-16 text. `length` and indices count UTF-16 code units. |
 | list | A host array or a produced list. Lists are never mutated. |
 | map | A plain object or class instance, read through its **own** properties; object literals. A value may have more keys than its declared type lists. |
@@ -60,6 +60,9 @@ type(lookup) // => "opaque"
 lookup.a // error: TYPE_ERROR
 lookup == lookup // => true
 big == big // => true
+big > 1 // => true
+toString(big) // => "Infinity"
+[big, 1].max() // error: NON_FINITE
 -big // error: NON_FINITE
 abs(big) // error: NON_FINITE
 ```
@@ -108,7 +111,9 @@ or explicitly `null`.
 `<`, `<=`, `>`, `>=` accept two numbers, two strings (code-unit order), two
 timestamps, or two durations. **If either side is `null` the result is
 `false`**, so `users.filter(.age >= 18)` skips users without an `age` instead of
-failing. Any other mix of kinds is a type error.
+failing. Any other mix of kinds is a type error. A non-finite host number
+compares as in JavaScript: `Infinity > 1` is `true`, and every ordering with
+`NaN` is `false`.
 
 ### Arithmetic
 
@@ -135,7 +140,7 @@ right and produce a boolean. `a ?? b` evaluates `b` only when `a` is `null`.
 ### Membership
 
 `x in list`: `==` against each element. `s in str`: substring test (both
-strings). `k in map`: own-key test (`k` a string, or a number converted to its decimal text). `x in null` is `false`.
+strings). `k in map`: own-key test (`k` a string, or a number converted to its decimal text); a key whose host value is `undefined` reads as absent, so it is `false`. `x in null` is `false`.
 `x not in y` is `!(x in y)`.
 
 ## 4. Names, members, and indexing
@@ -159,7 +164,11 @@ strings). `k in map`: own-key test (`k` a string, or a number converted to its d
   `keys()` treat them as absent), writing one as a computed key is a
   `BLOCKED_PROPERTY` error, and produced maps never contain them.
 - `has(a.b)` is `true` when `a` is a map with own property `b` (even if its
-  value is `null`). `has(a[k])` likewise; for lists it tests the index.
+  value is `null`). A property whose host value is `undefined` reads as
+  absent, as everywhere else (`keys()`, spread, `==`), so `has()` is `false`
+  for it. `has(a[k])` likewise; for lists it tests the index (`0 <= i <
+  length`), so a hole or an `undefined` element is present and reads as
+  `null`.
 
 ## 5. Functions and calls
 
@@ -170,7 +179,10 @@ in the function namespace.
 - Built-in functions are overloaded on parameter types. The overload is chosen
   statically when argument types are known and by the runtime kinds of the
   arguments otherwise. A `null` argument selects an overload whose parameter
-  accepts `null`; if none does, it is a type error (or `null`, for a `?.` call).
+  accepts `null`. If none does, a `null` first argument (the receiver) is a
+  `NULL_RECEIVER` error, or `null` for a `?.` call (see section 4); a `null` in
+  any other position is a `NO_OVERLOAD` error, and `?.` does not change that,
+  so `s?.startsWith(x)` with `x == null` fails. Use `??` on the argument.
 - Host functions are declared on the environment with typed parameters. A host
   function with the same name as a built-in replaces the built-in for that
   environment, so adding built-ins in a minor release never changes an existing

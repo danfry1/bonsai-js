@@ -69,7 +69,7 @@ Prefer `??` when the only problem is a missing value: `try` is for operations th
 
 ## has
 
-`has(a.b)` is `true` when `a` is a map with an own property `b`, even when its value is `null`. It never reads the value. `has(a[k])` works the same way with a computed key; for a list it tests whether the index exists.
+`has(a.b)` is `true` when `a` is a map with an own property `b`, even when its value is `null`. A property whose host value is `undefined` counts as absent, as it does for `keys()`, spread, and `==`, so `has()` is `false` for it; telling the two apart reads the property, so a getter on it runs. `has(a[k])` works the same way with a computed key; for a list it tests whether the index exists (`0 <= i < length`), so a hole or an `undefined` element is present and reads as `null`.
 
 ```bonsai
 has(user.email) // => true

@@ -226,6 +226,12 @@ describe('§2 values', () => {
     v('inf > 1e308', true, { inf: Infinity }),
     v('inf == inf', true, { inf: Infinity }),
     v('n', NaN, { n: NaN }),
+    v('toNumber(inf)', Infinity, { inf: Infinity }),
+    v('toString(inf)', 'Infinity', { inf: Infinity }),
+    err('[inf, 1].max()', 'NON_FINITE', { inf: Infinity }),
+    err('[inf, 1].sort()', 'NON_FINITE', { inf: Infinity }),
+    err('[inf, 1].sum()', 'NON_FINITE', { inf: Infinity }),
+    err('round(inf)', 'NON_FINITE', { inf: Infinity }),
     v('true', true),
     v('false', false),
     v('null', null),
@@ -329,6 +335,10 @@ describe('§3 ordering', () => {
     v('a >= b', false, { a: T0, b: T1 }),
     v('hours(1) < days(1)', true),
     v('minutes(60) <= hours(1)', true),
+    v('inf > 1', true, { inf: Infinity }),
+    v('inf < 1', false, { inf: Infinity }),
+    v('n < 1', false, { n: NaN }),
+    v('n >= n', false, { n: NaN }),
     err('1 < 2 < 3', 'SYNTAX'),
     err('1 == 1 == true', 'SYNTAX'),
     err('1 != 2 == true', 'SYNTAX'),
@@ -633,6 +643,9 @@ describe('§4 has', () => {
     v('has(m.own)', true, { m: inherited }),
     v('has(xs[1])', true, { xs: [1, 2] }),
     v('has(xs[1])', true, { xs: [1, null] }),
+    v('has(xs[1])', true, { xs: [1, undefined] }),
+    // oxlint-disable-next-line no-sparse-arrays -- a hole is the case under test
+    v('has(xs[1])', true, { xs: [1, , 3] }),
     v('has(xs[5])', false, { xs: [1, 2] }),
     v('has(xs[-1])', false, { xs: [1, 2] }),
     v('has({a: null}.a)', true),
@@ -730,6 +743,9 @@ describe('§5 calls and UFCS', () => {
     err('toUpperCase(n)', ['TYPE_ERROR', 'NO_OVERLOAD'], { n: 5 }),
     err('a.toUpperCase()', ['NULL_RECEIVER', 'TYPE_ERROR'], { a: null }),
     v('a?.toUpperCase()', null, { a: null }),
+    err('s.startsWith(x)', 'NO_OVERLOAD', { s: 'abc', x: null }),
+    err('s?.startsWith(x)', 'NO_OVERLOAD', { s: 'abc', x: null }),
+    v('s.startsWith(x ?? "")', true, { s: 'abc', x: null }),
   ])
 })
 

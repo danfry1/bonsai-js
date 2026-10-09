@@ -54,7 +54,7 @@ A spread argument cannot be used with a function that takes a lambda.
 
 ## `null` arguments
 
-A `null` argument selects an overload whose parameter accepts `null`. If none does, the call is a `NULL_RECEIVER` error in either call form, or `null` when the call uses `?.`:
+A `null` argument selects an overload whose parameter accepts `null`. If none does and the `null` is the first argument (the receiver), the call is a `NULL_RECEIVER` error in either call form, or `null` when the call uses `?.`. A `null` in any later position is a `NO_OVERLOAD` error, and `?.` does not change that: it only skips a call on a `null` receiver.
 
 ```bonsai
 user.nickname.toUpperCase() // error: NULL_RECEIVER
@@ -62,6 +62,8 @@ toUpperCase(user.nickname) // error: NULL_RECEIVER
 user.nickname?.toUpperCase() // => null
 (user.nickname ?? "").toUpperCase() // => ""
 isEmpty(user.nickname) // => true
+user.name?.startsWith(user.nickname) // error: NO_OVERLOAD
+user.name.startsWith(user.nickname ?? "") // => true
 ```
 
 Functions such as `isEmpty`, `toString`, and `type` accept `null`, and the calendar functions accept `null` as the time zone (meaning UTC).
