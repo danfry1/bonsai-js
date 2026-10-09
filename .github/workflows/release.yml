@@ -38,8 +38,11 @@ jobs:
       - name: Use repo-pinned npm
         run: echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
 
+      # GHSA-ch52-4w7c-c8xp (http-cache-semantics) and GHSA-rfgv-xxqx-mfg5 (undici) are
+      # bundled inside the npm package, which only the release job uses to publish;
+      # overrides cannot reach bundled code. Remove these once npm ships fixed versions.
       - name: Audit dependencies
-        run: bun audit --audit-level=high
+        run: bun audit --audit-level=high --ignore GHSA-ch52-4w7c-c8xp --ignore GHSA-rfgv-xxqx-mfg5
 
       - name: Format
         run: bun run format:check
