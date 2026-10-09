@@ -21,7 +21,7 @@ Every function can be called as `f(x, ...)` or as a method, `x.f(...)`. In the s
 | [`min`](#min) | The smallest value (nulls are skipped); null for an empty list. |
 | [`max`](#max) | The largest value (nulls are skipped); null for an empty list. |
 | [`sum`](#sum) | The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is. |
-| [`avg`](#avg) | The mean of the numbers in a list (nulls are skipped, summed as sum does); null for no numbers. |
+| [`avg`](#avg) | The mean of the numbers or durations in a list (nulls are skipped, summed as sum does); null for an empty list. |
 
 ## round
 
@@ -128,7 +128,6 @@ Formats a number with grouping, e.g. 1,234.5, with optional decimals and locale 
 formatNumber(1234567.891) // => "1,234,567.891"
 formatNumber(1234.5, 2) // => "1,234.50"
 formatNumber(1234.5, 2, "de-DE") // => "1.234,50"
-try(formatNumber(1234.5, 2, "xx"), "unsupported") // => "unsupported"
 ```
 
 ## formatCurrency
@@ -184,7 +183,7 @@ The sum of the numbers in a list (nulls are skipped), added left to right as a +
 
 ## avg
 
-The mean of the numbers in a list (nulls are skipped, summed as sum does); null for no numbers.
+The mean of the numbers or durations in a list (nulls are skipped, summed as sum does); null for an empty list.
 
 - `avg((number | null)[]): number | null`
 

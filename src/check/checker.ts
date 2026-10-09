@@ -1,5 +1,6 @@
 import { BonsaiLimitError, type DiagnosticCode, type Finding } from '../errors.js'
 import { RESULT_REFINERS } from '../functions/builtins.js'
+import { isStackOverflow, tooDeep } from '../runtime/overflow.js'
 import { closest, didYouMean } from '../suggest.js'
 import {
   isItemLambdaPosition,
@@ -159,10 +160,6 @@ function expectationProblem(actual: Type, expected: Type): string | undefined {
         actual.rest === undefined &&
         !isNullable(expected.fields[key]),
     )
-    const extra =
-      expected.rest === undefined && isExact(actual)
-        ? Object.keys(actual.fields).filter((key) => !Object.hasOwn(expected.fields, key))
-        : []
     const wrong = Object.keys(expected.fields).filter((key) => {
       const field = fieldOf(actual, key)
       return field !== undefined && !isAssignable(field, expected.fields[key])
@@ -177,26 +174,37 @@ function expectationProblem(actual: Type, expected: Type): string | undefined {
           )
     const parts: string[] = []
     if (missing.length > 0) parts.push(`missing ${missing.map((k) => `"${k}"`).join(', ')}`)
-    if (extra.length > 0)
-      parts.push(
-        `unexpected ${extra.map((k) => `"${k}"`).join(', ')}${suggestAll(extra, Object.keys(expected.fields))}`,
-      )
     for (const key of wrong) {
       parts.push(
-        `"${key}" should be ${formatType(expected.fields[key])} but is ${formatType(fieldOf(actual, key) as Type)}`,
+        `"${key}" should be ${typeText(expected.fields[key])} but is ${typeText(fieldOf(actual, key) as Type)}`,
       )
     }
     for (const key of wrongRest) {
       parts.push(
-        `"${key}" should be ${formatType(rest as Type)} but is ${formatType(actual.fields[key])}`,
+        `"${key}" should be ${typeText(rest as Type)} but is ${typeText(actual.fields[key])}`,
       )
     }
     if (parts.length > 0)
-      return `The result does not match ${formatType(expected)}: ${parts.join('; ')}`
+      return `The result does not match ${typeText(expected)}: ${parts.join('; ')}`
     if (isAssignable(actual, expected)) return undefined
   }
   if (isAssignable(actual, expected)) return undefined
-  return `Expected the expression to produce ${formatType(expected)} but it produces ${formatType(actual)}`
+  return `Expected the expression to produce ${typeText(expected)} but it produces ${typeText(actual)}`
+}
+
+/**
+ * Fields a map literal adds beyond an expected object type. An expected type
+ * means "has at least these fields", so they are allowed (and kept in the
+ * result), but often a misspelling: a warning, not an error.
+ */
+function unexpectedFields(actual: Type, expected: Type): string | undefined {
+  if (expected.kind !== 'map' || actual.kind !== 'map') return undefined
+  if (expected.rest !== undefined || !isExact(actual)) return undefined
+  const extra = Object.keys(actual.fields).filter((key) => !Object.hasOwn(expected.fields, key))
+  if (extra.length === 0) return undefined
+  const names = extra.map((k) => `"${k}"`).join(', ')
+  const them = extra.length === 1 ? 'it' : 'them'
+  return `unexpected ${names} for ${typeText(expected)}; the result keeps ${them}${suggestAll(extra, Object.keys(expected.fields))}`
 }
 
 /**
@@ -467,6 +475,7 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
   try {
     return withTypeBudget(CHECK_BUDGET, () => analyzeWithin(root, env, options))
   } catch (error) {
+    if (isStackOverflow(error)) throw tooDeep(undefined)
     if (!(error instanceof TypeBudgetExceeded)) throw error
     throw new BonsaiLimitError('TOO_COMPLEX', 'Expression is too complex to check', {
       span: { start: root.start, end: root.end },
@@ -616,6 +625,8 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
   if (options.expected !== undefined) {
     const problem = expectationProblem(raw, options.expected)
     if (problem !== undefined) report('EXPECTED_TYPE', problem, resultSpan(bound.node))
+    const extra = unexpectedFields(raw, options.expected)
+    if (extra !== undefined) report('EXPECTED_TYPE', extra, resultSpan(bound.node), 'warning')
     checkResult = containsAny(raw) || !isProvenAssignable(raw, options.expected)
   }
   const type = widen(raw)
@@ -676,7 +687,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
               t.union(STRING, NUMBER, BOOLEAN, NULL, t.timestamp(), t.duration()),
             )
           ) {
-            report('TYPE_ERROR', `Cannot render ${formatType(partType)} in a template`, part)
+            report('TYPE_ERROR', `Cannot render ${typeText(partType)} in a template`, part)
           }
         }
         return STRING
@@ -700,6 +711,19 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
             'error',
             suggestion,
           )
+        } else if (env.variables !== undefined) {
+          // Undeclared names read the context, but one edit from a declared
+          // name is most likely a typo of it.
+          const suggestion = suggest(node.name, () => Object.keys(env.variables ?? {}))
+          if (suggestion !== undefined && withinOneEdit(node.name, suggestion)) {
+            report(
+              'UNKNOWN_VARIABLE',
+              `"${node.name}" is not declared and reads the context as any${didYouMean(suggestion)}`,
+              node,
+              'warning',
+              suggestion,
+            )
+          }
         }
         return ANY
       }
@@ -735,7 +759,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         if (isAssignable(operand, NUMBER)) return NUMBER
         if (isAssignable(operand, t.duration())) return t.duration()
         if (isAssignable(operand, NUMBER_OR_DURATION)) return widen(operand)
-        report('TYPE_ERROR', `Cannot negate ${formatType(operand)}`, node)
+        report('TYPE_ERROR', `Cannot negate ${typeText(operand)}`, node)
         return ANY
       }
       case 'Binary':
@@ -762,7 +786,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
             else if (nonNull(spread).kind !== 'never')
               report(
                 'TYPE_ERROR',
-                `Only a list can be spread into a list, not ${formatType(spread)}`,
+                `Only a list can be spread into a list, not ${typeText(spread)}`,
                 item,
               )
           } else {
@@ -826,7 +850,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
             else
               report(
                 'TYPE_ERROR',
-                `Only a map can be spread into a map, not ${formatType(spread)}`,
+                `Only a map can be spread into a map, not ${typeText(spread)}`,
                 entry,
               )
             continue
@@ -844,7 +868,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
             if (!isAssignable(keyType, t.union(STRING, NUMBER))) {
               report(
                 'TYPE_ERROR',
-                `A map key must be a string, not ${formatType(keyType)}`,
+                `A map key must be a string, not ${typeText(keyType)}`,
                 entry.key,
               )
             }
@@ -891,7 +915,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
 
   function expectLogic(actual: Type, at: Node, what: string): void {
     if (!isAssignable(actual, OPTIONAL_BOOLEAN)) {
-      report('TYPE_ERROR', `${what} expects a boolean but got ${formatType(actual)}`, at)
+      report('TYPE_ERROR', `${what} expects a boolean but got ${typeText(actual)}`, at)
     } else if (mayBeNull(actual)) {
       // Null counts as false here, which ! turns into true: say which one is meant.
       report(
@@ -937,7 +961,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       const span = nameSpan(at, name)
       report(
         'UNKNOWN_PROPERTY',
-        `Property "${name}" does not exist on ${formatType(objectType)}${didYouMean(suggestion)}`,
+        `Property "${name}" does not exist on ${typeText(objectType)}${didYouMean(suggestion)}`,
         span ?? at,
         'error',
         span === undefined ? undefined : suggestion,
@@ -955,7 +979,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     const fn = env.lookup(name)
     report(
       'TYPE_ERROR',
-      `Cannot read property "${name}" of ${formatType(objectType)}${fn === undefined ? '' : `; did you mean to call ${name}()?`}`,
+      `Cannot read property "${name}" of ${typeText(objectType)}${fn === undefined ? '' : `; did you mean to call ${name}()?`}`,
       at,
     )
     return ANY
@@ -977,12 +1001,12 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       (objectType.kind === 'literal' && typeof objectType.value === 'string')
     ) {
       if (!isAssignable(indexType, NUMBER))
-        report('TYPE_ERROR', `An index must be a number, not ${formatType(indexType)}`, at)
+        report('TYPE_ERROR', `An index must be a number, not ${typeText(indexType)}`, at)
       return t.optional(objectType.kind === 'list' ? objectType.element : STRING)
     }
     if (objectType.kind === 'map') {
       if (!isAssignable(indexType, t.union(STRING, NUMBER))) {
-        report('TYPE_ERROR', `A map key must be a string, not ${formatType(indexType)}`, at)
+        report('TYPE_ERROR', `A map key must be a string, not ${typeText(indexType)}`, at)
         return ANY
       }
       if (indexType.kind === 'literal') return memberType(objectType, String(indexType.value), at)
@@ -992,7 +1016,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       if (objectType.rest !== undefined) members.push(objectType.rest)
       return t.optional(unionOf(members))
     }
-    report('TYPE_ERROR', `Cannot index ${formatType(objectType)}`, at)
+    report('TYPE_ERROR', `Cannot index ${typeText(objectType)}`, at)
     return ANY
   }
 
@@ -1036,7 +1060,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         if (!overlaps(left, right)) {
           report(
             op === '==' ? 'ALWAYS_FALSE' : 'ALWAYS_TRUE',
-            `This comparison is always ${op === '==' ? 'false' : 'true'}: ${formatType(left)} and ${formatType(right)} have no values in common`,
+            `This comparison is always ${op === '==' ? 'false' : 'true'}: ${typeText(left)} and ${typeText(right)} have no values in common`,
             node,
             'warning',
           )
@@ -1083,7 +1107,11 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
             a.kind !== 'never' &&
             b.kind !== 'never')
         ) {
-          report('TYPE_ERROR', `Cannot compare ${formatType(left)} with ${formatType(right)}`, node)
+          report(
+            'TYPE_ERROR',
+            `Cannot compare ${typeText(left)} with ${typeText(right)}${mixedKinds(a, 'left') ?? mixedKinds(b, 'right') ?? ''}`,
+            node,
+          )
         }
         return BOOLEAN
       }
@@ -1127,18 +1155,18 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       if (!isAssignable(left, STRING))
         report(
           'TYPE_ERROR',
-          `"in" on text needs text on the left, not ${formatType(left)}`,
+          `"in" on text needs text on the left, not ${typeText(left)}`,
           node.left,
         )
     } else if (container.kind === 'map') {
       if (!isAssignable(left, t.union(STRING, NUMBER)))
-        report('TYPE_ERROR', `"in" on a map needs a string key, not ${formatType(left)}`, node.left)
+        report('TYPE_ERROR', `"in" on a map needs a string key, not ${typeText(left)}`, node.left)
     } else if (container.kind === 'list') {
       if (!overlaps(left, container.element) && container.element.kind !== 'never') {
         const negated = node.operator === 'not in'
         report(
           negated ? 'ALWAYS_TRUE' : 'ALWAYS_FALSE',
-          `${formatType(left)} can never be in ${formatType(container)}, so this is always ${negated ? 'true' : 'false'}`,
+          `${typeText(left)} can never be in ${typeText(container)}, so this is always ${negated ? 'true' : 'false'}`,
           node,
           'warning',
         )
@@ -1146,7 +1174,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     } else if (container.kind !== 'any' && container.kind !== 'never' && container.kind !== 'var') {
       report(
         'TYPE_ERROR',
-        `"in" needs a list, text, or map on the right, not ${formatType(right)}`,
+        `"in" needs a list, text, or map on the right, not ${typeText(right)}`,
         node.right,
       )
     }
@@ -1230,7 +1258,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       hint = '; use a duration such as days(30)'
     report(
       'TYPE_ERROR',
-      `Cannot apply "${op}" to ${formatType(left)} and ${formatType(right)}${hint}`,
+      `Cannot apply "${op}" to ${typeText(left)} and ${typeText(right)}${hint}`,
       node,
     )
     return ANY
@@ -1304,7 +1332,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         if (elementOf(nonNull(spread)) === undefined && nonNull(spread).kind !== 'never') {
           report(
             'TYPE_ERROR',
-            `Only a list can be spread into arguments, not ${formatType(spread)}`,
+            `Only a list can be spread into arguments, not ${typeText(spread)}`,
             arg,
           )
         }
@@ -1447,7 +1475,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         const onlyNull = required.kind === 'boolean' && isAssignable(bodyType, OPTIONAL_BOOLEAN)
         report(
           onlyNull ? 'MAYBE_NULL' : 'TYPE_ERROR',
-          `The lambda for ${node.name}() must return ${formatType(required)} but returns ${formatType(bodyType)}`,
+          `The lambda for ${node.name}() must return ${typeText(required)} but returns ${typeText(bodyType)}`,
           arg.body,
           onlyNull ? 'warning' : 'error',
         )
@@ -1481,7 +1509,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       if (boundType !== undefined && !orderable(boundType)) {
         report(
           'TYPE_ERROR',
-          `${node.name}() can only order numbers, text, timestamps, or durations (one kind at a time), not ${formatType(boundType)}`,
+          `${node.name}() can only order numbers, text, timestamps, or durations (one kind at a time), not ${typeText(boundType)}`,
           node,
         )
       }
@@ -1529,7 +1557,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       ) {
         report(
           'ALWAYS_FALSE',
-          `${formatType(item)} can never be in ${formatType(list)}`,
+          `${typeText(item)} can never be in ${typeText(list)}`,
           node,
           'warning',
         )
@@ -1722,7 +1750,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       return
     }
     const shown = node.args
-      .map((arg, i) => (arg.type === 'Lambda' ? 'lambda' : formatType(argTypes[i] ?? ANY)))
+      .map((arg, i) => (arg.type === 'Lambda' ? 'lambda' : typeText(argTypes[i] ?? ANY)))
       .join(', ')
     const signatures = def.overloads
       .map((candidate) => signatureText(def.name, candidate))
@@ -2110,11 +2138,9 @@ function substitute(type: Type, b: ReadonlyMap<string, Type>): Type {
 
 export function signatureText(name: string, candidate: Overload): string {
   const required = candidate.required ?? candidate.params.length
-  const params = candidate.params.map(
-    (param, i) => `${formatType(param)}${i >= required ? '?' : ''}`,
-  )
-  if (candidate.rest !== undefined) params.push(`...${formatType(candidate.rest)}`)
-  return `${name}(${params.join(', ')}): ${formatType(candidate.result)}`
+  const params = candidate.params.map((param, i) => `${typeText(param)}${i >= required ? '?' : ''}`)
+  if (candidate.rest !== undefined) params.push(`...${typeText(candidate.rest)}`)
+  return `${name}(${params.join(', ')}): ${typeText(candidate.result)}`
 }
 
 function findIt(node: Node): Node | undefined {
@@ -2177,12 +2203,51 @@ const JS_GLOBALS: Readonly<Record<string, string>> = {
 }
 
 /**
+ * Longest type text in a diagnostic message. A message can name a large object
+ * type, and a source can repeat the mistake thousands of times, so a short cap
+ * keeps diagnostics (and their JSON) near the size of the source.
+ */
+const MESSAGE_TYPE_TEXT = 120
+
+const typeTexts = new WeakMap<Type, string>()
+
+/** A type's text for a diagnostic message, shortened with an ellipsis. */
+function typeText(type: Type): string {
+  let text = typeTexts.get(type)
+  if (text === undefined) typeTexts.set(type, (text = formatType(type, MESSAGE_TYPE_TEXT)))
+  return text
+}
+
+/**
  * "Did you mean" hints cost an edit distance per candidate, so a source full of
  * typos against a large schema is bounded: hints for the first unknown names
  * only, each against a bounded number of candidates.
  */
 const MAX_SUGGESTIONS = 16
 let suggestionsLeft = MAX_SUGGESTIONS
+
+/**
+ * Why a side that may hold several kinds (`s ?? 0` is a string or a number)
+ * cannot be ordered, as a message suffix; undefined for a side of one kind.
+ */
+function mixedKinds(type: Type, side: 'left' | 'right'): string | undefined {
+  if (type.kind !== 'union') return undefined
+  const kinds = [...new Set(type.types.map((member) => member.kind))]
+  if (kinds.length < 2) return undefined
+  return `: the ${side} side may be a ${kinds.join(' or a ')}, and an ordering compares values of one kind`
+}
+
+/** Whether one insertion, deletion, or substitution (ignoring case) turns `a` into `b`. */
+function withinOneEdit(a: string, b: string): boolean {
+  const x = a.toLowerCase()
+  const y = b.toLowerCase()
+  if (Math.abs(x.length - y.length) > 1) return false
+  let i = 0
+  while (i < x.length && i < y.length && x[i] === y[i]) i++
+  // Past the first difference, the rest must match after skipping one character.
+  if (x.length === y.length) return x.slice(i + 1) === y.slice(i + 1)
+  return x.length < y.length ? x.slice(i) === y.slice(i + 1) : x.slice(i + 1) === y.slice(i)
+}
 
 /** The closest candidate by edit distance, if one is close enough, within this check's budget. */
 function suggest(name: string, candidatesOf: () => Iterable<string>): string | undefined {

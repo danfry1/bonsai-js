@@ -105,7 +105,7 @@ export function matchesKind(value: unknown, type: Type): boolean {
     case 'timestamp':
       return value instanceof Date
     case 'duration':
-      return value instanceof Duration
+      return isValidDuration(value)
     case 'union':
       return type.types.some((member) => matchesKind(value, member))
     case 'opaque':

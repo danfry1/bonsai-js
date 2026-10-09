@@ -10,6 +10,7 @@ import {
   type Node,
   type SpreadNode,
 } from './ast.js'
+import { guardDepth } from '../runtime/overflow.js'
 import { BLOCKED_NAMES, tokenize, type Token } from './lexer.js'
 
 export interface ParseLimits {
@@ -26,6 +27,14 @@ export const DEFAULT_PARSE_LIMITS: ParseLimits = Object.freeze({
   maxDepth: 128,
   maxNodes: 20_000,
 })
+
+/**
+ * The largest `maxDepth` accepted. Checking, compiling, and evaluating recurse
+ * once or more per level; the deepest-recursing form (a `.map(.)` chain) runs
+ * out of stack at about 450 levels on Node 22 and 500 on Node 24, so the cap
+ * leaves a margin of almost 2x.
+ */
+export const MAX_DEPTH_LIMIT = 256
 
 // Binding power of binary operators; higher binds tighter.
 const BINARY_LEVEL: Readonly<Record<string, number>> = {
@@ -56,6 +65,10 @@ const NULLISH_MIXED = Object.keys(BINARY_LEVEL).filter(
 
 /** Parses an expression into a syntax tree. Throws BonsaiSyntaxError or BonsaiLimitError. */
 export function parse(source: string, limits: ParseLimits = DEFAULT_PARSE_LIMITS): Node {
+  return guardDepth(source, () => parseTree(source, limits))
+}
+
+function parseTree(source: string, limits: ParseLimits): Node {
   let tokens = tokenize(source, {
     maxSourceLength: limits.maxSourceLength,
     maxTokens: limits.maxNodes * 4,
@@ -429,6 +442,13 @@ export function parse(source: string, limits: ParseLimits = DEFAULT_PARSE_LIMITS
     }
     if (BLOCKED_NAMES.has(nameToken.value))
       fail(`"${nameToken.value}" cannot be called`, nameToken.start, nameToken.end)
+    // No function can have a reserved word's name, so `a.not(b)` is a mistake.
+    if (nameToken.kind === 'keyword')
+      fail(
+        `"${nameToken.value}" is a reserved word, not a function`,
+        nameToken.start,
+        nameToken.end,
+      )
     return node({
       type: 'Call',
       name: nameToken.value,
@@ -782,6 +802,7 @@ function hintFor(token: Token, previous: Token | undefined): string {
     if (token.value === '=' && adjacent && (previous.value === '==' || previous.value === '!=')) {
       return `; write ${previous.value} (it is already strict, there is no ${previous.value}=)`
     }
+    if (token.value === '>' && adjacent && previous.value === '<') return '; use != for "not equal"'
     if (token.value === '=') return '; use == to compare (expressions cannot assign)'
     if (token.value === '/') return '; patterns are strings, e.g. matches(text, "^a.*z$")'
   }

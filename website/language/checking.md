@@ -53,7 +53,7 @@ An expression with errors does not compile: `env.compile()` throws a `BonsaiChec
 | `NULLABLE_RECEIVER` | A possibly-null value where `null` is not accepted, such as a method call without `?.`. |
 | `INVALID_LAMBDA` | `.` outside a function argument, `.` inside an explicit lambda, or a spread into a function that takes a lambda. |
 | `BLOCKED_PROPERTY` | A blocked key (`__proto__`, `constructor`, `prototype`) as a static computed key. |
-| `EXPECTED_TYPE` | The result does not match the type passed as `expect`. |
+| `EXPECTED_TYPE` | The result does not match the type passed as `expect` (a warning when a map literal only adds fields). |
 | `INVALID_ARGUMENT` | A literal argument with an invalid value, such as an unknown `formatDate` pattern letter. |
 
 <!-- continue -->
@@ -87,7 +87,8 @@ Warnings do not stop compilation. They point at expressions that are valid but p
 - a comparison that can never hold, such as comparing an enum with a value it cannot have;
 - an ordering comparison with a value that may be `null` (it is `false` when the value is `null`);
 - `??` on a value that is never `null`;
-- a lambda that may return `null` where a boolean is expected.
+- a lambda that may return `null` where a boolean is expected;
+- a map literal with fields an expected type does not name (see [Expected types](#expected-types)).
 
 <!-- continue -->
 ```ts
@@ -99,7 +100,7 @@ premium.diagnostics[0].message // => 'This comparison is always false: "free" | 
 env.compile('user.age > 18').warnings[0].message // => "This value may be null, and a comparison with null is false; check it first (x != null && ...) or use ??"
 ```
 
-Warnings have their own codes (`ALWAYS_FALSE`, `ALWAYS_TRUE`, `NEVER_NULL`, `MAYBE_NULL`, `UNSAFE_INTEGER`; see [Errors](/api/errors#diagnostics)) and `severity: "warning"`.
+Warnings have their own codes (`ALWAYS_FALSE`, `ALWAYS_TRUE`, `NEVER_NULL`, `MAYBE_NULL`, `UNSAFE_INTEGER`; see [Errors](/api/errors#diagnostics)) and `severity: "warning"`, except an extra field for an expected type, which keeps the `EXPECTED_TYPE` code.
 
 ## Overloads and `any`
 
@@ -114,3 +115,14 @@ formatType(open.check('x.toUpperCase()').type!) // => "string"
 ## Expected types
 
 `compile(source, { expect })` and `check(source, { expect })` require the result to be assignable to a type. A rule that must produce a boolean should always be compiled with `expect: t.boolean()`: it rejects expressions like `user.plan` that would otherwise compile and return a string, and it types the program's result in TypeScript.
+
+An expected object type means "has at least these fields", the same rule assignability follows everywhere. A missing or mistyped field is an error. An extra field in a map literal is allowed, since a value with more fields still has the ones asked for, but it is often a misspelling, so the checker reports it as an `EXPECTED_TYPE` warning. `expect` never removes fields: the result keeps every field the expression produces, so pick the fields you need (`{ discount: r.discount }`) when extra ones must not pass through.
+
+<!-- continue -->
+```ts
+const refund = t.object({ discount: t.number(), reason: t.string() })
+const typo = open.check('{ discount: 5, reason: "late", reson: "x" }', { expect: refund })
+typo.ok // => true
+typo.diagnostics[0].severity // => "warning"
+open.compile('{ discount: 5, reason: "late", note: "x" }', { expect: refund }).evaluateSync() // => { discount: 5, reason: "late", note: "x" }
+```

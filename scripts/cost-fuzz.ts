@@ -417,6 +417,8 @@ const OPS: Readonly<Record<string, () => string>> = {
   now: () => 'now()',
   timestamp: () =>
     `timestamp(${pick([v('num'), '"2026-03-29T01:30:00Z"', '"+275760-09-13T00:00:00Z"', v('text')])})`,
+  duration: () =>
+    `duration(${pick([v('dur'), '"-P999999999999999DT999999999999999H"', '"PT0.001S"', v('text')])})`,
   weeks: () => `weeks(${v('num')})`,
   days: () => `days(${v('num')})`,
   hours: () => `hours(${v('num')})`,

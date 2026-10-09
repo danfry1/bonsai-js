@@ -1,6 +1,6 @@
 import type { Limits } from './environment.js'
 import type { Node } from './syntax/ast.js'
-import { DEFAULT_PARSE_LIMITS, parse as parseTree } from './syntax/parser.js'
+import { DEFAULT_PARSE_LIMITS, MAX_DEPTH_LIMIT, parse as parseTree } from './syntax/parser.js'
 
 const PARSE_LIMIT_KEYS = ['maxSourceLength', 'maxDepth', 'maxNodes'] as const
 
@@ -29,6 +29,8 @@ export function parse(source: string, limits: ParseOptions = {}): Node {
     if (typeof given !== 'number') throw new TypeError(`Limit "${key}" must be a number`)
     if (!Number.isSafeInteger(given) || given < 1)
       throw new RangeError(`Limit "${key}" must be an integer of at least 1`)
+    if (key === 'maxDepth' && given > MAX_DEPTH_LIMIT)
+      throw new RangeError(`Limit "maxDepth" must be at most ${MAX_DEPTH_LIMIT}`)
     return given
   }
   return parseTree(source, {

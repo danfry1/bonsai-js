@@ -10,6 +10,7 @@ Every function can be called as `f(x, ...)` or as a method, `x.f(...)`. In the s
 | --- | --- |
 | [`now`](#now) | The current time, fixed for one evaluation. |
 | [`timestamp`](#timestamp) | Parses ISO-8601 text or epoch milliseconds into a timestamp. |
+| [`duration`](#duration) | Parses ISO-8601 duration text in weeks, days, hours, minutes, and seconds (e.g. "PT1H30M", "-P2DT0.5S"), the text a duration renders as. |
 | [`weeks`](#weeks) | A duration of n weeks. |
 | [`days`](#days) | A duration of n days (24 hours each). |
 | [`hours`](#hours) | A duration of n hours. |
@@ -63,6 +64,20 @@ timestamp("2026-03-01T12:00:00Z") // => 2026-03-01T12:00:00.000Z
 timestamp("2026-03-01") // => 2026-03-01T00:00:00.000Z
 timestamp("2026-03-01T12:00:00+02:00") // => 2026-03-01T10:00:00.000Z
 timestamp(0) // => 1970-01-01T00:00:00.000Z
+```
+
+## duration
+
+Parses ISO-8601 duration text in weeks, days, hours, minutes, and seconds (e.g. "PT1H30M", "-P2DT0.5S"), the text a duration renders as.
+
+- `duration(string): duration`
+- `duration(duration): duration`
+
+<!-- context: { items: [{ name: "Pen", price: 2, qty: 3 }, { name: "Book", price: 12, qty: 1 }, { name: "Bag", price: 30, qty: 1 }] } -->
+```bonsai
+duration("PT1H30M") // => PT1H30M
+duration("-P2DT0.5S") // => -P2DT0.5S
+duration("P1W") == weeks(1) // => true
 ```
 
 ## weeks

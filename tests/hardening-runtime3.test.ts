@@ -41,8 +41,9 @@ describe('failures caught by try() are paid for', () => {
   it.each([
     ['try(1 / 0, 0)'],
     ['try(toNumber("zz"), 0)'],
-    ['try(formatCurrency(1, "QQ"), "")'],
-    ['try(formatNumber(1, 2, "!!"), "")'],
+    // Computed, since literal ones are checking errors.
+    ['try(formatCurrency(1, "Q" + "Q"), "")'],
+    ['try(formatNumber(1, 2, "!" + "!"), "")'],
     ['try(startOfDay(now(), "Bad/Zone"), now())'],
   ])('%s costs at least an error each time', (body) => {
     const source = `"a".repeat(20000).split("").map(x => ${body}).length`

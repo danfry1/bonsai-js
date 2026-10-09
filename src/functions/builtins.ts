@@ -26,6 +26,7 @@ import {
   mapBuildCost,
   chargeSearch,
   isMap,
+  isValidDuration,
   shown,
   MS_PER_DAY,
   MS_PER_HOUR,
@@ -58,6 +59,7 @@ import {
   type CallSite,
   type FunctionDef,
   type Lambda,
+  type Overload,
 } from './define.js'
 
 /** What toNumber accepts: an optional sign, digits with an optional fraction, and an optional exponent. */
@@ -152,24 +154,46 @@ function firstPresent(items: readonly unknown[]): unknown {
   return null
 }
 
-/** The total of a list of durations (nulls are skipped); anything else is a TYPE_ERROR. */
-function sumDurations(items: readonly unknown[], site: CallSite): Duration {
+/**
+ * The total milliseconds and count of a list of durations (nulls are
+ * skipped); anything else is a TYPE_ERROR naming `name`.
+ */
+function durationTotal(
+  items: readonly unknown[],
+  name: string,
+  site: CallSite,
+): { total: number; count: number } {
   site.state.charge(items.length)
   let total = 0
+  let count = 0
   // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
   for (let i = 0; i < items.length; i++) {
     const d = items[i]
     if (d === null || d === undefined) continue
-    if (!(d instanceof Duration)) {
+    if (!isValidDuration(d)) {
       throw site.state.error(
         'TYPE_ERROR',
-        `sum expects durations but found ${describeKind(d)}`,
+        `${name} expects durations but found ${describeKind(d)}`,
         site.span,
       )
     }
     total += d.ms
+    count++
   }
-  return durationOf(total, site.state, site.span)
+  return { total, count }
+}
+
+/** The total of a list of durations (nulls are skipped). */
+function sumDurations(items: readonly unknown[], site: CallSite): Duration {
+  return durationOf(durationTotal(items, 'sum', site).total, site.state, site.span)
+}
+
+/** The mean of a list of durations (nulls are skipped), or null for none. */
+function averageDuration(items: readonly unknown[], site: CallSite): Duration | null {
+  const { total, count } = durationTotal(items, 'avg', site)
+  // The total is checked as sum checks it, so avg fails where sum would.
+  const sum = durationOf(total, site.state, site.span)
+  return count === 0 ? null : durationOf(sum.ms / count, site.state, site.span)
 }
 
 /** Copies a list by index: never runs a host list's iterator, species, or methods. */
@@ -296,6 +320,44 @@ const CURRENCY_CODE = /^[A-Za-z]{3}$/u
 /** Intl formats -0 as "-0"; nothing else in the language shows it, so it formats as 0. */
 function plusZero(n: number): number {
   return n === 0 ? 0 : n
+}
+
+/** What checking found for each literal locale and currency (bounded like the format cache). */
+const formatProblems = new Map<string, string | null>()
+
+/**
+ * Why a literal locale or currency would fail formatNumber or formatCurrency
+ * at run time, so the checker reports it (INVALID_ARGUMENT) before anything
+ * runs. Non-literal arguments are left to run time.
+ */
+function formatProblem(locale: unknown, currency: unknown): string | undefined {
+  const tag = typeof locale === 'string' ? locale : undefined
+  const code = typeof currency === 'string' ? currency : undefined
+  if (tag === undefined && code === undefined) return undefined
+  const key = `${tag ?? ''}\u0000${code ?? ''}`
+  const known = formatProblems.get(key)
+  if (known !== undefined) return known ?? undefined
+  let problem: string | undefined
+  if (tag !== undefined && tag.length > MAX_LOCALE_LENGTH) {
+    problem = `Locale tags are at most ${MAX_LOCALE_LENGTH} characters long`
+  } else if (code !== undefined && !CURRENCY_CODE.test(code)) {
+    problem = `Currency codes are three letters (ISO 4217), not ${shown(code)}`
+  } else {
+    try {
+      const options: Intl.NumberFormatOptions =
+        code === undefined ? {} : { style: 'currency', currency: code }
+      // A currency alone is checked against the default locale, as it runs.
+      new Intl.NumberFormat(tag ?? 'en-US', options).format(0)
+      if (tag !== undefined && Intl.NumberFormat.supportedLocalesOf(tag).length === 0)
+        problem = `Unsupported locale ${shown(tag)}`
+    } catch (error) {
+      problem = `Invalid number format: ${errorText(error)}`
+    }
+  }
+  if (formatProblems.size >= MAX_CACHED)
+    formatProblems.delete(formatProblems.keys().next().value as string)
+  formatProblems.set(key, problem ?? null)
+  return problem
 }
 
 function numberFormat(
@@ -557,7 +619,7 @@ function canonicalKey(value: unknown, site: CallSite, depth: number, seen: Ident
     return charged(`${key}]`, site)
   }
   if (isTimestamp(value)) return `t${dateTime(value)}`
-  if (value instanceof Duration) return `u${value.ms}`
+  if (isValidDuration(value)) return `u${value.ms}`
   if (isMap(value)) {
     const keys = Object.keys(value)
     // Sorting compares keys: about log2(k) comparisons each, linear in the key length.
@@ -639,7 +701,7 @@ function joinText(items: readonly unknown[], separator: unknown, site: CallSite)
       item !== undefined &&
       typeof item === 'object' &&
       !(item instanceof Date) &&
-      !(item instanceof Duration)
+      !isValidDuration(item)
     ) {
       throw site.state.error(
         'TYPE_ERROR',
@@ -666,7 +728,7 @@ function checkOrderable(value: unknown, site: CallSite): void {
       throw site.state.error('NON_FINITE', 'Cannot order a non-finite number', site.span)
     return
   }
-  if (value instanceof Duration) return
+  if (isValidDuration(value)) return
   if (value instanceof Date) {
     timeOf(value, site.state, site.span)
     return
@@ -690,6 +752,16 @@ function extreme(items: readonly unknown[], sign: 1 | -1, site: CallSite): unkno
     if (result * sign > 0) best = item
   }
   return best
+}
+
+/**
+ * min and max of their arguments, one overload per kind a list can order, so
+ * `max(a, b)` takes what `[a, b].max()` does (and, unlike the list, no nulls).
+ */
+function spreadExtremes(sign: 1 | -1): Overload[] {
+  return [num, str, ts, dur].map((kind) =>
+    overload([kind], kind, (args, site) => extreme(args, sign, site), { rest: kind }),
+  )
 }
 
 function entryList(map: Record<string, unknown>, site: CallSite): string[] {
@@ -987,7 +1059,7 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
             plusZero(value),
           )
         },
-        { required: 1 },
+        { required: 1, literals: ([, , locale]) => formatProblem(locale, undefined) },
       ),
     ],
   ),
@@ -1004,17 +1076,17 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
             { style: 'currency', currency: currency as string },
             site,
           ).format(plusZero(finite(n as number, site))),
-        { required: 2 },
+        { required: 2, literals: ([, currency, locale]) => formatProblem(locale, currency) },
       ),
     ],
   ),
   define('min', 'The smallest value (nulls are skipped); null for an empty list.', [
     overload([listT], optT, ([l], site) => extreme(list(l), -1, site), { ordered: ['T'] }),
-    overload([num], num, (args, site) => extreme(args, -1, site), { rest: num }),
+    ...spreadExtremes(-1),
   ]),
   define('max', 'The largest value (nulls are skipped); null for an empty list.', [
     overload([listT], optT, ([l], site) => extreme(list(l), 1, site), { ordered: ['T'] }),
-    overload([num], num, (args, site) => extreme(args, 1, site), { rest: num }),
+    ...spreadExtremes(1),
   ]),
   define(
     'sum',
@@ -1024,7 +1096,7 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
         const items = list(l)
         // A list whose type is unknown statically reaches this overload; its
         // items decide (a list of durations sums as durations).
-        if (firstPresent(items) instanceof Duration) return sumDurations(items, site)
+        if (isValidDuration(firstPresent(items))) return sumDurations(items, site)
         let total = 0
         for (const n of numbersOf(items, 'sum', site)) total += n
         return finite(total, site)
@@ -1034,15 +1106,21 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
   ),
   define(
     'avg',
-    'The mean of the numbers in a list (nulls are skipped, summed as sum does); null for no numbers.',
+    'The mean of the numbers or durations in a list (nulls are skipped, summed as sum does); null for an empty list.',
     [
       overload([t.list(t.optional(num))], t.optional(num), ([l], site) => {
-        const values = numbersOf(list(l), 'avg', site)
+        const items = list(l)
+        // As in sum, a list whose type is unknown statically is decided by its items.
+        if (isValidDuration(firstPresent(items))) return averageDuration(items, site)
+        const values = numbersOf(items, 'avg', site)
         if (values.length === 0) return null
         let total = 0
         for (const n of values) total += n
         return finite(total / values.length, site)
       }),
+      overload([t.list(t.optional(dur))], t.optional(dur), ([l], site) =>
+        averageDuration(list(l), site),
+      ),
     ],
   ),
 ]
@@ -1361,17 +1439,21 @@ const MAP_FUNCTIONS: FunctionDef[] = [
       )
     }),
   ]),
-  define('entries', 'The { key, value } pairs of a map.', [
-    overload([t.record(T)], t.list(t.object({ key: str, value: T })), ([m], site) => {
-      const map = m as Record<string, unknown>
-      const keys = entryList(map, site)
-      site.state.charge(keys.length)
-      return made(
-        keys.map((key) => made({ key, value: map[key] ?? null }, site)),
-        site,
-      )
-    }),
-  ]),
+  define(
+    'entries',
+    'The entries of a map, as a list of { key, value } maps (not [key, value] pairs as in JavaScript), e.g. m.entries().map(.key + "=" + .value).',
+    [
+      overload([t.record(T)], t.list(t.object({ key: str, value: T })), ([m], site) => {
+        const map = m as Record<string, unknown>
+        const keys = entryList(map, site)
+        site.state.charge(keys.length)
+        return made(
+          keys.map((key) => made({ key, value: map[key] ?? null }, site)),
+          site,
+        )
+      }),
+    ],
+  ),
   define(
     'type',
     'The kind of a value: "null", "boolean", "number", "string", "list", "map", "timestamp", "duration", or "opaque".',
@@ -1409,6 +1491,39 @@ function startOf(name: string, what: string, reset: Partial<WallClock>): Functio
   ])
 }
 
+/** Longest duration text duration() reads; longer text is never a valid duration in range. */
+const MAX_DURATION_TEXT = 64
+/** Weeks, days, hours, minutes, seconds (to the millisecond); every part bounded, so no backtracking blowup. */
+const ISO_DURATION =
+  /^(?<sign>[+-])?P(?:(?<weeks>\d{1,15})W)?(?:(?<days>\d{1,15})D)?(?:T(?:(?<hours>\d{1,15})H)?(?:(?<minutes>\d{1,15})M)?(?:(?<seconds>\d{1,15})(?:[.,](?<fraction>\d{1,3}))?S)?)?$/u
+
+/**
+ * The milliseconds in ISO-8601 duration text, or why it is not one. Years and
+ * months have no fixed length, so they are refused rather than guessed.
+ */
+function isoDurationMs(text: string): number | string {
+  const bad = `Invalid duration ${shown(text)}: expected ISO-8601 text such as "PT1H30M"`
+  if (text.length > MAX_DURATION_TEXT) return bad
+  const match = ISO_DURATION.exec(text)
+  if (match === null) {
+    return /^[+-]?P[^T]*[YM]/u.test(text)
+      ? `Invalid duration ${shown(text)}: years and months have no fixed length; use days`
+      : bad
+  }
+  const { sign, weeks, days, hours, minutes, seconds, fraction } = match.groups ?? {}
+  // "P" and "PT" alone name no length.
+  if (text.endsWith('P') || text.endsWith('T')) return bad
+  const part = (digits: string | undefined): number => (digits === undefined ? 0 : Number(digits))
+  const ms =
+    part(weeks) * MS_PER_WEEK +
+    part(days) * MS_PER_DAY +
+    part(hours) * MS_PER_HOUR +
+    part(minutes) * MS_PER_MINUTE +
+    part(seconds) * MS_PER_SECOND +
+    (fraction === undefined ? 0 : Number(fraction.padEnd(3, '0')))
+  return sign === '-' ? -ms : ms
+}
+
 function durationUnit(name: string, unitMs: number, description: string): FunctionDef {
   return define(name, description, [
     overload([num], dur, ([n], site) => durationOf((n as number) * unitMs, site.state, site.span)),
@@ -1434,6 +1549,30 @@ const TIME_FUNCTIONS: FunctionDef[] = [
       return d
     }),
   ]),
+  define(
+    'duration',
+    'Parses ISO-8601 duration text in weeks, days, hours, minutes, and seconds (e.g. "PT1H30M", "-P2DT0.5S"), the text a duration renders as.',
+    [
+      overload(
+        [str],
+        dur,
+        ([s], site) => {
+          site.state.charge(PARSE_COST)
+          const ms = isoDurationMs(s as string)
+          if (typeof ms === 'string') throw site.state.error('INVALID_ARGUMENT', ms, site.span)
+          return durationOf(ms, site.state, site.span)
+        },
+        {
+          literals: ([text]) => {
+            if (typeof text !== 'string') return undefined
+            const ms = isoDurationMs(text)
+            return typeof ms === 'string' ? ms : undefined
+          },
+        },
+      ),
+      overload([dur], dur, ([d]) => d),
+    ],
+  ),
   durationUnit('weeks', MS_PER_WEEK, 'A duration of n weeks.'),
   durationUnit('days', MS_PER_DAY, 'A duration of n days (24 hours each).'),
   durationUnit('hours', MS_PER_HOUR, 'A duration of n hours.'),

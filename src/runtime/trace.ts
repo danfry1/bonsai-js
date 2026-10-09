@@ -1,6 +1,6 @@
 import { BonsaiError, type ErrorCode } from '../errors.js'
 import { forEachChild, type BinaryOperator, type Node, type UnaryOperator } from '../syntax/ast.js'
-import { Duration, isMap } from './values.js'
+import { durationText, isMap, isValidDuration } from './values.js'
 
 /** One evaluated (or skipped) sub-expression. */
 export interface Trace {
@@ -356,7 +356,7 @@ export function snapshot(
       return `[${typeof value}]`
   }
   try {
-    if (value instanceof Duration) return value.toString()
+    if (isValidDuration(value)) return durationText(value)
     const time = dateTime(value)
     if (time !== undefined)
       return Number.isNaN(time) ? 'Invalid Date' : new Date(time).toISOString()

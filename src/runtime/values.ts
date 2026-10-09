@@ -158,9 +158,22 @@ export function durationOf(ms: number, s: State, at?: Span): Duration {
   return new Duration(ms)
 }
 
-/** Whether a host value claiming to be a Duration holds a valid length. */
+/**
+ * Whether a host value claiming to be a Duration holds a valid length. The
+ * constructor leaves `ms` an own frozen data property, so a value made without
+ * it (`Object.create(Duration.prototype, ...)`, or with a getter) is not one.
+ */
 export function isValidDuration(value: unknown): value is Duration {
-  return value instanceof Duration && wholeMilliseconds(value.ms) === value.ms
+  if (!(value instanceof Duration)) return false
+  const own = Object.getOwnPropertyDescriptor(value, 'ms')
+  if (own === undefined || own.writable !== false || own.configurable !== false) return false
+  const ms: unknown = own.value
+  return typeof ms === 'number' && wholeMilliseconds(ms) === ms
+}
+
+/** ISO-8601 text for a duration, never through the value's own (overridable) methods. */
+export function durationText(value: Duration): string {
+  return formatDuration(value.ms)
 }
 
 export class Duration {
@@ -223,7 +236,7 @@ export function kindOf(value: unknown): Kind {
       if (Array.isArray(value)) return 'list'
       // An invalid Date (or a fake one) is not a timestamp: it is an opaque host value.
       if (value instanceof Date) return Number.isNaN(dateTime(value)) ? 'opaque' : 'timestamp'
-      if (value instanceof Duration) return 'duration'
+      if (value instanceof Duration) return isValidDuration(value) ? 'duration' : 'opaque'
       return isOpaqueObject(value) ? 'opaque' : 'map'
     case 'bigint':
     case 'function':
@@ -675,8 +688,8 @@ export function equals(a: unknown, b: unknown, s: State, depth = 0, at?: Span): 
     const time = dateTime(a)
     return b instanceof Date && time === dateTime(b) && !Number.isNaN(time)
   }
-  if (a instanceof Duration) return b instanceof Duration && a.ms === b.ms
-  if (b instanceof Date || b instanceof Duration) return false
+  if (isValidDuration(a)) return isValidDuration(b) && a.ms === b.ms
+  if (b instanceof Date || isValidDuration(b)) return false
   if (!isMap(a) || !isMap(b)) return false
   // Listing keys costs work per key, so each side is charged as it is listed,
   // before the counts can differ and end the comparison early.
@@ -728,7 +741,7 @@ export function order(a: unknown, b: unknown, s: State, at: Span): number | unde
     return a > b ? 1 : 0
   }
   if (a instanceof Date && b instanceof Date) return timeOf(a, s, at) - timeOf(b, s, at)
-  if (a instanceof Duration && b instanceof Duration) return a.ms - b.ms
+  if (isValidDuration(a) && isValidDuration(b)) return a.ms - b.ms
   throw s.error('TYPE_ERROR', `Cannot compare ${describeKind(a)} with ${describeKind(b)}`, at)
 }
 
@@ -857,9 +870,9 @@ export function add(a: unknown, b: unknown, s: State, at: Span): unknown {
     track(out, s, at)
     return out
   }
-  if (a instanceof Duration && b instanceof Duration) return durationOf(a.ms + b.ms, s, at)
-  if (a instanceof Date && b instanceof Duration) return timestamp(timeOf(a, s, at) + b.ms, s, at)
-  if (a instanceof Duration && b instanceof Date) return timestamp(timeOf(b, s, at) + a.ms, s, at)
+  if (isValidDuration(a) && isValidDuration(b)) return durationOf(a.ms + b.ms, s, at)
+  if (a instanceof Date && isValidDuration(b)) return timestamp(timeOf(a, s, at) + b.ms, s, at)
+  if (isValidDuration(a) && b instanceof Date) return timestamp(timeOf(b, s, at) + a.ms, s, at)
   throw arithmeticError('+', a, b, s, at)
 }
 
@@ -867,15 +880,15 @@ export function subtract(a: unknown, b: unknown, s: State, at: Span): unknown {
   if (typeof a === 'number' && typeof b === 'number') return finite(a - b, s, at)
   if (a instanceof Date && b instanceof Date)
     return durationOf(timeOf(a, s, at) - timeOf(b, s, at), s, at)
-  if (a instanceof Date && b instanceof Duration) return timestamp(timeOf(a, s, at) - b.ms, s, at)
-  if (a instanceof Duration && b instanceof Duration) return durationOf(a.ms - b.ms, s, at)
+  if (a instanceof Date && isValidDuration(b)) return timestamp(timeOf(a, s, at) - b.ms, s, at)
+  if (isValidDuration(a) && isValidDuration(b)) return durationOf(a.ms - b.ms, s, at)
   throw arithmeticError('-', a, b, s, at)
 }
 
 export function multiply(a: unknown, b: unknown, s: State, at: Span): unknown {
   if (typeof a === 'number' && typeof b === 'number') return finite(a * b, s, at)
-  if (a instanceof Duration && typeof b === 'number') return durationOf(a.ms * b, s, at)
-  if (typeof a === 'number' && b instanceof Duration) return durationOf(a * b.ms, s, at)
+  if (isValidDuration(a) && typeof b === 'number') return durationOf(a.ms * b, s, at)
+  if (typeof a === 'number' && isValidDuration(b)) return durationOf(a * b.ms, s, at)
   throw arithmeticError('*', a, b, s, at)
 }
 
@@ -884,11 +897,11 @@ export function divide(a: unknown, b: unknown, s: State, at: Span): unknown {
     if (b === 0) throw s.error('DIVISION_BY_ZERO', 'Division by zero', at)
     return finite(a / b, s, at)
   }
-  if (a instanceof Duration && typeof b === 'number') {
+  if (isValidDuration(a) && typeof b === 'number') {
     if (b === 0) throw s.error('DIVISION_BY_ZERO', 'Division by zero', at)
     return durationOf(a.ms / b, s, at)
   }
-  if (a instanceof Duration && b instanceof Duration) {
+  if (isValidDuration(a) && isValidDuration(b)) {
     if (b.ms === 0) throw s.error('DIVISION_BY_ZERO', 'Division by a zero duration', at)
     return finite(a.ms / b.ms, s, at)
   }
@@ -922,7 +935,7 @@ export function power(a: unknown, b: unknown, s: State, at: Span): unknown {
 
 export function negate(a: unknown, s: State, at: Span): unknown {
   if (typeof a === 'number') return a === 0 ? 0 : finite(-a, s, at)
-  if (a instanceof Duration) return durationOf(-a.ms, s, at)
+  if (isValidDuration(a)) return durationOf(-a.ms, s, at)
   throw s.error(
     'TYPE_ERROR',
     `Cannot negate ${describeKind(a)}${a === null || a === undefined ? '; use ?? to supply a default' : ''}`,
@@ -961,9 +974,9 @@ export function toText(value: unknown, s: State, at: Span): string {
         s.charge(TIME_TEXT_COST)
         return isoText(timeOf(value, s, at))
       }
-      if (value instanceof Duration) {
+      if (isValidDuration(value)) {
         s.charge(TIME_TEXT_COST)
-        return value.toString()
+        return durationText(value)
       }
       throw s.error(
         'TYPE_ERROR',

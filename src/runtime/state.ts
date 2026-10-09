@@ -23,6 +23,13 @@ export const DEFAULT_RUNTIME_LIMITS: RuntimeLimits = Object.freeze({
   maxPatternLength: 4096,
 })
 
+/**
+ * The largest `maxValueDepth` accepted. Equality, `unique`, and building
+ * nested values recurse once per level and run out of stack at about 2,500
+ * levels on Node 22, so the cap leaves a margin of more than 2x.
+ */
+export const MAX_VALUE_DEPTH_LIMIT = 1024
+
 const CLOCK_SAMPLE = 1024
 const NO_CONTEXT: Record<string, unknown> = Object.freeze({})
 /**
