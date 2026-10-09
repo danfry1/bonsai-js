@@ -3,7 +3,7 @@ import { PGlite } from '@electric-sql/pglite'
 import { test } from '@fast-check/vitest'
 import { Query } from 'mingo'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { BonsaiError, bonsai, fn, t } from '../src/index.js'
+import { BonsaiError, Duration, bonsai, fn, t } from '../src/index.js'
 import {
   BonsaiTranslationError,
   toMongo,
@@ -27,11 +27,11 @@ let pg: PGlite
 beforeAll(async () => {
   lite = new DatabaseSync(':memory:')
   lite.exec(
-    'create table t (id integer, name text, city text, total real, qty real, active integer, placed integer) strict',
+    'create table t (id integer, name text, city text, total real, qty real, active integer, placed integer, wait integer) strict',
   )
   pg = new PGlite()
   await pg.exec(
-    'create table t (id int, name text, city text, total float8, qty float8, active boolean, placed timestamptz)',
+    'create table t (id int, name text, city text, total float8, qty float8, active boolean, placed timestamptz, wait bigint)',
   )
 })
 
@@ -42,7 +42,7 @@ afterAll(async () => {
 
 async function load(rows: readonly Row[], postgres = true): Promise<void> {
   lite.exec('delete from t')
-  const insert = lite.prepare('insert into t values (?, ?, ?, ?, ?, ?, ?)')
+  const insert = lite.prepare('insert into t values (?, ?, ?, ?, ?, ?, ?, ?)')
   for (const r of rows) {
     insert.run(
       ...[
@@ -53,13 +53,14 @@ async function load(rows: readonly Row[], postgres = true): Promise<void> {
         r.qty,
         r.active === null ? null : Number(r.active),
         r.placed?.getTime() ?? null,
+        r.wait?.ms ?? null,
       ],
     )
   }
   if (!postgres) return
   await pg.exec('delete from t')
   for (const r of rows) {
-    await pg.query('insert into t values ($1, $2, $3, $4, $5, $6, $7)', [
+    await pg.query('insert into t values ($1, $2, $3, $4, $5, $6, $7, $8)', [
       r.id,
       r.name,
       r.city,
@@ -67,6 +68,7 @@ async function load(rows: readonly Row[], postgres = true): Promise<void> {
       r.qty,
       r.active,
       r.placed?.toISOString() ?? null,
+      r.wait?.ms ?? null,
     ])
   }
 }
@@ -129,7 +131,10 @@ async function agree(
   }
   if (mongo !== undefined) {
     const filter = mongo.filter
-    const mongoIds = rows.filter((row) => new Query(filter).test({ ...row })).map((r) => r.id)
+    // MongoDB stores a duration as its milliseconds.
+    const mongoIds = rows
+      .filter((row) => new Query(filter).test({ ...row, wait: row.wait?.ms ?? null }))
+      .map((r) => r.id)
     expect(mongoIds, `mongo: ${JSON.stringify(filter)}`).toEqual(want)
   }
   return want
@@ -154,6 +159,7 @@ const row = (id: number, fields: Partial<Row>): Row => ({
   qty: null,
   active: null,
   placed: null,
+  wait: null,
   ...fields,
 })
 
@@ -591,7 +597,7 @@ describe('toSQL', () => {
     ['order == null', /not order itself/u],
     ['order.name > "a"', /Ordering text/u],
     ['order.name.toUpperCase() == "A"', /no exact database equivalent|not translated/u],
-    ['order.total / 2 > 1', /no exact database equivalent/u],
+    ['order.total / 2 > 1', /"\/" is not translated/u],
     ['order.name', /Only boolean columns/u],
   ])('rejects %s', (source, message) => {
     expect(() =>
@@ -655,7 +661,7 @@ describe('translator options are validated like the others', () => {
     expect(() => toSQL(program, { ...sql, paramOfset: 5 } as never)).toThrow(
       /Unknown toSQL option key "paramOfset"/u,
     )
-    expect(() => toSQL(program, { ...sql, timeout: 5 } as never)).toThrow(TypeError)
+    expect(() => toSQL(program, { ...sql, unknown: ['x'] } as never)).toThrow(TypeError)
     expect(() => toMongo(program, { ...mongo, dialect: 'postgres' } as never)).toThrow(
       /Unknown toMongo option key "dialect"/u,
     )
@@ -769,5 +775,201 @@ describe('known values are read as the engine reads them', () => {
       ),
       'order.total > 1',
     )
+  })
+})
+
+describe('known values must hold every path the filter reads', () => {
+  const sqlite = { row: 'order', columns, dialect: 'sqlite' } as const
+  const mongo = { row: 'order', fields: columns } as const
+
+  it('refuses a path missing from a known object instead of reading it as null', () => {
+    const program = env.compile('order.total > limits.max')
+    for (const data of [{ limits: { min: 1 } }, { limits: { min: 1, max: undefined } }]) {
+      expect(() => toSQL(program, { ...sqlite, known: data })).toThrow(
+        /limits\.max is missing from the known values/u,
+      )
+      expect(() => toMongo(program, { ...mongo, known: data })).toThrow(
+        /limits\.max is missing from the known values/u,
+      )
+    }
+    expect(() =>
+      toSQL(env.compile('order.total > limits.a.b'), { ...sqlite, known: { limits: { a: {} } } }),
+    ).toThrow(/limits\.a\.b is missing/u)
+    expect(() =>
+      toSQL(env.compile('order.name == cfg["label"]'), { ...sqlite, known: { cfg: {} } }),
+    ).toThrow(/cfg\.label is missing/u)
+  })
+
+  it('translates a path that is present, even when it holds null', () => {
+    const program = env.compile('order.total > limits.max')
+    expect(toSQL(program, { ...sqlite, known: { limits: { max: 5 } } }).params).toEqual([5])
+    expect(toSQL(program, { ...sqlite, known: { limits: { max: null } } }).sql).toBe('0')
+  })
+
+  it('accepts a missing path the filter guards with has(), ??, or a null test', () => {
+    const data = { limits: { min: 1 } }
+    for (const source of [
+      'order.total > (limits.max ?? 5)',
+      'has(limits.max) && order.total > limits.max',
+      'limits.max == null || order.total > limits.max',
+      'limits.max != null && order.total > limits.max',
+    ]) {
+      expect(() => toSQL(env.compile(source), { ...sqlite, known: data }), source).not.toThrow()
+    }
+  })
+})
+
+describe('numeric and text ?? defaults', () => {
+  const rows = [row(1, {}), row(2, { total: 600 }), row(3, { total: 5 }), row(4, { total: 0 })]
+  const translates = { mustTranslate: true }
+
+  it('translates a column with a known default compared with a known value', async () => {
+    expect(await agree('(order.total ?? 0) >= 500', rows, translates)).toEqual([2])
+    expect(await agree('(order.total ?? 1000) >= 500', rows, translates)).toEqual([1, 2])
+    expect(await agree('!((order.total ?? 0) >= 500)', rows, translates)).toEqual([1, 3, 4])
+    expect(await agree('limit < (order.total ?? 11)', rows, translates)).toEqual([1, 2])
+    expect(await agree('(order.total ?? 0) == 0', rows, translates)).toEqual([1, 4])
+    expect(await agree('(order.total ?? 0) != 0', rows, translates)).toEqual([2, 3])
+    expect(await agree('(order.total ?? 5) in [5, 600]', rows, translates)).toEqual([1, 2, 3])
+    expect(await agree('(order.total ?? 5) not in [5, 600]', rows, translates)).toEqual([4])
+    expect(await agree('(order.total ?? 0) > nothing', rows, translates)).toEqual([])
+    const named = [row(1, {}), row(2, { name: '' }), row(3, { name: 'a' })]
+    expect(await agree('(order.name ?? "") == ""', named, translates)).toEqual([1, 2])
+  })
+
+  it('translates a default against another column or in arithmetic for SQL', async () => {
+    const pairs = [
+      row(1, {}),
+      row(2, { total: 3, qty: 2 }),
+      row(3, { qty: -1 }),
+      row(4, { total: 1 }),
+    ]
+    for (const source of ['(order.total ?? 0) > (order.qty ?? 0)', '(order.total ?? 0) + 1 > 2']) {
+      expect(() =>
+        toSQL(env.compile(source), { row: 'order', columns, dialect: 'sqlite' }),
+      ).not.toThrow()
+    }
+    expect(await agree('(order.total ?? 0) > (order.qty ?? 0)', pairs)).toEqual([2, 3, 4])
+    expect(await agree('(order.total ?? 0) + 1 > 2', pairs)).toEqual([2])
+  })
+
+  it('refuses a default of a different kind than its column', () => {
+    expect(() =>
+      toSQL(env.compile('(order.total ?? "none") > 5'), {
+        row: 'order',
+        columns,
+        dialect: 'sqlite',
+      }),
+    ).toThrow(BonsaiTranslationError)
+  })
+})
+
+describe('duration columns', () => {
+  const ms = (n: number): Duration => new Duration(n)
+  const rows = [
+    row(1, {}),
+    row(2, { wait: ms(500) }),
+    row(3, { wait: ms(1_209_600_000) }),
+    row(4, { wait: ms(-5) }),
+  ]
+  const translates = { mustTranslate: true }
+
+  it('compares a duration column with known durations', async () => {
+    expect(await agree('order.wait < seconds(1)', rows, translates)).toEqual([2, 4])
+    expect(await agree('order.wait >= span', rows, translates)).toEqual([3])
+    expect(await agree('order.wait == span', rows, translates)).toEqual([3])
+    expect(await agree('!(order.wait < seconds(1))', rows, translates)).toEqual([1, 3])
+    expect(await agree('order.wait in [span, milliseconds(500)]', rows, translates)).toEqual([2, 3])
+    expect(await agree('order.wait == null', rows, translates)).toEqual([1])
+    // A duration is never equal to a number.
+    expect(await agree('order.wait == 500', rows, translates)).toEqual([])
+  })
+
+  it('reads inMilliseconds of a duration column in SQL, failing on null', async () => {
+    expect(await agree('inMilliseconds(order.wait) > 100', rows)).toEqual([2, 3])
+    expect(await agree('!(inMilliseconds(order.wait) > 100)', rows)).toEqual([4])
+    expect(await agree('!(order.wait?.inMilliseconds() > 100)', rows)).toEqual([1, 4])
+    expect(
+      toSQL(env.compile('inMilliseconds(order.wait) > 100'), {
+        row: 'order',
+        columns,
+        dialect: 'postgres',
+      }).sql,
+    ).toContain('"wait"')
+  })
+
+  it('refuses a duration compared with a number', () => {
+    expect(() =>
+      toSQL(env.compile('order.wait > 500'), { row: 'order', columns, dialect: 'sqlite' }),
+    ).toThrow(BonsaiTranslationError)
+  })
+})
+
+describe('untranslatable parts say why', () => {
+  const options = { row: 'order', columns, dialect: 'sqlite', known } as const
+  const reason = (source: string): string => {
+    try {
+      toSQL(bonsai().compile(source), options)
+    } catch (error) {
+      if (error instanceof BonsaiTranslationError) {
+        expect(error.span, source).toBeDefined()
+        return error.message
+      }
+      throw error
+    }
+    throw new Error(`${source} translated`)
+  }
+
+  it('names the missing now option, calendar functions, and unsupported constructs', () => {
+    expect(reason('order.placed < now()')).toMatch(/now\(\).*`now` option/u)
+    expect(reason('hour(order.placed) > 9')).toMatch(/hour\(\).*time zone/u)
+    expect(reason('year(order.placed) == 2026')).toMatch(/year\(\).*time zone/u)
+    expect(reason('(let x = order.total; x > 1)')).toMatch(/let/u)
+    expect(reason('(order.active ? order.total : order.qty) > 1')).toMatch(/\?:/u)
+    expect(reason('try(order.total > 1, false)')).toMatch(/try\(\)/u)
+    expect(reason('order.total / 2 > 1')).toMatch(/"\/"/u)
+    expect(reason('order.name.toUpperCase() == "A"')).toMatch(/toUpperCase\(\) is not translated/u)
+  })
+})
+
+describe('translation shares the partial evaluation budget options', () => {
+  const program = env.compile('order.total > 1 && limit > 0')
+  const sql = { row: 'order', columns, dialect: 'sqlite', known } as const
+
+  it('accepts maxSteps, timeout, and signal, validated like partial()', () => {
+    expect(toSQL(program, { ...sql, maxSteps: 1000, timeout: 1000 }).sql).toContain('total')
+    const signal = new AbortController().signal
+    expect(toMongo(program, { row: 'order', fields: columns, known, signal }).filter).toBeDefined()
+    expect(() => toSQL(program, { ...sql, maxSteps: -1 })).toThrow(RangeError)
+    expect(() => toSQL(program, { ...sql, timeout: 'x' } as never)).toThrow(TypeError)
+  })
+
+  it('stops at the step budget and an aborted signal', () => {
+    const terms = Array.from({ length: 200 }, () => 'limit > 0').join(' && ')
+    const long = env.compile(`order.total > 1 && ${terms}`)
+    expect(() => toSQL(long, { ...sql, maxSteps: 5 })).toThrow(
+      expect.objectContaining({ code: 'STEP_LIMIT' }),
+    )
+    const controller = new AbortController()
+    controller.abort()
+    expect(() => toSQL(program, { ...sql, signal: controller.signal })).toThrow(
+      expect.objectContaining({ code: 'ABORTED' }),
+    )
+  })
+})
+
+describe('the translators take compiled programs', () => {
+  it('rejects a partial-evaluation residual or another object with a TypeError', () => {
+    const residual = env
+      .compile('order.total > limit')
+      .partial({ limit: 1 }, { unknown: ['order'] })
+    for (const value of [residual, { source: 'x' }, null]) {
+      expect(() => toSQL(value as never, { row: 'order', columns, dialect: 'sqlite' })).toThrow(
+        /takes a compiled program/u,
+      )
+      expect(() => toMongo(value as never, { row: 'order', fields: columns })).toThrow(
+        /takes a compiled program/u,
+      )
+    }
   })
 })

@@ -30,7 +30,7 @@ if (result.status === 'residual') {
 
 - **Decide early.** A `value` result means the missing data cannot change the outcome (a free user never passes this rule).
 - **Precompute.** Evaluate the per-tenant or per-user part of a rule once, keep the result, and evaluate only the per-request part later. A residual does less work than the original program and evaluates faster.
-- **Push filters down.** The residual refers only to the unknown data, so it can be translated to a database query.
+- **Push filters down.** [`toSQL` and `toMongo`](./query) run this partial evaluation for you: pass the original program with the known values in `known`, and the part that reads the record becomes a database query.
 
 ## Results
 
