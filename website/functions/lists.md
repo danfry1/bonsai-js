@@ -25,7 +25,7 @@ const context = { items: [{ name: "Pen", price: 2, qty: 3 }, { name: "Book", pri
 | [`flatMap`](#flatmap) | Transforms each item and flattens list results one level. |
 | [`reduce`](#reduce) | Folds a list into one value: reduce(list, (acc, item) => ..., initial). |
 | [`sort`](#sort) | Sorts numbers, text, timestamps, or durations; pass "desc" to reverse. |
-| [`sortBy`](#sortby) | Sorts by a key; pass "desc" to reverse. Nulls sort first. |
+| [`sortBy`](#sortby) | Sorts by a key; pass "desc" to reverse. Nulls sort first ("asc") or last ("desc"). |
 | [`groupBy`](#groupby) | Groups items into a map of lists by a key. |
 | [`reverse`](#reverse) | The items in reverse order. |
 | [`unique`](#unique) | The items without duplicates (by value), in first-seen order. |
@@ -172,7 +172,7 @@ Sorts numbers, text, timestamps, or durations; pass "desc" to reverse.
 
 ## sortBy
 
-Sorts by a key; pass "desc" to reverse. Nulls sort first.
+Sorts by a key; pass "desc" to reverse. Nulls sort first ("asc") or last ("desc").
 
 - `sortBy(T[], (T, number) => K, ("asc" | "desc")?): T[]`
 

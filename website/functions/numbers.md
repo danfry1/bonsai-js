@@ -140,7 +140,7 @@ Formats an amount in a currency (ISO 4217 code such as "EUR"), with an optional 
 ```bonsai
 formatCurrency(1234.5, "EUR") // => "€1,234.50"
 formatCurrency(1234.5, "EUR", "de-DE") // => "1.234,50 €"
-formatCurrency(99, "JPY", "ja-JP") // => "¥99"
+formatCurrency(99, "JPY") // => "¥99"
 ```
 
 ## min
