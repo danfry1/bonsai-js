@@ -784,8 +784,45 @@ async function scenarioHolds(scenario: Scenario): Promise<boolean> {
 
     // (d) printing is a faithful, idempotent round trip, in every call style.
     if (env === openEnv) checkPrinting(env, source, context, sync)
+
+    // (e) explain() agrees with evaluation and its trace is plain data.
+    if (env === openEnv) checkExplain(env, source, context, sync)
   }
   return true
+}
+
+function checkExplain(
+  env: ReturnType<typeof bonsai>,
+  source: string,
+  context: Record<string, unknown>,
+  expected: Outcome,
+): void {
+  const explained = capture('explain', () => env.explain(source, context))
+  if (!explained.ok) {
+    // Only syntax and check errors may throw, and evaluation must throw the same.
+    if (expected.ok || expected.code !== explained.code) {
+      throw new FuzzViolation(
+        `explain threw ${explained.code} but evaluateSync gave ${describeOutcome(expected)}`,
+      )
+    }
+    return
+  }
+  const explanation = explained.value as {
+    ok: boolean
+    value?: unknown
+    error?: { code: string }
+    trace: unknown
+    toString: () => string
+  }
+  const outcome: Outcome = explanation.ok
+    ? { ok: true, value: explanation.value }
+    : { ok: false, code: explanation.error?.code ?? '?', message: '' }
+  if (!sameOutcome(expected, outcome)) {
+    throw new FuzzViolation(
+      `explain gave ${describeOutcome(outcome)} but evaluateSync gave ${describeOutcome(expected)}`,
+    )
+  }
+  explanation.toString()
 }
 
 function checkPrinting(

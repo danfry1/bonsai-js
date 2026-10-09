@@ -134,7 +134,7 @@ wherever the language walks it (equality, `unique`, `in`).
 - Host functions are your code. Validate their inputs if they reach sensitive
   systems, and give them their own timeouts. A running synchronous function
   cannot be interrupted.
-- Getters and Proxies in the context run when an expression reads them. Pass
+- Getters and Proxies in the context run when an expression reads them (an exception they throw surfaces as `HOST_ERROR`). Pass
   plain data when the context contains anything sensitive or expensive.
 - Bonsai is not a process, memory, or CPU isolation boundary. If your host
   functions or context are themselves untrusted, run evaluation in a worker or

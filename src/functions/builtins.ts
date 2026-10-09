@@ -1189,19 +1189,19 @@ const LIST_FUNCTIONS: FunctionDef[] = [
       U,
       ([l, f, initial]) => {
         const items = list(l)
-        const fn = f as (acc: unknown, item: unknown) => unknown
+        const fn = f as (acc: unknown, item: unknown, index: number) => unknown
         let acc = initial
         // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
-        for (let i = 0; i < items.length; i++) acc = fn(acc, items[i])
+        for (let i = 0; i < items.length; i++) acc = fn(acc, items[i], i)
         return acc
       },
       {
         runAsync: async ([l, f, initial]) => {
           const items = list(l)
-          const fn = f as (acc: unknown, item: unknown) => unknown
+          const fn = f as (acc: unknown, item: unknown, index: number) => unknown
           let acc = initial
           // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
-          for (let i = 0; i < items.length; i++) acc = await fn(acc, items[i])
+          for (let i = 0; i < items.length; i++) acc = await fn(acc, items[i], i)
           return acc
         },
       },
