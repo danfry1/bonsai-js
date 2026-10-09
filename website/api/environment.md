@@ -22,7 +22,7 @@ const env = bonsai(options?)
 | `clock` | `() => Date` | system clock | The source of `now()`, read once per evaluation. A result that is not a valid `Date` fails the evaluation with `HOST_CONTRACT`; a clock that throws gives `HOST_ERROR`. |
 | `validateContext` | `boolean` | `false` | Check the context against the declared variable types before every evaluation. |
 
-Without `variables` an environment is **open**: every identifier reads the context and is typed `any`. With `variables` (even `variables: {}`), or with a library that declares variables, the environment is **strict**: the checker knows the declared types and rejects any other name. A library that adds a variable therefore changes what its users may write, so adding one is a breaking change for that library. Set `strict: false` to declare some variables and still let undeclared names read the context as `any`. Variable names must be identifiers other than the keywords `true`, `false`, `null`, `let`, `in`, and `not`, and other than `__proto__`, `constructor`, and `prototype`; declaring the same variable in two libraries, or in a library and `variables`, throws a `TypeError`, as does listing a library twice.
+Without `variables` an environment is **open**: every identifier reads the context and is typed `any`. With `variables` (even `variables: {}`), or with a library that declares at least one variable, the environment is **strict** (a library with an empty `variables: {}` declares nothing and leaves it open): the checker knows the declared types and rejects any other name. A library that adds a variable therefore changes what its users may write, so adding one is a breaking change for that library. Set `strict: false` to declare some variables and still let undeclared names read the context as `any`. Variable names must be identifiers other than the keywords `true`, `false`, `null`, `let`, `in`, and `not`, and other than `__proto__`, `constructor`, and `prototype`; declaring the same variable in two libraries, or in a library and `variables`, throws a `TypeError`, as does listing a library twice.
 
 Unknown option names and invalid values (a limit out of range, a type that is not a `t` type, a malformed host function) make `bonsai()` throw a `TypeError` or `RangeError` immediately.
 
@@ -160,7 +160,7 @@ pricedPartial.status // => "residual"
 
 ## env.extend(options)
 
-Returns a new environment with more variables, functions, or libraries. It takes the same options as `bonsai()`, so it can also change `strict`, `limits`, `clock`, `cacheSize`, or `validateContext`; options it does not set keep the base environment's values. The original is unchanged. Adding a function that the base environment already defines as a host function replaces it; defining the same name twice within one `extend()` call is an error.
+Returns a new environment with more variables, functions, or libraries. It takes the same options as `bonsai()`, so it can also change `strict`, `limits`, `clock`, `cacheSize`, or `validateContext`; options it does not set keep the base environment's values. The original is unchanged. A variable or host function declared again replaces the base environment's, from `variables`, `functions`, or a library, and the context type follows the new declaration; declaring the same name twice within one `extend()` call is an error, as it is within one `bonsai()` call.
 
 <!-- continue -->
 ```ts
@@ -180,6 +180,8 @@ interface FunctionInfo {
   description: string
   host: boolean // declared by the host rather than built in
   async: boolean
+  call: boolean // a host function declared call: true
+  cost?: number // steps per call, when a host function declares a cost
   signatures: { params: Type[]; required: number; rest?: Type; returns: Type }[]
 }
 ```

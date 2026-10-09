@@ -95,9 +95,15 @@ export interface BonsaiErrorJSON {
   readonly position?: { readonly line: number; readonly column: number }
   /** For a limit error: the option that bounds it, when there is one. */
   readonly limit?: LimitName
-  /** For a check error: every finding. */
-  readonly diagnostics?: readonly Diagnostic[]
+  /** For a check error: every finding, without the `formatted` code frame. */
+  readonly diagnostics?: readonly DiagnosticJSON[]
 }
+
+/**
+ * Marks Bonsai errors across copies of the package (two installed versions,
+ * or a bundle beside node_modules), so isBonsaiError recognizes them all.
+ */
+const BRAND = Symbol.for('bonsai-js.error')
 
 /** Options for constructing a {@link BonsaiError}. */
 export interface ErrorInit {
@@ -118,6 +124,7 @@ export class BonsaiError extends Error {
     this.code = code
     this.source = init.source
     this.span = init.span
+    Object.defineProperty(this, BRAND, { value: true })
   }
 
   /** 1-based position of the error, when it is tied to a source span. */
@@ -233,6 +240,9 @@ export interface Diagnostic {
   readonly suggestion?: string
 }
 
+/** A {@link Diagnostic} as JSON: every field except the `formatted` accessor. */
+export type DiagnosticJSON = Omit<Diagnostic, 'formatted'>
+
 /** A finding as the checker records it, before it is tied to a source. */
 export interface Finding {
   readonly code: DiagnosticCode
@@ -342,6 +352,17 @@ export class BonsaiCheckError extends BonsaiError {
   }
 }
 
+/**
+ * Whether `value` is a Bonsai error, including one thrown by another copy of
+ * the package (where `instanceof` fails).
+ */
 export function isBonsaiError(value: unknown): value is BonsaiError {
-  return value instanceof BonsaiError
+  if (value instanceof BonsaiError) return true
+  if (typeof value !== 'object' || value === null) return false
+  try {
+    return (value as Record<symbol, unknown>)[BRAND] === true
+  } catch {
+    // A hostile Proxy is not a Bonsai error.
+    return false
+  }
 }

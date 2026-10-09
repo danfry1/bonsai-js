@@ -25,6 +25,15 @@ user.nickname ?? user.name // => "Ada"
 
 Reading a property of `null` gives `null` rather than an error, so `?.` is only needed for calls: `user.nickname?.toUpperCase()`.
 
+Supply defaults where a value may be absent: `order.discount ?? 0` before arithmetic, and `?? 0` after an aggregate of a list that may be empty, since `avg`, `min`, and `max` of an empty list return `null` (`sum` returns `0`).
+
+<!-- context: { scores: [] } -->
+```bonsai
+avg(scores) // => null
+avg(scores) ?? 0 // => 0
+sum(scores) // => 0
+```
+
 ## Values compare by value, with no coercion
 
 `==` compares lists and maps deeply and never converts between types. Operators that would silently coerce in JavaScript are errors instead.

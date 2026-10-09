@@ -102,7 +102,7 @@ try {
       ...['BonsaiError', 'BonsaiErrorJSON'],
       ...['BonsaiLimitError', 'BonsaiRuntimeError', 'BonsaiSyntaxError', 'BooleanType'],
       ...['CallNode', 'CallStyle', 'CheckResult', 'CompileOptions', 'ConditionalNode'],
-      ...['ContextOf', 'Diagnostic', 'DiagnosticCode', 'Duration', 'DurationType'],
+      ...['Diagnostic', 'DiagnosticCode', 'DiagnosticJSON', 'Duration', 'DurationType'],
       ...['Environment', 'EnvironmentOptions', 'ErrorCode', 'EvaluateOptions'],
       ...[
         'ExplainOptions',

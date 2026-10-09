@@ -51,7 +51,34 @@ function variables(node: Node, found = new Set<string>()): Set<string> {
 
 ## Transforming a tree
 
-`mapChildren(node, map)` returns a shallow copy of `node` with each child replaced by `map(child)`, leaving the original tree unchanged. Applied recursively, it rewrites a whole tree, for example to rename a field when a schema changes:
+To rewrite expressions, such as renaming a field when a schema changes, edit the source text and use the checked tree to find what to change. The checker knows the type of every node, so the rename can be limited to one record type, and editing the text keeps comments and spacing. `nameStart` and `nameEnd` of a `Member` or `Call` cover just the name:
+
+<!-- continue -->
+```ts
+import { formatType, t } from 'bonsai-js'
+
+const order = t.object({ qty: t.number(), price: t.number() })
+const shop = bonsai({ variables: { order, stock: t.object({ qty: t.number() }) } })
+const source = 'order.qty * order.price + stock.qty // per line'
+const checked = shop.check(source)
+
+const edits: { start: number; end: number }[] = []
+const collect = (node: Node): void => {
+  if (node.type === 'Member' && node.name === 'qty' && node.nameStart !== undefined && node.nameEnd !== undefined) {
+    const owner = checked.typeOf(node.object)
+    if (owner && formatType(owner) === formatType(order)) edits.push({ start: node.nameStart, end: node.nameEnd })
+  }
+  forEachChild(node, collect)
+}
+if (checked.ast) collect(checked.ast)
+let edited = source
+for (const { start, end } of edits.sort((a, b) => b.start - a.start)) {
+  edited = edited.slice(0, start) + 'quantity' + edited.slice(end)
+}
+edited // => "order.quantity * order.price + stock.qty // per line"
+```
+
+`mapChildren(node, map)` returns a shallow copy of `node` with each child replaced by `map(child)`, leaving the original tree unchanged. Applied recursively, it rewrites a whole tree. A rewrite like the one below is purely syntactic: it renames every field called `qty`, on any object, and printing the result drops comments and the original spacing. Use it for generated expressions, not for text people wrote:
 
 <!-- continue -->
 ```ts
@@ -62,26 +89,11 @@ function renameField(node: Node, from: string, to: string): Node {
   return mapped.type === 'Member' && mapped.name === from ? { ...mapped, name: to } : mapped
 }
 
-print(renameField(env.parse('order.qty * order.price'), 'qty', 'quantity')) // => "order.quantity * order.price"
+print(renameField(env.parse('order.qty * stock.qty'), 'qty', 'quantity')) // => "order.quantity * stock.quantity"
 ```
 
-Printing does not keep comments or the original spacing. To keep them, edit the source text instead, using the spans the parser records: `nameStart` and `nameEnd` of a `Member` or `Call` cover just the name.
+To combine expressions, combine their trees (or print each and wrap it in parentheses), rather than joining source strings. A `//` comment runs to the end of the line, so `` `${a} && ${b}` `` with `a = 'x > 1 // minimum'` comments out `b`. Printing a parsed tree removes the comment, and `` `(${print(env.parse(a))}) && (${print(env.parse(b))})` `` is safe.
 
-<!-- continue -->
-```ts
-const source = 'order.qty * order.price // per line'
-const edits: { start: number; end: number }[] = []
-const collect = (node: Node): void => {
-  if (node.type === 'Member' && node.name === 'qty' && node.nameStart !== undefined && node.nameEnd !== undefined) {
-    edits.push({ start: node.nameStart, end: node.nameEnd })
-  }
-  forEachChild(node, collect)
-}
-collect(env.parse(source))
-let edited = source
-for (const { start, end } of edits.reverse()) edited = edited.slice(0, start) + 'quantity' + edited.slice(end)
-edited // => "order.quantity * order.price // per line"
-```
 
 ## Types of nodes
 
@@ -89,8 +101,6 @@ edited // => "order.quantity * order.price // per line"
 
 <!-- continue -->
 ```ts
-import { formatType, t } from 'bonsai-js'
-
 const typed = bonsai({ variables: { order: t.object({ qty: t.number() }), tags: t.list(t.string()) } })
 const result = typed.check('order.qty > tags.length')
 const qty = result.ast?.type === 'Binary' ? result.ast.left : undefined

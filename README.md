@@ -48,7 +48,7 @@ This README describes 1.0, which is in release candidate on the `next` tag; `npm
 
 Requires Node.js 22 or newer, current Bun, or a modern browser. The package is ESM; `require('bonsai-js')` works where Node can load ES modules synchronously (22.12 and newer).
 
-In a browser bundle, an app that evaluates expressions adds about 60 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. `bonsai-js/query` and `bonsai-js/service` are separate entry points, and importing only `t` or the error classes adds under 1 KB. CI enforces these budgets (`bun run check:size`).
+In a browser bundle, an app that evaluates expressions adds about 60 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. `bonsai-js/query` and `bonsai-js/service` are separate entry points; the language service on its own is about 41 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.4 KB. CI enforces these budgets (`bun run check:size`).
 
 ## Why Bonsai
 
@@ -112,7 +112,7 @@ import { bonsai, t } from 'bonsai-js'
 const env = bonsai({ variables: { user: t.object({ age: t.number(), nick: t.optional(t.string()) }) } })
 
 env.check('user.agee > 18')
-// { ok: false, type: { kind: 'boolean' }, diagnostics: [{ code: 'UNKNOWN_PROPERTY', message: 'Property "agee" does not exist on { age: number, nick: string | null }; did you mean "age"?', severity: 'error', start: 0, end: 9 }] }
+// { ok: false, type: { kind: 'boolean' }, diagnostics: [{ code: 'UNKNOWN_PROPERTY', message: 'Property "agee" does not exist on { age: number, nick: string | null }; did you mean "age"?', severity: 'error', start: 5, end: 9, span: { start: 5, end: 9 }, position: { line: 1, column: 6 }, suggestion: 'age' }] }
 
 env.check('user.nick.toUpperCase()')
 // NULLABLE_RECEIVER: The value before .toUpperCase() may be null; use ?.toUpperCase() or ?? to supply a default
