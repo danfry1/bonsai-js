@@ -73,12 +73,17 @@ export const MAX_TRACE_TEXT = 120
 const HIGH_SURROGATE_FIRST = 0xd800
 const HIGH_SURROGATE_LAST = 0xdbff
 
+/** `text` cut to `max` code units and marked with `...`, never inside a surrogate pair. */
+function cut(text: string, max: number): string {
+  if (text.length <= max) return text
+  const code = text.charCodeAt(max - 1)
+  const splitsPair = code >= HIGH_SURROGATE_FIRST && code <= HIGH_SURROGATE_LAST
+  return `${text.slice(0, splitsPair ? max - 1 : max)}...`
+}
+
 /** `text` cut to {@link MAX_TRACE_TEXT} code units, never inside a surrogate pair. */
 export function capTraceText(text: string): string {
-  if (text.length <= MAX_TRACE_TEXT) return text
-  const code = text.charCodeAt(MAX_TRACE_TEXT - 1)
-  const splitsPair = code >= HIGH_SURROGATE_FIRST && code <= HIGH_SURROGATE_LAST
-  return `${text.slice(0, splitsPair ? MAX_TRACE_TEXT - 1 : MAX_TRACE_TEXT)}...`
+  return cut(text, MAX_TRACE_TEXT)
 }
 export const DEFAULT_MAX_TRACE_NODES = 10_000
 
@@ -340,7 +345,7 @@ export function snapshot(
   if (value === null || value === undefined) return null
   switch (typeof value) {
     case 'string':
-      return value.length > SNAPSHOT_TEXT ? `${value.slice(0, SNAPSHOT_TEXT)}...` : value
+      return cut(value, SNAPSHOT_TEXT)
     case 'number':
       return Number.isFinite(value) ? value : String(value)
     case 'boolean':
@@ -462,7 +467,7 @@ function preview(value: unknown): string {
   const text =
     JSON.stringify(snapshot(value, { left: PREVIEW_ENTRIES }, SNAPSHOT_DEPTH - PREVIEW_DEPTH)) ??
     'null'
-  return text.length > MAX_PREVIEW * 2 ? `${text.slice(0, MAX_PREVIEW * 2)}...` : text
+  return cut(text, MAX_PREVIEW * 2)
 }
 
 function outcome(trace: Trace): string {
@@ -543,6 +548,5 @@ export function renderTrace(root: Trace, truncated = false): string {
 }
 
 function oneLine(text: string): string {
-  const flat = text.replace(/\s+/gu, ' ').trim()
-  return flat.length > MAX_PREVIEW ? `${flat.slice(0, MAX_PREVIEW)}...` : flat
+  return cut(text.replace(/\s+/gu, ' ').trim(), MAX_PREVIEW)
 }
