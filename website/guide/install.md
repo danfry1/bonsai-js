@@ -31,6 +31,10 @@ These docs describe 1.0, which is in release candidate on npm's `next` tag. With
 
 Node.js 22 and newer, current Bun, and modern browsers with ES2022 and `Intl.DateTimeFormat` time zone support. The package is ESM; on Node, `require('bonsai-js')` also works from CommonJS where Node can load ES modules synchronously (22.12 and newer). TypeScript projects compiling CommonJS should use `"module": "node20"` or `"nodenext"`; the older `"node16"` setting does not know `require()` can load ES modules and reports TS1479 (use `await import('bonsai-js')` there). The same code runs everywhere: there are no Node-specific APIs and no generated code, so Bonsai works under a Content Security Policy that forbids `eval`.
 
+## Bundle size
+
+In a browser bundle, an app that evaluates expressions adds about 56 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. The `query` and `service` entry points are separate, and unused modules are tree-shaken: importing only `t` or the error classes adds under 1 KB. CI enforces these budgets.
+
 ## First evaluation
 
 ```ts

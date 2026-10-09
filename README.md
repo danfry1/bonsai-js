@@ -48,6 +48,8 @@ This README describes 1.0, which is in release candidate on the `next` tag; `npm
 
 Requires Node.js 22 or newer, current Bun, or a modern browser. The package is ESM; `require('bonsai-js')` works where Node can load ES modules synchronously (22.12 and newer).
 
+In a browser bundle, an app that evaluates expressions adds about 56 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. `bonsai-js/query` and `bonsai-js/service` are separate entry points, and importing only `t` or the error classes adds under 1 KB. CI enforces these budgets (`bun run check:size`).
+
 ## Why Bonsai
 
 - **Familiar.** JavaScript syntax and JavaScript names: `a.b`, `?.`, `??`, templates, `filter`, `map`, `includes`, `toUpperCase`. Every function also works as a method, so `sum(xs)` and `xs.sum()` are the same call.
