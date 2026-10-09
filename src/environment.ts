@@ -22,7 +22,6 @@ import {
 import {
   partiallyEvaluate,
   residualTexts,
-  KNOWN_KEYS_PER_STEP,
   RESIDUAL_CHARS_PER_STEP,
   type PartialData,
   type PartialOptions,
@@ -66,7 +65,7 @@ import {
 type Optional<T> = { readonly [K in keyof T]?: T[K] | undefined }
 
 export interface Limits extends Optional<ParseLimits>, Optional<RuntimeLimits> {
-  /** Wall-clock budget per evaluation in milliseconds (0 = none). Default 0. */
+  /** Wall-clock budget per evaluation in milliseconds (0 = none; fractions allowed). Default 0. */
   readonly timeout?: number | undefined
 }
 
@@ -83,7 +82,7 @@ export interface AbortSignalLike {
 }
 
 export interface EvaluateOptions {
-  /** Wall-clock budget for this evaluation in milliseconds (0 = none). */
+  /** Wall-clock budget for this evaluation in milliseconds (0 = none; fractions allowed). */
   readonly timeout?: number | undefined
   /** Step budget for this evaluation (0 = none; overrides the environment limit). */
   readonly maxSteps?: number | undefined
@@ -420,8 +419,11 @@ export interface ExplainOptions extends EvaluateOptions {
   /**
    * Also evaluate the side of && and || that short-circuiting would skip, so
    * reasons() lists every failing condition rather than the first. Those
-   * parts are marked `extra`; their errors are ignored and the result is
-   * unchanged. Host functions on those parts do run. Default false.
+   * parts are marked `extra`; their evaluation errors are ignored and the
+   * result is unchanged. They spend from the same step and time budget, so a
+   * limit reached there (STEP_LIMIT, TIMEOUT, a size limit) fails the
+   * explanation even when evaluation alone would stay inside it. Host
+   * functions on those parts do run. Default false.
    */
   readonly exhaustive?: boolean | undefined
 }
@@ -583,53 +585,66 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * context a residual is given (the given values win): `given` itself when it
  * already has every known value, otherwise a frozen copy with the rest added.
  * Plain objects on both sides are merged; anything else given replaces the
- * known value whole. The keys looked at and copied are charged (KNOWN_KEYS_PER_STEP
- * a step), and charging checks the deadline, so a large context cannot make
- * the overlay unbounded work.
+ * known value whole. Each pair of objects is merged once, however many paths
+ * reach it, and a reference back into a pair still being merged (a cycle) sees
+ * the given object. Every own key looked at or copied costs a step, and
+ * charging checks the deadline, so the overlay is bounded like evaluation.
  */
 function overlayKnown(
   known: Readonly<Record<string, unknown>>,
   given: Record<string, unknown>,
   state: State,
-  depth: number,
+  maxDepth: number,
 ): Record<string, unknown> {
-  let changes: Map<string, unknown> | undefined
-  let count = 0
-  for (const name in known) {
-    if (!Object.hasOwn(known, name)) continue
-    if (++count % KNOWN_KEYS_PER_STEP === 0) state.charge(1)
-    const mine = known[name]
-    if (mine === undefined) continue
-    const theirs = Object.hasOwn(given, name) ? given[name] : undefined
-    let value = mine
-    if (theirs !== undefined) {
-      if (depth <= 0 || !isPlainObject(mine) || !isPlainObject(theirs)) continue
-      value = overlayKnown(mine, theirs, state, depth - 1)
-      if (value === theirs) continue
+  const merged = new Map<object, Map<object, Record<string, unknown>>>()
+  const merge = (
+    mine: Readonly<Record<string, unknown>>,
+    theirs: Record<string, unknown>,
+    depth: number,
+  ): Record<string, unknown> => {
+    state.charge(1)
+    let byGiven = merged.get(mine)
+    const done = byGiven?.get(theirs)
+    if (done !== undefined) return done
+    if (byGiven === undefined) merged.set(mine, (byGiven = new Map()))
+    // Until this pair is merged, a cycle back into it sees the given object.
+    byGiven.set(theirs, theirs)
+    let changes: Map<string, unknown> | undefined
+    const names = Object.keys(mine)
+    state.charge(names.length)
+    for (const name of names) {
+      const value = mine[name]
+      if (value === undefined) continue
+      const other = Object.hasOwn(theirs, name) ? theirs[name] : undefined
+      let next = value
+      if (other !== undefined) {
+        if (depth <= 0 || !isPlainObject(value) || !isPlainObject(other)) continue
+        next = merge(value, other, depth - 1)
+        if (next === other) continue
+      }
+      changes ??= new Map()
+      changes.set(name, next)
     }
-    changes ??= new Map()
-    changes.set(name, value)
+    if (changes === undefined) return theirs
+    const out: Record<string, unknown> = {}
+    // Defined, not assigned, so a key named __proto__ stays a key.
+    const put = (name: string, value: unknown): void => {
+      Object.defineProperty(out, name, {
+        value,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      })
+    }
+    const own = Object.keys(theirs)
+    state.charge(own.length + changes.size)
+    for (const name of own) put(name, theirs[name])
+    for (const [name, value] of changes) put(name, value)
+    const result = Object.freeze(out)
+    byGiven.set(theirs, result)
+    return result
   }
-  state.charge(1)
-  if (changes === undefined) return given
-  const out: Record<string, unknown> = {}
-  // Defined, not assigned, so a key named __proto__ stays a key.
-  const put = (name: string, value: unknown): void => {
-    Object.defineProperty(out, name, {
-      value,
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    })
-  }
-  count = 0
-  for (const name in given) {
-    if (!Object.hasOwn(given, name)) continue
-    if (++count % KNOWN_KEYS_PER_STEP === 0) state.charge(1)
-    put(name, given[name])
-  }
-  for (const [name, value] of changes) put(name, value)
-  return Object.freeze(out)
+  return merge(known, given, maxDepth)
 }
 
 interface Settings {
@@ -753,6 +768,20 @@ function numberOption(name: string, value: unknown, fallback: number, minimum: n
   return value
 }
 
+/**
+ * A timeout in milliseconds: 0 turns it off; any other non-negative number,
+ * fractions included, is a limit, so a budget computed down to its last
+ * fraction of a millisecond stays a limit rather than becoming 0.
+ */
+function timeoutOption(name: string, value: unknown, fallback: number): number {
+  if (value === undefined) return fallback
+  if (typeof value !== 'number') throw new TypeError(`${name} must be a number`)
+  if (!Number.isFinite(value) || value < 0) {
+    throw new RangeError(`${name} must be a non-negative number of milliseconds (0 disables it)`)
+  }
+  return value
+}
+
 const OPTION_KEYS = new Set([
   'variables',
   'strict',
@@ -869,7 +898,7 @@ function settingsFrom(base: Settings | undefined, options: unknown): Settings {
       base?.runtimeLimits ?? DEFAULT_RUNTIME_LIMITS,
       limits,
     ) as unknown as RuntimeLimits,
-    timeout: numberOption('Limit "timeout"', limits.timeout, base?.timeout ?? 0, 0),
+    timeout: timeoutOption('Limit "timeout"', limits.timeout, base?.timeout ?? 0),
     cacheSize: numberOption(
       'cacheSize',
       options.cacheSize,
@@ -889,8 +918,14 @@ function settingsFrom(base: Settings | undefined, options: unknown): Settings {
 const CACHE_CHARS = 262_144
 const CACHE_MAX_SOURCE = 16_384
 
+/**
+ * Approximately least recently used ("second chance"): a hit only marks its
+ * entry, so the hot path is one lookup. When the cache is full, the oldest
+ * entry is evicted, unless it was used since it last reached the front (or is
+ * the entry being added), in which case it moves to the back unmarked.
+ */
 class ProgramCache<V> {
-  private readonly map = new Map<string, V>()
+  private readonly map = new Map<string, { readonly value: V; used: boolean }>()
   private readonly size: number
   private chars = 0
 
@@ -899,23 +934,29 @@ class ProgramCache<V> {
   }
 
   get(key: string): V | undefined {
-    const value = this.map.get(key)
-    if (value !== undefined) {
-      this.map.delete(key)
-      this.map.set(key, value)
-    }
-    return value
+    const slot = this.map.get(key)
+    if (slot === undefined) return undefined
+    slot.used = true
+    return slot.value
   }
 
   set(key: string, value: V): void {
     if (this.size === 0 || key.length > CACHE_MAX_SOURCE) return
     if (this.map.delete(key)) this.chars -= key.length
-    this.map.set(key, value)
+    this.map.set(key, { value, used: false })
     this.chars += key.length
     while (this.map.size > this.size || this.chars > CACHE_CHARS) {
-      const oldest = this.map.keys().next().value as string
+      const [oldest, slot] = this.map.entries().next().value as [
+        string,
+        { readonly value: V; used: boolean },
+      ]
       this.map.delete(oldest)
-      this.chars -= oldest.length
+      if (slot.used || oldest === key) {
+        slot.used = false
+        this.map.set(oldest, slot)
+      } else {
+        this.chars -= oldest.length
+      }
     }
   }
 }
@@ -1035,7 +1076,7 @@ function evaluationLimits(options: unknown, settings: Settings): EvaluationLimit
   if (o.now !== undefined && !isValidDate(o.now)) throw new TypeError('now must be a valid Date')
   return {
     maxSteps: numberOption('maxSteps', o.maxSteps, settings.runtimeLimits.maxSteps, 0),
-    timeout: numberOption('timeout', o.timeout, settings.timeout, 0),
+    timeout: timeoutOption('timeout', o.timeout, settings.timeout),
     // A structurally checked AbortSignalLike; evaluation only reads the members checked above.
     signal: signal as AbortSignal | undefined,
     now: o.now,
@@ -1674,21 +1715,24 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         // Known variables are validated as evaluation validates them; a variable
         // with an unknown path inside it is incomplete by design, so it is not.
         if (settings.validateContext && settings.variables !== undefined) {
+          const variables = settings.variables
           const unknownPaths = options.unknown ?? []
-          const knownVariables = Object.fromEntries(
-            Object.entries(settings.variables).filter(
-              ([name]) =>
-                Object.hasOwn(context, name) &&
-                !unknownPaths.some((path) => path === name || path.startsWith(`${name}.`)),
-            ),
-          )
           try {
+            const knownVariables = Object.fromEntries(
+              Object.entries(variables).filter(
+                ([name]) =>
+                  Object.hasOwn(context, name) &&
+                  !unknownPaths.some((path) => path === name || path.startsWith(`${name}.`)),
+              ),
+            )
             validateContext(context, knownVariables, source, {
               maxDepth: settings.runtimeLimits.maxValueDepth,
               maxSteps: limits.maxSteps,
               timeout: limits.timeout,
             })
           } catch (error) {
+            // Validation only reads the known data, so any other failure is the host's.
+            if (!(error instanceof BonsaiError)) throw hostDataFailure(error, source)
             if (error instanceof BonsaiRuntimeError) return { status: 'error', error }
             throw error
           }
@@ -1709,6 +1753,13 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
               state.checkTime()
             },
             maxSourceLength: settings.parseLimits.maxSourceLength,
+            readKnown: (read) => {
+              try {
+                return read()
+              } catch (error) {
+                throw hostDataFailure(error, source)
+              }
+            },
             evaluate: (node, locals) => {
               const key = locals.map(([name]) => name).join('\u0000')
               let byLocals = subtrees.get(node)
@@ -1764,6 +1815,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
           try {
             checked(result.value, state)
           } catch (error) {
+            // Checking reads the value, which can be host data.
+            if (!(error instanceof BonsaiError)) throw hostDataFailure(error, source)
             if (error instanceof BonsaiRuntimeError) return { status: 'error', error }
             throw error
           }
@@ -1771,8 +1824,11 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         // The residual accepts any object at run time; its parameter is typed by this program's context.
         return result as PartialResult<R, Ctx>
       } catch (error) {
-        // Reading `known` is reading host data: a throwing Proxy or getter is a HOST_ERROR.
-        throw hostDataFailure(error, source)
+        // Host data is read through readKnown, evaluate, and the checks above,
+        // which report its failures as HOST_ERROR; anything else is a failure
+        // of the engine itself, not of the caller's data, so it is not relabeled.
+        if (isStackOverflow(error)) throw tooDeep(source)
+        throw error
       } finally {
         state.release()
       }

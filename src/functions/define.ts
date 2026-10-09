@@ -1,7 +1,14 @@
 import { BLOCKED_NAMES } from '../syntax/lexer.js'
 import type { Span } from '../errors.js'
 import type { State } from '../runtime/state.js'
-import { Duration, isMap, isValidDuration, keyListCost, shown } from '../runtime/values.js'
+import {
+  Duration,
+  isMap,
+  isTimestamp,
+  isValidDuration,
+  keyListCost,
+  shown,
+} from '../runtime/values.js'
 import { formatType, type FunctionType, type Type, type TypeVar } from '../types.js'
 
 /** A lambda as seen by a built-in: called with the item and its index. */
@@ -164,7 +171,7 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
       return type.types.some((member) => conforms(value, member, state, depth))
     case 'timestamp':
       // An invalid Date is an opaque host value, not a timestamp.
-      return isValidTime(value)
+      return isTimestamp(value)
     case 'duration':
       return isValidDuration(value)
     case 'any':
@@ -184,21 +191,10 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
 
 const CLOCK_SAMPLE = 1024
 
-/** A valid Date, read through Date internals so a subclass or Proxy runs none of its own code. */
-function isValidTime(value: unknown): value is Date {
-  if (!(value instanceof Date)) return false
-  try {
-    return !Number.isNaN(Date.prototype.getTime.call(value))
-  } catch {
-    // A Proxy around a Date has no Date internals.
-    return false
-  }
-}
-
 function describeValue(value: unknown): string {
   if (value === null) return 'null (missing)'
   if (Array.isArray(value)) return 'a list'
-  if (value instanceof Date) return isValidTime(value) ? 'a timestamp' : 'an invalid Date'
+  if (value instanceof Date) return isTimestamp(value) ? 'a timestamp' : 'an invalid Date'
   if (value instanceof Duration && !isValidDuration(value)) return 'an invalid Duration'
   if (typeof value === 'object') return 'a map'
   if (typeof value === 'string') return `string ${shown(value)}`
@@ -276,7 +272,7 @@ export function describeMismatch(
       return undefined
     }
   } else if (type.kind === 'timestamp') {
-    if (isValidTime(actual)) return undefined
+    if (isTimestamp(actual)) return undefined
   } else if (type.kind === 'duration') {
     if (isValidDuration(actual)) return undefined
   } else if (type.kind !== 'list' && type.kind !== 'map' && matchesKind(actual, type)) {
