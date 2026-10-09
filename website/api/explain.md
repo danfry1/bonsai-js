@@ -21,7 +21,7 @@ String(explanation)
 
 ## Reasons
 
-`explanation.reasons()` returns only the conditions that decided the result: it follows `&&`, `||`, and `!` down to the comparisons and values (or the error) behind the outcome.
+`explanation.reasons()` returns only the conditions that decided the result: it follows `&&`, `||`, and `!` down to the comparisons and values (or the error) behind the outcome. The same condition can appear more than once when several sub-expressions reach it (with `exhaustive`, for example); de-duplicate by `id` when listing reasons in a UI.
 
 By default `&&` stops at the first false condition, so there is one reason. Pass `exhaustive: true` to evaluate the remaining conditions for the explanation, and every failing one is listed. Those parts are marked `extra: true`, and an error in them (a failing comparison, a throwing getter) is ignored, so the result does not change. The extra work counts toward the step budget and other limits, so a limit error there does fail the explanation. Host functions on those parts do run.
 
@@ -55,7 +55,7 @@ rule.explainSync({ user }, { exhaustive: true }).reasons().map((r) => r.text)
 | `iterations` | For calls that take a lambda: `{ index, item, result or error, trace }` for each item the lambda ran on (reduce adds `accumulator`) |
 | `omittedIterations` | Lambda runs beyond `maxIterations`, counted but not recorded |
 
-Values in `trace` are the live values from your context, not copies. The trace is typed read-only but not frozen at run time (a trace can hold thousands of records, and freezing each would cost more than recording it), so treat it as read-only. An error in the JSON form has the same shape as `JSON.stringify(error)` (see [Errors](/api/errors#json-form)). To send an explanation to a browser or store it, use `JSON.stringify(explanation)` (or `explanation.toJSON()`): values become bounded, cycle-safe copies (at most 10,000 values in total, however often a value recurs), getters are never run, host collections such as typed arrays and `Map` are summarized by type, and a value that throws when read becomes `"[unreadable]"`.
+Values in `trace` are the live values from your context, not copies. The trace is typed read-only but not frozen at run time (a trace can hold thousands of records, and freezing each would cost more than recording it), so treat it as read-only. The explanation's own `error` has the same JSON form as `JSON.stringify(error)` (see [Errors](/api/errors#json-form)); an error recorded on a trace node is the shorter `{ code, message }`, since its node already gives the span. To send an explanation to a browser or store it, use `JSON.stringify(explanation)` (or `explanation.toJSON()`): values become bounded, cycle-safe copies (at most 10,000 values in total, however often a value recurs), getters are never run, host collections such as typed arrays and `Map` are summarized by type, and a value that throws when read becomes `"[unreadable]"`.
 
 ## Errors
 

@@ -62,6 +62,15 @@ formatType(env.check('customer.attributes.region').type!) // => "string | null"
 
 A closed type is a checking aid, not access control: see [Safety](/guide/safety#what-remains-your-responsibility).
 
+For untyped JSON, such as a request body whose shape is not declared, use `t.any()` rather than `t.record(t.any())`. Every read of a record may be missing, so it is typed `any | null`, and the checker then asks for `??` or `?.` at each use; `t.any()` is checked at run time instead:
+
+<!-- continue -->
+```ts
+const untyped = bonsai({ variables: { body: t.any() } })
+untyped.check('body.total * 2').ok // => true
+bonsai({ variables: { body: t.record(t.any()) } }).check('body.total * 2').ok // => false
+```
+
 ## Optional values
 
 `t.optional(T)` is `T | null`. Because absent keys read as `null`, it also marks a field that may be missing. The checker then requires `?.` for calls and `??` for arithmetic on it:

@@ -107,7 +107,7 @@ Environment members:
 - `evaluateSync(src, ctx?, options?)`, `evaluate(src, ctx?, options?)`: compile through an LRU cache (`cacheSize`, default 256) and evaluate.
 - `explainSync(src, ctx?, options?)`, `explain(src, ctx?, options?)`: compile through the cache and explain (see Program).
 - `extend(options)` -> new environment with more variables/functions/libraries.
-- `listFunctions()`, `describeFunction(name)` -> `{ name, description, host, async, signatures: [{ params, required, rest?, returns }] }`.
+- `listFunctions()`, `describeFunction(name)` -> `{ name, description, host, async, call, cost?, signatures: [{ params, required, rest?, returns }] }` (`call` for host functions declared `call: true`; `cost` when a host function declares one).
 - `parse(src)` -> syntax tree; `variables`; `strict`.
 
 Evaluation options: `timeout` (ms), `maxSteps`, `signal` (AbortSignal), `now` (Date: the time `now()` returns in this evaluation). `compile(src, { expect })` is cached: the same source and expected type return the same program. `env.partial(src, known, options?)` compiles through the cache and partially evaluates.

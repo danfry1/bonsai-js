@@ -3,7 +3,6 @@ export type {
   AbortSignalLike,
   CheckResult,
   CompileOptions,
-  ContextOf,
   Environment,
   EnvironmentOptions,
   EvaluateOptions,
@@ -50,6 +49,7 @@ export {
 export type {
   BonsaiErrorJSON,
   Diagnostic,
+  DiagnosticJSON,
   DiagnosticCode,
   ErrorCode,
   LimitName,

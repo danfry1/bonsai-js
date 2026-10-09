@@ -284,6 +284,20 @@ type ContextFor<V, L, S = undefined> = [S] extends [false]
   ? ContextOf<V & LibraryVariables<L>> & MoreKeys
   : ContextOf<V & LibraryVariables<L>>
 
+/**
+ * `Ctx` with the variables `New` declares replacing those of the same name,
+ * as extend() replaces them at run time ("later wins"). Remapping keys (not
+ * Omit) keeps an index signature and the other keys' types.
+ */
+type Override<Ctx, New> = [keyof New] extends [never]
+  ? Ctx
+  : { [K in keyof Ctx as K extends keyof New ? never : K]: Ctx[K] } & New
+
+/** The context type extend() produces: re-declared variables replaced, strict: false loosened. */
+type Extended<Ctx, V, L, S> = [S] extends [false]
+  ? Override<Ctx, ContextOf<V & LibraryVariables<L>>> & MoreKeys
+  : Override<Ctx, ContextOf<V & LibraryVariables<L>>>
+
 export interface EnvironmentOptions<
   V extends Readonly<Record<string, Type>> = Readonly<Record<string, Type>>,
   L extends readonly Library[] = readonly Library[],
@@ -480,7 +494,10 @@ export interface Environment<Ctx = any> {
     source: string,
     options?: CompileOptions<E>,
   ) => Program<Ctx, Infer<E>>
-  /** Compiles (cached) and partially evaluates; see Program.partial. Throws only for syntax and check errors. */
+  /**
+   * Compiles (cached) and partially evaluates; see Program.partial. Throws for
+   * syntax, check, and limit errors, and a TypeError or RangeError for invalid options.
+   */
   partial: <R = unknown>(
     source: string,
     known: PartialData<Ctx> & object,
@@ -490,30 +507,44 @@ export interface Environment<Ctx = any> {
   evaluate: <R = unknown>(source: string, ...args: Args<Ctx>) => Promise<R>
   /** Compiles (cached) and evaluates synchronously. */
   evaluateSync: <R = unknown>(source: string, ...args: Args<Ctx>) => R
-  /** Compiles (cached) and explains; see Program.explain. Rejects only for syntax and check errors. */
+  /**
+   * Compiles (cached) and explains; see Program.explain. Rejects for syntax and
+   * check errors and parse limits, and with a TypeError or RangeError for invalid options.
+   */
   explain: <R = unknown>(source: string, ...args: ExplainArgs<Ctx>) => Promise<Explanation<R>>
-  /** Compiles (cached) and explains synchronously. Throws only for syntax and check errors. */
+  /**
+   * Compiles (cached) and explains synchronously. Throws for syntax and check
+   * errors and parse limits, and a TypeError or RangeError for invalid options.
+   */
   explainSync: <R = unknown>(source: string, ...args: ExplainArgs<Ctx>) => Explanation<R>
   /** Looks up a function (host or built-in). */
   describeFunction: (name: string) => FunctionInfo | undefined
   /** Every callable function, host functions first. */
   listFunctions: () => FunctionInfo[]
-  /** A new environment with more variables, functions, or libraries. */
+  /**
+   * A new environment with more variables, functions, or libraries. A
+   * variable or function declared again replaces the earlier one.
+   */
   extend: <
     const V2 extends Readonly<Record<string, Type>> = NoVariables,
     const L2 extends readonly Library[] = [],
     const S2 extends boolean | undefined = undefined,
   >(
     options: EnvironmentOptions<V2, L2> & { readonly strict?: S2 },
-  ) => Environment<Ctx & ContextFor<V2, L2, S2>>
+  ) => Environment<Extended<Ctx, V2, L2, S2>>
 }
 
 /**
- * The context type of an environment with declared variables `V`. An open
- * environment (no variables) accepts any object, including values typed by an
- * interface.
+ * The context type of declared variables `V`. An open environment (no
+ * variables) accepts any object, including values typed by an interface, and
+ * so does a schema only known at run time (`Record<string, Type>`), whose
+ * variables are not known statically.
  */
-export type ContextOf<V> = [keyof V] extends [never] ? object : InferVariables<V>
+type ContextOf<V> = [keyof V] extends [never]
+  ? object
+  : string extends keyof V
+    ? MoreKeys
+    : InferVariables<V>
 
 // === implementation ===
 
@@ -1841,7 +1872,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       L2 extends readonly Library[],
       S2 extends boolean | undefined,
     >(options: EnvironmentOptions<V2, L2> & { readonly strict?: S2 }) {
-      return createEnvironment<Ctx & ContextFor<V2, L2, S2>>(settingsFrom(settings, options))
+      return createEnvironment<Extended<Ctx, V2, L2, S2>>(settingsFrom(settings, options))
     },
   })
   internals.set(env, { checkEnv, parseLimits: settings.parseLimits })
