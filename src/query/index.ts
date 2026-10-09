@@ -88,14 +88,23 @@ export interface SQLOptions extends CommonOptions {
   readonly paramOffset?: number | undefined
 }
 
-export interface SQLQuery {
+/** A value toSQL sends for a placeholder. */
+type SQLParam = string | number | boolean | (string | number)[]
+
+export interface SQLQuery<Param = SQLParam> {
   /**
    * A boolean SQL expression for a WHERE clause. It is true for exactly the
    * selected records, and may be NULL (not false) for others: negate a
    * filter by translating `!(filter)`, not by wrapping this in NOT.
    */
   readonly sql: string
-  readonly params: readonly unknown[]
+  /**
+   * The values for the placeholders, a new array on every call so a driver
+   * may take it as is. SQLite gets numbers and text (booleans as 1 and 0,
+   * timestamps as epoch milliseconds); Postgres also gets booleans, and an
+   * array for each known list.
+   */
+  readonly params: Param[]
 }
 
 export interface MongoOptions extends CommonOptions {
@@ -1070,6 +1079,14 @@ function lower(
       )
     const key = path.join('.')
     const declared = columns.get(key)
+    // `.length` of a declared text column: Bonsai counts UTF-16 units, databases characters.
+    const parent = path.length > 1 ? columns.get(path.slice(0, -1).join('.')) : undefined
+    if (declared === undefined && parent?.type === 'text' && path.at(-1) === 'length') {
+      return fail(
+        'The length of text is not translated (databases count characters, Bonsai UTF-16 units)',
+        node,
+      )
+    }
     if (declared === undefined) {
       return fail(
         `${options.row}.${key} is not a declared column${hint(key, columns.keys())}`,
@@ -1236,7 +1253,16 @@ function lower(
       if (!target.arithmetic) return fail(`Arithmetic is not translated for ${target.name}`, node)
       const left = value(node.left)
       const right = value(node.right)
-      if (kindOf(left) !== 'number' || kindOf(right) !== 'number') {
+      const kinds = [kindOf(left), kindOf(right)]
+      if (kinds.includes('timestamp')) {
+        return fail(
+          `"${node.operator}" on a timestamp is translated only for a timestamp column itself, ` +
+            'shifted by a known duration or measured from a known time; for an optional column, ' +
+            'test it first (x != null && now() - x < days(14))',
+          node,
+        )
+      }
+      if (kinds.some((kind) => kind !== 'number')) {
         return fail(`"${node.operator}" is translated for numbers only`, node)
       }
       return { kind: 'arith', op: node.operator, left, right }
@@ -1484,8 +1510,11 @@ function lower(
           }
           case '??': {
             const left = nullable(node.left)
-            if (left === undefined)
+            if (left === undefined) {
+              // A call that does not translate says why, rather than blaming the "??".
+              if (node.left.type === 'Call') return untranslatable(blamed(node.left))
               return fail('"??" is translated after a ?. text call or a boolean field', node)
+            }
             if (left.whenNull === undefined) return left.pred
             // The right side runs only when the left is null; the left is false then.
             return {
@@ -1529,6 +1558,12 @@ function lower(
 
   const ordering = (left: Value, op: '<' | '<=' | '>' | '>=', right: Value, node: Node): Pred => {
     const kinds = [kindOf(left), kindOf(right)]
+    if (!kinds.includes('null') && kinds[0] !== kinds[1]) {
+      let message = `Cannot order ${kinds[0]} with ${kinds[1]}`
+      if (left.kind === 'const') message += `: the known value on the left is ${kinds[0]}`
+      else if (right.kind === 'const') message += `: the known value on the right is ${kinds[1]}`
+      return fail(message, node)
+    }
     if (kinds.includes('text')) {
       return fail(
         'Ordering text is not translated (databases order by code point, Bonsai by UTF-16 unit)',
@@ -1539,9 +1574,6 @@ function lower(
     // Ordering with null is false, unless the other side fails first.
     if (kinds.includes('null'))
       return { kind: 'in', value: kinds[0] === 'null' ? right : left, list: [] }
-    if (kinds[0] !== kinds[1]) {
-      return fail('Both sides of an ordering must be numbers, timestamps, or durations alike', node)
-    }
     pair(left, right, node)
     return left.kind === 'const'
       ? { kind: 'order', op: FLIP[op], left: right, right: left }
@@ -1839,7 +1871,10 @@ const PG_CASTS: Readonly<Record<ColumnType, string>> = {
  * numbers, booleans as 0/1, timestamps as epoch milliseconds, and durations as
  * milliseconds, and should be declared STRICT so they cannot hold other types.
  */
-export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
+export function toSQL<Dialect extends SQLOptions['dialect']>(
+  program: Translatable,
+  options: SQLOptions & { readonly dialect: Dialect },
+): SQLQuery<Dialect extends 'sqlite' ? string | number : SQLParam> {
   checkProgram(program, 'toSQL')
   checkKeys(options, SQL_OPTION_KEYS, 'toSQL')
   const dialect = options.dialect
@@ -1878,7 +1913,7 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
   const declaredColumns = declare(options, options.columns, 'columns', target)
   checkDeclaredTypes(program, options.row, declaredColumns, 'columns')
   const predicate = lower(program, options, declaredColumns, target, translation)
-  const params: unknown[] = []
+  const params: SQLParam[] = []
   const tooManyParams = (): BonsaiTranslationError =>
     new BonsaiTranslationError(
       `The translated query needs more than ${MAX_PARAMS[dialect]} parameters`,
@@ -1888,7 +1923,7 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
 
   const quote = (name: string): string =>
     pg ? `"${name.replaceAll('"', '""')}"` : `\`${name.replaceAll('`', '``')}\``
-  const encode = (value: Exclude<Primitive, null>): unknown => {
+  const encode = (value: Exclude<Primitive, null>): string | number | boolean => {
     if (value instanceof Date) return pg ? new Date(msOf(value)).toISOString() : msOf(value)
     if (value instanceof Duration) return value.ms
     if (typeof value === 'boolean' && !pg) return value ? 1 : 0
@@ -1896,9 +1931,9 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
   }
   // Numbered placeholders, so a value used again (with the same cast) reuses its
   // parameter: known text or a known list is sent once however often it is used.
-  const numbered = new Map<string, Map<unknown, string>>()
+  const numbered = new Map<string, Map<SQLParam, string>>()
   let paramText = 0
-  const placeholder = (encoded: unknown, cast: string): string => {
+  const placeholder = (encoded: SQLParam, cast: string): string => {
     charge()
     let byValue = numbered.get(cast)
     if (byValue === undefined) {
@@ -1947,7 +1982,8 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
       if (arrayEntries > MAX_LIST_ENTRIES) throw tooLarge(program.source)
       charge(list.length)
       sql = placeholder(
-        list.map((entry) => encode(entry as Exclude<Primitive, null>)),
+        // Never booleans: a boolean list is written out entry by entry.
+        list.map((entry) => encode(entry as Exclude<Primitive, null>) as string | number),
         cast,
       )
       byCast.set(cast, sql)
@@ -2156,7 +2192,9 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     },
   }
 
-  return { sql: algebra.guard(dual(predicate, algebra).t), params }
+  // SQLite parameters are only numbers and text: encode() writes booleans as 1 and 0, and lists
+  // become one parameter per entry.
+  return { sql: algebra.guard(dual(predicate, algebra).t), params: params as never }
 }
 
 // === MongoDB ===

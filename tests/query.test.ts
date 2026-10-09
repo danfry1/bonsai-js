@@ -85,7 +85,7 @@ async function agree(
   await load(rows, targets.postgres ?? true)
   const shared = { row: 'order', known, ...(now === undefined ? {} : { now }) }
 
-  let sqlite: ReturnType<typeof toSQL>
+  let sqlite: ReturnType<typeof toSQL<'sqlite'>>
   try {
     sqlite = toSQL(program, { ...shared, columns, dialect: 'sqlite' })
   } catch (error) {
@@ -95,12 +95,12 @@ async function agree(
   }
   const liteIds = lite
     .prepare(`select id from t where ${sqlite.sql} order by id`)
-    .all(...(sqlite.params as (string | number | null)[]))
+    .all(...sqlite.params)
     .map((r) => (r as { id: number }).id)
   expect(liteIds, `sqlite: ${sqlite.sql}`).toEqual(want)
 
   // Postgres alone may refuse (timestamps outside the years 0001 to 9999).
-  let postgres: ReturnType<typeof toSQL> | undefined
+  let postgres: ReturnType<typeof toSQL<'postgres'>> | undefined
   if (targets.postgres ?? true) {
     try {
       postgres = toSQL(program, { ...shared, columns, dialect: 'postgres' })
@@ -111,14 +111,17 @@ async function agree(
   if (postgres !== undefined) {
     try {
       const pgIds = (
-        await pg.query<{ id: number }>(`select id from t where ${postgres.sql} order by id`, [
-          ...postgres.params,
-        ])
+        await pg.query<{ id: number }>(
+          `select id from t where ${postgres.sql} order by id`,
+          postgres.params,
+        )
       ).rows.map((r) => r.id)
       expect(pgIds, `postgres: ${postgres.sql}`).toEqual(want)
     } catch (error) {
-      // Documented: Postgres raises an error, never a wrong answer, when double arithmetic
-      // overflows or underflows.
+      // Documented: Postgres float8 arithmetic raises "value out of range" when a row's
+      // arithmetic overflows a double, or a nonzero product rounds to zero. The query then
+      // fails as a whole, which is allowed; returning different rows is not. Guarding every
+      // operation in SQL made arithmetic filters 7 to 10 times slower, for operands beyond 1e154.
       if (!/value out of range: (?:overflow|underflow)/u.test(String(error))) throw error
     }
   }
@@ -515,7 +518,7 @@ describe('production hardening', () => {
       const q = toSQL(env.compile(source), { row: 'order', columns: cols, dialect: 'sqlite' })
       const plan = db
         .prepare(`explain query plan select id from idx where ${q.sql}`)
-        .all(...(q.params as (string | number)[]))
+        .all(...q.params)
         .map((r) => (r as { detail: string }).detail)
         .join('\n')
       expect(plan, `${source}: ${q.sql}`).toMatch(/USING INDEX/u)
