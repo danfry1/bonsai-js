@@ -20,6 +20,7 @@ import {
   type ValidationBudget,
 } from './functions/define.js'
 import {
+  definePut,
   partiallyEvaluate,
   residualTexts,
   RESIDUAL_CHARS_PER_STEP,
@@ -576,19 +577,6 @@ const DEFAULT_CACHE_SIZE = 256
 /** Subtrees compiled for partial evaluation, in nodes, kept per program: this times its own. */
 const SUBTREE_CACHE_FACTOR = 2
 
-/** The nodes in a tree, counted without recursion. */
-function countNodes(root: Node): number {
-  let count = 0
-  const pending: Node[] = [root]
-  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
-    count++
-    forEachChild(node, (child) => {
-      pending.push(child)
-    })
-  }
-  return count
-}
-
 /** A plain data object, which an overlay may copy without losing a prototype. */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) return false
@@ -600,13 +588,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * One pair of objects an overlay merges: a known object, the given object at
  * its place, and their merged copy, with the keys it adds or replaces.
  */
-interface OverlayPair {
-  readonly mine: Readonly<Record<string, unknown>>
-  readonly theirs: Record<string, unknown>
-  readonly out: Record<string, unknown>
+type OverlayPair = readonly [
+  mine: Readonly<Record<string, unknown>>,
+  theirs: Record<string, unknown>,
+  out: Record<string, unknown>,
   /** Known values the given object lacks, and merged copies of plain objects both hold. */
-  readonly put: [string, unknown][]
-}
+  put: [string, unknown][],
+]
 
 /**
  * The known data of a partial evaluation overlaid at every depth with the
@@ -638,7 +626,7 @@ function overlayKnown(
     if (pair === undefined) {
       state.charge(1)
       // Each copy exists before any is filled, so a cycle refers to the copy.
-      pair = { mine, theirs, out: {}, put: [] }
+      pair = [mine, theirs, {}, []]
       byGiven.set(theirs, pair)
       all.push(pair)
     }
@@ -646,7 +634,7 @@ function overlayKnown(
   }
   const root = pairOf(known, given)
   // Every pair reached, and what each adds (the loop also visits pairs found during it).
-  for (const { mine, theirs, put } of all) {
+  for (const [mine, theirs, , put] of all) {
     const names = Object.keys(mine)
     state.charge(names.length)
     for (const name of names) {
@@ -657,28 +645,19 @@ function overlayKnown(
         put.push([name, value])
         adds = true
       } else if (isPlainObject(value) && isPlainObject(other)) {
-        put.push([name, pairOf(value, other).out])
+        put.push([name, pairOf(value, other)[2]])
       }
     }
   }
   if (!adds) return given
-  // Defined, not assigned, so a key named __proto__ stays a key.
-  const define = (out: object, name: string, value: unknown): void => {
-    Object.defineProperty(out, name, {
-      value,
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    })
-  }
-  for (const { theirs, out, put } of all) {
+  for (const [, theirs, out, put] of all) {
     const own = Object.keys(theirs)
     state.charge(own.length + put.length)
-    for (const name of own) define(out, name, theirs[name])
-    for (const [name, value] of put) define(out, name, value)
+    for (const name of own) definePut(out, name, theirs[name])
+    for (const [name, value] of put) definePut(out, name, value)
     Object.freeze(out)
   }
-  return root.out
+  return root[2]
 }
 
 interface Settings {
@@ -1743,7 +1722,6 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     // a few times the program's own nodes, and starts over when full.
     let subtrees = new Map<Node, Map<string, CompiledProgram>>()
     let subtreeNodes = 0
-    let programNodes = 0
     // The variables evaluation validates, which a residual keeps known values of.
     const validated =
       settings.validateContext && settings.variables !== undefined
@@ -1814,12 +1792,11 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
               }
             },
             validated,
-            evaluate: (node, locals, size) => {
+            evaluate: (node, locals, size, total) => {
               const key = locals.map(([name]) => name).join('\u0000')
               let code = subtrees.get(node)?.get(key)
               if (code === undefined) {
-                if (programNodes === 0) programNodes = countNodes(analysis.root)
-                if (subtreeNodes + size > SUBTREE_CACHE_FACTOR * programNodes) {
+                if (subtreeNodes + size > SUBTREE_CACHE_FACTOR * total) {
                   subtrees = new Map()
                   subtreeNodes = 0
                 }
@@ -1841,7 +1818,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
                 throw hostDataFailure(error, source)
               }
             },
-            compileResidual: (residual, bindings, residualSource, residualKnown) => {
+            compileResidual: (residual, bindings, residualSource, kept, readsContext) => {
               // The original expression passed the checker; inlining known
               // values can make a failing branch statically visible, and that
               // failure must happen at run time, as it would have, so findings
@@ -1864,8 +1841,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
                 new Map(Object.entries(bindings)),
                 {
                   source: residualSource,
-                  known: residualKnown?.data,
-                  readsContext: residualKnown?.readsContext === true,
+                  known: kept,
+                  readsContext,
                 },
               )
               return runner as ResidualRunner

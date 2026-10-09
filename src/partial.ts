@@ -86,14 +86,12 @@ interface NodeInfo {
 
 interface TreeIndex {
   readonly info: ReadonlyMap<Node, NodeInfo>
-  /** Local reads in pre-order, with the position of their binder. */
-  readonly locals: readonly { readonly name: string; readonly binder: number }[]
-  /** The context paths the tree reads (`user.age` for a static chain of reads). */
-  readonly paths: ReadonlySet<string>
+  /** Local reads in pre-order: name, and the position of its binder. */
+  readonly locals: readonly (readonly [string, number])[]
+  /** The context paths the tree reads (`user.age` for a static chain of reads), with their segments. */
+  readonly paths: ReadonlyMap<string, readonly string[]>
   /** The path each outermost static read names. */
   readonly readPath: ReadonlyMap<Node, string>
-  /** The segments of each path in `paths`. */
-  readonly segments: ReadonlyMap<string, readonly string[]>
   /** The steps building the index charged, charged again on each reuse. */
   readonly steps: number
 }
@@ -128,10 +126,9 @@ function indexTree(
     charge(n)
   }
   const info = new Map<Node, NodeInfo>()
-  const locals: { name: string; binder: number }[] = []
-  const paths = new Set<string>()
+  const locals: [string, number][] = []
+  const paths = new Map<string, readonly string[]>()
   const readPath = new Map<Node, string>()
-  const segments = new Map<string, readonly string[]>()
   // The binders in scope: per local name, and for `.` (implicit lambdas).
   const scopes = new Map<string, number[]>()
   const implicit: number[] = []
@@ -140,17 +137,10 @@ function indexTree(
     if (stack === undefined) scopes.set(name, (stack = []))
     return stack
   }
-  // One string per path, however often it is read.
-  const interned = new Map<string, string>()
   const read = (node: Node, parts: readonly string[]): void => {
-    const text = parts.join('.')
-    spend(1 + Math.floor(text.length / PATH_CHARS_PER_STEP))
-    let path = interned.get(text)
-    if (path === undefined) {
-      interned.set(text, (path = text))
-      paths.add(path)
-      segments.set(path, parts)
-    }
+    const path = parts.join('.')
+    spend(1 + Math.floor(path.length / PATH_CHARS_PER_STEP))
+    if (!paths.has(path)) paths.set(path, parts)
     readPath.set(node, path)
   }
   let count = 0
@@ -174,7 +164,7 @@ function indexTree(
       if (!inChain) read(node, [node.name])
     } else if (node.type === 'Local') {
       me.local = scope(node.name).at(-1) ?? -1
-      locals.push({ name: node.name, binder: me.local })
+      locals.push([node.name, me.local])
     } else if (node.type === 'It') {
       me.it = implicit.at(-1) ?? -1
     } else if ((node.type === 'Member' || node.type === 'Index') && !inChain) {
@@ -209,7 +199,7 @@ function indexTree(
     return me
   }
   visit(root, false)
-  return { info, locals, paths, readPath, segments, steps }
+  return { info, locals, paths, readPath, steps }
 }
 
 interface PathTrie {
@@ -225,14 +215,15 @@ interface PathTrie {
  * is a value the expression reads, and a path under it that the expression
  * reads is tested in its own right. The paths are kept as a tree of segments,
  * so building it and each test walk the segments once: no prefix strings are
- * built, and checking costs nothing like paths x unknowns.
+ * built, and checking costs nothing like paths x unknowns. The tree is
+ * returned too: copies of the known data leave out what it marks `under`.
  */
 function unknownIndex(
   unknown: Iterable<string>,
   missing: Iterable<string>,
   charge: (steps: number) => void,
   segmentsOf: (path: string) => readonly string[],
-): (path: string) => boolean {
+): [(path: string) => boolean, PathTrie] {
   const root: PathTrie = { under: false, next: new Map() }
   const add = (path: string): PathTrie => {
     charge(1 + Math.floor(path.length / PATH_CHARS_PER_STEP))
@@ -246,7 +237,7 @@ function unknownIndex(
   }
   for (const path of unknown) add(path).under = true
   for (const path of missing) add(path)
-  return (path) => {
+  const touches = (path: string): boolean => {
     let node = root
     for (const segment of segmentsOf(path)) {
       const child = node.next.get(segment)
@@ -257,6 +248,7 @@ function unknownIndex(
     // The path is a missing one, or one lies under it.
     return true
   }
+  return [touches, root]
 }
 
 // === public types ===
@@ -378,15 +370,16 @@ export interface PartialEngine {
    */
   readonly validated: ReadonlySet<string> | undefined
   /**
-   * Evaluates a subtree of `size` nodes against the known context with the
-   * given free locals, sharing one step budget and deadline across the whole
-   * partial evaluation. Throws BonsaiRuntimeError for evaluation errors and
-   * BonsaiLimitError when a limit is reached.
+   * Evaluates a subtree of `size` nodes (of a program of `total`) against the
+   * known context with the given free locals, sharing one step budget and
+   * deadline across the whole partial evaluation. Throws BonsaiRuntimeError
+   * for evaluation errors and BonsaiLimitError when a limit is reached.
    */
   readonly evaluate: (
     node: Node,
     locals: readonly (readonly [string, unknown])[],
     size: number,
+    total: number,
   ) => unknown
   /**
    * Compiles a residual for later evaluation, with `bindings` as fixed values
@@ -401,9 +394,8 @@ export interface PartialEngine {
     residual: Node,
     bindings: Readonly<Record<string, unknown>>,
     source: string,
-    known:
-      | { readonly data: Readonly<Record<string, unknown>>; readonly readsContext: boolean }
-      | undefined,
+    known: Readonly<Record<string, unknown>> | undefined,
+    readsContext: boolean,
   ) => {
     readonly async: boolean
     runSync: (ctx: unknown, options: unknown) => unknown
@@ -467,8 +459,9 @@ export function partiallyEvaluate<R>(
     engine.charge(rootIndex.steps)
   }
   const rootPaths = rootIndex.paths
-  const rootSegments = rootIndex.segments
-  const segmentsOf = (path: string): readonly string[] => rootSegments.get(path) ?? path.split('.')
+  // The program's nodes: subtrees compiled for it are kept up to a few times this.
+  const total = (rootIndex.info.get(root) as NodeInfo).end
+  const segmentsOf = (path: string): readonly string[] => rootPaths.get(path) ?? path.split('.')
 
   // Nodes made during this call (a computed key written in) are indexed on
   // their own when first asked about, charged like the tree's.
@@ -490,7 +483,7 @@ export function partiallyEvaluate<R>(
     if (info.local >= info.pos) return []
     engine.charge(1 + info.last - info.first)
     for (let i = info.first; i < info.last; i++) {
-      const { name, binder } = index.locals[i]
+      const [name, binder] = index.locals[i]
       if (binder < info.pos) names.add(name)
     }
     return [...names]
@@ -515,15 +508,10 @@ export function partiallyEvaluate<R>(
     pathMemo.set(node, path)
     return path
   }
-  /** Whether a subtree reads the implicit parameter of a lambda around it. */
-  const readsIt = (node: Node): boolean => {
-    const { info } = locate(node)
-    return info.it < info.pos
-  }
 
   const unknown = engine.readKnown(() =>
     options.unknown === undefined
-      ? [...new Set([...rootPaths].map((path) => segmentsOf(path)[0]))].filter(
+      ? [...new Set([...rootPaths.keys()].map((path) => segmentsOf(path)[0]))].filter(
           // A known value of undefined is absent, as a host key holding undefined is.
           (name) => !Object.hasOwn(known, name) || known[name] === undefined,
         )
@@ -534,13 +522,13 @@ export function partiallyEvaluate<R>(
   // Without an explicit unknown list, anything not given is unknown: a property
   // a known object leaves out, and any known object read whole (its keys, a
   // spread, ==, a let alias), since the caller may not have given all of it.
-  const missing = options.unknown === undefined ? missingPaths(rootPaths) : NO_NAMES
-  const touchesUnknown = unknownIndex(unknown, missing, engine.charge, segmentsOf)
+  const missing = options.unknown === undefined ? missingPaths(rootPaths.keys()) : NO_NAMES
+  const [touchesUnknown, unknownTree] = unknownIndex(unknown, missing, engine.charge, segmentsOf)
 
   const bindings: Record<string, unknown> = {}
   // Binding names must not shadow a variable the expression reads or a name it
   // binds; known data the expression never reads is irrelevant.
-  const taken = new Set([...rootPaths].map((path) => segmentsOf(path)[0]))
+  const taken = new Set([...rootPaths.keys()].map((path) => segmentsOf(path)[0]))
   for (const name of boundNames(root)) taken.add(name)
   let bindingCount = 0
   const freshName = (base: string): string => {
@@ -571,7 +559,7 @@ export function partiallyEvaluate<R>(
    * `{...user}` reads `user`). Every path the expression reads is listed, so a
    * path above a gap is decided by its own value, not by the gap.
    */
-  function missingPaths(paths: ReadonlySet<string>): ReadonlySet<string> {
+  function missingPaths(paths: Iterable<string>): ReadonlySet<string> {
     const out = new Set<string>()
     for (const path of paths) if (missingAt(path)) out.add(path)
     return out
@@ -682,7 +670,7 @@ export function partiallyEvaluate<R>(
     // every call (compiled or reused), so a budget fits every call alike.
     const size = info.end - info.pos
     engine.charge(Math.ceil(size / COMPILE_NODES_PER_STEP))
-    return engine.evaluate(node, locals, size)
+    return engine.evaluate(node, locals, size, total)
   }
 
   /** A known value as syntax: an inline literal, or a reference to a binding. */
@@ -858,7 +846,8 @@ export function partiallyEvaluate<R>(
         const body = asNode(peval(lambda.body, inner))
         // An implicit lambda whose body no longer uses `.` would print as a
         // plain value; make the parameter explicit instead.
-        if (lambda.implicit && !readsIt(body)) {
+        const info = lambda.implicit ? locate(body).info : undefined
+        if (info !== undefined && info.it >= info.pos) {
           return { ...lambda, implicit: false, params: [freshName('__item')], body }
         }
         return { ...lambda, body }
@@ -915,10 +904,10 @@ export function partiallyEvaluate<R>(
   // the known data it keeps) are copies, so later changes to the caller's
   // objects never reach it. The bindings are compiled in as constants, so
   // evaluating reads the caller's context as it is: no per-call copy.
-  const copies = snapshotter(engine.charge)
+  const copy = snapshotter(engine.charge)
   const frozenBindings = engine.readKnown(() => {
     const out: Record<string, unknown> = {}
-    for (const [name, value] of Object.entries(bindings)) out[name] = copies.copy(value)
+    for (const [name, value] of Object.entries(bindings)) out[name] = copy(value)
     return Object.freeze(out)
   })
   // Kept for call: true functions (all of it) or for validating the context a
@@ -928,25 +917,16 @@ export function partiallyEvaluate<R>(
   const keep = readsContext ? undefined : engine.validated
   if (readsContext || keep !== undefined) {
     residualKnown = engine.readKnown(() => {
-      const names = Object.keys(known)
-      engine.charge(1 + names.length)
-      const leave = leaving(options.unknown ?? [])
-      const out: Record<string, unknown> = {}
-      for (const name of names) {
-        const under = leave.get(name)
-        const value = known[name]
-        if ((keep === undefined || keep.has(name)) && under !== null && value !== undefined)
-          definePut(out, name, copies.copy(value, under))
-      }
-      return Object.freeze(out)
+      const kept = {}
+      for (const name of Object.keys(known))
+        if (keep?.has(name) !== false) definePut(kept, name, known[name])
+      return copy(kept, unknownTree) as Record<string, unknown>
     })
   }
-  copies.freeze()
   // `x.length` reads a list's or a string's length when x is one, so the data
   // the caller supplies is the path above the first `length`.
   const dependsOn = new Set<string>()
-  for (const path of residualPaths) {
-    const segments = segmentsOf(path)
+  for (const [path, segments] of residualPaths) {
     if (Object.hasOwn(frozenBindings, segments[0])) continue
     const cut = segments.indexOf('length', 1)
     dependsOn.add(cut === -1 ? path : segments.slice(0, cut).join('.'))
@@ -955,9 +935,12 @@ export function partiallyEvaluate<R>(
     outcome.node,
     frozenBindings,
     source,
-    residualKnown === undefined ? undefined : { data: residualKnown, readsContext },
+    residualKnown,
+    readsContext,
   )
   engine.checkTime()
+  type Residual = ResidualResult<R>
+  // The runners take (context, options) and always return a promise when async.
   return Object.freeze({
     status: 'residual',
     residual: outcome.node,
@@ -968,14 +951,10 @@ export function partiallyEvaluate<R>(
     readsContext,
     async: compiled.async,
     type: engine.analysis.type,
-    evaluateSync: (context?: object, evaluateOptions?: EvaluateOptions) =>
-      compiled.runSync(context, evaluateOptions) as R,
-    evaluate: async (context?: object, evaluateOptions?: EvaluateOptions) =>
-      (await compiled.runAsync(context, evaluateOptions)) as R,
-    explainSync: (context?: object, explainOptions?: ExplainOptions) =>
-      compiled.explainSync(context, explainOptions) as Explanation<R>,
-    explain: (context?: object, explainOptions?: ExplainOptions) =>
-      compiled.explainAsync(context, explainOptions) as Promise<Explanation<R>>,
+    evaluateSync: compiled.runSync as Residual['evaluateSync'],
+    evaluate: compiled.runAsync as Residual['evaluate'],
+    explainSync: compiled.explainSync as Residual['explainSync'],
+    explain: compiled.explainAsync as Residual['explain'],
   })
 }
 
@@ -1029,31 +1008,8 @@ export function residualTexts(
 // === copies of known data ===
 
 /** Sets an own enumerable key; defined, not assigned, so a key named __proto__ stays a key. */
-function definePut(out: object, name: string, value: unknown, enumerable = true): void {
+export function definePut(out: object, name: string, value: unknown, enumerable = true): void {
   Object.defineProperty(out, name, { value, enumerable, writable: true, configurable: true })
-}
-
-/**
- * Paths to leave out of a copy, as a tree of keys: `null` leaves the key out,
- * a tree leaves out parts of the value under it.
- */
-type Leave = Map<string, Leave | null>
-
-/** The paths as a tree of keys to leave out (a listed path leaves out everything under it). */
-function leaving(paths: readonly string[]): Leave {
-  const root: Leave = new Map()
-  for (const path of paths) {
-    let node = root
-    const keys = path.split('.')
-    for (let i = 0; i < keys.length; i++) {
-      const next = node.get(keys[i])
-      if (next === null) break
-      if (i === keys.length - 1) node.set(keys[i], null)
-      else if (next === undefined) node.set(keys[i], (node = new Map()))
-      else node = next
-    }
-  }
-  return root
 }
 
 /**
@@ -1062,20 +1018,19 @@ function leaving(paths: readonly string[]): Leave {
  * through their own keys) are copied, a timestamp becomes a new Date, and
  * durations and opaque host values (a Map, a RegExp, a function) are kept as
  * they are, since the language never reads into them. Shared and cyclic
- * values stay shared, except a map on the way to a path left out, which is
- * copied on its own (another path to the same map keeps the key). It runs on
- * an explicit stack, so deep data costs no call stack, and every entry copied
- * costs a step. Reads run getters and Proxy traps, so the caller runs it as a
- * read of host data. `freeze()` freezes every copy once all are made.
+ * values stay shared, except along the paths of `leave` (a tree of unknown
+ * paths), where each map is copied on its own and a key marked `under` is
+ * left out (another path to the same map keeps it). It runs on an explicit
+ * stack, so deep data costs no call stack, and every entry copied costs a
+ * step. Reads run getters and Proxy traps, so the caller runs it as a read of
+ * host data. `freeze()` freezes every copy once all are made.
  */
-function snapshotter(charge: (steps: number) => void): {
-  readonly copy: (value: unknown, leave?: Leave) => unknown
-  readonly freeze: () => void
-} {
+function snapshotter(
+  charge: (steps: number) => void,
+): (value: unknown, leave?: PathTrie) => unknown {
   const copies = new Map<object, unknown>()
-  const made: object[] = []
-  const pending: { readonly from: object; readonly to: object; readonly leave?: Leave }[] = []
-  const shallow = (value: unknown, leave?: Leave): unknown => {
+  const pending: [object, object, PathTrie | undefined][] = []
+  const shallow = (value: unknown, leave?: PathTrie): unknown => {
     if (typeof value !== 'object' || value === null) return value
     let out = leave === undefined ? copies.get(value) : undefined
     if (out !== undefined) return out
@@ -1084,30 +1039,25 @@ function snapshotter(charge: (steps: number) => void): {
     else if (value instanceof Date) out = isTimestamp(value) ? new Date(dateTime(value)) : value
     else if (isMap(value)) out = {}
     if (leave === undefined) copies.set(value, out)
-    if (out !== value && !(out instanceof Date)) {
-      made.push(out as object)
-      pending.push({ from: value, to: out as object, ...(leave === undefined ? {} : { leave }) })
-    }
+    if (out !== value && !(out instanceof Date)) pending.push([value, out as object, leave])
     return out
   }
-  return {
-    copy: (value, leave) => {
-      try {
-        const out = shallow(value, leave)
-        for (let job = pending.pop(); job !== undefined; job = pending.pop()) {
-          const { from, to } = job
-          if (Array.isArray(from)) {
-            charge(1 + from.length)
-            // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
-            for (let i = 0; i < from.length; i++) (to as unknown[]).push(shallow(from[i]))
-            continue
-          }
+  return (value, leave) => {
+    try {
+      const out = shallow(value, leave)
+      for (let job = pending.pop(); job !== undefined; job = pending.pop()) {
+        const [from, to, tree] = job
+        if (Array.isArray(from)) {
+          charge(1 + from.length)
+          // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+          for (let i = 0; i < from.length; i++) (to as unknown[]).push(shallow(from[i]))
+        } else {
           const names = Object.getOwnPropertyNames(from)
           charge(1 + names.length)
           for (const name of names) {
-            const under = job.leave?.get(name)
+            const under = tree?.next.get(name)
             // A getter is read as evaluation reads it.
-            if (under !== null)
+            if (under?.under !== true)
               definePut(
                 to,
                 name,
@@ -1116,20 +1066,19 @@ function snapshotter(charge: (steps: number) => void): {
               )
           }
         }
-        return out
-      } catch (error) {
-        if (error instanceof BonsaiError) throw error
-        // Data that throws when read (a getter, a Proxy trap) cannot be copied;
-        // it is kept as it is, and fails where evaluation reads it. Copies left
-        // half made are never handed out again.
-        pending.length = 0
-        copies.clear()
-        return value
+        // Filled: nothing changes it again.
+        Object.freeze(to)
       }
-    },
-    freeze: () => {
-      for (const value of made) Object.freeze(value)
-    },
+      return out
+    } catch (error) {
+      if (error instanceof BonsaiError) throw error
+      // Data that throws when read (a getter, a Proxy trap) cannot be copied;
+      // it is kept as it is, and fails where evaluation reads it. Copies left
+      // half made are never handed out again.
+      pending.length = 0
+      copies.clear()
+      return value
+    }
   }
 }
 
