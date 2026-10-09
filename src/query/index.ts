@@ -355,7 +355,7 @@ function budget(options: CommonOptions, source: string): Budget {
   const { maxSteps, timeout, signal } = options
   // Invalid values are passed on to partial(), which rejects them as it always does.
   const validSteps = typeof maxSteps === 'number' && Number.isInteger(maxSteps) && maxSteps >= 0
-  const validTimeout = typeof timeout === 'number' && Number.isInteger(timeout) && timeout >= 0
+  const validTimeout = typeof timeout === 'number' && Number.isFinite(timeout) && timeout >= 0
   const max = validSteps ? maxSteps : DEFAULT_MAX_STEPS
   const deadline = validTimeout && timeout > 0 ? performance.now() + timeout : 0
   let steps = 0
@@ -395,8 +395,7 @@ function budget(options: CommonOptions, source: string): Budget {
     if (timeout !== undefined) {
       if (deadline === 0) limits.timeout = timeout
       else {
-        // Whole milliseconds, as partial() takes them: rounded up, since the deadline still holds.
-        const left = Math.ceil(deadline - performance.now())
+        const left = deadline - performance.now()
         if (left <= 0) throw overTime()
         limits.timeout = left
       }

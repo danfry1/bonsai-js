@@ -176,6 +176,11 @@ describe('one budget covers the whole translation', () => {
   it('keeps 0 as no limit', () => {
     expect(outcome(() => toSQL(program, { ...options, maxSteps: 0, timeout: 0 }))).toBe('ok')
   })
+
+  it('takes a fractional timeout, as evaluation does', () => {
+    expect(outcome(() => toSQL(program, { ...options, timeout: 60_000.5 }))).toBe('ok')
+    expect(outcome(() => toSQL(program, { ...options, timeout: 0.001 }))).toBe('TIMEOUT')
+  })
 })
 
 describe('unary minus translates for SQL', () => {
