@@ -76,12 +76,32 @@ jobs:
           npm pack --ignore-scripts --pack-destination /tmp
           bun run attw /tmp/bonsai-js-*.tgz --ignore-rules no-resolution cjs-resolves-to-esm
 
+      # The tag must name the version being published. Prerelease versions
+      # (1.0.0-rc.1) go to the `next` dist-tag so `latest` stays on the last
+      # stable release; npm refuses to publish a prerelease without a tag.
+      - name: Release channel
+        id: channel
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "$TAG_NAME" != "v$version" ]; then
+            echo "::error::Tag $TAG_NAME does not match package.json version $version"
+            exit 1
+          fi
+          case "$version" in
+            *-*) echo "dist_tag=next" >> "$GITHUB_OUTPUT"; echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "dist_tag=latest" >> "$GITHUB_OUTPUT"; echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
       - name: Stage publish to npm
         # Uploads the tarball to npm's stage queue. Provenance is auto-generated
         # via OIDC trusted publishing. The version is NOT installable until a
         # maintainer approves it with a 2FA challenge:
         #   npm stage approve <id>   (or approve on npmjs.com)
-        run: npm stage publish
+        env:
+          DIST_TAG: ${{ steps.channel.outputs.dist_tag }}
+        run: npm stage publish --tag "$DIST_TAG"
 
       - name: Staged-publish approval reminder
         run: echo "::notice::Version staged to npm. Approve it (npm stage approve <id>, or on npmjs.com) with 2FA to make it installable."
@@ -90,4 +110,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ github.ref_name }}
-        run: gh release create "$TAG_NAME" --generate-notes
+          PRERELEASE: ${{ steps.channel.outputs.prerelease }}
+        run: gh release create "$TAG_NAME" --generate-notes --prerelease="$PRERELEASE"
