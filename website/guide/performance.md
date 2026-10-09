@@ -40,7 +40,7 @@ orders.filter((order) => rule.evaluateSync({ order })).length // => 1
 
 ## Benchmarks
 
-The repository includes a comparison against `@marcbachmann/cel-js`, another safe expression language, on the same workloads. On Node, a typical rule evaluates about 10 million times per second, 1.3x to 2x faster than cel-js. Reproduce it from a checkout with:
+The repository includes a comparison against `@marcbachmann/cel-js`, another safe expression language, on the same workloads. On Node, a typical rule evaluates about 10 million times per second, 1.1x to 2.8x faster than cel-js depending on the workload (measured on Apple silicon; results vary by machine). Reproduce it from a checkout with:
 
 ```bash
 bun run bench

@@ -18,12 +18,12 @@ Most expressions need small, mechanical changes, and the checker finds most of t
 | `a \|> f(b)` | `a.f(b)` or `f(a, b)` | Every function is also a method. |
 | `upper`, `lower` | `toUpperCase`, `toLowerCase` | JavaScript names. |
 | `flatten` | `flat` | |
-| `isString(x)`, `isNumber(x)`, `isArray(x)` | `type(x) == "string"`, `"number"`, `"list"` | `type()` returns the kind of any value. |
-| `isNull(x)` | `x == null` | Also true when `x` is missing. |
-| `toBool(x)` | an explicit test, for example `x != ""` or `x > 0` | Booleans are strict. |
+| `x \|> isString`, `x \|> isNumber`, `x \|> isArray` | `type(x) == "string"`, `"number"`, `"list"` | `type()` returns the kind of any value. |
+| `x \|> isNull` | `x == null` | Also true when `x` is missing. |
+| `x \|> toBool` | an explicit test, for example `x != ""` or `x > 0` | Booleans are strict. |
 | `a \|> diffDays(b)` (epoch milliseconds) | `round(abs(inDays(timestamp(a) - timestamp(b))))` | Subtracting timestamps gives a signed, fractional duration. See [Results that changed](#results-that-changed). |
 | `now()` (epoch milliseconds) | `now()` (a timestamp) | Compare with `now() - t > days(30)`. |
-| `ts \|> formatDate("YYYY-MM-DD")` | `formatDate(t, "yyyy-MM-dd")` | Takes a timestamp, not epoch milliseconds. Tokens are `yyyy MM dd HH mm ss SSS` (and more); an optional time zone argument is accepted. |
+| `ts \|> formatDate("YYYY-MM-DD")` | `formatDate(timestamp(ts), "yyyy-MM-dd")` | Takes a timestamp, not epoch milliseconds (`timestamp(ts)` converts them). Tokens are `yyyy MM dd HH mm ss SSS` (and more); an optional time zone argument is accepted. |
 | `xs \|> filter`, `xs \|> some`, `xs \|> every` (no argument, by truthiness) | `xs.filter(. != null)`, `flags.some(.)`, `flags.every(.)` | Lambdas are required. `.` alone works for lists of booleans; for other lists write the test. |
 | `undefined` | `null` | There is no `undefined` literal. |
 | `substring(i, j)` | `slice(i, j)` | The same for `0 <= i <= j`. `slice` does not swap reversed arguments and counts negative positions from the end. See [Results that changed](#results-that-changed). |
@@ -34,7 +34,7 @@ Most expressions need small, mechanical changes, and the checker finds most of t
 | `with(i, v)` | `xs.slice(0, i) + [v] + xs.slice(i + 1)` | |
 | `charCodeAt(i)` | none | Declare a host function if you need code points. |
 | `+x` (unary plus) | `toNumber(x)` | There is no unary plus. |
-| `indexOf(s, from)`, `includes(s, from)`, `startsWith(s, from)` | `slice(from).indexOf(s)` (add `from` back), `slice(from).includes(s)`, `slice(from).startsWith(s)` | The position argument is gone; the checker reports the extra argument. |
+| `indexOf(s, from)`, `includes(s, from)`, `startsWith(s, from)` | `let i = x.slice(from).indexOf(s); i < 0 ? -1 : i + from`, `slice(from).includes(s)`, `slice(from).startsWith(s)` | The position argument is gone; the checker reports the extra argument. |
 | `toString(16)`, `split()` with no separator | a host function; `[s]` | Radix and whole-string split are gone; the checker reports both. |
 | `slice()`, `at()`, `toFixed()` with no argument | `slice(0)`, `at(0)`, `toFixed(0)` | The argument is required; the checker reports the call. |
 
@@ -49,7 +49,7 @@ items.filter(. != null) // => [1, 2]
 
 ## Results that changed
 
-These expressions give different results in the two versions. Most run without any error in 1.x, so the checker cannot flag them; search stored expressions for the functions involved. Rows whose 1.x column is a check error are the exception, and `env.check()` finds them.
+These expressions give different results in the two versions. The table writes them in 1.x syntax; in 0.x, functions such as `round`, `avg`, `toNumber`, and `toString` were pipe transforms (`-2.5 |> round`). Most run without any error in 1.x, so the checker cannot flag them; search stored expressions for the functions involved. Rows whose 1.x column is a check error are the exception, and `env.check()` finds them.
 
 | Expression | 0.x | 1.x | To keep the old result |
 | --- | --- | --- | --- |

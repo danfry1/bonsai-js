@@ -4,18 +4,20 @@ Bonsai is published to npm as an ESM-only package with TypeScript types included
 
 ::: code-group
 ```bash [npm]
-npm install bonsai-js
+npm install bonsai-js@next
 ```
 ```bash [bun]
-bun add bonsai-js
+bun add bonsai-js@next
 ```
 ```bash [pnpm]
-pnpm add bonsai-js
+pnpm add bonsai-js@next
 ```
 ```bash [yarn]
-yarn add bonsai-js
+yarn add bonsai-js@next
 ```
 :::
+
+These docs describe 1.0, which is in release candidate on npm's `next` tag. Without `@next`, the commands above install 0.5.0 until 1.0.0 is released.
 
 ## Entry points
 
@@ -23,6 +25,7 @@ yarn add bonsai-js
 | --- | --- |
 | `bonsai-js` | `bonsai()`, `fn()`, the type builders `t`, error classes, and types |
 | `bonsai-js/service` | `createLanguageService()` for editor completions, hover, and diagnostics |
+| `bonsai-js/query` | `toSQL()` and `toMongo()`, which translate a filter to a SQL `WHERE` clause or a MongoDB filter |
 
 ## Runtimes
 

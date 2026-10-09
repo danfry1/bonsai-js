@@ -53,6 +53,10 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      # Runs every documentation example and compares it with its stated result.
+      - name: Documentation examples
+        run: bun run check:docs
+
       - name: Test
         run: bun run test:coverage
 

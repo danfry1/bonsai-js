@@ -2,7 +2,7 @@
 
 > A small, safe, typed expression language for JavaScript: rules, filters, formulas, and templates written by people other than your developers. JavaScript-like syntax, static checking against declared data types, bounded evaluation, zero dependencies.
 
-- Package: `bonsai-js` (ESM, TypeScript types included). Entry points: `bonsai-js` and `bonsai-js/service`.
+- Package: `bonsai-js` (ESM, TypeScript types included). Entry points: `bonsai-js`, `bonsai-js/service`, and `bonsai-js/query`. 1.0 is in release candidate: install `bonsai-js@next` (plain `bonsai-js` is 0.5.0 until 1.0.0).
 - Runtimes: Node.js 22+, current Bun, modern ESM browsers. No eval, no generated code.
 
 ## Example
@@ -17,7 +17,7 @@ const env = bonsai({
   },
 })
 
-env.check('user.agee > 18') // { ok: false, diagnostics: [{ code: 'UNKNOWN_PROPERTY', ... did you mean "age"? }] }
+env.check('user.agee > 18') // { ok: false, type: { kind: 'boolean' }, diagnostics: [{ code: 'UNKNOWN_PROPERTY', ... did you mean "age"? }] }
 
 const rule = env.compile(
   'user.plan == "pro" && orders.filter(.paid && now() - .created < days(30)).map(.total).sum() > 100',
@@ -43,6 +43,10 @@ rule.evaluateSync(context) // a boolean
 - `bonsai({ variables, strict, functions, libraries, limits, cacheSize, clock, validateContext })` returns an immutable environment. Declaring `variables` makes it strict (undeclared names are errors) unless `strict: false`.
 - `env.check(src)` returns `{ ok, type, diagnostics }` and never throws. `env.compile(src, { expect })` returns a program with `evaluate`, `evaluateSync`, `type`, `references`, `warnings`.
 - `env.evaluateSync(src, ctx)` and `await env.evaluate(src, ctx)` compile through a cache. Options: `{ timeout, maxSteps, signal }`.
+- `await program.explain(ctx)` / `program.explainSync(ctx)` evaluate and return `{ ok, value | error, trace, reasons(), toString(), toJSON() }`, a trace of every sub-expression's value.
+- `program.partial(known, { unknown?, callHostFunctions?, now? })` returns `{ status: 'value' }`, `{ status: 'error' }`, or `{ status: 'residual', source, bindings, dependsOn, evaluate, evaluateSync }`: a simplified expression over only the missing data.
+- `toSQL(program, { row, columns, dialect: 'postgres' | 'sqlite', known?, now?, paramOffset? })` -> `{ sql, params }` and `toMongo(program, { row, fields, known?, now? })` -> `{ filter, options }` from `bonsai-js/query` translate a filter to a query selecting exactly the records it accepts.
+- `env.parse(src)` gives a JSON syntax tree; `print(tree, { calls? })` turns it back into source.
 - Host functions: `fn({ params: [t.string()], returns: t.boolean(), run, async?, context?, required?, rest? })`.
 - Types: `t.string() number() boolean() null() timestamp() duration() literal() enum() list() object() record() optional() union() opaque() any()`; `Infer<typeof T>`.
 - Errors: `BonsaiSyntaxError`, `BonsaiCheckError` (`.diagnostics`), `BonsaiLimitError`, `BonsaiRuntimeError`; each has a stable `code`. Host functions that throw give `HOST_ERROR`; results that break the declared type give `HOST_CONTRACT`, which `try()` does not catch.

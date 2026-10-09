@@ -2,7 +2,7 @@
 
 Bonsai (`bonsai-js` on npm) is a small, total, typed expression language for JavaScript. It evaluates untrusted expression text against host data without executing JavaScript. Every expression terminates: there are no loops, recursion, or assignment. An expression reaches host code only through functions the host declared and data the host put in the context.
 
-Entry points: `bonsai-js` (environment, types, errors) and `bonsai-js/service` (editor features). ESM only, zero dependencies. Runtimes: Node.js 22+, current Bun, modern ESM browsers.
+Entry points: `bonsai-js` (environment, types, errors, `print`), `bonsai-js/service` (editor features), and `bonsai-js/query` (SQL and MongoDB translation). ESM only, zero dependencies. 1.0 is in release candidate: install `bonsai-js@next` (plain `bonsai-js` is 0.5.0 until 1.0.0). Runtimes: Node.js 22+, current Bun, modern ESM browsers.
 
 ## Quick start
 
@@ -105,6 +105,7 @@ Environment members:
 - `check(src, { expect? })` -> `{ ok, type, diagnostics }`; never throws.
 - `compile(src, { expect? })` -> Program; throws `BonsaiSyntaxError`, `BonsaiCheckError`, `BonsaiLimitError`.
 - `evaluateSync(src, ctx?, options?)`, `evaluate(src, ctx?, options?)`: compile through an LRU cache (`cacheSize`, default 256) and evaluate.
+- `explainSync(src, ctx?, options?)`, `explain(src, ctx?, options?)`: compile through the cache and explain (see Program).
 - `extend(options)` -> new environment with more variables/functions/libraries.
 - `listFunctions()`, `describeFunction(name)` -> `{ name, description, host, async, signatures: [{ params, required, rest?, returns }] }`.
 - `parse(src)` -> syntax tree; `variables`; `strict`.
@@ -113,7 +114,23 @@ Evaluation options: `timeout` (ms), `maxSteps`, `signal` (AbortSignal).
 
 ### Program
 
-`source`, `ast`, `type`, `async`, `warnings`, `references: { variables, functions }`, `evaluate(ctx?, options?)`, `evaluateSync(ctx?, options?)`. Results are plain values; timestamps are `Date`; durations are `Duration` (`ms`, ISO `toString()`).
+`source`, `ast`, `type`, `async`, `warnings`, `references: { variables, functions }`, `evaluate(ctx?, options?)`, `evaluateSync(ctx?, options?)`, `explain(ctx?, options?)`, `explainSync(ctx?, options?)`, `partial(known, options?)`. Results are plain values; timestamps are `Date`; durations are `Duration` (`ms`, ISO `toString()`).
+
+### Explain
+
+`await program.explain(ctx, options?)` (async, like `evaluate`) or `program.explainSync(ctx, options?)` evaluates and records every sub-expression's value. Returns `{ ok: true, value } | { ok: false, error }` plus `trace` (nodes with `id`, `kind`, `text`, `start`, `end`, `value` or `error`, `children`, `evaluated: false` for skipped parts, `iterations` for lambda runs), `truncated`, `reasons()` (the conditions that decided the result), `toString()` (indented tree), and `toJSON()` (bounded snapshot that never runs getters). Evaluation errors are returned, not thrown. Options: the evaluation options plus `maxIterations` (default 20), `maxTraceNodes` (default 10000), `exhaustive` (also evaluate skipped `&&`/`||` sides so `reasons()` lists every failing condition).
+
+### Partial evaluation
+
+`program.partial(known, options?)` evaluates what `known` decides. Options: `unknown` (variables or dotted paths; default: variables missing from `known`), `callHostFunctions` (default false), `now` (the time `now()` returns; otherwise `now()` stays in the residual). Returns `{ status: 'value', value }`, `{ status: 'error', error }` (fails whatever the unknown data is), or `{ status: 'residual', residual, source, bindings, dependsOn, hostFunctions, evaluate(ctx, options?), evaluateSync(ctx, options?) }`. The residual is exact: evaluating it with the full context gives the same value or error as the original. Known values that are not short primitives are referenced as `__knownN` bindings; `evaluate`/`evaluateSync` supply them. Known variables are validated when `validateContext` is on.
+
+### Query translation (bonsai-js/query)
+
+`toSQL(program, { row, columns, dialect, known?, now?, paramOffset? })` -> `{ sql, params }` for Postgres or SQLite; `toMongo(program, { row, fields, known?, now? })` -> `{ filter, options }` (pass `options` to `find()`). `row` names the record variable; every other variable must be in `known`. Columns map keys to `text`, `number`, `boolean`, `timestamp` (or `{ type, name }`); anything else is rejected. The query selects exactly the records for which the filter is `true` in Bonsai. Parts without an exact database equivalent throw `BonsaiTranslationError` (`UNTRANSLATABLE`) with the span. Unknown options are `TypeError`s.
+
+### Syntax trees
+
+`env.parse(src)` returns a JSON syntax tree (`type`, `start`, `end` on every node); `print(tree, { calls?: 'method' | 'function' })` turns it back into source that evaluates the same way.
 
 ### Host functions
 
@@ -139,10 +156,11 @@ Arguments are validated before `run`; results are checked deeply against `return
 
 ### Errors
 
-All errors from checking and evaluating extend `BonsaiError` with `code`, `source`, `span` (`{ start, end }`), `position` (1-based), `formatted` (message + code frame); exceptions from host code (functions, getters, Proxies, including a `BonsaiError` a host function throws) are wrapped as `HOST_ERROR`. Invalid configuration throws `TypeError` or `RangeError` from `bonsai()`, `fn()`, `evaluate*()` (per-evaluation options), and `print()` (trees the parser could not produce).
+All errors from checking and evaluating extend `BonsaiError` with `code`, `source`, `span` (`{ start, end }`), `position` (1-based), `formatted` (message + code frame); exceptions from host code (functions, getters, Proxies, including a `BonsaiError` a host function throws) are wrapped as `HOST_ERROR`. Invalid configuration throws `TypeError` or `RangeError` (a wrong type or unknown option key is a `TypeError`, a value out of range a `RangeError`) from `bonsai()`, `fn()`, `compile()`/`check()`, `evaluate*()` and `explain*()` (per-evaluation options), `partial()`, `toSQL()`/`toMongo()`, and `print()` (trees the parser could not produce).
 - `BonsaiSyntaxError`: `SYNTAX`
 - `BonsaiCheckError`: `CHECK` (`.diagnostics`)
 - `BonsaiLimitError`: `SOURCE_TOO_LONG`, `TOO_DEEP`, `TOO_MANY_NODES`, `TOO_COMPLEX`, `STEP_LIMIT`, `STRING_LIMIT`, `LIST_LIMIT`, `PATTERN_LIMIT`, `TIMEOUT`, `ABORTED`
+- `BonsaiTranslationError` (from `bonsai-js/query`): `UNTRANSLATABLE`
 - `BonsaiRuntimeError`: `TYPE_ERROR`, `NO_OVERLOAD`, `NULL_RECEIVER`, `DIVISION_BY_ZERO`, `NON_FINITE`, `BLOCKED_PROPERTY`, `INVALID_ARGUMENT`, `ASYNC_IN_SYNC`, `HOST_ERROR`, `HOST_CONTRACT`, `INVALID_CONTEXT`
 
 ### Limits (defaults)

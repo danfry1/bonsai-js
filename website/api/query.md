@@ -43,7 +43,7 @@ The types are part of the contract, and results are exact only when the data kee
 - SQLite databases use UTF-8 (the default), tables are `STRICT`, text columns use the default `BINARY` collation (not `NOCASE`), and boolean columns hold only 0 or 1 (`CHECK (active IN (0, 1))`).
 - MongoDB fields hold the declared scalar types, not arrays, and the objects on the way to a nested key exist. Numbers are doubles, 32-bit integers, or 64-bit integers within ±2^53; `Decimal128` values compare differently from Bonsai's doubles.
 
-Invalid options (an unknown `dialect` or column type, a missing `row`, the row variable in `known`, an invalid column name) throw a `TypeError`.
+Invalid options (an unknown option key, an unknown `dialect` or column type, a missing `row`, the row variable in `known`, an invalid column name, a `paramOffset` that is not a number) throw a `TypeError`; a `paramOffset` that is negative or not an integer throws a `RangeError`.
 
 ## What translates
 
