@@ -62,6 +62,24 @@ export interface Iteration {
 }
 
 export const DEFAULT_MAX_ITERATIONS = 20
+
+/**
+ * Longest text a trace record keeps (a longer one ends with `...`), so an
+ * explanation and its JSON stay bounded however long the source is. The
+ * record's offsets still let a UI slice the full source.
+ */
+export const MAX_TRACE_TEXT = 120
+
+const HIGH_SURROGATE_FIRST = 0xd800
+const HIGH_SURROGATE_LAST = 0xdbff
+
+/** `text` cut to {@link MAX_TRACE_TEXT} code units, never inside a surrogate pair. */
+export function capTraceText(text: string): string {
+  if (text.length <= MAX_TRACE_TEXT) return text
+  const code = text.charCodeAt(MAX_TRACE_TEXT - 1)
+  const splitsPair = code >= HIGH_SURROGATE_FIRST && code <= HIGH_SURROGATE_LAST
+  return `${text.slice(0, splitsPair ? MAX_TRACE_TEXT - 1 : MAX_TRACE_TEXT)}...`
+}
 export const DEFAULT_MAX_TRACE_NODES = 10_000
 
 /** Records traces during one explained evaluation. */
@@ -114,7 +132,11 @@ export class Tracer {
       kind: node.type,
       start: node.start,
       end: node.end,
-      text: this.textOf === undefined ? this.source.slice(node.start, node.end) : this.textOf(node),
+      text: capTraceText(
+        this.textOf === undefined
+          ? this.source.slice(node.start, Math.min(node.end, node.start + MAX_TRACE_TEXT + 1))
+          : this.textOf(node),
+      ),
       evaluated: true,
       children: [],
     }

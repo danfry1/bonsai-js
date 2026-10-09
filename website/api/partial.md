@@ -44,28 +44,30 @@ The residual is exact: evaluating it with the full data gives the same value or 
 
 ## Bindings
 
-Short primitives (numbers, booleans, `null`, strings up to 200 characters) are written into the residual. Other known values, such as lists, maps, dates, and durations, are kept by reference in `result.bindings` and named in the residual (`order.sku in __known1`). `result.evaluateSync(context)` and `result.evaluate(context)` supply the bindings for you; to store a residual instead, see Storing a residual below.
+Short primitives (numbers, booleans, `null`, strings up to 16 characters) are written into the residual. Other known values, such as longer strings, lists, maps, dates, and durations, are kept by reference in `result.bindings` and named in the residual (`order.sku in __known1`); a value used in several places is bound once. `result.evaluateSync(context)` and `result.evaluate(context)` supply the bindings for you; to store a residual instead, see Storing a residual below.
 
 ## Options
 
 | Option | Default | Effect |
 |---|---|---|
-| `unknown` | variables missing from `known` | Variables or dotted paths (`order`, `user.riskScore`) to treat as unknown; unknown wins over a value you passed |
+| `unknown` | variables and fields missing from `known` | Variables or dotted paths (`order`, `user.riskScore`) to treat as unknown; unknown wins over a value you passed |
 | `callHostFunctions` | `false` | Call host functions whose inputs are known (only synchronous ones); otherwise they stay in the residual |
 | `now` | none | The time `now()` returns; otherwise `now()` stays in the residual (the environment's `clock` is not used, so a stored residual reads the time when it is evaluated) |
 | `maxSteps` | the environment's | Step budget for the whole partial evaluation (`0` for none) |
 | `timeout` | the environment's | Wall-clock budget in milliseconds for the whole partial evaluation (`0` for none) |
 | `signal` | none | Cancels the partial evaluation with an `ABORTED` error |
 
-Limit errors (steps, time, cancellation) are thrown from `partial()` rather than guessed. Every sub-expression evaluated during one `partial()` call shares one step budget and one deadline. `env.partial(source, known, options?)` compiles through the environment's cache and does the same. Options follow the same rules as everywhere else: an unknown option or a wrong type is a `TypeError`. With `validateContext`, the variables in `known` are validated as evaluation validates them (a mismatch is an `INVALID_CONTEXT` result), so a known object must have all its declared fields; a missing field would otherwise be read as `null`. To leave part of an object unknown, list its path in `unknown` (`user.riskScore`): a variable with an unknown path inside it is not validated.
+Limit errors (steps, time, cancellation) are thrown from `partial()` rather than guessed. Every sub-expression evaluated during one `partial()` call shares one step budget and one deadline. `env.partial(source, known, options?)` compiles through the environment's cache and does the same. Options follow the same rules as everywhere else: an unknown option or a wrong type is a `TypeError`. With `validateContext`, the variables in `known` are validated as evaluation validates them (a mismatch is an `INVALID_CONTEXT` result), so a known object must have all its declared fields. To leave part of an object unknown, list its path in `unknown` (`user.riskScore`): a variable with an unknown path inside it is not validated.
 
 ## Details
 
 - **Evaluate the residual with the full context.** A known part that fails (say, a division by zero in a branch that may not run) stays in the residual so the error can still happen, and it reads the known variables again.
 - **Known parts of every branch are evaluated**, including branches the unknown data may never choose. They count toward the step budget, and context getters they read run during `partial()`.
 - **Host functions** are called only with `callHostFunctions: true`, never when they are async, and functions declared `call: true` only when you also pass `unknown: []`, since they can read variables the expression does not name.
-- **With an explicit `unknown` list**, a variable that is neither in `known` nor listed reads as `null`, as it would in normal evaluation.
+- **Missing data is unknown by default.** Without an `unknown` list, a variable missing from `known` and a field missing from a known object (`cart.items` when `known` has `cart: {}`) both stay unknown, and their paths appear in `dependsOn`. In a typed environment, an object read whole (`cart == saved`) that lacks a declared field is unknown too. In an open environment an object read whole is taken as given, since nothing says which fields it should have; list the path in `unknown` when more fields are still to come.
+- **With an explicit `unknown` list**, nothing else is guessed: a variable or field that is neither in `known` nor listed reads as `null`, as it would in normal evaluation.
 - **`expect` still applies.** A program compiled with `expect` checks a decided `value` against it (a mismatch is a `TYPE_ERROR` result), and its residual checks results the same way.
-- **The residual reads your context as it is.** The bindings are compiled into the residual, so evaluating it copies nothing: getters run on your own object, and host functions declared `call: true` receive it as `call.context`, as they do in evaluation.
+- **The residual reads your context as it is.** The bindings are compiled into the residual, so evaluating it copies nothing: variables and getters read your own object. Host functions declared `call: true` receive your context as `call.context` when it has every variable from `known`; otherwise they receive a frozen copy of the known data overlaid with your context (your values win), so they see the same data they would have seen in a full evaluation.
+- **Residual size is limited.** Printing the residual counts toward the step budget, and a residual longer than the environment's `maxSourceLength` is a `SOURCE_TOO_LONG` limit error thrown from `partial()`. Copying `known` for `call: true` host functions also counts toward the step budget.
 - **Storing a residual.** `result.evaluateSync` and `result.evaluate` are the reliable way to run it; keep the result in memory where you can. If you store `source` and `bindings` and compile them yourself, use a non-strict environment (the binding names are not declared variables) and pass the bindings in the context. Bindings are live values: JSON turns a date or a duration into ISO-8601 text, so restore dates with `new Date(text)` (or store bindings in a format that keeps them) before evaluating. Inlined values can also make a type error in an untaken branch visible to the checker.
 

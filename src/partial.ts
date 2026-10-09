@@ -1,14 +1,16 @@
 import type { Analysis } from './check/checker.js'
-import { BonsaiRuntimeError, type BonsaiError } from './errors.js'
+import { BonsaiLimitError, BonsaiRuntimeError, type BonsaiError } from './errors.js'
 import { forEachChild, type LambdaNode, type Node, type SpreadNode } from './syntax/ast.js'
+import { parse, type ParseLimits } from './syntax/parser.js'
 import { print } from './syntax/printer.js'
+import { MAX_TRACE_TEXT, capTraceText } from './runtime/trace.js'
+import { isMap, type Duration } from './runtime/values.js'
 import type {
   AbortSignalLike,
   EvaluateOptions,
   ExplainOptions,
   Explanation,
 } from './environment.js'
-import type { Duration } from './runtime/values.js'
 
 // === dependencies ===
 
@@ -247,8 +249,18 @@ export interface PartialOptions {
 export interface PartialEngine {
   readonly analysis: Analysis
   readonly hostKind: (name: string) => HostKind | undefined
-  /** Charges one step of partial-evaluation work against the shared budget. */
-  readonly charge: () => void
+  /** Charges partial-evaluation work (one step by default) against the shared budget. */
+  readonly charge: (steps?: number) => void
+  /** Checks the shared deadline and signal now. */
+  readonly checkTime: () => void
+  /** The longest residual source allowed: the environment's maxSourceLength. */
+  readonly maxSourceLength: number
+  /**
+   * Whether a known value read whole is incomplete for its declared type (an
+   * object missing declared fields), so it cannot be read as given. Open
+   * environments declare nothing, so a value they read whole is taken as given.
+   */
+  readonly incomplete: (path: string, value: unknown) => boolean
   /**
    * Evaluates a subtree against the known context with the given free locals,
    * sharing one step budget and deadline across the whole partial evaluation.
@@ -258,11 +270,15 @@ export interface PartialEngine {
   readonly evaluate: (node: Node, locals: readonly (readonly [string, unknown])[]) => unknown
   /**
    * Compiles a residual for later evaluation, with `bindings` as fixed values
-   * of the variables they name; everything else is read from the caller's context.
+   * of the variables they name; everything else is read from the caller's
+   * context. `source` is the residual printed; `known` (when the residual calls
+   * `call: true` host functions) is the known data they see under the caller's.
    */
   readonly compileResidual: (
     residual: Node,
     bindings: Readonly<Record<string, unknown>>,
+    source: string,
+    known: Readonly<Record<string, unknown>> | undefined,
   ) => {
     runSync: (ctx: unknown, options: unknown) => unknown
     runAsync: (ctx: unknown, options: unknown) => Promise<unknown>
@@ -282,7 +298,17 @@ type Outcome =
   | { readonly known: false; readonly node: Node; readonly fails?: BonsaiRuntimeError }
 
 const at = { start: 0, end: 0 }
-const MAX_INLINE_STRING = 200
+const NO_PATHS: ReadonlySet<string> = new Set()
+/**
+ * Longest string written into a residual as a literal. A longer one is bound
+ * once and referenced by name, so a value used many times is not copied into
+ * the residual at every use.
+ */
+const MAX_INLINE_STRING = 16
+/** Steps charged per character of residual printed or compiled. */
+export const RESIDUAL_CHARS_PER_STEP = 16
+/** Known keys copied per step for a residual's call: true functions. */
+export const KNOWN_KEYS_PER_STEP = 8
 const BOOLEAN_OPERATORS = new Set(['==', '!=', '<', '<=', '>', '>=', 'in', 'not in', '&&', '||'])
 
 function literalFor(value: unknown): Node | undefined {
@@ -319,10 +345,15 @@ export function partiallyEvaluate<R>(
   const touchesUnknown = unknownIndex(unknown)
   const callHost = options.callHostFunctions === true
   const nowKnown = options.now !== undefined
+  // Without an explicit unknown list, anything not given is unknown, including
+  // a property a known object leaves out (or a declared object given in part):
+  // reading it as null could decide the result wrongly.
+  const missing = options.unknown === undefined ? missingPaths(rootDeps.paths) : NO_PATHS
 
   const bindings: Record<string, unknown> = {}
+  // Binding names must not shadow a variable the expression reads or a name it
+  // binds; known data the expression never reads is irrelevant.
   const taken = new Set([...rootDeps.paths].map((path) => path.split('.')[0]))
-  for (const name of Object.keys(known)) taken.add(name)
   for (const name of boundNames(root)) taken.add(name)
   let bindingCount = 0
   const freshName = (base: string): string => {
@@ -330,12 +361,57 @@ export function partiallyEvaluate<R>(
     for (let i = 2; taken.has(name); i++) name = `${base}${i}`
     return name
   }
+  // One binding per value, however often it is used.
+  const bound = new Map<unknown, string>()
   const bind = (value: unknown): Node => {
-    let name: string
-    do name = `__known${++bindingCount}`
-    while (taken.has(name))
-    bindings[name] = value
+    let name = bound.get(value)
+    if (name === undefined) {
+      do name = `__known${++bindingCount}`
+      while (taken.has(name))
+      bindings[name] = value
+      bound.set(value, name)
+    }
     return { type: 'Variable', name, ...at }
+  }
+
+  /**
+   * The paths the expression reads that the known data does not give: a path
+   * through a known object that lacks the next property (or holds undefined),
+   * every path above such a path (reading that object whole would see it
+   * incomplete), and a whole read of a declared object given in part.
+   */
+  function missingPaths(paths: ReadonlySet<string>): ReadonlySet<string> {
+    const out = new Set<string>()
+    // The path and every path above it (reading those whole would see the gap).
+    const markMissing = (segments: readonly string[]): void => {
+      for (let i = 1; i <= segments.length; i++) out.add(segments.slice(0, i).join('.'))
+    }
+    for (const path of paths) {
+      engine.charge()
+      const segments = path.split('.')
+      let value: unknown = known[segments[0]]
+      // A variable known does not give is unknown already.
+      if (value === undefined) continue
+      // Whether the path reached its own value (rather than stopping at a gap,
+      // or at null, a list, or another value, where evaluation decides).
+      let reached = true
+      for (let i = 1; i < segments.length; i++) {
+        if (value === null || !isMap(value)) {
+          reached = false
+          break
+        }
+        const segment = segments[i]
+        const next = Object.hasOwn(value, segment) ? value[segment] : undefined
+        if (next === undefined) {
+          markMissing(segments)
+          reached = false
+          break
+        }
+        value = next
+      }
+      if (reached && engine.incomplete(path, value)) markMissing(segments)
+    }
+    return out
   }
 
   type Env = ReadonlyMap<string, Outcome>
@@ -347,7 +423,7 @@ export function partiallyEvaluate<R>(
     // A context function can read variables the expression never names, so it
     // runs only when the caller says nothing is unknown.
     if (deps.wholeContext && (options.unknown === undefined || unknown.length > 0)) return false
-    for (const path of deps.paths) if (touchesUnknown(path)) return false
+    for (const path of deps.paths) if (touchesUnknown(path) || missing.has(path)) return false
     for (const name of deps.locals) if (env.get(name)?.known !== true) return false
     return true
   }
@@ -557,18 +633,37 @@ export function partiallyEvaluate<R>(
   // An expression that is known except for an error it always raises.
   const residualDeps = dependencies(engine.hostKind)(outcome.node)
   const frozenBindings = Object.freeze({ ...bindings })
+  // Printing and compiling the residual are work proportional to its size:
+  // charged, checked against the deadline, and bounded like any source.
+  const source = print(outcome.node)
+  engine.charge(1 + Math.ceil(source.length / RESIDUAL_CHARS_PER_STEP))
+  engine.checkTime()
+  if (source.length > engine.maxSourceLength) {
+    throw new BonsaiLimitError(
+      'SOURCE_TOO_LONG',
+      `The residual is ${source.length} characters long, more than maxSourceLength (${engine.maxSourceLength})`,
+    )
+  }
+  // A call: true host function reads the whole context, which includes the
+  // known data: the residual's calls see it under the context they are given.
+  const hostFunctions = hostCalls(outcome.node, engine.hostKind)
+  const readsContext = hostFunctions.some((name) => engine.hostKind(name)?.call === true)
   // The bindings are compiled in as constants, so evaluating reads the caller's
   // context as it is: no per-call copy, and getters see their own object.
-  const compiled = engine.compileResidual(outcome.node, frozenBindings)
+  const knownCopy = readsContext ? Object.freeze({ ...known }) : undefined
+  if (knownCopy !== undefined)
+    engine.charge(1 + Math.ceil(Object.keys(knownCopy).length / KNOWN_KEYS_PER_STEP))
+  const compiled = engine.compileResidual(outcome.node, frozenBindings, source, knownCopy)
+  engine.checkTime()
   return Object.freeze({
     status: 'residual',
     residual: outcome.node,
-    source: print(outcome.node),
+    source,
     bindings: frozenBindings,
     dependsOn: [...residualDeps.paths]
       .filter((path) => !Object.hasOwn(frozenBindings, path.split('.')[0]))
       .sort(),
-    hostFunctions: hostCalls(outcome.node, engine.hostKind),
+    hostFunctions,
     evaluateSync: (context?: object, evaluateOptions?: EvaluateOptions) =>
       compiled.runSync(context, evaluateOptions) as R,
     evaluate: async (context?: object, evaluateOptions?: EvaluateOptions) =>
@@ -578,6 +673,53 @@ export function partiallyEvaluate<R>(
     explain: (context?: object, explainOptions?: ExplainOptions) =>
       compiled.explainAsync(context, explainOptions) as Promise<Explanation<R>>,
   })
+}
+
+/**
+ * The text of each node of a residual tree, for explanations: slices of the
+ * residual's printed `source`, found by parsing it once and walking the parsed
+ * tree alongside the residual (an implicit lambda is its body in the parsed
+ * tree). Each text is capped, so the whole costs time and memory in proportion
+ * to the source, never to its size times the number of nodes. A node the walk
+ * cannot pair (or a source the parser rejects) has empty text.
+ */
+export function residualTexts(
+  root: Node,
+  source: string,
+  limits: ParseLimits,
+): ReadonlyMap<Node, string> {
+  const texts = new Map<Node, string>()
+  let parsed: Node
+  try {
+    parsed = parse(source, limits)
+  } catch {
+    return texts
+  }
+  const children = (node: Node): Node[] => {
+    const out: Node[] = []
+    forEachChild(node, (child) => {
+      out.push(child)
+    })
+    return out
+  }
+  const walk = (node: Node, twin: Node): void => {
+    texts.set(
+      node,
+      capTraceText(source.slice(twin.start, Math.min(twin.end, twin.start + MAX_TRACE_TEXT + 1))),
+    )
+    if (node.type === 'Lambda' && node.implicit && twin.type !== 'Lambda') {
+      walk(node.body, twin)
+      return
+    }
+    const mine = children(node)
+    const theirs = children(twin)
+    if (mine.length !== theirs.length) return
+    mine.forEach((child, i) => {
+      walk(child, theirs[i])
+    })
+  }
+  walk(root, parsed)
+  return texts
 }
 
 // === tree helpers ===

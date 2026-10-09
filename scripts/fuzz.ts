@@ -850,6 +850,94 @@ function checkPartial(
       `partial of ${JSON.stringify(source)} with ${unknown.join(',') || 'nothing'} unknown gave ${describeOutcome(outcome)}${shown}, evaluation gave ${describeOutcome(expected)}`,
     )
   }
+  if (partial.status === 'residual') checkResidualExplain(partial, context, outcome, source)
+  checkPartialObject(program, source, context, expected, hash)
+}
+
+/** A residual explains to what it evaluates to, and its explanation renders and serializes. */
+function checkResidualExplain(
+  residual: object,
+  context: Record<string, unknown>,
+  expected: Outcome,
+  source: string,
+): void {
+  const explained = capture('residual explain', () =>
+    (residual as { explainSync: (ctx: object) => unknown }).explainSync(context),
+  )
+  if (!explained.ok) {
+    throw new FuzzViolation(`residual explain of ${JSON.stringify(source)} threw ${explained.code}`)
+  }
+  const explanation = explained.value as {
+    ok: boolean
+    value?: unknown
+    error?: { code: string }
+    toString: () => string
+  }
+  const outcome: Outcome = explanation.ok
+    ? { ok: true, value: explanation.value }
+    : { ok: false, code: explanation.error?.code ?? '', message: '' }
+  if (!outcome.ok && LIMIT_CODES.has(outcome.code)) return
+  if (!sameOutcome(expected, outcome)) {
+    throw new FuzzViolation(
+      `residual explain of ${JSON.stringify(source)} gave ${describeOutcome(outcome)}, residual evaluation gave ${describeOutcome(expected)}`,
+    )
+  }
+  String(explanation)
+  JSON.stringify(explanation)
+}
+
+/**
+ * Partial evaluation with a known object given in part and no unknown list:
+ * the missing field is unknown, never read as null, so the residual (or the
+ * decided result) matches evaluation with the full data.
+ */
+function checkPartialObject(
+  program: { partial: (known: object, options?: object) => unknown },
+  source: string,
+  context: Record<string, unknown>,
+  expected: Outcome,
+  hash: number,
+): void {
+  const objects = Object.keys(context).filter((name) => {
+    const value = context[name]
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+  })
+  const name = objects[Math.abs(hash) % Math.max(objects.length, 1)]
+  if (name === undefined) return
+  // The guarantee is for properties read by name: an object read whole is
+  // taken as given. So only objects every use of which reads a named field.
+  const uses = source.match(new RegExp(`(?<![\\w.])${name}(?!\\w)`, 'gu')) ?? []
+  const fieldReads = [
+    ...source.matchAll(new RegExp(`(?<![\\w.])${name}\\??\\.([A-Za-z_]\\w*)`, 'gu')),
+  ]
+  if (uses.length === 0 || uses.length !== fieldReads.length) return
+  const read = fieldReads.map((match) => match[1])
+  const object = context[name] as Record<string, unknown>
+  const dropped = read[Math.abs(hash >> 3) % read.length]
+  if (dropped === undefined || !Object.hasOwn(object, dropped)) return
+  const known = { ...context, [name]: { ...object, [dropped]: undefined } }
+  const result = capture('partial (object in part)', () => program.partial(known))
+  if (!result.ok) {
+    if (LIMIT_CODES.has(result.code)) return
+    throw new FuzzViolation(`partial of ${JSON.stringify(source)} threw ${result.code}`)
+  }
+  const partial = result.value as
+    | { status: 'value'; value: unknown }
+    | { status: 'error'; error: { code: string } }
+    | { status: 'residual'; source: string; evaluateSync: (ctx: object) => unknown }
+  let outcome: Outcome
+  if (partial.status === 'value') outcome = { ok: true, value: partial.value }
+  else if (partial.status === 'error')
+    outcome = { ok: false, code: partial.error.code, message: '' }
+  else {
+    outcome = capture('residual', () => partial.evaluateSync(context))
+    if (!outcome.ok && LIMIT_CODES.has(outcome.code)) return
+  }
+  if (!sameOutcome(expected, outcome)) {
+    throw new FuzzViolation(
+      `partial of ${JSON.stringify(source)} with ${name}.${dropped} left out gave ${describeOutcome(outcome)}, evaluation gave ${describeOutcome(expected)}`,
+    )
+  }
 }
 
 function checkExplain(

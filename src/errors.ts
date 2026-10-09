@@ -52,14 +52,33 @@ function positionOf(source: string, offset: number): { line: number; column: num
   return { line, column: end - lineStart + 1 }
 }
 
-/** A source excerpt with a caret line under `span`, e.g. for terminal output. */
-function codeFrame(source: string, span: Span): string {
-  const { line, column } = positionOf(source, span.start)
-  const lines = source.split('\n')
-  const text = lines[line - 1] ?? ''
-  const width = Math.max(1, Math.min(span.end, span.start + text.length - column + 1) - span.start)
+/** The widest excerpt of a line a code frame shows. */
+const FRAME_WIDTH = 120
+/** Columns shown before the span when a long line is cut on the left. */
+const FRAME_LEAD = 40
+
+/**
+ * A source excerpt with a caret line under `span`, e.g. for terminal output.
+ * A long line is cut to a window around the span (marked `...`), so a frame
+ * costs the same however long the source is.
+ */
+function codeFrame(
+  source: string,
+  span: Span,
+  { line, column }: { line: number; column: number },
+): string {
+  const start = Math.min(Math.max(span.start, 0), source.length)
+  const lineStart = start - (column - 1)
+  const from = start - lineStart > FRAME_WIDTH - FRAME_LEAD ? start - FRAME_LEAD : lineStart
+  const window = source.slice(from, from + FRAME_WIDTH + 1)
+  const newline = window.indexOf('\n')
+  const to = from + (newline === -1 ? Math.min(window.length, FRAME_WIDTH) : newline)
+  const cutLeft = from > lineStart ? '...' : ''
+  const cutRight = newline === -1 && window.length > FRAME_WIDTH ? '...' : ''
+  const text = `${cutLeft}${source.slice(from, to)}${cutRight}`
+  const width = Math.max(1, Math.min(span.end, to) - start)
   const gutter = String(line)
-  return `${gutter} | ${text}\n${' '.repeat(gutter.length)} | ${' '.repeat(column - 1)}${'^'.repeat(width)}`
+  return `${gutter} | ${text}\n${' '.repeat(gutter.length)} | ${' '.repeat(cutLeft.length + start - from)}${'^'.repeat(width)}`
 }
 
 /** Options for constructing a {@link BonsaiError}. */
@@ -92,7 +111,7 @@ export class BonsaiError extends Error {
   /** The message followed by a code frame, when a span is known. */
   get formatted(): string {
     if (this.source === undefined || this.span === undefined) return this.message
-    return `${this.message}\n${codeFrame(this.source, this.span)}`
+    return `${this.message}\n${codeFrame(this.source, this.span, positionOf(this.source, this.span.start))}`
   }
 }
 
@@ -215,7 +234,7 @@ class SourceDiagnostic implements Diagnostic {
   }
 
   get formatted(): string {
-    return `${this.message}\n${codeFrame(this.#source, this.span)}`
+    return `${this.message}\n${codeFrame(this.#source, this.span, this.position)}`
   }
 }
 
