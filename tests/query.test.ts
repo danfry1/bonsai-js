@@ -565,6 +565,22 @@ describe('translator options are validated like the others', () => {
   })
 })
 
+describe('host functions are named when they block translation', () => {
+  it('reports a host call used as a value, not only as a condition', () => {
+    const host = bonsai({
+      functions: { dbl: fn({ params: [t.number()], returns: t.number(), run: (n) => n * 2 }) },
+    })
+    const program = host.compile('dbl(k) < order.total')
+    const options = {
+      row: 'order',
+      columns: { total: 'number' },
+      dialect: 'sqlite',
+      known: { k: 1 },
+    } as const
+    expect(() => toSQL(program, options)).toThrow(/dbl\(\) is a host function/u)
+  })
+})
+
 describe('known values are validated as evaluation validates them', () => {
   it('reports INVALID_CONTEXT for known data that does not match its type', () => {
     const strictEnv = bonsai({

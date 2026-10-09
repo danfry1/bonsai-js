@@ -276,6 +276,11 @@ function lower(
     return { kind: 'const', value: result.value === true }
   }
   const { bindings, hostFunctions } = result
+  /** The reason a node does not translate: specific for a host function call. */
+  const untranslatable = (node: Node): never =>
+    node.type === 'Call' && hostFunctions.includes(node.name)
+      ? fail(`${node.name}() is a host function, which has no database equivalent`, node)
+      : fail('This expression has no exact database equivalent', node)
 
   const columnOf = (node: Node): Value | undefined => {
     const path: string[] = []
@@ -365,7 +370,7 @@ function lower(
       }
       return { kind: 'arith', op: node.operator, left, right }
     }
-    return fail('This expression has no exact database equivalent', node)
+    return untranslatable(node)
   }
 
   const pair = (left: Value, right: Value, at: Node): void => {
@@ -450,8 +455,7 @@ function lower(
         return fail('Only boolean columns can be used as conditions', node)
       }
       case 'Call': {
-        if (hostFunctions.includes(node.name))
-          return fail(`${node.name}() is a host function, which has no database equivalent`, node)
+        if (hostFunctions.includes(node.name)) return untranslatable(node)
         const receiver = node.args[0]
         const column =
           receiver === undefined || receiver.type === 'Spread' ? undefined : columnOf(receiver)
