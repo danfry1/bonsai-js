@@ -379,3 +379,22 @@ describe('explain on the hardened engine', () => {
     }).toThrow(TypeError)
   })
 })
+
+describe('explain text cuts', () => {
+  // With the u flag a surrogate class matches only a surrogate that is not half of a pair.
+  const loneSurrogate = /[\uD800-\uDFFF]/u
+  const emoji = '\u{1F600}'
+
+  it('never splits a surrogate pair in node text, value previews, or recorded strings', () => {
+    const plain = bonsai()
+    // The emoji straddles each cut: node text at 60, previews at 120, recorded strings at 1,000.
+    const literal = `"${'a'.repeat(58)}${emoji}"`
+    const explained = plain.explainSync(`${literal} == s`, { s: `${'a'.repeat(118)}${emoji}` })
+    const long = plain.explainSync('s', { s: `${'a'.repeat(999)}${emoji}` })
+    expect(String(explained)).toContain('a...')
+    expect(loneSurrogate.test(String(explained))).toBe(false)
+    const json = JSON.stringify(long)
+    expect(loneSurrogate.test(json)).toBe(false)
+    expect(json).toContain(`"${'a'.repeat(999)}..."`)
+  })
+})
