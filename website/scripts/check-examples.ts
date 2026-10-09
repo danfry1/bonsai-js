@@ -229,6 +229,7 @@ const typedExamples: TypedExample[] = []
 function redirectImports(code: string): string {
   return code
     .replaceAll("from 'bonsai-js/service'", `from ${JSON.stringify(join(srcDir, 'service/index.ts'))}`)
+    .replaceAll("from 'bonsai-js/query'", `from ${JSON.stringify(join(srcDir, 'query/index.ts'))}`)
     .replaceAll("from 'bonsai-js'", `from ${JSON.stringify(join(srcDir, 'index.ts'))}`)
 }
 

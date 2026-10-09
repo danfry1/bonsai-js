@@ -16,6 +16,11 @@
       "types": "./dist/service/index.d.mts",
       "import": "./dist/service/index.mjs",
       "default": "./dist/service/index.mjs"
+    },
+    "./query": {
+      "types": "./dist/query/index.d.mts",
+      "import": "./dist/query/index.mjs",
+      "default": "./dist/query/index.mjs"
     }
   },
   "files": [
@@ -38,6 +43,7 @@
   "scripts": {
     "build": "tsdown",
     "test": "vitest run",
+    "test:servers": "QUERY_SERVERS=1 vitest run tests/query.servers.test.ts",
     "test:watch": "vitest",
     "bench": "vitest bench",
     "bench:gate": "bun run scripts/perf-gate.ts",
@@ -85,20 +91,26 @@
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
+    "@electric-sql/pglite": "0.5.8",
     "@fast-check/vitest": "0.4.1",
     "@marcbachmann/cel-js": "8.0.0",
     "@stryker-mutator/core": "9.6.1",
     "@stryker-mutator/vitest-runner": "9.6.1",
     "@types/node": "22.20.4",
+    "@types/pg": "8.23.1",
     "@varlock/bumpy": "1.18.1",
     "@vitest/coverage-v8": "4.1.10",
     "fast-check": "4.9.0",
     "knip": "6.26.0",
     "lefthook": "2.1.10",
+    "mingo": "7.2.4",
+    "mongodb": "7.6.0",
     "npm": "11.19.0",
     "oxfmt": "0.58.0",
     "oxlint": "1.73.0",
     "oxlint-tsgolint": "0.24.0",
+    "pg": "8.23.0",
+    "postgres": "3.4.9",
     "tsdown": "0.22.4",
     "typescript": "6.0.3",
     "vitepress": "1.6.4",

@@ -5,7 +5,7 @@ import { defineConfig } from 'tsdown'
 const DECLARATION_MAP_COMMENT = /\n\/\/# sourceMappingURL=\S+\.d\.mts\.map\s*$/u
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/service/index.ts'],
+  entry: ['src/index.ts', 'src/service/index.ts', 'src/query/index.ts'],
   format: 'esm',
   // Declaration maps are off (tsconfig): they would point at src/, which is not published.
   dts: true,

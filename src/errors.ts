@@ -27,6 +27,8 @@ export type ErrorCode =
   | 'HOST_ERROR'
   | 'HOST_CONTRACT'
   | 'INVALID_CONTEXT'
+  // query translation
+  | 'UNTRANSLATABLE'
 
 export interface Span {
   readonly start: number

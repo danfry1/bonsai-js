@@ -49,6 +49,8 @@ try {
     'package/dist/index.d.mts',
     'package/dist/service/index.mjs',
     'package/dist/service/index.d.mts',
+    'package/dist/query/index.mjs',
+    'package/dist/query/index.d.mts',
     'package/README.md',
     'package/LICENSE',
     'package/CHANGELOG.md',
@@ -117,6 +119,10 @@ try {
       ...['Completion', 'CompletionKind', 'CompletionResult', 'HoverResult', 'LanguageService'],
       'createLanguageService',
     ],
+    'query/index.d.mts': [
+      ...['BonsaiTranslationError', 'Column', 'ColumnType', 'Columns', 'MongoOptions'],
+      ...['MongoQuery', 'SQLOptions', 'SQLQuery', 'Translatable', 'toMongo', 'toSQL'],
+    ],
   }
   for (const [file, expected] of Object.entries(publicExports)) {
     const declarations = readFileSync(join(extractDir, 'package', 'dist', file), 'utf8')
@@ -136,8 +142,11 @@ try {
       )
     }
   }
+  if (packedPkg.exports?.['./query']?.import !== './dist/query/index.mjs') {
+    throw new Error('Packed query export does not point to ./dist/query/index.mjs')
+  }
   const exportKeys = [...Object.keys(packedPkg.exports ?? {})].sort()
-  if (exportKeys.join(',') !== '.,./service') {
+  if (exportKeys.join(',') !== '.,./query,./service') {
     throw new Error(`Packed package exports unexpected subpaths: ${exportKeys.join(', ')}`)
   }
 
@@ -152,6 +161,7 @@ try {
     [
       "import { bonsai, fn, t, BonsaiCheckError, BonsaiRuntimeError, isBonsaiError } from 'bonsai-js'",
       "import { createLanguageService } from 'bonsai-js/service'",
+      "import { toMongo, toSQL } from 'bonsai-js/query'",
       '',
       'const env = bonsai({',
       '  variables: { user: t.object({ name: t.string(), age: t.number() }), items: t.list(t.number()) },',
@@ -178,6 +188,12 @@ try {
       "if (!labels.includes('age') || !labels.includes('name')) throw new Error('Service subpath completions failed')",
       "if (service.hover('user.age', 6)?.detail !== 'number') throw new Error('Service subpath hover failed')",
       "if (service.diagnostics('user.nope').length === 0) throw new Error('Service subpath diagnostics failed')",
+      '',
+      'const filter = bonsai().compile(\'order.total > limit && order.status == "paid"\')',
+      "const query = toSQL(filter, { row: 'order', columns: { total: 'number', status: 'text' }, dialect: 'postgres', known: { limit: 5 } })",
+      "if (query.params.length !== 2 || !query.sql.includes('$1::float8')) throw new Error('Query subpath toSQL failed')",
+      "const mongo = toMongo(filter, { row: 'order', fields: { total: 'number', status: 'text' }, known: { limit: 5 } })",
+      "if (JSON.stringify(mongo.filter) !== JSON.stringify({ $and: [{ total: { $gt: 5 } }, { status: { $eq: 'paid' } }] })) throw new Error('Query subpath toMongo failed')",
       '',
       "console.log('packed package smoke test passed')",
       '',
