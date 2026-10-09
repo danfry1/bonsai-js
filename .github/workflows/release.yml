@@ -56,6 +56,10 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      # Runs every documentation example and compares it with its stated result.
+      - name: Documentation examples
+        run: bun run check:docs
+
       # test:coverage rather than test: a tag can be cut from a commit that
       # never went through the pull-request gate, so the release gate enforces
       # the same coverage floors CI does.

@@ -13,8 +13,13 @@ interface Program<Context, Result> {
   readonly references: { readonly variables: readonly string[]; readonly functions: readonly string[] }
   evaluate(context?: Context, options?: EvaluateOptions): Promise<Result>
   evaluateSync(context?: Context, options?: EvaluateOptions): Result
+  explain(context?: Context, options?: ExplainOptions): Promise<Explanation<Result>>
+  explainSync(context?: Context, options?: ExplainOptions): Explanation<Result>
+  partial(known: KnownData<Context>, options?: PartialOptions): PartialResult<Result>
 }
 ```
+
+`explain` and `explainSync` are described in [Explaining Results](/api/explain), and `partial` in [Partial Evaluation](/api/partial); `known` may hold any part of the context, at any depth.
 
 ## Example
 

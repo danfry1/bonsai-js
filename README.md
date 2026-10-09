@@ -41,8 +41,10 @@ rule.evaluateSync({
 ## Install
 
 ```bash
-npm install bonsai-js
+npm install bonsai-js@next
 ```
+
+This README describes 1.0, which is in release candidate on the `next` tag; `npm install bonsai-js` still installs 0.5.0 until 1.0.0 is released.
 
 Requires Node.js 22 or newer, current Bun, or a modern browser. The package is ESM; `require('bonsai-js')` works where Node can load ES modules synchronously (22.12 and newer).
 
@@ -51,7 +53,7 @@ Requires Node.js 22 or newer, current Bun, or a modern browser. The package is E
 - **Familiar.** JavaScript syntax and JavaScript names: `a.b`, `?.`, `??`, templates, `filter`, `map`, `includes`, `toUpperCase`. Every function also works as a method, so `sum(xs)` and `xs.sum()` are the same call.
 - **Checked.** Declare your data once with `t` and get errors for typos, wrong types, and possible nulls before an expression is saved, with "did you mean" suggestions and exact source ranges. TypeScript types for the context and result are inferred from the same declaration.
 - **Safe by construction.** No prototype access, no globals, no calling functions found in data, no conversion hooks, no mutation. Every evaluation terminates: a deterministic step budget charges each operation for the work it does (including text search, regular expressions, sorting, and time zone math), and produced strings, lists, and nested values are size-limited. A timeout and an `AbortSignal` bound time spent waiting on your own host functions.
-- **Fast.** Expressions compile to closures once (no `eval`, CSP-safe). A typical rule evaluates about 10 million times per second on Node, 1.3x to 2x faster than `@marcbachmann/cel-js` on the same workloads (`bun run bench` reproduces this with `benchmarks/vs-cel.bench.ts`).
+- **Fast.** Expressions compile to closures once (no `eval`, CSP-safe). A typical rule evaluates about 10 million times per second on Node, 1.1x to 2.8x faster than `@marcbachmann/cel-js` on the same workloads (`bun run bench` reproduces this with `benchmarks/vs-cel.bench.ts`).
 - **Editor-ready.** A language service provides completions (including methods applicable to each type), hover, and diagnostics without evaluating anything.
 
 ## The language in one screen
@@ -108,7 +110,7 @@ import { bonsai, t } from 'bonsai-js'
 const env = bonsai({ variables: { user: t.object({ age: t.number(), nick: t.optional(t.string()) }) } })
 
 env.check('user.agee > 18')
-// { ok: false, diagnostics: [{ code: 'UNKNOWN_PROPERTY', message: 'Property "agee" does not exist on { age: number, nick: string | null }; did you mean "age"?', severity: 'error', start: 0, end: 9 }] }
+// { ok: false, type: { kind: 'boolean' }, diagnostics: [{ code: 'UNKNOWN_PROPERTY', message: 'Property "agee" does not exist on { age: number, nick: string | null }; did you mean "age"?', severity: 'error', start: 0, end: 9 }] }
 
 env.check('user.nick.toUpperCase()')
 // NULLABLE_RECEIVER: The value before .toUpperCase() may be null; use ?.toUpperCase() or ?? to supply a default
@@ -172,7 +174,7 @@ All callable as `f(x, ...)` or `x.f(...)`.
 import { bonsai } from 'bonsai-js'
 
 const rule = bonsai().compile('user.age >= 18 && user.plan == "pro"')
-const explanation = rule.explain({ user: { age: 25, plan: 'free' } })
+const explanation = rule.explainSync({ user: { age: 25, plan: 'free' } })
 
 explanation.ok // true
 if (explanation.ok) explanation.value // false
@@ -192,11 +194,11 @@ import { bonsai } from 'bonsai-js'
 const rule = bonsai().compile('user.age >= 18 && user.plan == "pro"')
 const user = { age: 16, plan: 'free' }
 
-rule.explain({ user }, { exhaustive: true }).reasons().map((r) => r.text)
+rule.explainSync({ user }, { exhaustive: true }).reasons().map((r) => r.text)
 // ['user.age >= 18', 'user.plan == "pro"']
 ```
 
-`explanation.trace` is the full tree: each node has an `id`, `kind`, `text`, `start`/`end` source offsets, `value` or `error`, and `children`. Parts skipped by short-circuiting are marked `evaluated: false`, and lambdas record each item they ran on under `iterations` (up to `maxIterations`, default 20; `maxTraceNodes` caps the whole trace). `JSON.stringify(explanation)` gives a bounded, cycle-safe snapshot that never runs getters. Evaluation errors are returned (`ok: false`, `error`) with the failing node marked, never thrown; invalid options or context throw, as with `evaluate()`. Use `explainAsync()` for expressions that call async host functions. Explaining uses a separately compiled program, so ordinary evaluation is not slowed down.
+`explanation.trace` is the full tree: each node has an `id`, `kind`, `text`, `start`/`end` source offsets, `value` or `error`, and `children`. Parts skipped by short-circuiting are marked `evaluated: false`, and lambdas record each item they ran on under `iterations` (up to `maxIterations`, default 20; `maxTraceNodes` caps the whole trace). `JSON.stringify(explanation)` gives a bounded, cycle-safe snapshot that never runs getters. Evaluation errors are returned (`ok: false`, `error`) with the failing node marked, never thrown; invalid options or context throw, as with `evaluate()`. Like `evaluate()` and `evaluateSync()`, `explain()` returns a promise (and supports async host functions) and `explainSync()` returns the explanation directly. Explaining uses a separately compiled program, so ordinary evaluation is not slowed down.
 
 ## Partial evaluation
 

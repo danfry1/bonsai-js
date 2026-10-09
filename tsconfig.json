@@ -9,6 +9,7 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
+    "exactOptionalPropertyTypes": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,

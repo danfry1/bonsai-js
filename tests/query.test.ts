@@ -537,6 +537,66 @@ describe('toMongo', () => {
   })
 })
 
+describe('translator options are validated like the others', () => {
+  const program = env.compile('order.total > 1')
+  const sql = { row: 'order', columns, dialect: 'postgres' } as const
+  const mongo = { row: 'order', fields: columns } as const
+
+  it('rejects unknown keys, so a misspelled paramOffset is never silently ignored', () => {
+    expect(() => toSQL(program, { ...sql, paramOfset: 5 } as never)).toThrow(
+      /Unknown toSQL option key "paramOfset"/u,
+    )
+    expect(() => toSQL(program, { ...sql, timeout: 5 } as never)).toThrow(TypeError)
+    expect(() => toMongo(program, { ...mongo, dialect: 'postgres' } as never)).toThrow(
+      /Unknown toMongo option key "dialect"/u,
+    )
+  })
+
+  it('reports a wrongly typed paramOffset as a TypeError and a bad value as a RangeError', () => {
+    expect(() => toSQL(program, { ...sql, paramOffset: '3' } as never)).toThrow(TypeError)
+    expect(() => toSQL(program, { ...sql, paramOffset: null } as never)).toThrow(TypeError)
+    expect(() => toSQL(program, { ...sql, paramOffset: -1 })).toThrow(RangeError)
+    expect(toSQL(program, { ...sql, paramOffset: 2 }).sql).toContain('$3')
+  })
+
+  it('accepts undefined for optional options', () => {
+    expect(
+      toSQL(program, { ...sql, paramOffset: undefined, known: undefined, now: undefined }).sql,
+    ).toContain('$1')
+  })
+})
+
+describe('host functions are named when they block translation', () => {
+  it('reports a host call used as a value, not only as a condition', () => {
+    const host = bonsai({
+      functions: { dbl: fn({ params: [t.number()], returns: t.number(), run: (n) => n * 2 }) },
+    })
+    const program = host.compile('dbl(k) < order.total')
+    const options = {
+      row: 'order',
+      columns: { total: 'number' },
+      dialect: 'sqlite',
+      known: { k: 1 },
+    } as const
+    expect(() => toSQL(program, options)).toThrow(/dbl\(\) is a host function/u)
+  })
+})
+
+describe('known values are validated as evaluation validates them', () => {
+  it('reports INVALID_CONTEXT for known data that does not match its type', () => {
+    const strictEnv = bonsai({
+      variables: { user: t.object({ age: t.number() }), order: t.object({ total: t.number() }) },
+      validateContext: true,
+    })
+    const program = strictEnv.compile('user.age > 30 && order.total > 0')
+    const options = { row: 'order', columns: { total: 'number' }, dialect: 'sqlite' } as const
+    expect(() => toSQL(program, { ...options, known: { user: { age: '36' } } })).toThrow(
+      expect.objectContaining({ code: 'INVALID_CONTEXT' }),
+    )
+    expect(toSQL(program, { ...options, known: { user: { age: 36 } } }).sql).toBe('(`total` > ?1)')
+  })
+})
+
 describe('known values are read as the engine reads them', () => {
   const program = env.compile('order.total in xs')
   const sqlite = { row: 'order', columns, dialect: 'sqlite' } as const

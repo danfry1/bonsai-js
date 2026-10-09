@@ -2,6 +2,7 @@ import type { Analysis } from './check/checker.js'
 import { BonsaiRuntimeError, type BonsaiError } from './errors.js'
 import { forEachChild, type LambdaNode, type Node, type SpreadNode } from './syntax/ast.js'
 import { print } from './syntax/printer.js'
+import type { EvaluateOptions } from './environment.js'
 
 // === dependencies ===
 
@@ -180,9 +181,12 @@ export interface ResidualResult<R> {
   readonly dependsOn: readonly string[]
   /** Host functions the residual still calls (they may replace a built-in of the same name). */
   readonly hostFunctions: readonly string[]
-  /** Evaluates the residual with the (full) context; bindings are supplied for you. */
-  readonly evaluateSync: (context?: object) => R
-  readonly evaluate: (context?: object) => Promise<R>
+  /**
+   * Evaluates the residual with the (full) context, taking the same options as
+   * Program.evaluateSync; bindings are supplied for you.
+   */
+  readonly evaluateSync: (context?: object, options?: EvaluateOptions) => R
+  readonly evaluate: (context?: object, options?: EvaluateOptions) => Promise<R>
 }
 
 export interface PartialOptions {
@@ -191,14 +195,14 @@ export interface PartialOptions {
    * known yet. Unknown wins over a value present in `known`. Default: every
    * variable the expression reads that `known` does not have.
    */
-  readonly unknown?: readonly string[]
+  readonly unknown?: readonly string[] | undefined
   /**
    * Evaluate host function calls whose inputs are known. Default false: they
    * stay in the residual. Only sync host functions can be called.
    */
-  readonly callHostFunctions?: boolean
+  readonly callHostFunctions?: boolean | undefined
   /** The time now() returns. Default: now() stays in the residual. */
-  readonly now?: Date
+  readonly now?: Date | undefined
 }
 
 /** How the partial evaluator reaches the engine. */
@@ -216,10 +220,14 @@ export interface PartialEngine {
    * a limit is reached.
    */
   readonly evaluate: (node: Node, locals: readonly (readonly [string, unknown])[]) => unknown
-  /** Compiles a residual for later evaluation with its bindings. */
+  /**
+   * Compiles a residual for later evaluation. The compiled residual reads
+   * variables from `ctx` (the caller's context plus the bindings); context host
+   * functions receive `hostContext`, the caller's own context.
+   */
   readonly compileResidual: (residual: Node) => {
-    evaluateSync: (context: object) => unknown
-    evaluate: (context: object) => Promise<unknown>
+    runSync: (ctx: object, hostContext: object, options: unknown) => unknown
+    runAsync: (ctx: object, hostContext: object, options: unknown) => Promise<unknown>
   }
 }
 
@@ -509,8 +517,7 @@ export function partiallyEvaluate<R>(
   const residualDeps = dependencies(engine.hostKind)(outcome.node)
   const compiled = engine.compileResidual(outcome.node)
   const frozenBindings = Object.freeze({ ...bindings })
-  const withBindings = (context: object | undefined): object => {
-    const base = engine.contextOf(context)
+  const withBindings = (base: Record<string, unknown>): object => {
     // Copy property descriptors so the caller's getters are not run here.
     const merged: object = Object.create(null) as object
     try {
@@ -534,8 +541,14 @@ export function partiallyEvaluate<R>(
       .filter((path) => !Object.hasOwn(frozenBindings, path.split('.')[0]))
       .sort(),
     hostFunctions: hostCalls(outcome.node, engine.hostKind),
-    evaluateSync: (context?: object) => compiled.evaluateSync(withBindings(context)) as R,
-    evaluate: (context?: object) => compiled.evaluate(withBindings(context)) as Promise<R>,
+    evaluateSync: (context?: object, evaluateOptions?: EvaluateOptions) => {
+      const base = engine.contextOf(context)
+      return compiled.runSync(withBindings(base), base, evaluateOptions) as R
+    },
+    evaluate: async (context?: object, evaluateOptions?: EvaluateOptions) => {
+      const base = engine.contextOf(context)
+      return (await compiled.runAsync(withBindings(base), base, evaluateOptions)) as R
+    },
   })
 }
 

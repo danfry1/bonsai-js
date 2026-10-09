@@ -7,7 +7,7 @@ import { bonsai } from 'bonsai-js'
 
 const env = bonsai()
 const rule = env.compile('user.age >= 18 && user.plan == "pro"')
-const explanation = rule.explain({ user: { age: 25, plan: 'free' } })
+const explanation = rule.explainSync({ user: { age: 25, plan: 'free' } })
 
 explanation.ok // true
 if (explanation.ok) explanation.value // false
@@ -31,9 +31,9 @@ import { bonsai } from 'bonsai-js'
 const rule = bonsai().compile('user.age >= 18 && user.plan == "pro" && user.verified')
 const user = { age: 16, plan: 'free', verified: true }
 
-rule.explain({ user }).reasons().map((r) => r.text)
+rule.explainSync({ user }).reasons().map((r) => r.text)
 // ['user.age >= 18']
-rule.explain({ user }, { exhaustive: true }).reasons().map((r) => r.text)
+rule.explainSync({ user }, { exhaustive: true }).reasons().map((r) => r.text)
 // ['user.age >= 18', 'user.plan == "pro"']
 ```
 
@@ -59,12 +59,12 @@ Values in `trace` are the live values from your context, not copies. To send an 
 
 ## Errors
 
-`explain()` never throws for evaluation errors. It returns `{ ok: false, error }` and marks the node that failed, so you can show where a rule broke. Invalid options and an invalid context throw, as they do for `evaluate()`:
+`explain()` never rejects for evaluation errors (and `explainSync()` never throws for them). It returns `{ ok: false, error }` and marks the node that failed, so you can show where a rule broke; a context that fails `validateContext` is returned the same way, as an `INVALID_CONTEXT` error. Invalid options and a context that is not an object are your own mistakes: `explain()` rejects and `explainSync()` throws, as `evaluate()` and `evaluateSync()` do:
 
 ```ts
 import { bonsai } from 'bonsai-js'
 
-const explanation = bonsai().explain('stats.visits / stats.days', { stats: { visits: 10, days: 0 } })
+const explanation = bonsai().explainSync('stats.visits / stats.days', { stats: { visits: 10, days: 0 } })
 explanation.ok // false
 String(explanation)
 // stats.visits / stats.days  → error DIVISION_BY_ZERO: Division by zero
@@ -72,7 +72,7 @@ String(explanation)
 // └─ stats.days  → 0
 ```
 
-Syntax and check errors still throw from `env.explain(source)`, as they do from `env.compile`.
+Syntax and check errors reject from `env.explain(source)` and throw from `env.explainSync(source)`, as they do for `env.evaluate` and `env.evaluateSync`.
 
 ## Options
 
@@ -84,4 +84,4 @@ Syntax and check errors still throw from `env.explain(source)`, as they do from 
 | `maxTraceNodes` | 10,000 | Sub-expressions recorded in total; the result stays exact and `truncated` is set |
 | `exhaustive` | `false` | Evaluate every condition of `&&` and `||` so `reasons()` lists them all |
 
-Use `explainAsync()` for expressions that call async host functions. Explaining uses a separately compiled program, so evaluating the same program normally is not slowed down.
+Like `evaluate()` and `evaluateSync()`, `explain()` returns a promise (and supports async host functions) and `explainSync()` returns the explanation directly; `explainSync()` on an expression that calls an async host function returns an `ASYNC_IN_SYNC` error. Explaining uses a separately compiled program, so evaluating the same program normally is not slowed down.

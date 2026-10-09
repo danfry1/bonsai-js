@@ -26,7 +26,7 @@ export type ColumnType = 'text' | 'number' | 'boolean' | 'timestamp'
 export interface Column {
   readonly type: ColumnType
   /** The column (SQL) or field path (MongoDB) name, when it differs from the key. */
-  readonly name?: string
+  readonly name?: string | undefined
 }
 
 /** Declared record fields, keyed by the path after the row variable (`status`, `address.city`). */
@@ -36,9 +36,9 @@ interface CommonOptions {
   /** The variable that names the record being filtered, e.g. `order`. */
   readonly row: string
   /** Values for every other variable the predicate reads. */
-  readonly known?: Readonly<Record<string, unknown>>
+  readonly known?: Readonly<Record<string, unknown>> | undefined
   /** The time `now()` returns. Required when the predicate calls now(). */
-  readonly now?: Date
+  readonly now?: Date | undefined
 }
 
 export interface SQLOptions extends CommonOptions {
@@ -46,7 +46,7 @@ export interface SQLOptions extends CommonOptions {
   /** The queryable columns. Anything else is rejected. */
   readonly columns: Columns
   /** Number of parameters already used before this fragment (`$n` / `?n` numbering). Default 0. */
-  readonly paramOffset?: number
+  readonly paramOffset?: number | undefined
 }
 
 export interface SQLQuery {
@@ -182,6 +182,27 @@ interface Declared {
   readonly type: ColumnType
 }
 
+const SQL_OPTION_KEYS: readonly string[] = [
+  'row',
+  'known',
+  'now',
+  'dialect',
+  'columns',
+  'paramOffset',
+]
+const MONGO_OPTION_KEYS: readonly string[] = ['row', 'known', 'now', 'fields']
+
+/** Rejects option keys a translator does not read, so a misspelled one is never ignored. */
+function checkKeys(options: unknown, allowed: readonly string[], translator: string): void {
+  if (!isRecord(options)) throw new TypeError('Options must be an object')
+  for (const key of Object.keys(options)) {
+    if (!allowed.includes(key))
+      throw new TypeError(
+        `Unknown ${translator} option key "${key}" (expected one of: ${allowed.join(', ')})`,
+      )
+  }
+}
+
 /** Validates options that come from configuration; mistakes there are programming errors. */
 function declare(
   options: CommonOptions,
@@ -255,6 +276,11 @@ function lower(
     return { kind: 'const', value: result.value === true }
   }
   const { bindings, hostFunctions } = result
+  /** The reason a node does not translate: specific for a host function call. */
+  const untranslatable = (node: Node): never =>
+    node.type === 'Call' && hostFunctions.includes(node.name)
+      ? fail(`${node.name}() is a host function, which has no database equivalent`, node)
+      : fail('This expression has no exact database equivalent', node)
 
   const columnOf = (node: Node): Value | undefined => {
     const path: string[] = []
@@ -344,7 +370,7 @@ function lower(
       }
       return { kind: 'arith', op: node.operator, left, right }
     }
-    return fail('This expression has no exact database equivalent', node)
+    return untranslatable(node)
   }
 
   const pair = (left: Value, right: Value, at: Node): void => {
@@ -429,8 +455,7 @@ function lower(
         return fail('Only boolean columns can be used as conditions', node)
       }
       case 'Call': {
-        if (hostFunctions.includes(node.name))
-          return fail(`${node.name}() is a host function, which has no database equivalent`, node)
+        if (hostFunctions.includes(node.name)) return untranslatable(node)
         const receiver = node.args[0]
         const column =
           receiver === undefined || receiver.type === 'Spread' ? undefined : columnOf(receiver)
@@ -671,10 +696,13 @@ const PG_CASTS: Readonly<Record<ColumnType, string>> = {
  * other types.
  */
 export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
-  const dialect = isRecord(options) ? options.dialect : undefined
+  checkKeys(options, SQL_OPTION_KEYS, 'toSQL')
+  const dialect = options.dialect
   if (dialect !== 'postgres' && dialect !== 'sqlite')
     throw new TypeError(`dialect must be 'postgres' or 'sqlite'`)
   const pg = dialect === 'postgres'
+  if (options.paramOffset !== undefined && typeof options.paramOffset !== 'number')
+    throw new TypeError('paramOffset must be a number')
   const offset = options.paramOffset ?? 0
   if (!Number.isSafeInteger(offset) || offset < 0)
     throw new RangeError('paramOffset must be a non-negative integer')
@@ -902,6 +930,7 @@ function escapeRegex(text: string): string {
  * is binary whatever the collection's default collation.
  */
 export function toMongo(program: Translatable, options: MongoOptions): MongoQuery {
+  checkKeys(options, MONGO_OPTION_KEYS, 'toMongo')
   const target: Target = {
     name: 'MongoDB',
     arithmetic: false,

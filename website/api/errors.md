@@ -60,10 +60,11 @@ try {
 | | `NON_FINITE` | A result would be `NaN` or infinite. |
 | | `BLOCKED_PROPERTY` | A computed key is `__proto__`, `constructor`, or `prototype`. |
 | | `INVALID_ARGUMENT` | An argument has the right type but an invalid value (an unparsable timestamp, an unknown time zone, a non-integer count, a regular expression the engine does not support), or the context is not an object. |
-| | `ASYNC_IN_SYNC` | `evaluateSync()` on an expression that calls a host function declared `async: true`. |
+| | `ASYNC_IN_SYNC` | `evaluateSync()` (or `explainSync()`) on an expression that calls a host function declared `async: true`. |
 | | `HOST_ERROR` | A host function threw (anything, including a `BonsaiError` from a nested evaluation), or reading the context ran host code (a getter or Proxy) that threw. |
 | | `HOST_CONTRACT` | Host code broke its contract: a host function returned a value that does not match `returns` (checked deeply) or a promise without `async: true`, or the `clock` returned something other than a valid `Date`. |
 | | `INVALID_CONTEXT` | With `validateContext`, the context does not match the declared variable types. |
+| `BonsaiTranslationError` | `UNTRANSLATABLE` | From `bonsai-js/query`: part of a filter has no exact SQL or MongoDB equivalent. See [Database Filters](./query). |
 
 `try(expr, fallback)` in an expression catches `BonsaiRuntimeError`s except `HOST_CONTRACT`, which is a bug in host code rather than a condition an expression should recover from. It never catches syntax, check, or limit errors.
 

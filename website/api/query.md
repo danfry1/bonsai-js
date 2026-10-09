@@ -19,7 +19,7 @@ const { filter: mongoFilter, options } = toMongo(filter, { row: 'order', fields:
 
 ## The contract
 
-- A filter is an expression over one record variable (`row`). Every other variable must be in `known`, which is applied by [partial evaluation](./partial) before translating; a variable that is neither is rejected, so a misspelled `row` cannot silently read as null.
+- A filter is an expression over one record variable (`row`). Every other variable must be in `known`, which is applied by [partial evaluation](./partial) before translating; a variable that is neither is rejected, so a misspelled `row` cannot silently read as null. With `validateContext`, the known values are validated as evaluation validates them (`INVALID_CONTEXT`).
 - The query selects **exactly** the records for which the filter evaluates to `true` in Bonsai. Records for which it would fail (for example calling `startsWith` on a null field) are excluded, as `try(filter, false)` would.
 - SQL's three-valued `NULL` logic is converted to Bonsai's: `x != "a"` includes rows where `x` is `NULL`, comparisons with `NULL` are false, and `!` of a failing condition stays excluded. The returned SQL is true for the selected rows and may be `NULL` for the others, so negate a filter by translating `!(filter)`, not by wrapping the SQL in `NOT`.
 - This is verified by differential tests that run random filters over random rows and compare the selected records with Bonsai's evaluation: in SQLite and PGlite on every run, and against Postgres 13 and 17 (through `pg` and `postgres`) and MongoDB 8.0 (through the official driver) with `bun run test:servers`.
@@ -43,7 +43,7 @@ The types are part of the contract, and results are exact only when the data kee
 - SQLite databases use UTF-8 (the default), tables are `STRICT`, text columns use the default `BINARY` collation (not `NOCASE`), and boolean columns hold only 0 or 1 (`CHECK (active IN (0, 1))`).
 - MongoDB fields hold the declared scalar types, not arrays, and the objects on the way to a nested key exist. Numbers are doubles, 32-bit integers, or 64-bit integers within ±2^53; `Decimal128` values compare differently from Bonsai's doubles.
 
-Invalid options (an unknown `dialect` or column type, a missing `row`, the row variable in `known`, an invalid column name) throw a `TypeError`.
+Invalid options (an unknown option key, an unknown `dialect` or column type, a missing `row`, the row variable in `known`, an invalid column name, a `paramOffset` that is not a number) throw a `TypeError`; a `paramOffset` that is negative or not an integer throws a `RangeError`.
 
 ## What translates
 
@@ -64,7 +64,7 @@ Anything else throws a `BonsaiTranslationError` (code `UNTRANSLATABLE`) with the
 
 A failing `&&` or `||` repeats part of its left side in the query, so deeply nested filters grow quickly; a translation larger than 1,000,000 characters of SQL or 100,000 MongoDB filter nodes is rejected, as is one needing more parameters than the database accepts (65,535 in Postgres, 32,766 in SQLite).
 
-A filter that fails whatever the record is (say `limit / 0 > 1` with `limit` known) throws that `BonsaiRuntimeError` instead of translating to a query that selects nothing. The environment's runtime limits (`maxSteps`, `timeout`) apply to translating, not to the database: a filter that would exceed them per record in Bonsai (for example over a known list of millions of items) still matches rows in the database. Translating evaluates every known part of the filter up front, so a known part that evaluation would skip by short-circuiting still counts toward the limit.
+A filter that fails whatever the record is (say `limit / 0 > 1` with `limit` known) throws that `BonsaiRuntimeError` instead of translating to a query that selects nothing. When the failing part comes after a read of the record (`order.total > 1e308 * limit`), that read could fail first, so the part is left untranslated and reported as `UNTRANSLATABLE`. The environment's runtime limits (`maxSteps`, `timeout`) apply to translating, not to the database: a filter that would exceed them per record in Bonsai (for example over a known list of millions of items) still matches rows in the database. Translating evaluates every known part of the filter up front, so a known part that evaluation would skip by short-circuiting still counts toward the limit.
 
 ## Indexes
 

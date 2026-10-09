@@ -26,7 +26,7 @@ Every function can be called as `f(x, ...)` or as a method, `x.f(...)`. In the s
 | [`padEnd`](#padend) | Pads text at the end to a length. |
 | [`repeat`](#repeat) | Repeats text a number of times. |
 | [`at`](#at) | The item or character at a position; negative positions count from the end. |
-| [`matches`](#matches) | Whether text contains a match for a regular expression (JavaScript syntax as with the u flag, without backreferences or lookaround; linear time; anchor with ^ and $; prefix (?i) to ignore case). |
+| [`matches`](#matches) | Whether text contains a match for a regular expression (JavaScript syntax without backreferences or lookaround, linear time; anchor with ^ and $; prefix (?i) to ignore case). |
 | [`toString`](#tostring) | Renders a value as text, as a template would. |
 | [`toNumber`](#tonumber) | Parses text as a number. |
 
@@ -234,7 +234,7 @@ The item or character at a position; negative positions count from the end.
 
 ## matches
 
-Whether text contains a match for a regular expression (JavaScript syntax as with the u flag, without backreferences or lookaround; linear time; anchor with ^ and $; prefix (?i) to ignore case).
+Whether text contains a match for a regular expression (JavaScript syntax without backreferences or lookaround, linear time; anchor with ^ and $; prefix (?i) to ignore case).
 
 - `matches(string, string): boolean`
 

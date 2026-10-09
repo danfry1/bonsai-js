@@ -8,7 +8,7 @@ type Code = string
 interface Case {
   name?: string
   source: string
-  context?: Record<string, unknown>
+  context?: Record<string, unknown> | undefined
   value?: unknown
   /** Expected timestamp result, compared via toISOString(). */
   iso?: string

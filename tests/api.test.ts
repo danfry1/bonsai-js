@@ -273,3 +273,21 @@ describe('async host functions', () => {
     expect(log).toEqual(['start 1', 'end 1', 'start 2', 'end 2'])
   })
 })
+
+describe('public option types accept undefined (exactOptionalPropertyTypes)', () => {
+  it('lets every optional option be passed as undefined', async () => {
+    const maybe = <T>(value: T): T | undefined => value
+    const env = bonsai({ variables: { n: t.number() } })
+    const program = env.compile('n + 1', { expect: maybe(t.number()) })
+    const explanation = await program.explain(
+      { n: 1 },
+      { maxIterations: maybe(5), maxTraceNodes: maybe(100), exhaustive: maybe(false) },
+    )
+    expect(explanation.ok).toBe(true)
+    const partial = program.partial(
+      {},
+      { unknown: maybe(['n']), callHostFunctions: maybe(false), now: maybe(new Date(0)) },
+    )
+    expect(partial.status).toBe('residual')
+  })
+})

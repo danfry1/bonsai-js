@@ -544,7 +544,7 @@ const scenarioArbitrary: fc.Arbitrary<Scenario> = fc
 
 type Outcome =
   | { ok: true; value: unknown }
-  | { ok: false; code: string; message: string; span?: { start: number; end: number } }
+  | { ok: false; code: string; message: string; span?: { start: number; end: number } | undefined }
 
 class FuzzViolation extends Error {}
 
@@ -786,11 +786,11 @@ async function scenarioHolds(scenario: Scenario): Promise<boolean> {
     if (env === openEnv) checkPrinting(env, source, context, sync)
 
     // (e) explain() agrees with evaluation and its trace is plain data.
-    if (env === openEnv) checkExplain(env, source, context, sync)
+    checkExplain(env, source, context, sync)
 
     // (f) partial evaluation with part of the context is faithful: its value,
     // or its residual evaluated with the full context, matches evaluation.
-    if (env === openEnv) checkPartial(env, source, context, sync)
+    checkPartial(env, source, context, sync)
   }
   return true
 }
@@ -858,7 +858,7 @@ function checkExplain(
   context: Record<string, unknown>,
   expected: Outcome,
 ): void {
-  const explained = capture('explain', () => env.explain(source, context))
+  const explained = capture('explain', () => env.explainSync(source, context))
   if (!explained.ok) {
     // Only syntax and check errors may throw, and evaluation must throw the same.
     if (expected.ok || expected.code !== explained.code) {

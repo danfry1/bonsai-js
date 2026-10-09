@@ -1,4 +1,4 @@
-import { BonsaiError } from '../errors.js'
+import { BonsaiError, type ErrorCode } from '../errors.js'
 import { forEachChild, type Node } from '../syntax/ast.js'
 import { Duration, isMap } from './values.js'
 
@@ -24,7 +24,7 @@ export interface Trace {
   /** The value it produced (a live reference into your data; see Explanation.toJSON). */
   value?: unknown
   /** Why it failed, when it did. */
-  error?: { readonly code: string; readonly message: string }
+  error?: { readonly code: ErrorCode; readonly message: string }
   children: Trace[]
   /** For calls with a lambda: one entry per run of the lambda (up to the cap). */
   iterations?: Iteration[]
@@ -41,7 +41,7 @@ export interface Iteration {
   /** The lambda's result for this item. */
   readonly result?: unknown
   /** Why the lambda failed for this item, when it did. */
-  readonly error?: { readonly code: string; readonly message: string }
+  readonly error?: { readonly code: ErrorCode; readonly message: string }
   /** The lambda body's trace for this item. */
   readonly trace: Trace
 }
@@ -222,7 +222,7 @@ export class Tracer {
   }
 }
 
-export function errorInfo(error: unknown): { code: string; message: string } {
+export function errorInfo(error: unknown): { code: ErrorCode; message: string } {
   if (error instanceof BonsaiError) return { code: error.code, message: error.message }
   return { code: 'HOST_ERROR', message: error instanceof Error ? error.message : String(error) }
 }

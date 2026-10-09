@@ -38,7 +38,7 @@ if (result.status === 'residual') {
 |---|---|
 | `value` | The known data decides the result: `value` |
 | `error` | Evaluation fails whatever the unknown data is: `error` |
-| `residual` | `residual` (syntax tree), `source`, `bindings`, `dependsOn`, `hostFunctions` (host functions the residual still calls), and `evaluateSync` / `evaluate` |
+| `residual` | `residual` (syntax tree), `source`, `bindings`, `dependsOn`, `hostFunctions` (host functions the residual still calls), and `evaluateSync(context, options?)` / `evaluate(context, options?)`, which take the same evaluation options as a program (`timeout`, `maxSteps`, `signal`) |
 
 The residual is exact: evaluating it with the full data gives the same value or error as evaluating the original expression with the full data. Simplifications that would change a result (for example turning `x && false` into `false` when `x` could fail) are not made.
 
@@ -52,9 +52,9 @@ Short primitives (numbers, booleans, `null`, strings up to 200 characters) are w
 |---|---|---|
 | `unknown` | variables missing from `known` | Variables or dotted paths (`order`, `user.riskScore`) to treat as unknown; unknown wins over a value you passed |
 | `callHostFunctions` | `false` | Call host functions whose inputs are known (only synchronous ones); otherwise they stay in the residual |
-| `now` | none | The time `now()` returns; otherwise `now()` stays in the residual |
+| `now` | none | The time `now()` returns; otherwise `now()` stays in the residual (the environment's `clock` is not used, so a stored residual reads the time when it is evaluated) |
 
-Limit errors (steps, time) are thrown from `partial()` rather than guessed. Every sub-expression evaluated during one `partial()` call shares one step budget. Options follow the same rules as everywhere else: an unknown option or a wrong type is a `TypeError`.
+Limit errors (steps, time) are thrown from `partial()` rather than guessed. Every sub-expression evaluated during one `partial()` call shares one step budget. Options follow the same rules as everywhere else: an unknown option or a wrong type is a `TypeError`. With `validateContext`, the variables in `known` are validated as evaluation validates them (a mismatch is an `INVALID_CONTEXT` result), so a known object must have all its declared fields; a missing field would otherwise be read as `null`. To leave part of an object unknown, list its path in `unknown` (`user.riskScore`): a variable with an unknown path inside it is not validated.
 
 ## Details
 
@@ -63,6 +63,6 @@ Limit errors (steps, time) are thrown from `partial()` rather than guessed. Ever
 - **Host functions** are called only with `callHostFunctions: true`, never when they are async, and context functions (`context: true`) only when you also pass `unknown: []`, since they can read variables the expression does not name.
 - **With an explicit `unknown` list**, a variable that is neither in `known` nor listed reads as `null`, as it would in normal evaluation.
 - **`expect` still applies.** A program compiled with `expect` checks a decided `value` against it (a mismatch is a `TYPE_ERROR` result), and its residual checks results the same way.
-- **Context getters run against the merged context.** The residual's context is your context plus the bindings, copied property by property (getters are copied, not run). A getter that relies on `this` being your original object (a private field, a `WeakMap` lookup) sees the merged object instead.
+- **Context getters run against the merged context.** The residual reads variables from your context plus the bindings, copied property by property (getters are copied, not run). A getter that relies on `this` being your original object (a private field, a `WeakMap` lookup) sees the merged object instead. Host functions declared `context: true` receive your original context, as they do in evaluation.
 - **Storing a residual.** `result.evaluateSync` and `result.evaluate` are the reliable way to run it. If you store `source` and `bindings` and compile them yourself, use a non-strict environment (the binding names are not declared variables) and pass the bindings in the context; inlined values can also make a type error in an untaken branch visible to the checker.
 

@@ -44,7 +44,7 @@ typed.check('c').ok // => false
 
 ## Validating the context
 
-The checker trusts the declared types: it assumes the context you pass matches them. A declared object type lists the fields expressions may use, and the value may have more keys (a row with extra columns is valid); the checker accounts for that, and validation accepts extra keys. If the context comes from somewhere you do not control (a JSON body, a database column), set `validateContext: true`. Every evaluation then checks the declared variables deeply before running and fails with `INVALID_CONTEXT`, naming the first path that does not match. The check is proportional to the size of the data, so leave it off when the context is built by your own typed code.
+The checker trusts the declared types: it assumes the context you pass matches them. A declared object type lists the fields expressions may use, and the value may have more keys (a row with extra columns is valid); the checker accounts for that, and validation accepts extra keys. If the context comes from somewhere you do not control (a JSON body, a database column), set `validateContext: true`. Every evaluation then checks the declared variables deeply before running and fails with `INVALID_CONTEXT`, naming the first path that does not match. `explain()` reports the failure in its result, and [`partial()`](/api/partial) validates the variables in `known` (except one with an unknown path inside it, which is incomplete by design). The check is proportional to the size of the data, so leave it off when the context is built by your own typed code.
 
 <!-- continue -->
 ```ts
@@ -90,7 +90,7 @@ Parses, checks, and compiles. Returns a [Program](/api/programs). Throws `Bonsai
 compile<E extends Type>(source: string, options?: { expect?: E }): Program<Context, Infer<E>>
 ```
 
-`expect` requires the result type and sets the program's TypeScript result type. When the checker cannot prove the result type statically (part of it is `any`, as with untyped variables or `values()` of a declared object), the result is checked at run time instead, and a mismatch is a `TYPE_ERROR`. That check walks the result, so it costs time and steps in proportion to the result's size (about 7 steps per record for a list of small maps); declare variable types to let the checker prove the result instead.
+`expect` requires the result type and sets the program's TypeScript result type. `expect` is the only option; an unknown key (such as a misspelled `expected`) or an `expect` that is not a type built with `t` is a `TypeError`, from `check()` as well. When the checker cannot prove the result type statically (part of it is `any`, as with untyped variables or `values()` of a declared object), the result is checked at run time instead, and a mismatch is a `TYPE_ERROR`. That check walks the result, so it costs time and steps in proportion to the result's size (about 7 steps per record for a list of small maps); declare variable types to let the checker prove the result instead.
 
 The checker proves results from the declared variable types, which describe the data you pass but are not checked against it unless `validateContext` is on. With `validateContext: true` (or data that is already known to match the declarations), the TypeScript result type always holds. Without it, a context that breaks its declarations (a string where a number is declared) can produce a result of a different type.
 
@@ -127,6 +127,10 @@ The context must be a plain object or class instance (or omitted when no variabl
 ```ts
 typed.evaluateSync('a + b', { a: 1, b: 2 }, { timeout: 50, maxSteps: 10_000 }) // => 3
 ```
+
+## env.explain(source, context?, options?) and env.explainSync(source, context?, options?)
+
+Compile through the cache and [explain](/api/explain) the result: `explain()` returns a promise, like `evaluate()`, and rejects for syntax and check errors; `explainSync()` returns the explanation and throws them.
 
 ## env.extend(options)
 

@@ -53,6 +53,16 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      # Runs every documentation example and compares it with its stated result.
+      - name: Documentation examples
+        run: bun run check:docs
+
+      # The function reference pages are generated from the built-in definitions.
+      - name: Generated function pages are current
+        run: |
+          bun run website/scripts/generate-functions.ts
+          git diff --exit-code -- website/functions website/public/llms-full.txt
+
       - name: Test
         run: bun run test:coverage
 
