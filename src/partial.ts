@@ -227,8 +227,6 @@ export interface PartialEngine {
   readonly hostKind: (name: string) => HostKind | undefined
   /** Charges one step of partial-evaluation work against the shared budget. */
   readonly charge: () => void
-  /** Checks an evaluation context as evaluation does (a list or a Map is not one). */
-  readonly contextOf: (value: unknown) => Record<string, unknown>
   /**
    * Evaluates a subtree against the known context with the given free locals,
    * sharing one step budget and deadline across the whole partial evaluation.
@@ -237,13 +235,15 @@ export interface PartialEngine {
    */
   readonly evaluate: (node: Node, locals: readonly (readonly [string, unknown])[]) => unknown
   /**
-   * Compiles a residual for later evaluation. The compiled residual reads
-   * variables from `ctx` (the caller's context plus the bindings); context host
-   * functions receive `hostContext`, the caller's own context.
+   * Compiles a residual for later evaluation, with `bindings` as fixed values
+   * of the variables they name; everything else is read from the caller's context.
    */
-  readonly compileResidual: (residual: Node) => {
-    runSync: (ctx: object, hostContext: object, options: unknown) => unknown
-    runAsync: (ctx: object, hostContext: object, options: unknown) => Promise<unknown>
+  readonly compileResidual: (
+    residual: Node,
+    bindings: Readonly<Record<string, unknown>>,
+  ) => {
+    runSync: (ctx: unknown, options: unknown) => unknown
+    runAsync: (ctx: unknown, options: unknown) => Promise<unknown>
   }
 }
 
@@ -532,23 +532,10 @@ export function partiallyEvaluate<R>(
 
   // An expression that is known except for an error it always raises.
   const residualDeps = dependencies(engine.hostKind)(outcome.node)
-  const compiled = engine.compileResidual(outcome.node)
   const frozenBindings = Object.freeze({ ...bindings })
-  const withBindings = (base: Record<string, unknown>): object => {
-    // Copy property descriptors so the caller's getters are not run here.
-    const merged: object = Object.create(null) as object
-    try {
-      Object.defineProperties(merged, Object.getOwnPropertyDescriptors(base))
-    } catch (error) {
-      throw new BonsaiRuntimeError('HOST_ERROR', 'Reading the evaluation context failed', {
-        cause: error,
-      })
-    }
-    for (const [name, value] of Object.entries(frozenBindings)) {
-      Object.defineProperty(merged, name, { value, enumerable: true })
-    }
-    return merged
-  }
+  // The bindings are compiled in as constants, so evaluating reads the caller's
+  // context as it is: no per-call copy, and getters see their own object.
+  const compiled = engine.compileResidual(outcome.node, frozenBindings)
   return Object.freeze({
     status: 'residual',
     residual: outcome.node,
@@ -558,14 +545,10 @@ export function partiallyEvaluate<R>(
       .filter((path) => !Object.hasOwn(frozenBindings, path.split('.')[0]))
       .sort(),
     hostFunctions: hostCalls(outcome.node, engine.hostKind),
-    evaluateSync: (context?: object, evaluateOptions?: EvaluateOptions) => {
-      const base = engine.contextOf(context)
-      return compiled.runSync(withBindings(base), base, evaluateOptions) as R
-    },
-    evaluate: async (context?: object, evaluateOptions?: EvaluateOptions) => {
-      const base = engine.contextOf(context)
-      return (await compiled.runAsync(withBindings(base), base, evaluateOptions)) as R
-    },
+    evaluateSync: (context?: object, evaluateOptions?: EvaluateOptions) =>
+      compiled.runSync(context, evaluateOptions) as R,
+    evaluate: async (context?: object, evaluateOptions?: EvaluateOptions) =>
+      (await compiled.runAsync(context, evaluateOptions)) as R,
   })
 }
 

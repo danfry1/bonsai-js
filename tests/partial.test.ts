@@ -483,3 +483,32 @@ describe('partial residuals evaluate as the program does', () => {
     expect(residualOf(partlyKnown).source).toBe('order.total > user.riskScore')
   })
 })
+
+describe('residuals read the caller context as it is', () => {
+  const open = bonsai()
+
+  it('runs context getters on the caller object, with or without bindings', () => {
+    const secret = new WeakMap<object, number>()
+    const context = {}
+    Object.defineProperty(context, 'age', {
+      enumerable: true,
+      get(this: object) {
+        return secret.get(this)
+      },
+    })
+    secret.set(context, 30)
+    for (const source of ['age > limit', 'age > limit && "x" in tags']) {
+      const result = open.compile(source).partial({ limit: 18, tags: ['x', 'y'] })
+      if (result.status !== 'residual') throw new Error('expected a residual')
+      expect(result.evaluateSync(context), source).toBe(true)
+    }
+  })
+
+  it('keeps bindings ahead of a context key with the same name', () => {
+    const result = open.compile('n in tags').partial({ tags: ['x', 'y'] })
+    if (result.status !== 'residual') throw new Error('expected a residual')
+    const [name] = Object.keys(result.bindings)
+    expect(name).toBeDefined()
+    expect(result.evaluateSync({ n: 'x', [name]: ['other'] })).toBe(true)
+  })
+})

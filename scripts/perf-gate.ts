@@ -59,6 +59,11 @@ function writeLine(message: string): void {
 
 const env = bonsai()
 const compiled = env.compile(RULE)
+// A residual with a binding (the known list), evaluated per request.
+const partial = env
+  .compile('user.age >= minAge && user.country in countries')
+  .partial({ minAge: 18, countries: ['GB', 'IE'] })
+if (partial.status !== 'residual') throw new Error('expected a residual')
 // A zero-size cache forces every evaluateSync(source) through parse, check, and compile.
 // Older bases took cacheSize as a limit and ignore it at the top level; newer ones reject it as a limit.
 const uncached = (() => {
@@ -118,6 +123,11 @@ const cases: PerfCase[] = [
     name: 'compiled rule',
     minHz: 1_600_000,
     fn: () => compiled.evaluateSync(context),
+  },
+  {
+    name: 'partial residual',
+    minHz: 1_600_000,
+    fn: () => partial.evaluateSync(context),
   },
   {
     name: 'arithmetic',
