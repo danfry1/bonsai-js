@@ -537,6 +537,34 @@ describe('toMongo', () => {
   })
 })
 
+describe('translator options are validated like the others', () => {
+  const program = env.compile('order.total > 1')
+  const sql = { row: 'order', columns, dialect: 'postgres' } as const
+  const mongo = { row: 'order', fields: columns } as const
+
+  it('rejects unknown keys, so a misspelled paramOffset is never silently ignored', () => {
+    expect(() => toSQL(program, { ...sql, paramOfset: 5 } as never)).toThrow(
+      /Unknown toSQL option key "paramOfset"/u,
+    )
+    expect(() => toSQL(program, { ...sql, timeout: 5 } as never)).toThrow(TypeError)
+    expect(() => toMongo(program, { ...mongo, dialect: 'postgres' } as never)).toThrow(
+      /Unknown toMongo option key "dialect"/u,
+    )
+  })
+
+  it('reports a wrongly typed paramOffset as a TypeError and a bad value as a RangeError', () => {
+    expect(() => toSQL(program, { ...sql, paramOffset: '3' } as never)).toThrow(TypeError)
+    expect(() => toSQL(program, { ...sql, paramOffset: -1 })).toThrow(RangeError)
+    expect(toSQL(program, { ...sql, paramOffset: 2 }).sql).toContain('$3')
+  })
+
+  it('accepts undefined for optional options', () => {
+    expect(
+      toSQL(program, { ...sql, paramOffset: undefined, known: undefined, now: undefined }).sql,
+    ).toContain('$1')
+  })
+})
+
 describe('known values are validated as evaluation validates them', () => {
   it('reports INVALID_CONTEXT for known data that does not match its type', () => {
     const strictEnv = bonsai({
