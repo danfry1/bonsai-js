@@ -36,7 +36,7 @@ Every function can be called as `f(x, ...)` or as a method, `x.f(...)`. In the s
 | [`addYears`](#addyears) | Adds calendar years (Feb 29 becomes Feb 28). |
 | [`formatDate`](#formatdate) | Formats a timestamp in a time zone (default UTC). Tokens: yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS; quote literal text. |
 | [`abs`](#abs) | Absolute value. |
-| [`sum`](#sum) | The sum of the numbers in a list (nulls are skipped). |
+| [`sum`](#sum) | The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is. |
 
 ## now
 
@@ -360,7 +360,7 @@ abs(hours(-2)) // => PT2H
 
 ## sum
 
-The sum of the numbers in a list (nulls are skipped).
+The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is.
 
 - `sum((duration | null)[]): duration`
 

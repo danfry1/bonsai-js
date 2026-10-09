@@ -289,8 +289,9 @@ export function print(node: Node, options: PrintOptions = {}): string {
         needed = !(ASSOCIATIVE.has(op) && child.type === 'Binary' && child.operator === op)
     }
     if (child.type === 'Binary') {
+      // Beside "??", every other binary operator needs parentheses (the parser requires them).
       const mixesNullish =
-        (op === '??' && (child.operator === '&&' || child.operator === '||')) ||
+        (op === '??' && child.operator !== '??') ||
         ((op === '&&' || op === '||') && child.operator === '??')
       if (mixesNullish) needed = true
     }

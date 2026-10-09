@@ -218,9 +218,9 @@ describe('sync compilation of the same node kinds', () => {
     )
   })
 
-  it('reads undefined list items and map values as null', () => {
+  it('reads undefined list items as null and drops map keys holding undefined', () => {
     expect(env.evaluateSync('[...xs]', { xs: [undefined] })).toEqual([null])
-    expect(env.evaluateSync('{ ...m }', { m: { a: undefined } })).toEqual({ a: null })
+    expect(env.evaluateSync('{ ...m }', { m: { a: undefined, b: null } })).toEqual({ b: null })
     // A spread undefined is a null argument, which max(number, ...number) rejects.
     expect(() => env.evaluateSync('max(...xs)', { xs: [1, undefined] })).toThrow(/cannot take/u)
   })

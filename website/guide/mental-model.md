@@ -13,7 +13,7 @@ order.total >= threshold && order.country in ["GB", "IE"] // => true
 
 ## One kind of absent value: `null`
 
-A missing property, a missing variable, and a host `undefined` all read as `null`. There is no `undefined` in the language, so `x == null` means "missing or null".
+A missing property, a missing variable, and a host `undefined` all read as `null`. There is no `undefined` in the language, so `x == null` means "missing or null". A host key holding `undefined` is absent everywhere, so a record means the same whether it came from JSON (key left out) or from an object that set the key to `undefined`: it is not listed by `keys`, `has` and `in` report it missing, and `==` ignores it.
 
 <!-- context: { user: { name: "Ada", middleName: null } } -->
 ```bonsai

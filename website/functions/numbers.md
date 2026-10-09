@@ -16,12 +16,12 @@ Every function can be called as `f(x, ...)` or as a method, `x.f(...)`. In the s
 | [`sqrt`](#sqrt) | Square root. |
 | [`clamp`](#clamp) | Limits a number to a range. |
 | [`toFixed`](#tofixed) | Formats a number with a fixed number of decimals. |
-| [`formatNumber`](#formatnumber) | Formats a number with grouping, e.g. 1,234.5, with optional decimals and locale (default "en-US"). |
-| [`formatCurrency`](#formatcurrency) | Formats an amount in a currency (ISO 4217 code such as "EUR"), with an optional locale (default "en-US"). |
+| [`formatNumber`](#formatnumber) | Formats a number with grouping, e.g. 1,234.5, with optional decimals and locale (default "en-US"; an unsupported locale is an error). |
+| [`formatCurrency`](#formatcurrency) | Formats an amount in a currency (ISO 4217 code such as "EUR"), with an optional locale (default "en-US"; an unsupported locale is an error). |
 | [`min`](#min) | The smallest value (nulls are skipped); null for an empty list. |
 | [`max`](#max) | The largest value (nulls are skipped); null for an empty list. |
-| [`sum`](#sum) | The sum of the numbers in a list (nulls are skipped). |
-| [`avg`](#avg) | The mean of the numbers in a list (nulls are skipped); null for no numbers. |
+| [`sum`](#sum) | The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is. |
+| [`avg`](#avg) | The mean of the numbers in a list (nulls are skipped, summed as sum does); null for no numbers. |
 
 ## round
 
@@ -119,7 +119,7 @@ toFixed(3.14159, 2) // => "3.14"
 
 ## formatNumber
 
-Formats a number with grouping, e.g. 1,234.5, with optional decimals and locale (default "en-US").
+Formats a number with grouping, e.g. 1,234.5, with optional decimals and locale (default "en-US"; an unsupported locale is an error).
 
 - `formatNumber(number, number?, string?): string`
 
@@ -128,11 +128,12 @@ Formats a number with grouping, e.g. 1,234.5, with optional decimals and locale 
 formatNumber(1234567.891) // => "1,234,567.891"
 formatNumber(1234.5, 2) // => "1,234.50"
 formatNumber(1234.5, 2, "de-DE") // => "1.234,50"
+try(formatNumber(1234.5, 2, "xx"), "unsupported") // => "unsupported"
 ```
 
 ## formatCurrency
 
-Formats an amount in a currency (ISO 4217 code such as "EUR"), with an optional locale (default "en-US").
+Formats an amount in a currency (ISO 4217 code such as "EUR"), with an optional locale (default "en-US"; an unsupported locale is an error).
 
 - `formatCurrency(number, string, string?): string`
 
@@ -171,18 +172,19 @@ max(4, 2, 8) // => 8
 
 ## sum
 
-The sum of the numbers in a list (nulls are skipped).
+The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is.
 
 - `sum((number | null)[]): number`
 
 <!-- context: { items: [{ name: "Pen", price: 2, qty: 3 }, { name: "Book", price: 12, qty: 1 }, { name: "Bag", price: 30, qty: 1 }] } -->
 ```bonsai
 [1, 2, 3].sum() // => 6
+[0.1, 0.2, 0.3].sum() // => 0.6000000000000001
 ```
 
 ## avg
 
-The mean of the numbers in a list (nulls are skipped); null for no numbers.
+The mean of the numbers in a list (nulls are skipped, summed as sum does); null for no numbers.
 
 - `avg((number | null)[]): number | null`
 

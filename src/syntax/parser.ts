@@ -49,6 +49,10 @@ const BINARY_LEVEL: Readonly<Record<string, number>> = {
 }
 const EQUALITY_LEVEL = BINARY_LEVEL['==']
 const RELATIONAL_LEVEL = BINARY_LEVEL['<']
+/** Operators that bind tighter than "??" but read as if they did not; they need parentheses beside it. */
+const NULLISH_MIXED = Object.keys(BINARY_LEVEL).filter(
+  (op) => op !== '??' && op !== '&&' && op !== '||',
+)
 
 /** Parses an expression into a syntax tree. Throws BonsaiSyntaxError or BonsaiLimitError. */
 export function parse(source: string, limits: ParseLimits = DEFAULT_PARSE_LIMITS): Node {
@@ -284,6 +288,18 @@ export function parse(source: string, limits: ParseLimits = DEFAULT_PARSE_LIMITS
           (isBare(left, ['??']) || isBare(right, ['??'])))
       ) {
         fail('Parenthesize "??" when mixing it with "&&" or "||"', left.start, right.end)
+      }
+      // `score ?? 0 > 10` means score ?? (0 > 10), which reads as (score ?? 0) > 10.
+      if (operator === '??') {
+        const mixed = [left, right].find((side) => isBare(side, NULLISH_MIXED))
+        if (mixed !== undefined) {
+          const op = (mixed as { operator: string }).operator
+          fail(
+            `Parenthesize "${op}" next to "??": write (a ?? b) ${op} c or a ?? (b ${op} c)`,
+            left.start,
+            right.end,
+          )
+        }
       }
       if (operator === '&&' || operator === '||' || operator === '??') {
         if (chain === undefined) {

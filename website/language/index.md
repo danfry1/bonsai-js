@@ -30,7 +30,7 @@ The examples on these pages run with the clock fixed at `2026-01-15T10:30:00Z`.
 
 | Kind | Examples | Notes |
 | --- | --- | --- |
-| `null` | `null` | The single absent value. A missing property, a missing variable, and a host `undefined` all read as `null`. |
+| `null` | `null` | The single absent value. A missing property, a missing variable, and a host `undefined` all read as `null`; a map key holding `undefined` counts as absent (`==`, `keys`, `has`, `in`). |
 | boolean | `true`, `false` | |
 | number | `42`, `3.14`, `1e-3`, `0xff` | IEEE-754 doubles. Operations that would produce `NaN` or `Infinity` are errors. |
 | string | `"text"`, `'text'` | UTF-16 text. `length` and positions count code units, as in JavaScript. |

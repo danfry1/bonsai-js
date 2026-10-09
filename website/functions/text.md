@@ -28,7 +28,7 @@ Every function can be called as `f(x, ...)` or as a method, `x.f(...)`. In the s
 | [`at`](#at) | The item or character at a position; negative positions count from the end. |
 | [`matches`](#matches) | Whether text contains a match for a regular expression (JavaScript syntax without backreferences or lookaround, linear time; anchor with ^ and $; prefix (?i) to ignore case). |
 | [`toString`](#tostring) | Renders a value as text, as a template would. |
-| [`toNumber`](#tonumber) | Parses text as a number. |
+| [`toNumber`](#tonumber) | Parses decimal text as a number, e.g. "-12.5" or "1e3" (surrounding whitespace is ignored; 0x and other bases are not accepted). |
 
 ## toUpperCase
 
@@ -260,12 +260,13 @@ days(1).toString() // => "P1D"
 
 ## toNumber
 
-Parses text as a number.
+Parses decimal text as a number, e.g. "-12.5" or "1e3" (surrounding whitespace is ignored; 0x and other bases are not accepted).
 
 - `toNumber(string | number): number`
 
 <!-- context: { items: [{ name: "Pen", price: 2, qty: 3 }, { name: "Book", price: 12, qty: 1 }, { name: "Bag", price: 30, qty: 1 }] } -->
 ```bonsai
 "42.5".toNumber() // => 42.5
-try("4x".toNumber(), 0) // => 0
+" -1e3 ".toNumber() // => -1000
+try("0x10".toNumber(), 0) // => 0
 ```

@@ -124,6 +124,17 @@ const OBJECT_PROTOTYPE: object = Object.prototype
 const isEnumerable = Object.prototype.propertyIsEnumerable
 
 /**
+ * Whether a map holds `key` as data: an own key the language can read whose
+ * value is not `undefined`. Host `undefined` reads as null, and a key holding
+ * it counts as absent everywhere (==, keys, has, in, spread), so a record
+ * means the same whether it came from JSON (key left out) or from an object
+ * that set the key to undefined.
+ */
+export function holdsKey(map: Readonly<Record<string, unknown>>, key: string): boolean {
+  return !BLOCKED_NAMES.has(key) && hasOwn(map, key) && map[key] !== undefined
+}
+
+/**
  * Whether a value is a map: a plain object, or a class instance, read through
  * its own properties. Lists, timestamps, durations, and built-in host objects
  * (a Map, a RegExp, a Promise, ...) are not.
@@ -375,7 +386,7 @@ export function hasKey(object: unknown, key: unknown, s: State, at: Span): boole
     const name = typeof key === 'number' ? String(key) : key
     if (typeof name !== 'string') return false
     chargeKey(s, name)
-    return !BLOCKED_NAMES.has(name) && hasOwn(object, name)
+    return holdsKey(object, name)
   }
   // has() is a read: an opaque value is never read into (as with `in`).
   if (kindOf(object) === 'opaque') {
@@ -521,19 +532,30 @@ export function equals(a: unknown, b: unknown, s: State, depth = 0, at?: Span): 
   if (a instanceof Duration) return b instanceof Duration && a.ms === b.ms
   if (b instanceof Date || b instanceof Duration) return false
   if (!isMap(a) || !isMap(b)) return false
-  const visible = (key: string): boolean => !BLOCKED_NAMES.has(key)
   // Listing keys costs work per key, so each side is charged as it is listed,
   // before the counts can differ and end the comparison early.
   const keys = Object.keys(a)
   s.charge(1 + keyListCost(keys.length))
   const other = Object.keys(b)
   s.charge(1 + keyListCost(other.length))
-  if (keys.filter(visible).length !== other.filter(visible).length) return false
+  // Data keys only (see holdsKey); each value is read once.
+  const values: unknown[] = []
+  const names: string[] = []
   for (const key of keys) {
-    if (!visible(key)) continue
+    if (BLOCKED_NAMES.has(key)) continue
+    const value = a[key]
+    if (value === undefined) continue
+    names.push(key)
+    values.push(value)
+  }
+  let count = 0
+  for (const key of other) if (!BLOCKED_NAMES.has(key) && b[key] !== undefined) count++
+  if (names.length !== count) return false
+  for (let i = 0; i < names.length; i++) {
+    const key = names[i]
     // An own enumerable key, as Object.keys(b) lists: a non-enumerable key is not data.
     if (!isEnumerable.call(b, key)) return false
-    if (!equals(a[key], b[key], s, depth + 1, at)) return false
+    if (!equals(values[i], b[key], s, depth + 1, at)) return false
   }
   return true
 }
@@ -627,7 +649,7 @@ export function contains(container: unknown, item: unknown, s: State, at: Span):
     }
     const key = String(item)
     chargeKey(s, key)
-    return !BLOCKED_NAMES.has(key) && hasOwn(container, key)
+    return holdsKey(container, key)
   }
   throw s.error(
     'TYPE_ERROR',

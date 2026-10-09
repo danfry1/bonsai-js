@@ -601,7 +601,10 @@ export function compileProgram(
         s.charge(keyListCost(keys.length) + mapBuildCost(keys.length))
         for (const k of keys) {
           chargeKey(s, k)
-          if (!BLOCKED_NAMES.has(k)) out[k] = value[k] === undefined ? null : value[k]
+          // A key holding undefined is absent (see holdsKey), so it is not copied.
+          if (BLOCKED_NAMES.has(k)) continue
+          const v = value[k]
+          if (v !== undefined) out[k] = v
         }
         return true
       }
