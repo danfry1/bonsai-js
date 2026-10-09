@@ -25,7 +25,12 @@ Bonsai follows Semantic Versioning for its two package entrypoints:
   - a prefix operator left of `**`.
 - **New built-in functions.** Adding one never changes an existing environment's
   expressions, because a host function of the same name takes precedence and
-  an unknown function was previously an error.
+  an unknown function was previously an error. New overloads of an existing
+  built-in never take a lambda at an argument position that takes a value
+  today: `.` binds to the nearest argument whose parameter is a function in any
+  overload, so such an overload would silently re-bind `.` in stored
+  expressions (`users.filter(.score > max(.bonus, .cap))`). That is a major
+  change.
 - **New fields in exported interfaces.** An options or input interface may gain
   optional fields, and a result interface may gain fields. Construct the
   limits and options objects you pass as literals of the documented fields

@@ -24,7 +24,7 @@ Timestamps compare by instant with `==`, `<`, and the other ordering operators, 
 
 ## Durations
 
-Durations come from `weeks`, `days`, `hours`, `minutes`, `seconds`, and `milliseconds`, and from subtracting two timestamps. A day is exactly 24 hours. Durations render as ISO-8601 durations.
+Durations come from `weeks`, `days`, `hours`, `minutes`, `seconds`, and `milliseconds`, and from subtracting two timestamps. A day is exactly 24 hours. A duration is a whole number of milliseconds, the resolution of timestamps: a fraction is rounded to the nearest millisecond, halves away from zero, when the duration is made (`milliseconds(0.5)` is 1 ms, `days(1) / 7` is 12,342,857 ms), so duration arithmetic is exact. Durations render as ISO-8601 durations.
 
 ```bonsai
 days(1) + hours(12) // => P1DT12H
@@ -73,7 +73,7 @@ Durations are exact, so `+ days(1)` always adds 24 hours. Calendar functions wor
 | `addDays`, `addMonths`, `addYears` | calendar arithmetic |
 | `formatDate` | text from a pattern |
 
-Each takes an optional IANA time zone name as its last argument; without one (or with `null`) it uses UTC.
+Each takes an optional time zone as its last argument; without one (or with `null`) it uses UTC. A time zone is `"UTC"` or an IANA name as the tz database writes it, `Area/Location` (`"Europe/Berlin"`, `"America/Argentina/Buenos_Aires"`, `"Etc/GMT+5"`). Abbreviations and legacy names (`"EST"`, `"GB"`), other spellings (`"utc"`, `"europe/berlin"`), and offsets (`"+05:30"`) are `INVALID_ARGUMENT` errors: which of them a JavaScript runtime accepts, and what it maps them to, differs between runtimes, and an offset ignores daylight saving.
 
 ```bonsai
 day(order.placedAt) // => 14

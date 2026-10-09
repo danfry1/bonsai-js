@@ -40,7 +40,7 @@ put in the context (see §10).
 | list | A host array or a produced list. Lists are never mutated. |
 | map | A plain object or class instance, read through its **own** properties; object literals. A value may have more keys than its declared type lists. |
 | timestamp | A valid host `Date`, or one produced by `timestamp()`/`now()`. An invalid `Date` is an error when used. |
-| duration | A span of time, produced by `days(3)`, `hours(1)`, `t1 - t2`, ... |
+| duration | A span of time in whole milliseconds, produced by `days(3)`, `hours(1)`, `t1 - t2`, ... A fraction rounds to the nearest millisecond, halves away from zero. |
 
 Every other host value is **opaque**: functions, symbols, bigints, `Map`,
 `Set`, `WeakMap`, `WeakSet`, `RegExp`, promises, `ArrayBuffer` and typed
@@ -152,8 +152,10 @@ strings). `k in map`: own-key test (`k` a string, or a number converted to its d
   does not skip the rest of the chain, so write `a?.trim()?.toUpperCase()`.
 - Calling a function with `null` as its first argument, when no overload
   accepts `null` there, is a `NULL_RECEIVER` error in either call form.
-- `__proto__`, `constructor`, and `prototype` are never readable, never valid
-  literal keys, and produced maps never contain them.
+- `__proto__`, `constructor`, and `prototype` are never data: they are not
+  valid literal keys, a computed read of one is `null` (as `in`, `has()`, and
+  `keys()` treat them as absent), writing one as a computed key is a
+  `BLOCKED_PROPERTY` error, and produced maps never contain them.
 - `has(a.b)` is `true` when `a` is a map with own property `b` (even if its
   value is `null`). `has(a[k])` likewise; for lists it tests the index.
 
@@ -278,8 +280,10 @@ context variable but not another binding or parameter.
 
 ## 9. Time
 
-Timestamps are instants. Durations are exact lengths (a day is 24 hours).
-Calendar operations take an optional IANA time zone and default to UTC:
+Timestamps are instants. Durations are exact lengths in whole milliseconds (a
+day is 24 hours). Calendar operations take an optional time zone, `"UTC"` or
+an IANA `Area/Location` name in the tz database's spelling (anything else is
+`INVALID_ARGUMENT`), and default to UTC:
 `addMonths(t, 1, "Europe/Berlin")`, `startOfDay(t, tz)`, `year(t, tz)`, ...
 `now()` is read once per evaluation from the environment clock.
 
@@ -334,11 +338,13 @@ only when every field the record might lack is optional.
   example a method call without `?.`), lambdas in non-function positions, `.`
   with no enclosing function parameter, and a result that does not match the
   expected type.
-- Warnings (codes `ALWAYS_FALSE`, `NEVER_NULL`, `MAYBE_NULL`): comparisons or
-  memberships that can never hold (`plan == "premium"` when `plan` is
-  `"free" | "pro"`), `??` on a value that is never null, ordering comparisons on
-  a value that may be null (they are false when it is), and lambda results that
-  may be `null` where a boolean is expected.
+- Warnings (codes `ALWAYS_FALSE`, `ALWAYS_TRUE`, `NEVER_NULL`, `MAYBE_NULL`,
+  `UNSAFE_INTEGER`): comparisons or memberships that can never hold
+  (`plan == "premium"` when `plan` is `"free" | "pro"`) or always hold (`!=`,
+  `not in`), `??` on a value that is never null, a value that may be null where
+  it decides something (an ordering comparison, `!`, `&&`, `||`, a `?:`
+  condition, or a lambda result where a boolean is expected), and number
+  literals past 2^53.
 - Declared types describe data; they are not access control. Computed keys and
   `keys()`/`values()`/`entries()` read every own property the host passes in.
 

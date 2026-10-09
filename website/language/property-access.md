@@ -78,11 +78,12 @@ user.nickname == null && user.middleName == null // => true
 
 ## Blocked names
 
-`__proto__`, `constructor`, and `prototype` are never readable. As a literal property name they are a syntax error; as a computed key they are a runtime `BLOCKED_PROPERTY` error.
+`__proto__`, `constructor`, and `prototype` are never data. As a literal property name they are a syntax error. A computed read of one is `null`, as `in`, `has()`, and `keys()` also treat them as absent, so a lookup table keyed by user text can fall back with `??`. Writing one as a computed key (`{[k]: 1}`) is a `BLOCKED_PROPERTY` error.
 
 ```bonsai
 user.__proto__ // error: SYNTAX
-user["constructor"] // error: BLOCKED_PROPERTY
+user["constructor"] // => null
+user["constructor"] ?? "none" // => "none"
 ```
 
 Only own properties are visible. Inherited members such as `toString` or `hasOwnProperty` are not properties of a map:
