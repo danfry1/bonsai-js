@@ -786,11 +786,11 @@ async function scenarioHolds(scenario: Scenario): Promise<boolean> {
     if (env === openEnv) checkPrinting(env, source, context, sync)
 
     // (e) explain() agrees with evaluation and its trace is plain data.
-    if (env === openEnv) checkExplain(env, source, context, sync)
+    checkExplain(env, source, context, sync)
 
     // (f) partial evaluation with part of the context is faithful: its value,
     // or its residual evaluated with the full context, matches evaluation.
-    if (env === openEnv) checkPartial(env, source, context, sync)
+    checkPartial(env, source, context, sync)
   }
   return true
 }
