@@ -68,7 +68,7 @@ With declared types, the checker reports a missing `?.` before evaluation (`NULL
 
 ## Presence: `has`
 
-`has(a.b)` is `true` when `a` is a map with an own property `b`, even if its value is `null`. It distinguishes "present but null" from "missing", which `== null` does not. See [let, try, and has](/language/let-try-has).
+`has(a.b)` is `true` when `a` is a map with an own property `b`, even if its value is `null` (a host `undefined` counts as absent). It distinguishes "present but null" from "missing", which `== null` does not. See [let, try, and has](/language/let-try-has).
 
 ```bonsai
 has(user.nickname) // => true

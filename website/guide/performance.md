@@ -75,6 +75,22 @@ The step budget (`maxSteps`, default 1,000,000) is charged in proportion to the 
 | A host function call | its `cost` (default 32), plus the call around it | about 31,000 bare calls; about 28,000 inside `map` over records |
 | `matches` | about 2 to 12 steps per character searched (alternations cost the most; a pattern anchored with `^` stops early) | roughly 80,000 to 500,000 characters of text |
 | Calendar functions in a time zone (`startOfDay(t, zone)`) | about 20 per call over nearby instants | about 50,000 calls |
+| A built-in call with a string argument | 1, plus 1 per 32 characters of every string argument (the receiver included), plus 1 per 32 characters of text it returns | about 32 calls on a 1,000,000-character string |
+
+### Large strings
+
+Built-in functions are charged by the length of their string arguments whether or not they read all of them, so the budget stays a bound on the work without per-function cost rules. Calls that only look at the start of a string cost as much as ones that scan it. Measured on strings of 100 and 64,000 characters:
+
+| Expression | 100 characters | 64,000 characters |
+| --- | --- | --- |
+| `s.length`, `s == "x"` | 1 | 1 |
+| `s.at(0)`, `s.startsWith("a")` | 4 | 2,001 |
+| `s.slice(0, 50)` | 5 | 2,002 |
+| `s.includes("zz")` | 7 | 3,252 |
+| `s.toUpperCase().length` | 7 | 4,001 |
+| `classify(s)`, a host function | its `cost` (default 32) | its `cost` |
+
+When expressions run on large payloads (a webhook body, a document), size `maxSteps` for about `length / 32` steps per string built-in call on the payload, on top of the expression's other work. A per-tenant budget of 2,000 steps, for example, runs out on a single `body.startsWith("x")` once the body reaches 64,000 characters. If only a prefix or a field matters, pass that in the context instead of the whole payload, or expose a host function with a small `cost`: `.length` and `==` are not charged by length.
 
 If a legitimate workload needs more, raise `maxSteps` for that environment or that evaluation; the budget then bounds proportionally more time. Lower a pure helper function's `cost` so its calls do not dominate.
 

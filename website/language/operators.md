@@ -62,7 +62,7 @@ Absence is `null`, so `x == null` holds whether a key is missing or explicitly `
 
 ## Ordering
 
-`<`, `<=`, `>`, `>=` accept two numbers, two strings (compared by UTF-16 code unit, like JavaScript), two timestamps, or two durations. If either side is `null` the result is `false`. Any other mix of kinds is a type error.
+`<`, `<=`, `>`, `>=` accept two numbers, two strings (compared by UTF-16 code unit, like JavaScript), two timestamps, or two durations. If either side is `null` the result is `false`. Any other mix of kinds is a type error. A non-finite number from the host compares as in JavaScript (`Infinity > 1` is `true`, and every comparison with `NaN` is `false`), while sorting it, or taking `min` or `max`, is a `NON_FINITE` error.
 
 ```bonsai
 user.age >= 18 // => true
@@ -139,7 +139,7 @@ false ?? true // => false
 | --- | --- |
 | `x in list` | `x == item` for some item |
 | `s in str` | substring test (both strings) |
-| `k in map` | own-key test (`k` must be a string) |
+| `k in map` | own-key test (`k` a string, or a number converted to its decimal text); a key holding a host `undefined` is absent |
 | `x in null` | `false` |
 | `x not in y` | `!(x in y)` |
 

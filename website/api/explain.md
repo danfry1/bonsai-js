@@ -19,9 +19,22 @@ String(explanation)
 //    └─ user.plan  → "free"
 ```
 
+`String(explanation)` is for logs and terminals: each line shows a sub-expression's source on one line (whitespace collapsed, cut at 60 characters, then `...`) and a preview of its value (cut at 120 characters, then `...`). For the full text, use `trace` below.
+
 ## Reasons
 
-`explanation.reasons()` returns only the conditions that decided the result: it follows `&&`, `||`, and `!` down to the comparisons and values (or the error) behind the outcome. The same condition can appear more than once when several sub-expressions reach it (with `exhaustive`, for example); de-duplicate by `id` when listing reasons in a UI.
+`explanation.reasons()` returns only the conditions that decided the result: it follows `&&`, `||`, and `!` down to the comparisons and values (or the error) behind the outcome. It stops at anything else: a `?:`, a `let`, or a call that takes a lambda (`some`, `every`, `filter`, ...) is reported whole, so look in `trace` (its children, or `iterations` for a lambda) for what decided it:
+
+```ts
+import { bonsai } from 'bonsai-js'
+
+const cart = { total: 50, items: [{ price: 10 }, { price: 40 }] }
+const rule = bonsai().compile('cart.total > 100 || cart.items.some(.price > 100)')
+rule.explainSync({ cart }).reasons().map((r) => r.text)
+// ['cart.total > 100', 'cart.items.some(.price > 100)']
+```
+
+The same condition can appear more than once when several sub-expressions reach it (with `exhaustive`, for example); de-duplicate by `id` when listing reasons in a UI.
 
 By default `&&` stops at the first false condition, so there is one reason. Pass `exhaustive: true` to evaluate the remaining conditions for the explanation, and every failing one is listed. Those parts are marked `extra: true`, and an error in them (a failing comparison, a throwing getter) is ignored, so the result does not change. The extra work counts toward the step budget and other limits, so a limit error there does fail the explanation. Host functions on those parts do run.
 
