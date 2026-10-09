@@ -33,9 +33,11 @@ interface Deps {
   readonly wholeContext: boolean
 }
 
+const NO_NAMES: ReadonlySet<string> = new Set()
+
 const NONE: Deps = {
-  paths: new Set(),
-  locals: new Set(),
+  paths: NO_NAMES,
+  locals: NO_NAMES,
   it: false,
   now: false,
   host: false,
@@ -50,24 +52,77 @@ export interface HostKind {
   readonly call: boolean
 }
 
-/** The static context path a member chain reads (`user.address.city`), if any. */
-function staticPath(node: Node): string | undefined {
-  if (node.type === 'Variable') return node.name
-  if (node.type === 'Member') {
-    const base = staticPath(node.object)
-    return base === undefined ? undefined : `${base}.${node.name}`
+/**
+ * The key a read takes from its object as a path segment: a member name, or a
+ * literal string index (`user["age"]` reads the same data as `user.age`). A key
+ * with a dot cannot be a segment of a dotted path, so it is not one.
+ */
+function segmentOf(node: Node): string | undefined {
+  if (node.type === 'Member') return node.name
+  if (
+    node.type === 'Index' &&
+    node.index.type === 'Literal' &&
+    typeof node.index.value === 'string' &&
+    node.index.value !== '' &&
+    !node.index.value.includes('.')
+  ) {
+    return node.index.value
   }
   return undefined
 }
 
-function dependencies(hostKind: (name: string) => HostKind | undefined): (node: Node) => Deps {
+/** Characters of a path built or tested per step charged for it. */
+const PATH_CHARS_PER_STEP = 64
+
+function dependencies(
+  hostKind: (name: string) => HostKind | undefined,
+  charge: (steps: number) => void,
+): {
+  readonly deps: (node: Node) => Deps
+  readonly staticPath: (node: Node) => string | undefined
+} {
   const memo = new Map<Node, Deps>()
+  // The static context path a chain of reads names (`user.address.city`), if
+  // any; memoized per node, so a long chain builds each prefix once.
+  const paths = new Map<Node, string | undefined>()
+  const staticPath = (node: Node): string | undefined => {
+    if (node.type === 'Variable') return node.name
+    if (paths.has(node)) return paths.get(node)
+    const segment = segmentOf(node)
+    let path: string | undefined
+    if (segment !== undefined && (node.type === 'Member' || node.type === 'Index')) {
+      const base = staticPath(node.object)
+      if (base !== undefined) {
+        path = `${base}.${segment}`
+        charge(Math.ceil(path.length / PATH_CHARS_PER_STEP))
+      }
+    }
+    paths.set(node, path)
+    return path
+  }
+  // The union of the children's sets; a set only one child contributes is
+  // shared, not copied (sets are never changed once built).
+  const union = (all: readonly Deps[], pick: (d: Deps) => ReadonlySet<string>) => {
+    let out: ReadonlySet<string> = NO_NAMES
+    let owned: Set<string> | undefined
+    for (const d of all) {
+      const set = pick(d)
+      if (set.size === 0 || set === out) continue
+      if (out.size === 0) {
+        out = set
+        continue
+      }
+      if (owned === undefined) out = owned = new Set(out)
+      for (const name of set) owned.add(name)
+    }
+    return out
+  }
   const merge = (all: readonly Deps[]): Deps => {
     if (all.length === 0) return NONE
     if (all.length === 1) return all[0]
     return {
-      paths: new Set(all.flatMap((d) => [...d.paths])),
-      locals: new Set(all.flatMap((d) => [...d.locals])),
+      paths: union(all, (d) => d.paths),
+      locals: union(all, (d) => d.locals),
       it: all.some((d) => d.it),
       now: all.some((d) => d.now),
       host: all.some((d) => d.host),
@@ -96,7 +151,8 @@ function dependencies(hostKind: (name: string) => HostKind | undefined): (node: 
       case 'It':
         deps = { ...NONE, it: true }
         break
-      case 'Member': {
+      case 'Member':
+      case 'Index': {
         const path = staticPath(node)
         deps = path === undefined ? merge(children()) : { ...NONE, paths: new Set([path]) }
         break
@@ -130,7 +186,6 @@ function dependencies(hostKind: (name: string) => HostKind | undefined): (node: 
       }
       case 'Literal':
       case 'Template':
-      case 'Index':
       case 'Unary':
       case 'Binary':
       case 'Conditional':
@@ -144,26 +199,52 @@ function dependencies(hostKind: (name: string) => HostKind | undefined): (node: 
     memo.set(node, deps)
     return deps
   }
-  return visit
+  return { deps: visit, staticPath }
+}
+
+interface PathTrie {
+  /** An unknown path ends here, so everything under it is unknown too. */
+  under: boolean
+  readonly next: Map<string, PathTrie>
 }
 
 /**
- * Whether a read of a path could observe an unknown path: the path itself, a
- * prefix of it, or a path under it is unknown. Built once, each test walks only
- * the path's own segments, so checking costs nothing like paths x unknowns.
+ * Whether a read of a path could observe data that is not given: the path is
+ * `unknown` or `missing`, lies above one (reading it reads that one), or lies
+ * under an `unknown` path. Under a missing path is not covered: a missing path
+ * is a value the expression reads, and a path under it that the expression
+ * reads is tested in its own right. The paths are kept as a tree of segments,
+ * so building it and each test walk the segments once: no prefix strings are
+ * built, and checking costs nothing like paths x unknowns.
  */
-function unknownIndex(unknown: readonly string[]): (path: string) => boolean {
-  const exact = new Set(unknown)
-  const parents = new Set<string>()
-  for (const path of unknown) {
-    for (let dot = path.indexOf('.'); dot !== -1; dot = path.indexOf('.', dot + 1))
-      parents.add(path.slice(0, dot))
+function unknownIndex(
+  unknown: Iterable<string>,
+  missing: Iterable<string>,
+  charge: (steps: number) => void,
+): (path: string) => boolean {
+  const root: PathTrie = { under: false, next: new Map() }
+  const add = (path: string): PathTrie => {
+    charge(1 + Math.floor(path.length / PATH_CHARS_PER_STEP))
+    let node = root
+    for (const segment of path.split('.')) {
+      let child = node.next.get(segment)
+      if (child === undefined) node.next.set(segment, (child = { under: false, next: new Map() }))
+      node = child
+    }
+    return node
   }
+  for (const path of unknown) add(path).under = true
+  for (const path of missing) add(path)
   return (path) => {
-    if (exact.has(path) || parents.has(path)) return true
-    for (let dot = path.indexOf('.'); dot !== -1; dot = path.indexOf('.', dot + 1))
-      if (exact.has(path.slice(0, dot))) return true
-    return false
+    let node = root
+    for (const segment of path.split('.')) {
+      const child = node.next.get(segment)
+      if (child === undefined) return false
+      if (child.under) return true
+      node = child
+    }
+    // The path is a missing one, or one lies under it.
+    return true
   }
 }
 
@@ -205,6 +286,13 @@ export interface ResidualResult<R = unknown, Ctx = object> {
   readonly dependsOn: readonly string[]
   /** Host functions the residual still calls (they may replace a built-in of the same name). */
   readonly hostFunctions: readonly string[]
+  /**
+   * Whether the residual calls a `call: true` host function. Such a function
+   * reads the whole context, not only the paths in `dependsOn`: the known data
+   * given to partial() overlaid (deeply, your values winning) with the context
+   * the residual is evaluated with.
+   */
+  readonly readsContext: boolean
   /** Whether the residual calls an async host function (evaluateSync rejects it). */
   readonly async: boolean
   /** The program's statically inferred result type, which the residual's result also has. */
@@ -231,8 +319,10 @@ export interface ResidualResult<R = unknown, Ctx = object> {
 export interface PartialOptions {
   /**
    * Variables or dotted paths (`order`, `user.riskScore`) whose values are not
-   * known yet. Unknown wins over a value present in `known`. Default: every
-   * variable the expression reads that `known` does not have.
+   * known yet. Unknown wins over a value present in `known`, and everything
+   * else in `known` is taken as complete. Default: everything `known` does not
+   * give: variables and fields it leaves out, and any object it gives that the
+   * expression reads whole (a spread, `keys()`, `==`, a `let` holding it).
    */
   readonly unknown?: readonly string[] | undefined
   /**
@@ -260,12 +350,6 @@ export interface PartialEngine {
   readonly checkTime: () => void
   /** The longest residual source allowed: the environment's maxSourceLength. */
   readonly maxSourceLength: number
-  /**
-   * Whether a known value read whole is incomplete for its declared type (an
-   * object missing declared fields), so it cannot be read as given. Open
-   * environments declare nothing, so a value they read whole is taken as given.
-   */
-  readonly incomplete: (path: string, value: unknown) => boolean
   /**
    * Evaluates a subtree against the known context with the given free locals,
    * sharing one step budget and deadline across the whole partial evaluation.
@@ -304,7 +388,6 @@ type Outcome =
   | { readonly known: false; readonly node: Node; readonly fails?: BonsaiRuntimeError }
 
 const at = { start: 0, end: 0 }
-const NO_PATHS: ReadonlySet<string> = new Set()
 /**
  * Longest string written into a residual as a literal. A longer one is bound
  * once and referenced by name, so a value used many times is not copied into
@@ -340,7 +423,7 @@ export function partiallyEvaluate<R>(
   options: PartialOptions,
 ): PartialResult<R> {
   const root = engine.analysis.root
-  const depsOf = dependencies(engine.hostKind)
+  const { deps: depsOf, staticPath } = dependencies(engine.hostKind, engine.charge)
   const rootDeps = depsOf(root)
   const unknown =
     options.unknown ??
@@ -348,13 +431,13 @@ export function partiallyEvaluate<R>(
       // A known value of undefined is absent, as a host key holding undefined is.
       (name) => !Object.hasOwn(known, name) || known[name] === undefined,
     )
-  const touchesUnknown = unknownIndex(unknown)
   const callHost = options.callHostFunctions === true
   const nowKnown = options.now !== undefined
-  // Without an explicit unknown list, anything not given is unknown, including
-  // a property a known object leaves out (or a declared object given in part):
-  // reading it as null could decide the result wrongly.
-  const missing = options.unknown === undefined ? missingPaths(rootDeps.paths) : NO_PATHS
+  // Without an explicit unknown list, anything not given is unknown: a property
+  // a known object leaves out, and any known object read whole (its keys, a
+  // spread, ==, a let alias), since the caller may not have given all of it.
+  const missing = options.unknown === undefined ? missingPaths(rootDeps.paths) : NO_NAMES
+  const touchesUnknown = unknownIndex(unknown, missing, engine.charge)
 
   const bindings: Record<string, unknown> = {}
   // Binding names must not shadow a variable the expression reads or a name it
@@ -383,41 +466,58 @@ export function partiallyEvaluate<R>(
   /**
    * The paths the expression reads that the known data does not give: a path
    * through a known object that lacks the next property (or holds undefined),
-   * every path above such a path (reading that object whole would see it
-   * incomplete), and a whole read of a declared object given in part.
+   * and a path whose known value is an object, which the expression reads whole
+   * (a static path names only the value it reads: `user.age` reads `user.age`,
+   * `{...user}` reads `user`). Every path the expression reads is listed, so a
+   * path above a gap is decided by its own value, not by the gap.
    */
   function missingPaths(paths: ReadonlySet<string>): ReadonlySet<string> {
     const out = new Set<string>()
-    // The path and every path above it (reading those whole would see the gap).
-    const markMissing = (segments: readonly string[]): void => {
-      for (let i = 1; i <= segments.length; i++) out.add(segments.slice(0, i).join('.'))
-    }
-    for (const path of paths) {
-      engine.charge()
-      const segments = path.split('.')
-      let value: unknown = known[segments[0]]
-      // A variable known does not give is unknown already.
-      if (value === undefined) continue
-      // Whether the path reached its own value (rather than stopping at a gap,
-      // or at null, a list, or another value, where evaluation decides).
-      let reached = true
-      for (let i = 1; i < segments.length; i++) {
-        if (value === null || !isMap(value)) {
-          reached = false
-          break
-        }
-        const segment = segments[i]
-        const next = Object.hasOwn(value, segment) ? value[segment] : undefined
-        if (next === undefined) {
-          markMissing(segments)
-          reached = false
-          break
-        }
-        value = next
-      }
-      if (reached && engine.incomplete(path, value)) markMissing(segments)
-    }
+    for (const path of paths) if (missingAt(path)) out.add(path)
     return out
+  }
+
+  function missingAt(path: string): boolean {
+    engine.charge(1 + Math.floor(path.length / PATH_CHARS_PER_STEP))
+    const segments = path.split('.')
+    let value: unknown = known[segments[0]]
+    // A variable known does not give is unknown already.
+    if (value === undefined) return false
+    for (let i = 1; i < segments.length; i++) {
+      // At null, a list, or another value, evaluation decides.
+      if (value === null || !isMap(value)) return false
+      const segment = segments[i]
+      value = Object.hasOwn(value, segment) ? value[segment] : undefined
+      if (value === undefined) return true
+    }
+    return isMap(value)
+  }
+
+  // Whether a node's context reads are all given, once per node (each path's
+  // test charged once), so nested subtrees do not retest the same paths.
+  const pathOpen = new Map<string, boolean>()
+  const readsGiven = new Map<Node, boolean>()
+  const given = (node: Node, paths: ReadonlySet<string>): boolean => {
+    let result = readsGiven.get(node)
+    if (result !== undefined) return result
+    result = true
+    for (const path of paths) {
+      let open = pathOpen.get(path)
+      if (open === undefined) {
+        engine.charge(1 + Math.floor(path.length / PATH_CHARS_PER_STEP))
+        // A path the expression does not name is a computed key's (`tiers[level]`).
+        open =
+          touchesUnknown(path) ||
+          (options.unknown === undefined && !rootDeps.paths.has(path) && missingAt(path))
+        pathOpen.set(path, open)
+      }
+      if (open) {
+        result = false
+        break
+      }
+    }
+    readsGiven.set(node, result)
+    return result
   }
 
   type Env = ReadonlyMap<string, Outcome>
@@ -429,7 +529,7 @@ export function partiallyEvaluate<R>(
     // A context function can read variables the expression never names, so it
     // runs only when the caller says nothing is unknown.
     if (deps.wholeContext && (options.unknown === undefined || unknown.length > 0)) return false
-    for (const path of deps.paths) if (touchesUnknown(path) || missing.has(path)) return false
+    if (!given(node, deps.paths)) return false
     for (const name of deps.locals) if (env.get(name)?.known !== true) return false
     return true
   }
@@ -526,13 +626,27 @@ export function partiallyEvaluate<R>(
         }
         return rebuild(node, env, new Map([[receiver, outcome]]), !outcome.known)
       }
+      case 'Index': {
+        // A known key into a context object reads one path (`tiers[level]`
+        // with level "gold" reads `tiers.gold`), so only that path must be given.
+        if (staticPath(node.object) === undefined || segmentOf(node) !== undefined)
+          return rebuild(node, env)
+        const key = peval(node.index, env)
+        if (!key.known || typeof key.value !== 'string') {
+          return rebuild(node, env, new Map([[node.index, key]]))
+        }
+        const { start, end } = node.index
+        const keyed: Node = { ...node, index: { type: 'Literal', value: key.value, start, end } }
+        return segmentOf(keyed) === undefined
+          ? rebuild(node, env, new Map([[node.index, key]]))
+          : peval(keyed, env)
+      }
       case 'Literal':
       case 'Template':
       case 'Variable':
       case 'Local':
       case 'It':
       case 'Member':
-      case 'Index':
       case 'Unary':
       case 'List':
       case 'Map':
@@ -637,7 +751,7 @@ export function partiallyEvaluate<R>(
   if (outcome.fails !== undefined) return { status: 'error', error: outcome.fails }
 
   // An expression that is known except for an error it always raises.
-  const residualDeps = dependencies(engine.hostKind)(outcome.node)
+  const residualDeps = dependencies(engine.hostKind, engine.charge).deps(outcome.node)
   const frozenBindings = Object.freeze({ ...bindings })
   // Printing and compiling the residual are work proportional to its size:
   // charged, checked against the deadline, and bounded like any source.
@@ -652,13 +766,24 @@ export function partiallyEvaluate<R>(
   }
   // A call: true host function reads the whole context, which includes the
   // known data: the residual's calls see it under the context they are given.
-  const hostFunctions = hostCalls(outcome.node, engine.hostKind)
+  const hostFunctions = Object.freeze(hostCalls(outcome.node, engine.hostKind))
   const readsContext = hostFunctions.some((name) => engine.hostKind(name)?.call === true)
   // The bindings are compiled in as constants, so evaluating reads the caller's
   // context as it is: no per-call copy, and getters see their own object.
-  const knownCopy = readsContext ? Object.freeze({ ...known }) : undefined
-  if (knownCopy !== undefined)
-    engine.charge(1 + Math.ceil(Object.keys(knownCopy).length / KNOWN_KEYS_PER_STEP))
+  let knownCopy: Readonly<Record<string, unknown>> | undefined
+  if (readsContext) {
+    engine.charge(1 + Math.ceil(Object.keys(known).length / KNOWN_KEYS_PER_STEP))
+    knownCopy = Object.freeze({ ...known })
+  }
+  // `x.length` reads a list's or a string's length when x is one, so the data
+  // the caller supplies is the path above the first `length`.
+  const dependsOn = new Set<string>()
+  for (const path of residualDeps.paths) {
+    const segments = path.split('.')
+    if (Object.hasOwn(frozenBindings, segments[0])) continue
+    const cut = segments.indexOf('length', 1)
+    dependsOn.add(cut === -1 ? path : segments.slice(0, cut).join('.'))
+  }
   const compiled = engine.compileResidual(outcome.node, frozenBindings, source, knownCopy)
   engine.checkTime()
   return Object.freeze({
@@ -666,10 +791,9 @@ export function partiallyEvaluate<R>(
     residual: outcome.node,
     source,
     bindings: frozenBindings,
-    dependsOn: [...residualDeps.paths]
-      .filter((path) => !Object.hasOwn(frozenBindings, path.split('.')[0]))
-      .sort(),
+    dependsOn: Object.freeze([...dependsOn].sort()),
     hostFunctions,
+    readsContext,
     async: compiled.async,
     type: engine.analysis.type,
     evaluateSync: (context?: object, evaluateOptions?: EvaluateOptions) =>

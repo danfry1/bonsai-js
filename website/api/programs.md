@@ -19,7 +19,7 @@ interface Program<Context, Result> {
 }
 ```
 
-`explain` and `explainSync` are described in [Explaining Results](/api/explain), and `partial` in [Partial Evaluation](/api/partial); `known` may hold any part of the context, at any depth; a variable or field it leaves out is unknown unless you pass an `unknown` list. A program typed for one context can be stored as a bare `Program` (as in `Program[]` or `Map<string, Program>`), which accepts any context.
+`explain` and `explainSync` are described in [Explaining Results](/api/explain), and `partial` in [Partial Evaluation](/api/partial); `known` may hold any part of the context, at any depth; a variable or field it leaves out, and an object it gives that the expression reads whole, is unknown unless you pass an `unknown` list. A program typed for one context can be stored as a bare `Program` (as in `Program[]` or `Map<string, Program>`), which accepts any context.
 
 ## Example
 

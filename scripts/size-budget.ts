@@ -24,8 +24,11 @@ const cases: SizeCase[] = [
     name: "bonsai().evaluateSync('1 + 2')",
     source: `import { bonsai } from ${entry}\nconsole.log(bonsai().evaluateSync('1 + 2'))`,
     // 56.4 KB when set; 60.1 KB after the pre-1.0 review fixes (diagnostic
-    // positions and frames, residual explain and bounds, input validation).
-    maxGzipBytes: 62_000,
+    // positions and frames, residual explain and bounds, input validation);
+    // 62.3 KB after the third review round (stack-overflow guard, duration(),
+    // check-time warnings, partial evaluation that never decides from data it
+    // was not given).
+    maxGzipBytes: 64_000,
   },
   {
     name: 't only',

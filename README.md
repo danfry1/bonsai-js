@@ -48,7 +48,7 @@ This README describes 1.0, which is in release candidate on the `next` tag; `npm
 
 Requires Node.js 22 or newer, current Bun, or a modern browser. The package is ESM; `require('bonsai-js')` works where Node can load ES modules synchronously (22.12 and newer).
 
-In a browser bundle, an app that evaluates expressions adds about 60 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. `bonsai-js/query` and `bonsai-js/service` are separate entry points; the language service on its own is about 41 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.4 KB. CI enforces these budgets (`bun run check:size`).
+In a browser bundle, an app that evaluates expressions adds about 62 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. `bonsai-js/query` and `bonsai-js/service` are separate entry points; the language service on its own is about 41 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.4 KB. CI enforces these budgets (`bun run check:size`).
 
 ## Why Bonsai
 
@@ -222,7 +222,7 @@ if (result.status === 'residual') {
 }
 ```
 
-Use it to decide early (can this user ever pass?), to precompute the per-user part of a rule once and evaluate the rest per request, or to push a filter down to where the data lives. Unknowns default to the variables and fields missing from what you pass; `unknown: ['order', 'user.riskScore']` names them explicitly (unknown wins over a value you did pass).
+Use it to decide early (can this user ever pass?), to precompute the per-user part of a rule once and evaluate the rest per request, or to push a filter down to where the data lives. Unknowns default to the variables and fields missing from what you pass, and an object you pass is not read whole (`{...user}`, `user.keys()`, `user == saved`), since it may be only part of the object; `unknown: ['order', 'user.riskScore']` names the unknowns explicitly and says the rest is complete (unknown wins over a value you did pass).
 
 The result is exact: evaluating the residual with the full data gives the same value or error as evaluating the original. Short primitives are written into the residual; other known values (lists, maps, dates) are kept in `result.bindings` and referenced by name, and `evaluateSync`/`evaluate` on the result supply them. `now()` and host functions stay in the residual unless you pass `now` or `callHostFunctions: true`. When the known data already decides that evaluation fails, the result is `{ status: 'error', error }`.
 
