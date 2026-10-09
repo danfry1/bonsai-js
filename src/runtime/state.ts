@@ -43,7 +43,7 @@ class Failed {
 export class State {
   ctx: Record<string, unknown> = NO_CONTEXT
   /**
-   * The caller's context, as `context: true` host functions receive it. The
+   * The caller's context, as `call: true` host functions receive it. The
    * same object as `ctx`, except for a partial-evaluation residual, whose
    * `ctx` also holds the known values it refers to.
    */

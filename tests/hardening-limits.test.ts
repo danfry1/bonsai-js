@@ -266,10 +266,10 @@ describe('produced values are bounded', () => {
 
   it('stops nesting at maxValueDepth', () => {
     expect(run('reduce("a".repeat(100000).split(""), (acc, x) => [acc], 0)')).toEqual({
-      code: 'TOO_DEEP',
+      code: 'VALUE_DEPTH_LIMIT',
     })
     expect(run('reduce("a".repeat(100).split(""), (acc, x) => {inner: acc}, 0)')).toEqual({
-      code: 'TOO_DEEP',
+      code: 'VALUE_DEPTH_LIMIT',
     })
     const deep = run('reduce("a".repeat(60).split(""), (acc, x) => [acc], 0)') as { value: unknown }
     expect(JSON.stringify(deep.value).length).toBe(121)

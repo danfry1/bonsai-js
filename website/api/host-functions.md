@@ -92,9 +92,9 @@ text.evaluateSync('"Ada".greet("Hi")') // => "Hi, Ada"
 text.evaluateSync('total(1, 2, 3)') // => 6
 ```
 
-## Reading the context
+## The call: context and cancellation
 
-With `context: true`, `run` receives the evaluation context (read-only) as its first argument, before the declared parameters. Expressions stay short, and the function reads what it needs:
+With `call: true`, `run` receives a frozen `call` object before the declared parameters: `call.context` is the evaluation context (read-only), and `call.signal` is an `AbortSignal` for this call. Expressions stay short, and the function reads what it needs:
 
 <!-- continue -->
 ```ts
@@ -103,15 +103,15 @@ const auth = bonsai({
     hasRole: fn({
       params: [t.string()],
       returns: t.boolean(),
-      context: true,
-      run: (ctx, role) => (ctx.roles as string[]).includes(role),
+      call: true,
+      run: (call, role) => (call.context.roles as string[]).includes(role),
     }),
   },
 })
 auth.evaluateSync('hasRole("admin")', { roles: ['admin', 'editor'] }) // => true
 ```
 
-To type the context inside `run`, create functions with `withContext<Context>()`. It returns an `fn` variant whose `run` receives the context typed as `Readonly<Context>`:
+To type the context, create functions with `withContext<Context>()`. It returns an `fn` variant whose `run` receives the call with `call.context` typed as `Readonly<Context>`:
 
 <!-- continue -->
 ```ts
@@ -124,11 +124,11 @@ const contextFn = withContext<AppContext>()
 
 const app = bonsai({
   functions: {
-    userId: contextFn({ params: [], returns: t.string(), run: (ctx) => ctx.user.id }),
+    userId: contextFn({ params: [], returns: t.string(), run: (call) => call.context.user.id }),
     can: contextFn({
       params: [t.string()],
       returns: t.boolean(),
-      run: (ctx, role) => ctx.user.roles.includes(role),
+      run: (call, role) => call.context.user.roles.includes(role),
     }),
   },
 })
@@ -139,7 +139,7 @@ The type parameter is a promise you make: Bonsai passes whatever context the eva
 
 ## Async functions
 
-Declare `async: true` for a function that returns a promise. The expression must then be evaluated with `evaluate()`; `evaluateSync()` rejects it with `ASYNC_IN_SYNC` before any host code runs. Waiting on an async function honors the evaluation's timeout and `AbortSignal`, although the underlying work continues unless your function cancels it.
+Declare `async: true` for a function that returns a promise. The expression must then be evaluated with `evaluate()`; `evaluateSync()` rejects it with `ASYNC_IN_SYNC` before any host code runs. Waiting on an async function honors the evaluation's timeout and `AbortSignal`: the evaluation stops waiting with `TIMEOUT` or `ABORTED`. To stop the function's own work too, declare it `call: true` and pass `call.signal` on: it aborts, with that error as its `reason`, when the evaluation stops waiting.
 
 <!-- continue -->
 ```ts
@@ -158,6 +158,31 @@ await fx.evaluate('amounts.map(.value * fxRate(.currency)).sum()', {
   amounts: [{ value: 10, currency: 'EUR' }, { value: 10, currency: 'GBP' }],
 }) // => 24
 fx.evaluateSync('fxRate("EUR")') // throws: ASYNC_IN_SYNC
+```
+
+With `call: true`, an async function can stop its own work when the evaluation gives up on it, for example by passing the signal to `fetch(url, { signal: call.signal })`:
+
+<!-- continue -->
+```ts
+const slow = bonsai({
+  functions: {
+    lookup: fn({
+      params: [t.string()],
+      returns: t.string(),
+      async: true,
+      call: true,
+      run: (call, id) =>
+        new Promise<string>((resolve, reject) => {
+          const timer = setTimeout(() => resolve(id), 1000)
+          call.signal.addEventListener('abort', () => {
+            clearTimeout(timer)
+            reject(call.signal.reason)
+          })
+        }),
+    }),
+  },
+})
+await slow.evaluate('lookup("a")', {}, { timeout: 50 }) // throws: TIMEOUT
 ```
 
 Calls run one at a time, left to right, in async mode too: an expression cannot start several host calls concurrently. If a function reaches a network or database, prefetch the data into the context or batch inside your function.
@@ -182,19 +207,19 @@ Names must be identifiers and cannot be `has`, `try`, or a reserved word.
 
 ## Libraries
 
-A `Library` bundles functions (and optionally variable declarations) under a name, for sharing between environments or packages:
+A `Library` bundles functions (and optionally variable declarations) under a name, for sharing between environments or packages. Declare it with `satisfies Library` so its variables keep their types: they become part of the context type of every environment that lists the library (inline, or in an `as const` array), so a context missing them does not compile:
 
 <!-- continue -->
 ```ts
 import type { Library } from 'bonsai-js'
 
-const money: Library = {
+const money = {
   name: 'money',
   functions: {
     cents: fn({ params: [t.number()], returns: t.number(), run: (amount) => Math.round(amount * 100) }),
   },
   variables: { currency: t.string() },
-}
+} satisfies Library
 
 const shop = bonsai({ libraries: [money] })
 shop.evaluateSync('`${cents(12.34)} ${currency}`', { currency: 'EUR' }) // => "1234 EUR"

@@ -38,7 +38,7 @@ if (result.status === 'residual') {
 |---|---|
 | `value` | The known data decides the result: `value` |
 | `error` | Evaluation fails whatever the unknown data is: `error` |
-| `residual` | `residual` (syntax tree), `source`, `bindings`, `dependsOn`, `hostFunctions` (host functions the residual still calls), and `evaluateSync(context, options?)` / `evaluate(context, options?)`, which take the same evaluation options as a program (`timeout`, `maxSteps`, `signal`) |
+| `residual` | `residual` (syntax tree), `source`, `bindings`, `dependsOn`, `hostFunctions` (host functions the residual still calls), and `evaluateSync(context, options?)` / `evaluate(context, options?)`, which take the same evaluation options as a program (`timeout`, `maxSteps`, `signal`); `context` is typed as any part of the program's context, so a misspelled variable does not compile |
 
 The residual is exact: evaluating it with the full data gives the same value or error as evaluating the original expression with the full data. Simplifications that would change a result (for example turning `x && false` into `false` when `x` could fail) are not made.
 
@@ -60,9 +60,9 @@ Limit errors (steps, time) are thrown from `partial()` rather than guessed. Ever
 
 - **Evaluate the residual with the full context.** A known part that fails (say, a division by zero in a branch that may not run) stays in the residual so the error can still happen, and it reads the known variables again.
 - **Known parts of every branch are evaluated**, including branches the unknown data may never choose. They count toward the step budget, and context getters they read run during `partial()`.
-- **Host functions** are called only with `callHostFunctions: true`, never when they are async, and context functions (`context: true`) only when you also pass `unknown: []`, since they can read variables the expression does not name.
+- **Host functions** are called only with `callHostFunctions: true`, never when they are async, and functions declared `call: true` only when you also pass `unknown: []`, since they can read variables the expression does not name.
 - **With an explicit `unknown` list**, a variable that is neither in `known` nor listed reads as `null`, as it would in normal evaluation.
 - **`expect` still applies.** A program compiled with `expect` checks a decided `value` against it (a mismatch is a `TYPE_ERROR` result), and its residual checks results the same way.
-- **Context getters run against the merged context.** The residual reads variables from your context plus the bindings, copied property by property (getters are copied, not run). A getter that relies on `this` being your original object (a private field, a `WeakMap` lookup) sees the merged object instead. Host functions declared `context: true` receive your original context, as they do in evaluation.
+- **Context getters run against the merged context.** The residual reads variables from your context plus the bindings, copied property by property (getters are copied, not run). A getter that relies on `this` being your original object (a private field, a `WeakMap` lookup) sees the merged object instead. Host functions declared `call: true` receive your original context as `call.context`, as they do in evaluation.
 - **Storing a residual.** `result.evaluateSync` and `result.evaluate` are the reliable way to run it. If you store `source` and `bindings` and compile them yourself, use a non-strict environment (the binding names are not declared variables) and pass the bindings in the context; inlined values can also make a type error in an untaken branch visible to the checker.
 

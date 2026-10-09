@@ -15,11 +15,11 @@ interface Program<Context, Result> {
   evaluateSync(context?: Context, options?: EvaluateOptions): Result
   explain(context?: Context, options?: ExplainOptions): Promise<Explanation<Result>>
   explainSync(context?: Context, options?: ExplainOptions): Explanation<Result>
-  partial(known: KnownData<Context>, options?: PartialOptions): PartialResult<Result>
+  partial(known: PartialData<Context>, options?: PartialOptions): PartialResult<Result, Context>
 }
 ```
 
-`explain` and `explainSync` are described in [Explaining Results](/api/explain), and `partial` in [Partial Evaluation](/api/partial); `known` may hold any part of the context, at any depth.
+`explain` and `explainSync` are described in [Explaining Results](/api/explain), and `partial` in [Partial Evaluation](/api/partial); `known` may hold any part of the context, at any depth. A program typed for one context can be stored as a bare `Program` (as in `Program[]` or `Map<string, Program>`), which accepts any context.
 
 ## Example
 

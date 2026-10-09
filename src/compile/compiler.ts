@@ -829,13 +829,20 @@ export function compileProgram(
       s.charge(hostCost)
       let result: unknown
       let thenable: boolean
+      let controller: AbortController | undefined
       try {
-        result =
-          def.context === true ? overload.run([s.hostCtx, ...args], site) : overload.run(args, site)
+        if (def.call === true) {
+          controller = new AbortController()
+          const call = Object.freeze({ context: s.hostCtx, signal: controller.signal })
+          result = overload.run([call, ...args], site)
+        } else {
+          result = overload.run(args, site)
+        }
         thenable = isThenable(result)
       } catch (error) {
         throw hostError(s, def.name, error, span)
       }
+      if (thenable && controller !== undefined) callControllers.set(result as object, controller)
       if (thenable) {
         if (!allowAsync || def.async !== true) {
           // Swallow the rejection of the orphaned promise; the call already failed.
@@ -1004,17 +1011,24 @@ function checkHostResult(
   return value
 }
 
+/**
+ * The controller behind the `call.signal` a host function received, by the
+ * promise it returned, so ending the wait early also aborts the host's work.
+ */
+const callControllers = new WeakMap<object, AbortController>()
+
 async function awaitHost(
   s: State,
   promise: PromiseLike<unknown>,
   node: CallNode,
   def: FunctionDef,
 ): Promise<unknown> {
+  const controller = callControllers.get(promise)
   // A rejection from the host is a HOST_ERROR; the limit errors racing it are not.
   const settled = Promise.resolve(promise).then(undefined, (error: unknown) => {
     throw hostError(s, node.name, error, node)
   })
-  const result = await raceLimits(s, settled)
+  const result = await raceLimits(s, settled, controller)
   s.checkTime()
   return checkHostResult(s, def, def.overloads[0], result, node)
 }
@@ -1025,9 +1039,14 @@ const MAX_TIMER_DELAY = 2_147_483_647
 /**
  * Waits for a host promise, rejecting early on timeout or abort. The signal is
  * host code: a listener method that throws counts as an abort, a cleanup that
- * throws is ignored, and the promise always settles exactly once.
+ * throws is ignored, and the promise always settles exactly once. Ending the
+ * wait early also aborts `controller`, the host call's own signal.
  */
-function raceLimits(s: State, promise: PromiseLike<unknown>): Promise<unknown> {
+function raceLimits(
+  s: State,
+  promise: PromiseLike<unknown>,
+  controller?: AbortController,
+): Promise<unknown> {
   const signal = s.signal
   const deadline = s.deadline
   if (signal === undefined && deadline === 0) return Promise.resolve(promise)
@@ -1050,20 +1069,25 @@ function raceLimits(s: State, promise: PromiseLike<unknown>): Promise<unknown> {
       cleanup()
       settle()
     }
+    // A limit ended the wait: reject, and tell the host function to stop.
+    const fail = (error: Error): void => {
+      reject(error)
+      controller?.abort(error)
+    }
     // An abort event (or a signal that fails) ends the wait even if the signal
     // does not read as aborted afterwards.
     const abort = (): void => {
       finish(() => {
         try {
           s.checkTime()
-          reject(
+          fail(
             new BonsaiLimitError('ABORTED', 'Evaluation was aborted', {
               source: s.source,
               cause: s.signalError,
             }),
           )
         } catch (error) {
-          reject(error as Error)
+          fail(error as Error)
         }
       })
     }
@@ -1082,7 +1106,7 @@ function raceLimits(s: State, promise: PromiseLike<unknown>): Promise<unknown> {
           // The timer is set for the deadline, so it has passed even if the
           // clock reads a hair earlier (timers and performance.now() differ).
           finish(() => {
-            reject(s.limit('TIMEOUT', 'Evaluation timed out'))
+            fail(s.limit('TIMEOUT', 'Evaluation timed out'))
           })
         },
         Math.min(MAX_TIMER_DELAY, Math.max(0, wait) + 1),
@@ -1096,6 +1120,14 @@ function raceLimits(s: State, promise: PromiseLike<unknown>): Promise<unknown> {
         s.signalError = error
         abort()
       }
+    }
+    // A signal aborted (or a deadline passed) before the wait began.
+    try {
+      s.checkTime()
+    } catch (error) {
+      finish(() => {
+        fail(error as Error)
+      })
     }
     Promise.resolve(promise).then(
       (value) => {

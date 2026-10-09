@@ -3,6 +3,7 @@ import { BonsaiRuntimeError, type BonsaiError } from './errors.js'
 import { forEachChild, type LambdaNode, type Node, type SpreadNode } from './syntax/ast.js'
 import { print } from './syntax/printer.js'
 import type { EvaluateOptions } from './environment.js'
+import type { Duration } from './runtime/values.js'
 
 // === dependencies ===
 
@@ -37,7 +38,8 @@ const NONE: Deps = {
 /** How a host function behaves, for deciding what partial evaluation may call. */
 export interface HostKind {
   readonly async: boolean
-  readonly context: boolean
+  /** Receives a HostCall, so it can read the whole context. */
+  readonly call: boolean
 }
 
 /** The static context path a member chain reads (`user.address.city`), if any. */
@@ -113,7 +115,7 @@ function dependencies(hostKind: (name: string) => HostKind | undefined): (node: 
           now: node.name === 'now' && kind === undefined,
           host: kind !== undefined,
           asyncHost: kind?.async === true,
-          wholeContext: kind?.context === true,
+          wholeContext: kind?.call === true,
         }
         deps = merge([own, ...children()])
         break
@@ -159,13 +161,27 @@ function unknownIndex(unknown: readonly string[]): (path: string) => boolean {
 
 // === public types ===
 
-export type PartialResult<R> =
+/**
+ * Any part of a context, at any depth: the known data for partial(), and the
+ * context a residual is evaluated with.
+ */
+export type PartialData<T> = T extends
+  | readonly unknown[]
+  | Date
+  | Duration
+  | ((...args: never) => unknown)
+  ? T
+  : T extends object
+    ? { [K in keyof T]?: PartialData<T[K]> }
+    : T
+
+export type PartialResult<R, Ctx = object> =
   | { readonly status: 'value'; readonly value: R }
   /** Evaluation fails whatever the unknown data turns out to be. */
   | { readonly status: 'error'; readonly error: BonsaiError }
-  | ResidualResult<R>
+  | ResidualResult<R, Ctx>
 
-export interface ResidualResult<R> {
+export interface ResidualResult<R, Ctx = object> {
   readonly status: 'residual'
   /**
    * The simplified expression that still needs the unknown data. Known values
@@ -185,8 +201,8 @@ export interface ResidualResult<R> {
    * Evaluates the residual with the (full) context, taking the same options as
    * Program.evaluateSync; bindings are supplied for you.
    */
-  readonly evaluateSync: (context?: object, options?: EvaluateOptions) => R
-  readonly evaluate: (context?: object, options?: EvaluateOptions) => Promise<R>
+  readonly evaluateSync: (context?: PartialData<Ctx>, options?: EvaluateOptions) => R
+  readonly evaluate: (context?: PartialData<Ctx>, options?: EvaluateOptions) => Promise<R>
 }
 
 export interface PartialOptions {

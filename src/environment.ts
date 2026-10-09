@@ -18,9 +18,14 @@ import {
   type FunctionDef,
   type ValidationBudget,
 } from './functions/define.js'
-import { partiallyEvaluate, type PartialOptions, type PartialResult } from './partial.js'
+import {
+  partiallyEvaluate,
+  type PartialData,
+  type PartialOptions,
+  type PartialResult,
+} from './partial.js'
 import { DEFAULT_RUNTIME_LIMITS, State, type RuntimeLimits } from './runtime/state.js'
-import { errorText, isMap, type Duration } from './runtime/values.js'
+import { errorText, isMap } from './runtime/values.js'
 import {
   DEFAULT_MAX_ITERATIONS,
   DEFAULT_MAX_TRACE_NODES,
@@ -80,6 +85,25 @@ type InferParams<P extends readonly Type[]> = Extract<
   unknown[]
 >
 
+/**
+ * The standard `AbortSignal` when the consumer's types declare one (DOM or
+ * Node), so it can be passed to `fetch`; otherwise {@link AbortSignalLike}.
+ */
+type HostAbortSignal = typeof globalThis extends { AbortSignal: { prototype: infer S } }
+  ? S
+  : AbortSignalLike
+
+/** What a host function declared with `call: true` receives before its arguments. */
+export interface HostCall<Ctx = Readonly<Record<string, unknown>>> {
+  /** The evaluation context, read-only. */
+  readonly context: Readonly<Ctx>
+  /**
+   * Aborted when the evaluation times out or is cancelled while it waits on
+   * this call, so an async function can stop its own work (pass it to `fetch`).
+   */
+  readonly signal: HostAbortSignal
+}
+
 /** A host function declaration. Create one with {@link fn}. */
 export interface HostFunction {
   readonly params: readonly Type[]
@@ -87,14 +111,15 @@ export interface HostFunction {
   readonly required?: number | undefined
   readonly rest?: Type | undefined
   readonly async?: boolean | undefined
-  readonly context?: boolean | undefined
+  /** Whether `run` receives a {@link HostCall} before its arguments. */
+  readonly call?: boolean | undefined
   readonly description?: string | undefined
   /** Steps charged per call (default 32). */
   readonly cost?: number | undefined
   readonly run: (...args: never[]) => unknown
 }
 
-/** The declaration passed to {@link fn}, without `run`, `async`, and `context`. */
+/** The declaration passed to {@link fn}, without `run`, `async`, and `call`. */
 export interface FnSpec<P extends readonly Type[] = readonly Type[], R extends Type = Type> {
   /** Parameter types, in order. */
   readonly params: P
@@ -119,7 +144,8 @@ export interface FnSpec<P extends readonly Type[] = readonly Type[], R extends T
  * ```ts
  * fn({ params: [t.string()], returns: t.boolean(), run: (perm) => user.can(perm) })
  * fn({ params: [t.string()], returns: t.string(), async: true, run: async (id) => lookup(id) })
- * fn({ params: [], returns: t.string(), context: true, run: (ctx) => String(ctx.tenant) })
+ * fn({ params: [t.string()], returns: t.number(), async: true, call: true,
+ *   run: async (call, id) => (await fetch(`/stock/${id}`, { signal: call.signal })).json() })
  * ```
  */
 export function fn<const P extends readonly Type[], R extends Type>(
@@ -127,29 +153,23 @@ export function fn<const P extends readonly Type[], R extends Type>(
     (
       | {
           readonly async?: false
-          readonly context?: false
+          readonly call?: false
           readonly run: (...args: InferParams<P>) => Infer<R>
         }
       | {
           readonly async: true
-          readonly context?: false
+          readonly call?: false
           readonly run: (...args: InferParams<P>) => Promise<Infer<R>>
         }
       | {
           readonly async?: false
-          readonly context: true
-          readonly run: (
-            context: Readonly<Record<string, unknown>>,
-            ...args: InferParams<P>
-          ) => Infer<R>
+          readonly call: true
+          readonly run: (call: HostCall, ...args: InferParams<P>) => Infer<R>
         }
       | {
           readonly async: true
-          readonly context: true
-          readonly run: (
-            context: Readonly<Record<string, unknown>>,
-            ...args: InferParams<P>
-          ) => Promise<Infer<R>>
+          readonly call: true
+          readonly run: (call: HostCall, ...args: InferParams<P>) => Promise<Infer<R>>
         }
     ),
 ): HostFunction {
@@ -158,11 +178,12 @@ export function fn<const P extends readonly Type[], R extends Type>(
 }
 
 /**
- * Declares host functions that read a typed evaluation context.
+ * Declares host functions that read a typed evaluation context: like `fn`
+ * with `call: true`, with `call.context` typed as `Readonly<Ctx>`.
  *
  * ```ts
  * const contextFn = withContext<{ user: { id: string } }>()
- * const functions = { userId: contextFn({ params: [], returns: t.string(), run: (ctx) => ctx.user.id }) }
+ * const functions = { userId: contextFn({ params: [], returns: t.string(), run: (call) => call.context.user.id }) }
  * ```
  */
 export function withContext<Ctx>() {
@@ -171,28 +192,52 @@ export function withContext<Ctx>() {
       (
         | {
             readonly async?: false
-            readonly run: (context: Readonly<Ctx>, ...args: InferParams<P>) => Infer<R>
+            readonly run: (call: HostCall<Ctx>, ...args: InferParams<P>) => Infer<R>
           }
         | {
             readonly async: true
-            readonly run: (context: Readonly<Ctx>, ...args: InferParams<P>) => Promise<Infer<R>>
+            readonly run: (call: HostCall<Ctx>, ...args: InferParams<P>) => Promise<Infer<R>>
           }
       ),
   ): HostFunction => {
     assertHostSpec(spec, 'withContext()')
-    return Object.freeze({ ...spec, context: true })
+    return Object.freeze({ ...spec, call: true })
   }
 }
 
-/** A reusable bundle of host functions (and optionally variables). */
-export interface Library {
+/**
+ * A reusable bundle of host functions (and optionally variables). Declare one
+ * with `satisfies Library` (not `: Library`) so its variables keep their types
+ * and become part of the context type of every environment that uses it.
+ */
+export interface Library<
+  V extends Readonly<Record<string, Type>> = Readonly<Record<string, Type>>,
+> {
   readonly name: string
   readonly functions?: Readonly<Record<string, HostFunction>> | undefined
-  readonly variables?: Readonly<Record<string, Type>> | undefined
+  readonly variables?: V | undefined
 }
+
+/** No declared variables: the empty record, which adds nothing to a context type. */
+// oxlint-disable-next-line typescript/no-generated-empty-object-type -- intentionally empty
+type NoVariables = Record<never, never>
+
+/**
+ * The variables a list of libraries declares, merged. Only a list whose
+ * elements are known (written inline, or `as const`) contributes; a value
+ * typed as `Library[]` adds nothing to the context type.
+ */
+type LibraryVariables<L> = L extends readonly [infer First, ...infer Rest]
+  ? (First extends { readonly variables?: infer V } ? NonNullable<V> : NoVariables) &
+      LibraryVariables<Rest>
+  : NoVariables
+
+/** The context type of an environment with variables `V` and libraries `L`. */
+type ContextFor<V, L> = ContextOf<V & LibraryVariables<L>>
 
 export interface EnvironmentOptions<
   V extends Readonly<Record<string, Type>> = Readonly<Record<string, Type>>,
+  L extends readonly Library[] = readonly Library[],
 > {
   /** Declared context variables and their types. */
   readonly variables?: V | undefined
@@ -204,7 +249,7 @@ export interface EnvironmentOptions<
   /** Host functions by name. A host function replaces a built-in of the same name. */
   readonly functions?: Readonly<Record<string, HostFunction>> | undefined
   /** Libraries of host functions and variables; a name defined twice is an error. */
-  readonly libraries?: readonly Library[] | undefined
+  readonly libraries?: L | undefined
   readonly limits?: Limits | undefined
   /**
    * Compiled programs kept for `evaluate(source)` and `evaluateSync(source)`. Default 256; 0
@@ -235,8 +280,13 @@ type Args<Ctx> =
     ? [context?: Ctx, options?: EvaluateOptions]
     : [context: Ctx, options?: EvaluateOptions]
 
-/** A checked, compiled expression. Immutable and safe to share. */
-export interface Program<Ctx = object, R = unknown> {
+/**
+ * A checked, compiled expression. Immutable and safe to share. A bare
+ * `Program` accepts any context, so a program typed for one context can be
+ * stored as a `Program`.
+ */
+// oxlint-disable-next-line typescript/no-explicit-any -- the erased context type every typed program is assignable to
+export interface Program<Ctx = any, R = unknown> {
   readonly source: string
   /** The syntax tree after implicit lambdas are made explicit. */
   readonly ast: Node
@@ -267,9 +317,9 @@ export interface Program<Ctx = object, R = unknown> {
    * the full data gives the same result as evaluating this program.
    */
   partial: (
-    known: KnownData<Ctx> & Record<string, unknown>,
+    known: PartialData<Ctx> & Record<string, unknown>,
     options?: PartialOptions,
-  ) => PartialResult<R>
+  ) => PartialResult<R, Ctx>
 }
 
 export interface ExplainOptions extends EvaluateOptions {
@@ -285,16 +335,6 @@ export interface ExplainOptions extends EvaluateOptions {
    */
   readonly exhaustive?: boolean | undefined
 }
-
-/**
- * Known data for partial(): any part of the context, at any depth, since a
- * dotted path in `unknown` (`user.riskScore`) leaves the rest of that object known.
- */
-type KnownData<T> = T extends readonly unknown[] | Date | Duration | ((...args: never) => unknown)
-  ? T
-  : T extends object
-    ? { [K in keyof T]?: KnownData<T[K]> }
-    : T
 
 type ExplainArgs<Ctx> =
   Record<string, never> extends Ctx
@@ -314,7 +354,7 @@ export type Explanation<R> = (
    * The conditions that decided the result, following &&, ||, and ! down to
    * the comparisons and values (or the error) behind it.
    */
-  reasons: () => Trace[]
+  reasons: () => readonly Trace[]
   /** The trace as an indented, human-readable tree. */
   toString: () => string
   /**
@@ -342,7 +382,9 @@ export interface FunctionInfo {
   }[]
 }
 
-export interface Environment<Ctx = object> {
+/** An environment. A bare `Environment` accepts any context, like a bare `Program`. */
+// oxlint-disable-next-line typescript/no-explicit-any -- the erased context type every typed environment is assignable to
+export interface Environment<Ctx = any> {
   /** Declared variables, or undefined for an open environment. */
   readonly variables: Readonly<Record<string, Type>> | undefined
   readonly strict: boolean
@@ -368,10 +410,12 @@ export interface Environment<Ctx = object> {
   /** Every callable function, host functions first. */
   listFunctions: () => FunctionInfo[]
   /** A new environment with more variables, functions, or libraries. */
-  // oxlint-disable-next-line typescript/no-generated-empty-object-type -- no variables adds nothing to Ctx
-  extend: <V2 extends Readonly<Record<string, Type>> = Record<never, never>>(
-    options: EnvironmentOptions<V2>,
-  ) => Environment<Ctx & ContextOf<V2>>
+  extend: <
+    const V2 extends Readonly<Record<string, Type>> = NoVariables,
+    const L2 extends readonly Library[] = [],
+  >(
+    options: EnvironmentOptions<V2, L2>,
+  ) => Environment<Ctx & ContextFor<V2, L2>>
 }
 
 /**
@@ -434,7 +478,7 @@ function toDef(name: string, host: HostFunction): FunctionDef {
     description: host.description ?? '',
     host: true,
     async: host.async === true,
-    context: host.context === true,
+    call: host.call === true,
     ...(host.cost === undefined ? {} : { cost: host.cost }),
     overloads: [
       overload(
@@ -442,7 +486,7 @@ function toDef(name: string, host: HostFunction): FunctionDef {
         host.returns,
         (args) => {
           // Missing optional arguments arrive as null.
-          const offset = host.context === true ? 1 : 0
+          const offset = host.call === true ? 1 : 0
           while (args.length < count + offset) args.push(null)
           return run(...args)
         },
@@ -761,9 +805,11 @@ function validateContext(
     deadline: limits.timeout > 0 ? performance.now() + limits.timeout : 0,
     onExhausted: (reason) => {
       if (reason === 'depth') {
-        throw new BonsaiLimitError('TOO_DEEP', `Context nests deeper than ${limits.maxDepth}`, {
-          source,
-        })
+        throw new BonsaiLimitError(
+          'VALUE_DEPTH_LIMIT',
+          `Context nests deeper than ${limits.maxDepth}`,
+          { source },
+        )
       }
       if (reason === 'time')
         throw new BonsaiLimitError('TIMEOUT', 'Context validation timed out', { source })
@@ -950,12 +996,8 @@ function contextOf(value: unknown): Record<string, unknown> {
       cause: error,
     })
   }
-  if (!map) {
-    throw new BonsaiRuntimeError(
-      'INVALID_ARGUMENT',
-      'The evaluation context must be a plain object or class instance',
-    )
-  }
+  // A caller's mistake, like invalid options, not an error in the expression's data.
+  if (!map) throw new TypeError('The evaluation context must be a plain object or class instance')
   return value as Record<string, unknown>
 }
 
@@ -1274,7 +1316,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     // Sub-trees compiled on their own for partial evaluation, by free locals.
     const subtrees = new WeakMap<Node, Map<string, CompiledProgram>>()
 
-    function partial(known: Record<string, unknown>, rawOptions: unknown): PartialResult<R> {
+    function partial(known: Record<string, unknown>, rawOptions: unknown): PartialResult<R, Ctx> {
       const options = partialOptions(rawOptions)
       const context = contextOf(known)
       const now = options.now
@@ -1314,7 +1356,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
               const def = settings.host.get(name)
               return def === undefined
                 ? undefined
-                : { async: def.async === true, context: def.context === true }
+                : { async: def.async === true, call: def.call === true }
             },
             charge: () => {
               state.charge(1)
@@ -1376,7 +1418,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
             throw error
           }
         }
-        return result
+        // The residual accepts any object at run time; its parameter is typed by this program's context.
+        return result as PartialResult<R, Ctx>
       } catch (error) {
         // Reading `known` is reading host data: a throwing Proxy or getter is a HOST_ERROR.
         throw hostDataFailure(error, source)
@@ -1503,8 +1546,10 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     listFunctions(): FunctionInfo[] {
       return [...checkEnv.functionNames()].map((name) => info(checkEnv.lookup(name) as FunctionDef))
     },
-    extend<V2 extends Readonly<Record<string, Type>>>(options: EnvironmentOptions<V2>) {
-      return createEnvironment<Ctx & ContextOf<V2>>(settingsFrom(settings, options))
+    extend<V2 extends Readonly<Record<string, Type>>, L2 extends readonly Library[]>(
+      options: EnvironmentOptions<V2, L2>,
+    ) {
+      return createEnvironment<Ctx & ContextFor<V2, L2>>(settingsFrom(settings, options))
     },
   })
   internals.set(env, { checkEnv, parseLimits: settings.parseLimits })
@@ -1521,9 +1566,9 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
  * adult.evaluateSync({ user: { age: 30 } }) // true
  * ```
  */
-// oxlint-disable-next-line typescript/no-generated-empty-object-type -- no variables means an empty context
-export function bonsai<const V extends Readonly<Record<string, Type>> = Record<never, never>>(
-  options: EnvironmentOptions<V> = {},
-): Environment<ContextOf<V>> {
-  return createEnvironment<ContextOf<V>>(settingsFrom(undefined, options))
+export function bonsai<
+  const V extends Readonly<Record<string, Type>> = NoVariables,
+  const L extends readonly Library[] = [],
+>(options: EnvironmentOptions<V, L> = {}): Environment<ContextFor<V, L>> {
+  return createEnvironment<ContextFor<V, L>>(settingsFrom(undefined, options))
 }

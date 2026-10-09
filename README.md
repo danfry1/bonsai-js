@@ -131,7 +131,7 @@ const rates = new Map([['EUR', 1.1], ['GBP', 1.3]])
 
 const env = bonsai({
   functions: {
-    hasRole: fn({ params: [t.string()], returns: t.boolean(), context: true, run: (ctx, role) => (ctx.roles as string[]).includes(role) }),
+    hasRole: fn({ params: [t.string()], returns: t.boolean(), call: true, run: (call, role) => (call.context.roles as string[]).includes(role) }),
     fxRate: fn({ params: [t.string()], returns: t.number(), async: true, run: async (currency) => rates.get(currency) ?? 1 }),
   },
 })
@@ -145,10 +145,10 @@ await env.evaluate('hasRole("admin") || orders.map(fxRate(.currency) * .amount).
 - Parameter and result types are declared with `t`; `run`'s argument types are inferred from them. Arguments are validated before your code runs, and results are checked deeply against the declared type: a mismatch is a `HOST_CONTRACT` error, which `try()` in an expression cannot catch. Anything your function throws, including a `BonsaiError`, becomes a `HOST_ERROR`, which `try()` can recover from.
 - `async: true` functions are awaited by `evaluate()`, one call at a time. `evaluateSync()` rejects expressions that call them before any host code runs. A function not declared `async` that returns a promise is a `HOST_CONTRACT` error.
 - A host function with the same name as a built-in replaces it for that environment, so new built-ins in future releases never change the meaning of your expressions.
-- `withContext<AppContext>()` returns a version of `fn` whose `run` receives the typed context first: `withContext<Ctx>()({ params: [], returns: t.string(), run: (ctx) => ctx.tenant.id })`.
+- With `call: true`, `run` first receives `{ context, signal }`: the read-only evaluation context, and an `AbortSignal` that aborts when the evaluation times out or is cancelled while waiting on the call (pass it to `fetch`). `withContext<Ctx>()` returns a version of `fn` with the context typed: `withContext<Ctx>()({ params: [], returns: t.string(), run: (call) => call.context.tenant.id })`.
 - Optional parameters (after `required`) arrive as `null` when omitted, so declare them with `t.optional(...)`.
 - Each call is charged `cost` steps (default 32) against the step budget; set a lower `cost` for cheap pure helpers.
-- Bundle functions into a `Library` (`{ name, functions }`) and pass `libraries: [a, b]`; a name defined twice is an error. `env.extend({...})` derives a new environment.
+- Bundle functions (and variables) into a `Library` (`{ name, functions, variables } satisfies Library`) and pass `libraries: [a, b]`; its variables join the context type, and a name defined twice is an error. `env.extend({...})` derives a new environment.
 
 Context data is not validated against the declared types by default (it is your data, and validation costs time proportional to it). Pass `validateContext: true` to check it before every evaluation; a mismatch fails with `INVALID_CONTEXT` and the exact path, e.g. `user.created should be timestamp, got string "2026-01-01"`. Objects may carry more keys than their declared type lists (a database row with extra columns is fine); the checker accounts for that.
 
@@ -284,7 +284,7 @@ Every error thrown while checking or evaluating an expression is a `BonsaiError`
 |---|---|
 | `BonsaiSyntaxError` | `SYNTAX` |
 | `BonsaiCheckError` | `CHECK` (see `.diagnostics`) |
-| `BonsaiLimitError` | `SOURCE_TOO_LONG` `TOO_DEEP` `TOO_MANY_NODES` `TOO_COMPLEX` `STEP_LIMIT` `STRING_LIMIT` `LIST_LIMIT` `PATTERN_LIMIT` `TIMEOUT` `ABORTED` |
+| `BonsaiLimitError` | `SOURCE_TOO_LONG` `TOO_DEEP` `TOO_MANY_NODES` `TOO_COMPLEX` `STEP_LIMIT` `STRING_LIMIT` `LIST_LIMIT` `VALUE_DEPTH_LIMIT` `PATTERN_LIMIT` `TIMEOUT` `ABORTED` |
 | `BonsaiRuntimeError` | `TYPE_ERROR` `NO_OVERLOAD` `NULL_RECEIVER` `DIVISION_BY_ZERO` `NON_FINITE` `BLOCKED_PROPERTY` `INVALID_ARGUMENT` `INVALID_CONTEXT` `ASYNC_IN_SYNC` `HOST_ERROR` `HOST_CONTRACT` |
 
 `try(expr, fallback)` in an expression catches runtime errors except `HOST_CONTRACT`; it never catches syntax, check, or limit errors.

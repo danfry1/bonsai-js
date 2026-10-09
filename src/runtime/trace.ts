@@ -15,21 +15,36 @@ export interface Trace {
   /** The source text of this sub-expression. */
   readonly text: string
   /** False when short-circuiting skipped it (`false && x`, the untaken branch of `?:`). */
-  evaluated: boolean
+  readonly evaluated: boolean
   /**
    * True when it was evaluated only because the explanation asked for every
    * reason (`exhaustive`); ordinary evaluation would have skipped it.
    */
-  extra?: boolean
+  readonly extra?: boolean
   /** The value it produced (a live reference into your data; see Explanation.toJSON). */
-  value?: unknown
+  readonly value?: unknown
   /** Why it failed, when it did. */
-  error?: { readonly code: ErrorCode; readonly message: string }
-  children: Trace[]
+  readonly error?: { readonly code: ErrorCode; readonly message: string }
+  readonly children: readonly Trace[]
   /** For calls with a lambda: one entry per run of the lambda (up to the cap). */
-  iterations?: Iteration[]
+  readonly iterations?: readonly Iteration[]
   /** Lambda runs beyond the cap, counted but not recorded. */
+  readonly omittedIterations?: number
+}
+
+/** A trace while it is being recorded; published as the read-only {@link Trace}. */
+export interface TraceRecord extends Trace {
+  evaluated: boolean
+  extra?: boolean
+  value?: unknown
+  error?: { readonly code: ErrorCode; readonly message: string }
+  children: TraceRecord[]
+  iterations?: IterationRecord[]
   omittedIterations?: number
+}
+
+interface IterationRecord extends Iteration {
+  readonly trace: TraceRecord
 }
 
 export interface Iteration {
@@ -51,11 +66,11 @@ export const DEFAULT_MAX_TRACE_NODES = 10_000
 
 /** Records traces during one explained evaluation. */
 export class Tracer {
-  readonly root: Trace
+  readonly root: TraceRecord
   /** Set when the node cap stopped recording; the result is still exact. */
   truncated = false
-  private readonly stack: Trace[] = []
-  private readonly nodes = new WeakMap<Trace, Node>()
+  private readonly stack: TraceRecord[] = []
+  private readonly nodes = new WeakMap<TraceRecord, Node>()
   private readonly ids = new WeakMap<Node, number>()
   private suspended = 0
   private recorded = 0
@@ -89,7 +104,7 @@ export class Tracer {
     this.root.evaluated = false
   }
 
-  private create(node: Node): Trace {
+  private create(node: Node): TraceRecord {
     const base = {
       id: this.ids.get(node) ?? -1,
       kind: node.type,
@@ -99,7 +114,7 @@ export class Tracer {
       evaluated: true,
       children: [],
     }
-    const trace: Trace =
+    const trace: TraceRecord =
       node.type === 'Binary' || node.type === 'Unary' ? { ...base, operator: node.operator } : base
     this.nodes.set(trace, node)
     return trace
@@ -112,10 +127,10 @@ export class Tracer {
   }
 
   /** Starts a node; returns undefined when recording is suspended or full. */
-  enter(node: Node, extra = false): Trace | undefined {
+  enter(node: Node, extra = false): TraceRecord | undefined {
     if (this.suspended > 0) return undefined
     const parent = this.stack[this.stack.length - 1]
-    let trace: Trace
+    let trace: TraceRecord
     if (parent === undefined) {
       trace = this.root
       trace.evaluated = true
@@ -144,7 +159,7 @@ export class Tracer {
     index: number,
     item: unknown,
     accumulator?: unknown,
-  ): Trace | undefined {
+  ): TraceRecord | undefined {
     const call = this.stack[this.stack.length - 1]
     if (this.suspended > 0 || call === undefined) {
       this.suspended++
@@ -165,23 +180,23 @@ export class Tracer {
     return trace
   }
 
-  exitIteration(recorded: Trace | undefined): void {
+  exitIteration(recorded: TraceRecord | undefined): void {
     if (recorded === undefined) this.suspended--
     else this.stack.pop()
   }
 
   /** Fills in skipped sub-expressions (in source order) and iteration results. */
-  finish(): Trace {
-    const visit = (trace: Trace): void => {
+  finish(): TraceRecord {
+    const visit = (trace: TraceRecord): void => {
       const node = this.nodes.get(trace)
       if (node !== undefined && trace.evaluated && node.type !== 'Lambda') {
-        const byNode = new Map<Node, Trace>()
+        const byNode = new Map<Node, TraceRecord>()
         for (const child of trace.children) {
           const childNode = this.nodes.get(child)
           if (childNode !== undefined && !byNode.has(childNode)) byNode.set(childNode, child)
         }
-        const ordered: Trace[] = []
-        const placed = new Set<Trace>()
+        const ordered: TraceRecord[] = []
+        const placed = new Set<TraceRecord>()
         forEachChild(node, (child) => {
           const recorded = byNode.get(child)
           if (recorded !== undefined) {

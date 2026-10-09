@@ -303,7 +303,7 @@ describe('unique', () => {
         env.evaluateSync(source, { xs: [deep(), deep()] })
         expect.unreachable(source)
       } catch (error) {
-        expect(error, source).toMatchObject({ code: 'TOO_DEEP' })
+        expect(error, source).toMatchObject({ code: 'VALUE_DEPTH_LIMIT' })
         expect((error as BonsaiError).span, source).toBeDefined()
       }
     }

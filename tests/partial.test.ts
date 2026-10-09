@@ -250,8 +250,8 @@ describe('partial', () => {
           tenant: fn({
             params: [],
             returns: t.string(),
-            context: true,
-            run: (ctx) => (typeof ctx.u === 'string' ? ctx.u : 'none'),
+            call: true,
+            run: (call) => (typeof call.context.u === 'string' ? call.context.u : 'none'),
           }),
           aget: fn({
             params: [t.number()],
@@ -339,9 +339,7 @@ describe('partial on the hardened engine', () => {
     )
     const result = open.compile('x + y').partial({ x: 1 })
     if (result.status !== 'residual') throw new Error('expected a residual')
-    expect(() => result.evaluateSync(new Map([['y', 1]]) as never)).toThrow(
-      expect.objectContaining({ code: 'INVALID_ARGUMENT' }),
-    )
+    expect(() => result.evaluateSync(new Map([['y', 1]]) as never)).toThrow(TypeError)
     const unreadable = new Proxy(
       { y: 1 },
       {
@@ -453,8 +451,8 @@ describe('partial residuals evaluate as the program does', () => {
         can: fn({
           params: [t.string()],
           returns: t.boolean(),
-          context: true,
-          run: (ctx, role) => (ctx as unknown as Session).can(role),
+          call: true,
+          run: (call, role) => (call.context as unknown as Session).can(role),
         }),
       },
     })
