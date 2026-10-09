@@ -1,6 +1,11 @@
 import { BonsaiLimitError, type Diagnostic, type DiagnosticCode } from '../errors.js'
 import { RESULT_REFINERS } from '../functions/builtins.js'
-import { isLambdaPosition, type FunctionDef, type Overload } from '../functions/define.js'
+import {
+  isItemLambdaPosition,
+  isLambdaPosition,
+  type FunctionDef,
+  type Overload,
+} from '../functions/define.js'
 import {
   forEachChild,
   mapChildren,
@@ -554,6 +559,13 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       }
       const r = bind(arg)
       if (lambdaPosition && r.free) {
+        if (def !== undefined && !isItemLambdaPosition(def, index)) {
+          report(
+            'INVALID_LAMBDA',
+            `"." is the current item, but the first parameter of ${def.name}'s lambda is not; write the parameters, e.g. (acc, x) => acc + x`,
+            findIt(r.node) ?? arg,
+          )
+        }
         const lambda: LambdaNode = {
           type: 'Lambda',
           params: [],

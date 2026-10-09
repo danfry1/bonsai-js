@@ -23,7 +23,7 @@ const context = { items: [{ name: "Pen", price: 2, qty: 3 }, { name: "Book", pri
 | [`none`](#none) | Whether the lambda is false for every item. |
 | [`count`](#count) | The number of items, or of items for which the lambda is true. |
 | [`flatMap`](#flatmap) | Transforms each item and flattens list results one level. |
-| [`reduce`](#reduce) | Folds a list into one value: reduce(list, (acc, item) => ..., initial). |
+| [`reduce`](#reduce) | Folds a list into one value: reduce(list, (acc, item) => ..., initial). Name both parameters; "." is not allowed, since the first one is the accumulator. |
 | [`sort`](#sort) | Sorts numbers, text, timestamps, or durations; pass "desc" to reverse. |
 | [`sortBy`](#sortby) | Sorts by a key; pass "desc" to reverse. Nulls sort first ("asc") or last ("desc"). |
 | [`groupBy`](#groupby) | Groups items into a map of lists by a key. |
@@ -41,8 +41,8 @@ const context = { items: [{ name: "Pen", price: 2, qty: 3 }, { name: "Book", pri
 | [`isEmpty`](#isempty) | Whether a list, text, or map has no items; null is empty. |
 | [`min`](#min) | The smallest value (nulls are skipped); null for an empty list. |
 | [`max`](#max) | The largest value (nulls are skipped); null for an empty list. |
-| [`sum`](#sum) | The sum of the numbers in a list (nulls are skipped). |
-| [`avg`](#avg) | The mean of the numbers in a list (nulls are skipped); null for no numbers. |
+| [`sum`](#sum) | The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is. |
+| [`avg`](#avg) | The mean of the numbers in a list (nulls are skipped, summed as sum does); null for no numbers. |
 
 ## map
 
@@ -149,7 +149,7 @@ Transforms each item and flattens list results one level.
 
 ## reduce
 
-Folds a list into one value: reduce(list, (acc, item) => ..., initial).
+Folds a list into one value: reduce(list, (acc, item) => ..., initial). Name both parameters; "." is not allowed, since the first one is the accumulator.
 
 - `reduce(T[], (U, T) => U, U): U`
 
@@ -357,7 +357,7 @@ items.map(.price).max() // => 30
 
 ## sum
 
-The sum of the numbers in a list (nulls are skipped).
+The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is.
 
 - `sum((number | null)[]): number`
 - `sum((duration | null)[]): duration`
@@ -370,7 +370,7 @@ items.map(.price * .qty).sum() // => 48
 
 ## avg
 
-The mean of the numbers in a list (nulls are skipped); null for no numbers.
+The mean of the numbers in a list (nulls are skipped, summed as sum does); null for no numbers.
 
 - `avg((number | null)[]): number | null`
 

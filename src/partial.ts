@@ -273,7 +273,8 @@ export function partiallyEvaluate<R>(
   const unknown =
     options.unknown ??
     [...new Set([...rootDeps.paths].map((path) => path.split('.')[0]))].filter(
-      (name) => !Object.hasOwn(known, name),
+      // A known value of undefined is absent, as a host key holding undefined is.
+      (name) => !Object.hasOwn(known, name) || known[name] === undefined,
     )
   const touchesUnknown = unknownIndex(unknown)
   const callHost = options.callHostFunctions === true

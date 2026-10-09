@@ -207,7 +207,7 @@ Every built-in is callable as `f(x, ...)` or `x.f(...)`. `?` marks an optional p
 - at(string, number): string | null: The item or character at a position; negative positions count from the end.
 - matches(string, string): boolean: Whether text contains a match for a regular expression (JavaScript syntax without backreferences or lookaround, linear time; anchor with ^ and $; prefix (?i) to ignore case).
 - toString(string | number | boolean | null | timestamp | duration): string: Renders a value as text, as a template would.
-- toNumber(string | number): number: Parses text as a number.
+- toNumber(string | number): number: Parses decimal text as a number, e.g. "-12.5" or "1e3" (surrounding whitespace is ignored; 0x and other bases are not accepted).
 
 ### Lists
 
@@ -220,7 +220,7 @@ Every built-in is callable as `f(x, ...)` or `x.f(...)`. `?` marks an optional p
 - none(T[], (T, number) => boolean): boolean: Whether the lambda is false for every item.
 - count(T[]): number; count(T[], (T, number) => boolean): number: The number of items, or of items for which the lambda is true.
 - flatMap(T[], (T, number) => U[] | U): U[]: Transforms each item and flattens list results one level.
-- reduce(T[], (U, T) => U, U): U: Folds a list into one value: reduce(list, (acc, item) => ..., initial).
+- reduce(T[], (U, T) => U, U): U: Folds a list into one value: reduce(list, (acc, item) => ..., initial). Name both parameters; "." is not allowed, since the first one is the accumulator.
 - sort(T[], ("asc" | "desc")?): T[]: Sorts numbers, text, timestamps, or durations; pass "desc" to reverse.
 - sortBy(T[], (T, number) => K, ("asc" | "desc")?): T[]: Sorts by a key; pass "desc" to reverse. Nulls sort first ("asc") or last ("desc").
 - groupBy(T[], (T, number) => string | number | boolean): { [key: string]: T[] }: Groups items into a map of lists by a key.
@@ -238,8 +238,8 @@ Every built-in is callable as `f(x, ...)` or `x.f(...)`. `?` marks an optional p
 - isEmpty(any[] | string | { [key: string]: any } | null): boolean: Whether a list, text, or map has no items; null is empty.
 - min(T[]): T | null: The smallest value (nulls are skipped); null for an empty list.
 - max(T[]): T | null: The largest value (nulls are skipped); null for an empty list.
-- sum((number | null)[]): number; sum((duration | null)[]): duration: The sum of the numbers in a list (nulls are skipped).
-- avg((number | null)[]): number | null: The mean of the numbers in a list (nulls are skipped); null for no numbers.
+- sum((number | null)[]): number; sum((duration | null)[]): duration: The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is.
+- avg((number | null)[]): number | null: The mean of the numbers in a list (nulls are skipped, summed as sum does); null for no numbers.
 
 ### Numbers
 
@@ -251,12 +251,12 @@ Every built-in is callable as `f(x, ...)` or `x.f(...)`. `?` marks an optional p
 - sqrt(number): number: Square root.
 - clamp(number, number, number): number: Limits a number to a range.
 - toFixed(number, number): string: Formats a number with a fixed number of decimals.
-- formatNumber(number, number?, string?): string: Formats a number with grouping, e.g. 1,234.5, with optional decimals and locale (default "en-US").
-- formatCurrency(number, string, string?): string: Formats an amount in a currency (ISO 4217 code such as "EUR"), with an optional locale (default "en-US").
+- formatNumber(number, number?, string?): string: Formats a number with grouping, e.g. 1,234.5, with optional decimals and locale (default "en-US"; an unsupported locale is an error).
+- formatCurrency(number, string, string?): string: Formats an amount in a currency (ISO 4217 code such as "EUR"), with an optional locale (default "en-US"; an unsupported locale is an error).
 - min(T[]): T | null; min(number, ...number): number: The smallest value (nulls are skipped); null for an empty list.
 - max(T[]): T | null; max(number, ...number): number: The largest value (nulls are skipped); null for an empty list.
-- sum((number | null)[]): number: The sum of the numbers in a list (nulls are skipped).
-- avg((number | null)[]): number | null: The mean of the numbers in a list (nulls are skipped); null for no numbers.
+- sum((number | null)[]): number: The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is.
+- avg((number | null)[]): number | null: The mean of the numbers in a list (nulls are skipped, summed as sum does); null for no numbers.
 
 ### Maps and Values
 
@@ -297,6 +297,6 @@ Every built-in is callable as `f(x, ...)` or `x.f(...)`. `?` marks an optional p
 - addYears(timestamp, number, string?): timestamp: Adds calendar years (Feb 29 becomes Feb 28).
 - formatDate(timestamp, string, string?): string: Formats a timestamp in a time zone (default UTC). Tokens: yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS; quote literal text.
 - abs(duration): duration: Absolute value.
-- sum((duration | null)[]): duration: The sum of the numbers in a list (nulls are skipped).
+- sum((duration | null)[]): duration: The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is.
 
 <!-- END GENERATED FUNCTIONS -->

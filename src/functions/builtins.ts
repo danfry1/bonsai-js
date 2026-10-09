@@ -36,6 +36,7 @@ import {
   describeKind,
   equals,
   errorText,
+  holdsKey,
   isTimestamp,
   kindOf,
   order,
@@ -58,6 +59,8 @@ import {
   type Lambda,
 } from './define.js'
 
+/** What toNumber accepts: an optional sign, digits with an optional fraction, and an optional exponent. */
+const DECIMAL_TEXT = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/u
 const MAX_ROUND_DIGITS = 15
 const MAX_FIXED_DIGITS = 100
 const MONTHS_PER_YEAR = 12
@@ -258,7 +261,9 @@ function numberFormat(
   const format = site.state.resource(`n${key}`, NUMBER_FORMAT_COST, () => {
     let created = numberFormats.get(key)
     if (created !== undefined) return created
+    let supported: string[]
     try {
+      supported = Intl.NumberFormat.supportedLocalesOf(locale)
       created = new Intl.NumberFormat(locale, options)
     } catch (error) {
       throw site.state.error(
@@ -266,6 +271,11 @@ function numberFormat(
         `Invalid number format: ${errorText(error)}`,
         site.span,
       )
+    }
+    // Intl falls back to the host's default locale for a tag it has no data
+    // for, so the same expression would format differently on each server.
+    if (supported.length === 0) {
+      throw site.state.error('INVALID_ARGUMENT', `Unsupported locale ${shown(locale)}`, site.span)
     }
     if (numberFormats.size >= MAX_CACHED)
       numberFormats.delete(numberFormats.keys().next().value as string)
@@ -498,7 +508,7 @@ function canonicalKey(value: unknown, site: CallSite, depth: number, seen: Ident
     let key = '{'
     let first = true
     for (const name of keys) {
-      if (BLOCKED_NAMES.has(name)) continue
+      if (!holdsKey(value, name)) continue
       key += `${first ? '' : ','}${name.length}:${name}=${canonicalKey(value[name], site, depth + 1, seen)}`
       first = false
     }
@@ -625,7 +635,7 @@ function extreme(items: readonly unknown[], sign: 1 | -1, site: CallSite): unkno
 function entryList(map: Record<string, unknown>, site: CallSite): string[] {
   const listed = Object.keys(map)
   site.state.charge(keyListCost(listed.length))
-  const keys = listed.filter((key) => !BLOCKED_NAMES.has(key))
+  const keys = listed.filter((key) => holdsKey(map, key))
   site.state.listLimit(keys.length, site.span)
   return keys
 }
@@ -818,21 +828,26 @@ const STRING_FUNCTIONS: FunctionDef[] = [
   define('toString', 'Renders a value as text, as a template would.', [
     overload([t.union(primitiveText, ts, dur)], str, ([v], site) => textOf(v, site)),
   ]),
-  define('toNumber', 'Parses text as a number.', [
-    overload([t.union(str, num)], num, ([v], site) => {
-      if (typeof v === 'number') return v
-      const text = (v as string).trim()
-      const value = text === '' ? Number.NaN : Number(text)
-      if (!Number.isFinite(value)) {
-        throw site.state.error(
-          'INVALID_ARGUMENT',
-          `Cannot convert ${shown(v as string)} to a number`,
-          site.span,
-        )
-      }
-      return value
-    }),
-  ]),
+  define(
+    'toNumber',
+    'Parses decimal text as a number, e.g. "-12.5" or "1e3" (surrounding whitespace is ignored; 0x and other bases are not accepted).',
+    [
+      overload([t.union(str, num)], num, ([v], site) => {
+        if (typeof v === 'number') return v
+        const text = (v as string).trim()
+        // Decimal only: user data such as "0x10" is not read as hexadecimal.
+        const value = DECIMAL_TEXT.test(text) ? Number(text) : Number.NaN
+        if (!Number.isFinite(value)) {
+          throw site.state.error(
+            'INVALID_ARGUMENT',
+            `Cannot convert ${shown(v as string)} to a number`,
+            site.span,
+          )
+        }
+        return value
+      }),
+    ],
+  ),
 ]
 
 /** A built-in applying a number function whose result must be finite. */
@@ -884,7 +899,7 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
   ]),
   define(
     'formatNumber',
-    'Formats a number with grouping, e.g. 1,234.5, with optional decimals and locale (default "en-US").',
+    'Formats a number with grouping, e.g. 1,234.5, with optional decimals and locale (default "en-US"; an unsupported locale is an error).',
     [
       overload(
         [num, t.optional(num), t.optional(str)],
@@ -918,7 +933,7 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
   ),
   define(
     'formatCurrency',
-    'Formats an amount in a currency (ISO 4217 code such as "EUR"), with an optional locale (default "en-US").',
+    'Formats an amount in a currency (ISO 4217 code such as "EUR"), with an optional locale (default "en-US"; an unsupported locale is an error).',
     [
       overload(
         [num, str, t.optional(str)],
@@ -941,33 +956,41 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
     overload([listT], optT, ([l], site) => extreme(list(l), 1, site), { ordered: ['T'] }),
     overload([num], num, (args, site) => extreme(args, 1, site), { rest: num }),
   ]),
-  define('sum', 'The sum of the numbers in a list (nulls are skipped).', [
-    overload([t.list(t.optional(num))], num, ([l], site) => {
-      let total = 0
-      for (const n of numbersOf(list(l), 'sum', site)) total += n
-      return finite(total, site)
-    }),
-    overload([t.list(t.optional(dur))], dur, ([l], site) => {
-      const items = list(l)
-      site.state.charge(items.length)
-      let total = 0
-      // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
-      for (let i = 0; i < items.length; i++) {
-        const d = items[i]
-        if (d instanceof Duration) total += d.ms
-      }
-      return new Duration(finite(total, site))
-    }),
-  ]),
-  define('avg', 'The mean of the numbers in a list (nulls are skipped); null for no numbers.', [
-    overload([t.list(t.optional(num))], t.optional(num), ([l], site) => {
-      const values = numbersOf(list(l), 'avg', site)
-      if (values.length === 0) return null
-      let total = 0
-      for (const n of values) total += n
-      return finite(total / values.length, site)
-    }),
-  ]),
+  define(
+    'sum',
+    'The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is.',
+    [
+      overload([t.list(t.optional(num))], num, ([l], site) => {
+        let total = 0
+        for (const n of numbersOf(list(l), 'sum', site)) total += n
+        return finite(total, site)
+      }),
+      overload([t.list(t.optional(dur))], dur, ([l], site) => {
+        const items = list(l)
+        site.state.charge(items.length)
+        let total = 0
+        // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+        for (let i = 0; i < items.length; i++) {
+          const d = items[i]
+          if (d instanceof Duration) total += d.ms
+        }
+        return new Duration(finite(total, site))
+      }),
+    ],
+  ),
+  define(
+    'avg',
+    'The mean of the numbers in a list (nulls are skipped, summed as sum does); null for no numbers.',
+    [
+      overload([t.list(t.optional(num))], t.optional(num), ([l], site) => {
+        const values = numbersOf(list(l), 'avg', site)
+        if (values.length === 0) return null
+        let total = 0
+        for (const n of values) total += n
+        return finite(total / values.length, site)
+      }),
+    ],
+  ),
 ]
 
 function hof(
@@ -1183,30 +1206,34 @@ const LIST_FUNCTIONS: FunctionDef[] = [
       },
     ),
   ]),
-  define('reduce', 'Folds a list into one value: reduce(list, (acc, item) => ..., initial).', [
-    overload(
-      [listT, fnType([U, T], U), U],
-      U,
-      ([l, f, initial]) => {
-        const items = list(l)
-        const fn = f as (acc: unknown, item: unknown, index: number) => unknown
-        let acc = initial
-        // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
-        for (let i = 0; i < items.length; i++) acc = fn(acc, items[i], i)
-        return acc
-      },
-      {
-        runAsync: async ([l, f, initial]) => {
+  define(
+    'reduce',
+    'Folds a list into one value: reduce(list, (acc, item) => ..., initial). Name both parameters; "." is not allowed, since the first one is the accumulator.',
+    [
+      overload(
+        [listT, fnType([U, T], U), U],
+        U,
+        ([l, f, initial]) => {
           const items = list(l)
           const fn = f as (acc: unknown, item: unknown, index: number) => unknown
           let acc = initial
           // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
-          for (let i = 0; i < items.length; i++) acc = await fn(acc, items[i], i)
+          for (let i = 0; i < items.length; i++) acc = fn(acc, items[i], i)
           return acc
         },
-      },
-    ),
-  ]),
+        {
+          runAsync: async ([l, f, initial]) => {
+            const items = list(l)
+            const fn = f as (acc: unknown, item: unknown, index: number) => unknown
+            let acc = initial
+            // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+            for (let i = 0; i < items.length; i++) acc = await fn(acc, items[i], i)
+            return acc
+          },
+        },
+      ),
+    ],
+  ),
   define('sort', 'Sorts numbers, text, timestamps, or durations; pass "desc" to reverse.', [
     overload(
       [listT, t.enum('asc', 'desc')],
@@ -1257,9 +1284,10 @@ const LIST_FUNCTIONS: FunctionDef[] = [
       if (v === null || v === undefined) return true
       if (Array.isArray(v) || typeof v === 'string') return v.length === 0
       // Listing a map's keys is linear in how many it has.
-      const keys = Object.keys(v)
+      const map = v as Record<string, unknown>
+      const keys = Object.keys(map)
       site.state.charge(keyListCost(keys.length))
-      return keys.length === 0
+      return !keys.some((key) => holdsKey(map, key))
     }),
   ]),
 ]

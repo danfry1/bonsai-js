@@ -78,7 +78,7 @@ startOfDay(order.placedAt, "Europe/Berlin")             // calendar math in time
 
 The full reference is [docs/language.md](./docs/language.md). The rules that matter most:
 
-- There is one absent value, `null`. Missing properties and host `undefined` read as `null`, so `x == null` means "missing or null".
+- There is one absent value, `null`. Missing properties and host `undefined` read as `null`, so `x == null` means "missing or null". A key holding `undefined` is absent everywhere: `{ a: 1, b: undefined }` equals `{ a: 1 }`, and `"b" in` it is false.
 - `==` compares by value (lists and maps deeply). There is no type coercion: `1 == "1"` is `false` and `"a" + 1` is an error.
 - Comparisons with `null` are `false`, so `users.filter(.age >= 18)` skips users without an age instead of failing.
 - `&&`, `||`, `!` and `?:` take booleans (`null` counts as false). Use `??` for defaults.

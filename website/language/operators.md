@@ -10,7 +10,7 @@ From loosest to tightest:
 | --- | --- | --- |
 | 1 | `let x = e; body` | prefix form, see [let](/language/let-try-has) |
 | 2 | `c ? a : b` | right-associative |
-| 3 | `??` | |
+| 3 | `??` | other binary operands need parentheses |
 | 4 | `\|\|` | |
 | 5 | `&&` | |
 | 6 | `==` `!=` | does not chain |
@@ -32,7 +32,13 @@ Some combinations that JavaScript accepts are syntax errors in Bonsai, because t
 (1 < 2) && (2 < 3) // => true
 discount ?? 0 || true // error: SYNTAX
 (discount ?? false) || true // => true
+discount ?? 0 > 10 // error: SYNTAX
+(discount ?? 0) > 10 // => false
+discount ?? 0 + 5 // error: SYNTAX
+(discount ?? 0) + 5 // => 5
 ```
+
+`??` binds more loosely than every other binary operator, so `discount ?? 0 > 10` would mean `discount ?? (0 > 10)`. An operand of `??` that is itself a binary operation (other than another `??`) must be parenthesized, which makes the intended grouping explicit either way.
 
 ## Equality
 

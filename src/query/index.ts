@@ -258,11 +258,17 @@ function lower(
       return fail(`Reading ${what} failed`)
     }
   }
-  if (hostRead(() => Object.hasOwn(knownData, options.row), 'the known values'))
+  // A key holding undefined is absent, as it is everywhere else.
+  const isKnown = (name: string): boolean =>
+    hostRead(
+      () => Object.hasOwn(knownData, name) && knownData[name] !== undefined,
+      'the known values',
+    )
+  if (isKnown(options.row))
     throw new TypeError(`known must not contain the row variable (${options.row})`)
   // A misspelled row (or a missing known value) would otherwise read as null.
   for (const name of program.references.variables) {
-    if (name !== options.row && !hostRead(() => Object.hasOwn(knownData, name), 'the known values'))
+    if (name !== options.row && !isKnown(name))
       fail(`${name} is neither the row (${options.row}) nor a known value`)
   }
   const result = program.partial(knownData as never, {

@@ -27,6 +27,13 @@ xs.map(. * 2) // => [10, 24, 40]
 rows.map(.[0]) // => [1, 3]
 ```
 
+`.` is only allowed where the lambda's first parameter is the current item. In `reduce` the first parameter is the accumulator, so `.` there is a check error; name both parameters instead:
+
+```bonsai
+xs.reduce(. + 10, 0) // error: CHECK
+xs.reduce((total, x) => total + x, 0) // => 37
+```
+
 ## How `.` binds
 
 `.` binds to the **nearest enclosing argument whose parameter is a function**, skipping arguments of ordinary parameters. The binding is decided by the declared parameter types, not by syntax, which is what makes these work:

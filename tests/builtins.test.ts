@@ -215,7 +215,7 @@ describe('string functions', () => {
 
   it('parses numbers with toNumber()', async () => {
     expect(await ok('toNumber(" 42 ")')).toBe(42)
-    expect(await ok('toNumber("0x10")')).toBe(16)
+    expect(await fails('toNumber("0x10")')).toBe('INVALID_ARGUMENT')
     expect(await ok('toNumber(5)')).toBe(5)
     expect(await fails('toNumber("")')).toBe('INVALID_ARGUMENT')
     expect(await fails('toNumber("x")')).toBe('INVALID_ARGUMENT')
@@ -602,8 +602,11 @@ describe('map functions', () => {
     expect(await ok('keys({ a: 1, b: 2 })')).toEqual(['a', 'b'])
     expect(await ok('values({ a: 1, b: null })')).toEqual([1, null])
     expect(await ok('entries({ a: 1 })')).toEqual([{ key: 'a', value: 1 }])
-    expect(await ok('values(m)', { m: { a: undefined } })).toEqual([null])
-    expect(await ok('entries(m)', { m: { a: undefined } })).toEqual([{ key: 'a', value: null }])
+    // A key holding undefined is absent.
+    expect(await ok('values(m)', { m: { a: undefined } })).toEqual([])
+    expect(await ok('entries(m)', { m: { a: undefined, b: null } })).toEqual([
+      { key: 'b', value: null },
+    ])
     const inherited = Object.create({ hidden: 1 }) as Record<string, unknown>
     inherited.own = 2
     expect(await ok('keys(m)', { m: inherited })).toEqual(['own'])

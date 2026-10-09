@@ -110,7 +110,7 @@ const EXAMPLES: Record<string, Record<string, string[]>> = {
     repeat: ['"ab".repeat(3)'],
     at: ['"hello".at(-1)', '"hello".at(10)'],
     toString: ['toString(42)', 'toString(null)', 'days(1).toString()'],
-    toNumber: ['"42.5".toNumber()', 'try("4x".toNumber(), 0)'],
+    toNumber: ['"42.5".toNumber()', '" -1e3 ".toNumber()', 'try("0x10".toNumber(), 0)'],
     matches: ['"INV-2041".matches("^INV-[0-9]+$")', '"Hello".matches("(?i)^hello$")', '"a.b".matches("a\\\\.b")'],
   },
   lists: {
@@ -153,11 +153,11 @@ const EXAMPLES: Record<string, Record<string, string[]>> = {
     sqrt: ['sqrt(16)', 'try(sqrt(-1), 0)'],
     clamp: ['clamp(150, 0, 100)', '(-5).clamp(0, 100)'],
     toFixed: ['toFixed(3.14159, 2)', '(2).toFixed(1)'],
-    formatNumber: ['formatNumber(1234567.891)', 'formatNumber(1234.5, 2)', 'formatNumber(1234.5, 2, "de-DE")'],
+    formatNumber: ['formatNumber(1234567.891)', 'formatNumber(1234.5, 2)', 'formatNumber(1234.5, 2, "de-DE")', 'try(formatNumber(1234.5, 2, "xx"), "unsupported")'],
     formatCurrency: ['formatCurrency(1234.5, "EUR")', 'formatCurrency(1234.5, "EUR", "de-DE")', 'formatCurrency(99, "JPY")'],
     min: ['min(4, 2, 8)', 'min([4, 2, 8])'],
     max: ['max(4, 2, 8)', '[4, 2, 8].max()'],
-    sum: ['[1, 2, 3].sum()'],
+    sum: ['[1, 2, 3].sum()', '[0.1, 0.2, 0.3].sum()'],
     avg: ['[2, 4, null].avg()'],
   },
   maps: {

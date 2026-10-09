@@ -61,6 +61,25 @@ export function isLambdaPosition(def: FunctionDef, index: number): boolean {
   return def.overloads.some((candidate) => candidate.params[index]?.kind === 'function')
 }
 
+/**
+ * Whether `.` may stand for the lambda at `index`: its first parameter must be
+ * the current item (the element of the list argument). In reduce it is the
+ * accumulator, so `.` there would silently mean the wrong value.
+ */
+export function isItemLambdaPosition(def: FunctionDef, index: number): boolean {
+  return def.overloads.some((candidate) => {
+    const lambda = candidate.params[index]
+    const items = candidate.params[0]
+    if (lambda?.kind !== 'function' || items?.kind !== 'list') return false
+    const first = lambda.params[0]
+    const element = items.element
+    return (
+      first === element ||
+      (first?.kind === 'var' && element.kind === 'var' && first.name === element.name)
+    )
+  })
+}
+
 /** Shallow runtime test used to pick an overload by argument kinds. */
 export function matchesKind(value: unknown, type: Type): boolean {
   switch (type.kind) {
@@ -129,9 +148,12 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
         const keys = Object.keys(value)
         state.charge(keyListCost(keys.length))
         for (const key of keys) {
+          // A key holding undefined is absent (see holdsKey).
+          const field = value[key]
           if (
+            field !== undefined &&
             !Object.hasOwn(type.fields, key) &&
-            !conforms(value[key], type.rest, state, depth + 1)
+            !conforms(field, type.rest, state, depth + 1)
           )
             return false
         }
@@ -218,8 +240,9 @@ export function describeMismatch(
       budget.remaining -= keyListCost(keys.length)
       if (budget.remaining < 0) budget.onExhausted('steps')
       for (const key of keys) {
-        // Keys the language can never read are not part of the data.
-        if (Object.hasOwn(type.fields, key) || BLOCKED_NAMES.has(key)) continue
+        // Keys the language can never read, or that hold undefined, are not part of the data.
+        if (Object.hasOwn(type.fields, key) || BLOCKED_NAMES.has(key) || actual[key] === undefined)
+          continue
         const problem = describeMismatch(
           actual[key],
           type.rest,
