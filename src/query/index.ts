@@ -88,14 +88,23 @@ export interface SQLOptions extends CommonOptions {
   readonly paramOffset?: number | undefined
 }
 
-export interface SQLQuery {
+/** A value toSQL sends for a placeholder. */
+type SQLParam = string | number | boolean | (string | number)[]
+
+export interface SQLQuery<Param = SQLParam> {
   /**
    * A boolean SQL expression for a WHERE clause. It is true for exactly the
    * selected records, and may be NULL (not false) for others: negate a
    * filter by translating `!(filter)`, not by wrapping this in NOT.
    */
   readonly sql: string
-  readonly params: readonly unknown[]
+  /**
+   * The values for the placeholders, a new array on every call so a driver
+   * may take it as is. SQLite gets numbers and text (booleans as 1 and 0,
+   * timestamps as epoch milliseconds); Postgres also gets booleans, and an
+   * array for each known list.
+   */
+  readonly params: Param[]
 }
 
 export interface MongoOptions extends CommonOptions {
@@ -1070,6 +1079,14 @@ function lower(
       )
     const key = path.join('.')
     const declared = columns.get(key)
+    // `.length` of a declared text column: Bonsai counts UTF-16 units, databases characters.
+    const parent = path.length > 1 ? columns.get(path.slice(0, -1).join('.')) : undefined
+    if (declared === undefined && parent?.type === 'text' && path.at(-1) === 'length') {
+      return fail(
+        'The length of text is not translated (databases count characters, Bonsai UTF-16 units)',
+        node,
+      )
+    }
     if (declared === undefined) {
       return fail(
         `${options.row}.${key} is not a declared column${hint(key, columns.keys())}`,
@@ -1236,7 +1253,16 @@ function lower(
       if (!target.arithmetic) return fail(`Arithmetic is not translated for ${target.name}`, node)
       const left = value(node.left)
       const right = value(node.right)
-      if (kindOf(left) !== 'number' || kindOf(right) !== 'number') {
+      const kinds = [kindOf(left), kindOf(right)]
+      if (kinds.includes('timestamp')) {
+        return fail(
+          `"${node.operator}" on a timestamp is translated only for a timestamp column itself, ` +
+            'shifted by a known duration or measured from a known time; for an optional column, ' +
+            'test it first (x != null && now() - x < days(14))',
+          node,
+        )
+      }
+      if (kinds.some((kind) => kind !== 'number')) {
         return fail(`"${node.operator}" is translated for numbers only`, node)
       }
       return { kind: 'arith', op: node.operator, left, right }
@@ -1484,8 +1510,11 @@ function lower(
           }
           case '??': {
             const left = nullable(node.left)
-            if (left === undefined)
+            if (left === undefined) {
+              // A call that does not translate says why, rather than blaming the "??".
+              if (node.left.type === 'Call') return untranslatable(blamed(node.left))
               return fail('"??" is translated after a ?. text call or a boolean field', node)
+            }
             if (left.whenNull === undefined) return left.pred
             // The right side runs only when the left is null; the left is false then.
             return {
@@ -1529,6 +1558,12 @@ function lower(
 
   const ordering = (left: Value, op: '<' | '<=' | '>' | '>=', right: Value, node: Node): Pred => {
     const kinds = [kindOf(left), kindOf(right)]
+    if (!kinds.includes('null') && kinds[0] !== kinds[1]) {
+      let message = `Cannot order ${kinds[0]} with ${kinds[1]}`
+      if (left.kind === 'const') message += `: the known value on the left is ${kinds[0]}`
+      else if (right.kind === 'const') message += `: the known value on the right is ${kinds[1]}`
+      return fail(message, node)
+    }
     if (kinds.includes('text')) {
       return fail(
         'Ordering text is not translated (databases order by code point, Bonsai by UTF-16 unit)',
@@ -1539,9 +1574,6 @@ function lower(
     // Ordering with null is false, unless the other side fails first.
     if (kinds.includes('null'))
       return { kind: 'in', value: kinds[0] === 'null' ? right : left, list: [] }
-    if (kinds[0] !== kinds[1]) {
-      return fail('Both sides of an ordering must be numbers, timestamps, or durations alike', node)
-    }
     pair(left, right, node)
     return left.kind === 'const'
       ? { kind: 'order', op: FLIP[op], left: right, right: left }
@@ -1774,6 +1806,93 @@ function failable(value: Value): boolean {
   return value.kind === 'arith' || value.kind === 'ms'
 }
 
+/** A product by 0, 1, or -1, which can neither overflow nor underflow. */
+function plainProduct(value: Extract<Value, { kind: 'arith' }>): boolean {
+  if (value.op !== '*') return false
+  const constant = value.left.kind === 'const' ? value.left : value.right
+  return (
+    constant.kind === 'const' &&
+    typeof constant.value === 'number' &&
+    (constant.value === 0 || Math.abs(constant.value) === 1)
+  )
+}
+
+/** An exact float8 literal: JavaScript writes the shortest text that reads back as the same double. */
+const float8 = (value: number): string => `${String(value)}::float8`
+const PG_INFINITY = `'Infinity'::float8`
+// Powers of two, each written as the shortest decimal that reads back as exactly that power.
+/** 2^1023, half of the overflow bound: `a/2 ± b/2` reaching it means `a ± b` overflows. */
+const HALF_OVERFLOW = 8.98846567431158e307
+/** 2^-512: scales two operands above 1 so their product stays finite and rounds as theirs would. */
+const SCALE_DOWN = 7.458340731200207e-155
+/** 2^-500: both operands of a product at least this large keep it far from rounding to zero. */
+const NO_UNDERFLOW = 3.054936363499605e-151
+/** 2^537 and 2^538: scale the smaller and larger operand so their product is 1 exactly at 2^-1075. */
+const SCALE_SMALL = 4.4989137945431964e161
+const SCALE_LARGE = 8.997827589086393e161
+/** Veltkamp's splitting constant for doubles, 2^27 + 1. */
+const SPLITTER = 134_217_729
+
+/**
+ * Postgres arithmetic that gives the double Bonsai computes, or NULL where
+ * Bonsai's fails (a null or non-finite operand, or an overflowing result),
+ * without ever running an operation Postgres rejects: float8 `+`, `-`, and
+ * `*` raise "value out of range" on overflow, and `*` also on a nonzero
+ * product that rounds to zero, where JavaScript gives Infinity and 0.
+ *
+ * The operands are bound once in a subquery (`OFFSET 0` keeps the planner
+ * from copying them into every use, and from folding a constant operand into
+ * an expression it would evaluate while planning), and each test is exact:
+ * - `a ± b` overflows only when both are at least 1, and then halving both is
+ *   exact, so it overflows exactly when `a/2 ± b/2` reaches 2^1023.
+ * - `a * b` overflows only when both exceed 1, and then
+ *   `(a·2^-512)(b·2^-512)` rounds as `ab` does, scaled, so it overflows
+ *   exactly when that reaches 1 (2^1024 - 2^970 rounds up to Infinity).
+ * - `a * b` rounds to zero only when both are below 1 and one is below
+ *   2^-500, exactly when `ab ≤ 2^-1075`, that is when `xp·yp ≤ 1` for
+ *   `xp = min·2^537` and `yp = max·2^538` (both exact). Their rounded product
+ *   decides unless it is exactly 1; then Dekker's exact product error does.
+ */
+function pgArithmetic(op: '+' | '-' | '*', left: string, right: string): string {
+  const a = '_bonsai_a'
+  const b = '_bonsai_b'
+  const finite = `(abs(${a}) < ${PG_INFINITY} AND abs(${b}) < ${PG_INFINITY})`
+  let body: string
+  if (op === '*') {
+    const product = `(${a} * ${b})`
+    const xp = `least(abs(${a}), abs(${b})) * ${float8(SCALE_SMALL)}`
+    const yp = `greatest(abs(${a}), abs(${b})) * ${float8(SCALE_LARGE)}`
+    const split = (x: string, high: string): string =>
+      `${x} * ${float8(SPLITTER)} - (${x} * ${float8(SPLITTER)} - ${x}) AS ${high}`
+    // The exact error of p = xp * yp: Dekker's product with Veltkamp's split.
+    const error =
+      '(((_bonsai_xh * _bonsai_yh - _bonsai_p) + _bonsai_xh * _bonsai_yl) + _bonsai_xl * _bonsai_yh) + _bonsai_xl * _bonsai_yl'
+    const underflow =
+      `(SELECT CASE WHEN _bonsai_p < 1 THEN 0::float8 WHEN _bonsai_p > 1 THEN ${product}` +
+      ` WHEN ${error} <= 0 THEN 0::float8 ELSE ${product} END` +
+      ' FROM (SELECT _bonsai_xh, _bonsai_xp - _bonsai_xh AS _bonsai_xl, _bonsai_yh,' +
+      ' _bonsai_yp - _bonsai_yh AS _bonsai_yl, _bonsai_xp * _bonsai_yp AS _bonsai_p' +
+      ` FROM (SELECT _bonsai_xp, _bonsai_yp, ${split('_bonsai_xp', '_bonsai_xh')},` +
+      ` ${split('_bonsai_yp', '_bonsai_yh')}` +
+      ` FROM (SELECT ${xp} AS _bonsai_xp, ${yp} AS _bonsai_yp OFFSET 0) AS _bonsai_s` +
+      ' OFFSET 0) AS _bonsai_h OFFSET 0) AS _bonsai_e)'
+    body =
+      `CASE WHEN ${a} IS NULL OR ${b} IS NULL THEN NULL` +
+      ` WHEN NOT ${finite} THEN NULL` +
+      ` WHEN ${a} = 0 OR ${b} = 0 THEN ${product}` +
+      ` WHEN abs(${a}) > 1 AND abs(${b}) > 1 THEN CASE WHEN` +
+      ` (abs(${a}) * ${float8(SCALE_DOWN)}) * (abs(${b}) * ${float8(SCALE_DOWN)}) < 1 THEN ${product} END` +
+      ` WHEN abs(${a}) >= 1 OR abs(${b}) >= 1 OR least(abs(${a}), abs(${b})) >= ${float8(NO_UNDERFLOW)}` +
+      ` THEN ${product} ELSE ${underflow} END`
+  } else {
+    body =
+      `CASE WHEN NOT ${finite} THEN NULL` +
+      ` WHEN abs(${a}) < 1 OR abs(${b}) < 1 THEN (${a} ${op} ${b})` +
+      ` WHEN abs(${a} * 0.5::float8 ${op} ${b} * 0.5::float8) < ${float8(HALF_OVERFLOW)} THEN (${a} ${op} ${b}) END`
+  }
+  return `(SELECT ${body} FROM (SELECT ${left} AS ${a}, ${right} AS ${b} OFFSET 0) AS _bonsai_o)`
+}
+
 const tooLarge = (source: string): BonsaiTranslationError =>
   new BonsaiTranslationError('The translated query is too large', source, {
     start: 0,
@@ -1839,7 +1958,10 @@ const PG_CASTS: Readonly<Record<ColumnType, string>> = {
  * numbers, booleans as 0/1, timestamps as epoch milliseconds, and durations as
  * milliseconds, and should be declared STRICT so they cannot hold other types.
  */
-export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
+export function toSQL<Dialect extends SQLOptions['dialect']>(
+  program: Translatable,
+  options: SQLOptions & { readonly dialect: Dialect },
+): SQLQuery<Dialect extends 'sqlite' ? string | number : SQLParam> {
   checkProgram(program, 'toSQL')
   checkKeys(options, SQL_OPTION_KEYS, 'toSQL')
   const dialect = options.dialect
@@ -1878,7 +2000,7 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
   const declaredColumns = declare(options, options.columns, 'columns', target)
   checkDeclaredTypes(program, options.row, declaredColumns, 'columns')
   const predicate = lower(program, options, declaredColumns, target, translation)
-  const params: unknown[] = []
+  const params: SQLParam[] = []
   const tooManyParams = (): BonsaiTranslationError =>
     new BonsaiTranslationError(
       `The translated query needs more than ${MAX_PARAMS[dialect]} parameters`,
@@ -1888,7 +2010,7 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
 
   const quote = (name: string): string =>
     pg ? `"${name.replaceAll('"', '""')}"` : `\`${name.replaceAll('`', '``')}\``
-  const encode = (value: Exclude<Primitive, null>): unknown => {
+  const encode = (value: Exclude<Primitive, null>): string | number | boolean => {
     if (value instanceof Date) return pg ? new Date(msOf(value)).toISOString() : msOf(value)
     if (value instanceof Duration) return value.ms
     if (typeof value === 'boolean' && !pg) return value ? 1 : 0
@@ -1896,9 +2018,9 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
   }
   // Numbered placeholders, so a value used again (with the same cast) reuses its
   // parameter: known text or a known list is sent once however often it is used.
-  const numbered = new Map<string, Map<unknown, string>>()
+  const numbered = new Map<string, Map<SQLParam, string>>()
   let paramText = 0
-  const placeholder = (encoded: unknown, cast: string): string => {
+  const placeholder = (encoded: SQLParam, cast: string): string => {
     charge()
     let byValue = numbered.get(cast)
     if (byValue === undefined) {
@@ -1947,7 +2069,8 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
       if (arrayEntries > MAX_LIST_ENTRIES) throw tooLarge(program.source)
       charge(list.length)
       sql = placeholder(
-        list.map((entry) => encode(entry as Exclude<Primitive, null>)),
+        // Never booleans: a boolean list is written out entry by entry.
+        list.map((entry) => encode(entry as Exclude<Primitive, null>) as string | number),
         cast,
       )
       byCast.set(cast, sql)
@@ -1986,7 +2109,12 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
         break
       case 'arith':
       default:
-        sql = `(${operand(value.left)} ${value.op} ${operand(value.right)})`
+        sql =
+          pg && !plainProduct(value)
+            ? pgArithmetic(value.op, val(value.left), val(value.right))
+            : `(${operand(value.left)} ${value.op} ${operand(value.right)})`
+        charge(textCost(sql))
+        if (sql.length > MAX_SQL_LENGTH) throw tooLarge(program.source)
     }
     rendered.set(value, sql)
     return sql
@@ -2156,7 +2284,9 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     },
   }
 
-  return { sql: algebra.guard(dual(predicate, algebra).t), params }
+  // SQLite parameters are only numbers and text: encode() writes booleans as 1 and 0, and lists
+  // become one parameter per entry.
+  return { sql: algebra.guard(dual(predicate, algebra).t), params: params as never }
 }
 
 // === MongoDB ===

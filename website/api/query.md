@@ -37,7 +37,7 @@ Every field a filter may read is declared, with its type. Anything else is rejec
 | `timestamp` | `timestamptz` (not `timestamp`), millisecond precision | `INTEGER` epoch milliseconds | Date |
 | `duration` | a numeric type holding whole milliseconds (`bigint`), compared as `float8` | `INTEGER` milliseconds | number of milliseconds |
 
-Use `{ type, name }` when the column (or MongoDB field path) differs from the key: `{ city: { type: 'text', name: 'ship_city' } }`. Nested keys (`'address.city'`) are dotted field paths in MongoDB. In SQL, a nested key is one column named after the whole key (`"address.city"`) unless `name` says otherwise.
+Use `{ type, name }` when the column (or MongoDB field path) differs from the key: `{ city: { type: 'text', name: 'ship_city' } }`. Nested keys (`'address.city'`) are dotted field paths in MongoDB. In SQL, a nested key is one column named after the whole key (`"address.city"`) unless `name` says otherwise. A `name` is always one quoted column name, never `table.column`: to filter a join, select the joined columns under plain names in a subquery or CTE (`WITH o AS (SELECT orders.id, customers.region FROM orders JOIN customers ON ...) SELECT * FROM o WHERE <sql>`).
 
 The types are part of the contract, and results are exact only when the data keeps it. When the program's environment declares a type for a field, the column must fit it, or `toSQL` and `toMongo` throw a `TypeError` naming the field: a list field, for example, is not a `text` column (`"a" in order.tags` on a `text` column would be a substring test). In an open environment nothing is declared, so declare each column with the type the field really has.
 
@@ -66,8 +66,9 @@ Invalid options (an unknown option key, an unknown `dialect` or column type, a m
 | `"text" in order.name` | substring test |
 | `order.name in text` | substring test, SQL only |
 | `order.a == order.b`, `order.a < order.b` | comparing two columns, SQL only |
-| `+ - *`, unary `-` | numbers, SQL only; a null operand or a non-finite result fails |
+| `+ - *`, unary `-` | numbers, SQL only; a null operand or a non-finite result fails, so the record is excluded |
 | `now() - order.placed < days(14)`, `order.placed + days(3) > now()` | relative dates: a timestamp column shifted by a known duration, or its distance from a known time, compared with a known timestamp or duration (either way round) |
+| `order.placed != null && now() - order.placed < days(14)` | relative dates on an optional timestamp column (the checker rejects the subtraction without the test; a `??` default does not translate) |
 
 A text function on a nullable column has three exact forms. With a declared environment the checker rejects `order.email.endsWith(x)` on an optional field and suggests `?.` or `??`; all of these translate:
 
@@ -80,7 +81,7 @@ order.email?.endsWith("@acme.com") ?? false // => false
 
 Relative dates need `now`, from the `now` option (or a known timestamp in its place); the comparison is rewritten as the column against a fixed instant, so it can use an index. A null timestamp fails the subtraction, so the record is excluded from the filter and from its negation, as in Bonsai, and so is a record that a shift would push past the range of dates. Durations are whole milliseconds, like timestamps, so the bound is exact.
 
-Anything else throws a `BonsaiTranslationError` (code `UNTRANSLATABLE`) with the span of the part that has no exact equivalent, including calls to host functions (which may replace a built-in of the same name). The message says why: `now()` without the `now` option, calendar functions such as `hour()` or `startOfDay()` (they follow time zone rules databases do not apply as Bonsai does; compare the timestamp with known bounds instead), `let`, `?:` (write the condition with `&&` and `||`), `try()`, computed reads, and other operators each name themselves. Deliberately not translated: ordering text (databases order by code point, Bonsai by UTF-16 unit), `toLowerCase`/`toUpperCase` (databases do not match JavaScript's Unicode case mapping), and division (databases differ on division by zero). Text with a lone surrogate is rejected, since drivers send it as U+FFFD.
+Anything else throws a `BonsaiTranslationError` (code `UNTRANSLATABLE`) with the span of the part that has no exact equivalent, including calls to host functions (which may replace a built-in of the same name). The message says why: `now()` without the `now` option, calendar functions such as `hour()` or `startOfDay()` (they follow time zone rules databases do not apply as Bonsai does; compare the timestamp with known bounds instead), `let`, `?:` (write the condition with `&&` and `||`), `try()`, computed reads, and other operators each name themselves. Deliberately not translated: ordering text (databases order by code point, Bonsai by UTF-16 unit), the `.length` of text (databases count characters, Bonsai UTF-16 units), `toLowerCase`/`toUpperCase` (databases do not match JavaScript's Unicode case mapping), and division (databases differ on division by zero). Text with a lone surrogate is rejected, since drivers send it as U+FFFD.
 
 A failing `&&` or `||` repeats part of its left side in the query, so deeply nested filters grow quickly; a translation larger than 1,000,000 characters of SQL or 100,000 MongoDB filter nodes is rejected, as is one needing more parameters than the database accepts (65,535 in Postgres, 32,766 in SQLite), more than 1,000,000 entries in Postgres array parameters, or more than 16,000,000 characters of SQL parameter text. In a MongoDB filter, every 160 characters of text count as one node toward its limit, so the filter stays near the 16 MB a MongoDB document can hold. In SQL, a known value is sent once however often the filter uses it: a parameter is reused wherever the same value (with the same type) appears.
 
@@ -137,10 +138,10 @@ Translated conditions are plain comparisons wherever Bonsai's semantics allow, s
 | `callHostFunctions` | both | Call sync host functions whose inputs are all known before translating, as for `partial()`. Default `false` |
 | `paramOffset` | SQL | Parameters already used, so numbering (`$n`, `?n`) continues |
 
-Parameters are always numbered (`$1` in Postgres, `?1` in SQLite) because a translated condition can repeat a sub-expression. In Postgres, a known list of text, numbers, or timestamps is one array parameter (`= ANY($1::text[])`), which drivers such as `pg`, `postgres`, and PGlite send as an array.
+Parameters are always numbered (`$1` in Postgres, `?1` in SQLite) because a translated condition can repeat a sub-expression. In Postgres, a known list of text, numbers, or timestamps is one array parameter (`= ANY($1::text[])`), which drivers such as `pg`, `postgres`, and PGlite send as an array. `params` is a new array on every call, typed so drivers take it as is: numbers and text for SQLite (`statement.all(...params)` in `node:sqlite`), plus booleans and arrays for Postgres (`db.query(sql, params)`).
 
 ## Caveats
 
-- Numbers: in Postgres, arithmetic that overflows or underflows a double raises a database error where Bonsai would exclude the record (or, for underflow, compute 0).
+- Numbers: Postgres raises an error where double arithmetic overflows (and where a product rounds to zero), so in Postgres each `+`, `-`, and `*` is written as a small subquery that tests exactly whether the operation would overflow or round to zero before running it. A record whose arithmetic overflows is excluded, as in Bonsai, and a product that rounds to zero is 0, as in Bonsai; the query never fails on the record's values. The cost is a subquery per operation per row, so arithmetic is slower than in hand-written SQL. SQLite computes infinities instead of raising, and needs no such test.
 - Timestamps: known timestamps sent to Postgres must fall in the years 0001 to 9999.
 - MongoDB: pass `options` to `find()` so string comparison is binary even if the collection has a case-insensitive default collation.
