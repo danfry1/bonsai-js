@@ -24,7 +24,7 @@ Timestamps compare by instant with `==`, `<`, and the other ordering operators, 
 
 ## Durations
 
-Durations come from `weeks`, `days`, `hours`, `minutes`, `seconds`, and `milliseconds`, and from subtracting two timestamps. A day is exactly 24 hours. A duration is a whole number of milliseconds, the resolution of timestamps: a fraction is rounded to the nearest millisecond, halves away from zero, when the duration is made (`milliseconds(0.5)` is 1 ms, `days(1) / 7` is 12,342,857 ms), so duration arithmetic is exact. Durations render as ISO-8601 durations.
+Durations come from `weeks`, `days`, `hours`, `minutes`, `seconds`, and `milliseconds`, and from subtracting two timestamps. A day is exactly 24 hours. A duration is a whole number of milliseconds, the resolution of timestamps: a fraction is rounded to the nearest millisecond, halves away from zero, when the duration is made (`milliseconds(0.5)` is 1 ms, `days(1) / 7` is 12,342,857 ms), so duration arithmetic is exact. A duration spans at most ±(2^53 - 1) ms, about 285,000 years, the range in which every millisecond is exact; a duration outside it (`days(1e300)`, or the distance between timestamps 300,000 years apart) is `INVALID_ARGUMENT`. Durations render as ISO-8601 durations. In TypeScript, build one for a context with `new Duration(ms)`, which rounds the same way and throws a `RangeError` for a length outside that range or not a number.
 
 ```bonsai
 days(1) + hours(12) // => P1DT12H

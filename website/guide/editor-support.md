@@ -58,11 +58,12 @@ service.hover('orders.map(.total)', 8)?.documentation // => "Transforms each ite
 const [problem] = service.diagnostics('user.emial')
 problem.code // => "UNKNOWN_PROPERTY"
 problem.severity // => "error"
-problem.start // => 0
+problem.start // => 5
 problem.end // => 10
+problem.suggestion // => "email"
 ```
 
-Map `start` and `end` to your editor's positions to underline the range. Warnings (`severity: "warning"`) point out expressions that are valid but probably wrong, such as a comparison that can never be true.
+Map `start` and `end` to your editor's positions to underline the range. For an unknown name the range is the name itself (`emial`), so a quick-fix replaces it with `suggestion`. Warnings (`severity: "warning"`) point out expressions that are valid but probably wrong, such as a comparison that can never be true.
 
 ## Wiring it to an editor
 

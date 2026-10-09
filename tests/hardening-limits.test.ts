@@ -536,7 +536,10 @@ describe('values', () => {
     expect(env.evaluateSync('`${milliseconds(0.0001)}`')).toBe('PT0S')
     expect(env.evaluateSync('`${milliseconds(5e-324)}`')).toBe('PT0S')
     expect(env.evaluateSync('`${seconds(59.9999999999)}`')).toBe('PT1M')
-    expect(env.evaluateSync('`${days(1e300)}`')).toMatch(/^P1\d{300}D$/u)
+    expect(env.evaluateSync('`${milliseconds(9007199254740991)}`')).toBe('P104249991DT8H59M0.991S')
+    expect(() => env.evaluateSync('`${days(1e300)}`')).toThrow(
+      expect.objectContaining({ code: 'INVALID_ARGUMENT' }),
+    )
   })
 
   it('evaluates list literal items before charging, in sync and async alike', async () => {

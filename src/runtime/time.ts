@@ -1,20 +1,29 @@
 import type { CallSite } from '../functions/define.js'
-import { MS_PER_DAY, MS_PER_HOUR, MS_PER_MINUTE, MS_PER_SECOND, shown, timeOf } from './values.js'
+import {
+  DAYS_PER_ERA,
+  DAYS_PER_YEAR,
+  EPOCH_SHIFT,
+  MARCH,
+  MONTH_CYCLE_DAYS,
+  MONTH_CYCLE_MONTHS,
+  MONTHS_AFTER_MARCH,
+  MS_PER_DAY,
+  MS_PER_HOUR,
+  MS_PER_MINUTE,
+  MS_PER_SECOND,
+  YEARS_PER_CENTURY,
+  YEARS_PER_ERA,
+  YEARS_PER_LEAP,
+  shown,
+  timeOf,
+  utcClock,
+  type WallClock,
+} from './values.js'
 
-/** Calendar fields of an instant as seen on a wall clock in some time zone. */
-export interface WallClock {
-  year: number
-  month: number // 1-12
-  day: number
-  hour: number
-  minute: number
-  second: number
-  millisecond: number
-}
+export type { WallClock } from './values.js'
 
 const MONTHS_PER_YEAR = 12
 const HOURS_PER_HALF_DAY = 12
-const YEARS_PER_CENTURY = 100
 const MINUTES_PER_HOUR = 60
 const MAX_HOUR = 23
 const MAX_MINUTE = 59
@@ -130,6 +139,8 @@ const zoneData = new Map<string, ZoneData>()
  * of them a runtime accepts, and what it maps them to, differs between engines.
  */
 const ZONE_NAME = /^[A-Z][\w+-]*(?:\/[A-Z0-9][\w+-]*)+$/u
+/** Longest zone name accepted (the longest IANA name is about 32 characters). */
+const MAX_ZONE_LENGTH = 64
 
 function unknownZone(zone: string, site: CallSite): Error {
   return site.state.error(
@@ -143,7 +154,7 @@ function formatterFor(zone: string, site: CallSite): Intl.DateTimeFormat {
   return site.state.resource(`f${zone}`, ZONE_FORMAT_COST, () => {
     let formatter = formatters.get(zone)
     if (formatter !== undefined) return formatter
-    if (!ZONE_NAME.test(zone)) throw unknownZone(zone, site)
+    if (zone.length > MAX_ZONE_LENGTH || !ZONE_NAME.test(zone)) throw unknownZone(zone, site)
     try {
       formatter = new Intl.DateTimeFormat('en-US', {
         timeZone: zone,
@@ -285,63 +296,6 @@ export function wallClock(date: Date, zone: string | null | undefined, site: Cal
     return formattedClock(formatterFor(zone, site), ms)
   }
   return utcClock(shifted)
-}
-
-// Days from 0000-03-01 to 1970-01-01, and the days in a 400-year cycle.
-const EPOCH_SHIFT = 719_468
-const DAYS_PER_ERA = 146_097
-const DAYS_PER_4_YEARS = 1460
-const DAYS_PER_CENTURY = 36_524
-const LAST_DAY_OF_ERA = 146_096
-const DAYS_PER_YEAR = 365
-const YEARS_PER_ERA = 400
-const YEARS_PER_LEAP = 4
-const MONTH_CYCLE_DAYS = 153
-const MONTH_CYCLE_MONTHS = 5
-const MARCH = 3
-const MONTHS_AFTER_MARCH = 9
-/** March to December: the months of the shifted year (it starts in March) before its new year. */
-const MONTHS_FROM_MARCH = 10
-
-/**
- * The UTC calendar fields of an instant, by integer arithmetic (the civil
- * calendar algorithm of H. Hinnant): several times faster than Date's getters.
- */
-function utcClock(ms: number): WallClock {
-  const days = Math.floor(ms / MS_PER_DAY)
-  let rest = ms - days * MS_PER_DAY
-  const hour = Math.floor(rest / MS_PER_HOUR)
-  rest -= hour * MS_PER_HOUR
-  const minute = Math.floor(rest / MS_PER_MINUTE)
-  rest -= minute * MS_PER_MINUTE
-  const second = Math.floor(rest / MS_PER_SECOND)
-  const shifted = days + EPOCH_SHIFT
-  const era = Math.floor(shifted / DAYS_PER_ERA)
-  const dayOfEra = shifted - era * DAYS_PER_ERA
-  const yearOfEra = Math.floor(
-    (dayOfEra -
-      Math.floor(dayOfEra / DAYS_PER_4_YEARS) +
-      Math.floor(dayOfEra / DAYS_PER_CENTURY) -
-      Math.floor(dayOfEra / LAST_DAY_OF_ERA)) /
-      DAYS_PER_YEAR,
-  )
-  const dayOfYear =
-    dayOfEra -
-    (DAYS_PER_YEAR * yearOfEra +
-      Math.floor(yearOfEra / YEARS_PER_LEAP) -
-      Math.floor(yearOfEra / YEARS_PER_CENTURY))
-  const monthIndex = Math.floor((MONTH_CYCLE_MONTHS * dayOfYear + 2) / MONTH_CYCLE_DAYS)
-  const month =
-    monthIndex < MONTHS_FROM_MARCH ? monthIndex + MARCH : monthIndex - MONTHS_AFTER_MARCH
-  return {
-    year: yearOfEra + era * YEARS_PER_ERA + (month <= 2 ? 1 : 0),
-    month,
-    day: dayOfYear - Math.floor((MONTH_CYCLE_DAYS * monthIndex + 2) / MONTH_CYCLE_MONTHS) + 1,
-    hour,
-    minute,
-    second,
-    millisecond: rest - second * MS_PER_SECOND,
-  }
 }
 
 /**

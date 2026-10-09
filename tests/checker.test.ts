@@ -105,7 +105,7 @@ describe('diagnostics', () => {
 
   it('points diagnostics at the offending span', () => {
     const [diagnostic] = env.check('user.age + user.agee').diagnostics
-    expect(diagnostic).toMatchObject({ code: 'UNKNOWN_PROPERTY', start: 11, end: 20 })
+    expect(diagnostic).toMatchObject({ code: 'UNKNOWN_PROPERTY', start: 16, end: 20 })
   })
 
   it('is lenient in an open environment', () => {

@@ -19,6 +19,7 @@ import {
 } from '../runtime/time.js'
 import {
   Duration,
+  durationOf,
   chargeIndexKey,
   chargeKey,
   keyListCost,
@@ -141,6 +142,36 @@ function numbersOf(items: readonly unknown[], what: string, site: CallSite): num
   return out
 }
 
+/** The first item that is not null, or null. */
+function firstPresent(items: readonly unknown[]): unknown {
+  // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    if (item !== null && item !== undefined) return item
+  }
+  return null
+}
+
+/** The total of a list of durations (nulls are skipped); anything else is a TYPE_ERROR. */
+function sumDurations(items: readonly unknown[], site: CallSite): Duration {
+  site.state.charge(items.length)
+  let total = 0
+  // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+  for (let i = 0; i < items.length; i++) {
+    const d = items[i]
+    if (d === null || d === undefined) continue
+    if (!(d instanceof Duration)) {
+      throw site.state.error(
+        'TYPE_ERROR',
+        `sum expects durations but found ${describeKind(d)}`,
+        site.span,
+      )
+    }
+    total += d.ms
+  }
+  return durationOf(total, site.state, site.span)
+}
+
 /** Copies a list by index: never runs a host list's iterator, species, or methods. */
 function copyOf(items: readonly unknown[], from = 0, to = items.length): unknown[] {
   const out = new Array<unknown>(Math.max(0, to - from))
@@ -188,8 +219,8 @@ const MAX_INTL_DIGITS = 20
  * of the patterns kept for reuse, shared by every environment.
  */
 const REGEX_CACHE_BUDGET = 100_000
-/** Steps charged for creating a number formatter (about 6 microseconds of work). */
-const NUMBER_FORMAT_COST = 256
+/** Steps charged for creating a number formatter (about 18 microseconds for a new locale, measured). */
+const NUMBER_FORMAT_COST = 1024
 /** Steps charged for formatting one number with Intl (about half a microsecond). */
 const FORMAT_COST = 16
 /** Steps charged for parsing a timestamp (a pattern match and calendar arithmetic). */
@@ -252,11 +283,40 @@ function regexFor(pattern: string, site: CallSite): RegexProgram {
 /** Number formatters shared by every environment (charged per evaluation, as patterns are). */
 const numberFormats = new Map<string, Intl.NumberFormat>()
 
+/**
+ * Longest locale tag accepted. Real tags, even with Unicode extensions
+ * (en-US-u-ca-gregory-nu-latn-hc-h23-cu-usd is 41 characters), are far
+ * shorter; Intl's work on a tag grows faster than its length, so a longer one
+ * is rejected before Intl sees it.
+ */
+const MAX_LOCALE_LENGTH = 64
+/** An ISO 4217 currency code. */
+const CURRENCY_CODE = /^[A-Za-z]{3}$/u
+
+/** Intl formats -0 as "-0"; nothing else in the language shows it, so it formats as 0. */
+function plusZero(n: number): number {
+  return n === 0 ? 0 : n
+}
+
 function numberFormat(
   locale: string,
   options: Intl.NumberFormatOptions,
   site: CallSite,
 ): Intl.NumberFormat {
+  if (locale.length > MAX_LOCALE_LENGTH) {
+    throw site.state.error(
+      'INVALID_ARGUMENT',
+      `Locale tags are at most ${MAX_LOCALE_LENGTH} characters long`,
+      site.span,
+    )
+  }
+  if (options.currency !== undefined && !CURRENCY_CODE.test(options.currency)) {
+    throw site.state.error(
+      'INVALID_ARGUMENT',
+      `Currency codes are three letters (ISO 4217), not ${shown(options.currency)}`,
+      site.span,
+    )
+  }
   const key = `${locale}\u0000${JSON.stringify(options)}`
   const format = site.state.resource(`n${key}`, NUMBER_FORMAT_COST, () => {
     let created = numberFormats.get(key)
@@ -924,7 +984,7 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
               ? (n as number)
               : roundTo(n as number, digits, site)
           return numberFormat(typeof locale === 'string' ? locale : 'en-US', options, site).format(
-            value,
+            plusZero(value),
           )
         },
         { required: 1 },
@@ -943,7 +1003,7 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
             typeof locale === 'string' ? locale : 'en-US',
             { style: 'currency', currency: currency as string },
             site,
-          ).format(finite(n as number, site)),
+          ).format(plusZero(finite(n as number, site))),
         { required: 2 },
       ),
     ],
@@ -961,21 +1021,15 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
     'The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is.',
     [
       overload([t.list(t.optional(num))], num, ([l], site) => {
+        const items = list(l)
+        // A list whose type is unknown statically reaches this overload; its
+        // items decide (a list of durations sums as durations).
+        if (firstPresent(items) instanceof Duration) return sumDurations(items, site)
         let total = 0
-        for (const n of numbersOf(list(l), 'sum', site)) total += n
+        for (const n of numbersOf(items, 'sum', site)) total += n
         return finite(total, site)
       }),
-      overload([t.list(t.optional(dur))], dur, ([l], site) => {
-        const items = list(l)
-        site.state.charge(items.length)
-        let total = 0
-        // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
-        for (let i = 0; i < items.length; i++) {
-          const d = items[i]
-          if (d instanceof Duration) total += d.ms
-        }
-        return new Duration(finite(total, site))
-      }),
+      overload([t.list(t.optional(dur))], dur, ([l], site) => sumDurations(list(l), site)),
     ],
   ),
   define(
@@ -1357,7 +1411,7 @@ function startOf(name: string, what: string, reset: Partial<WallClock>): Functio
 
 function durationUnit(name: string, unitMs: number, description: string): FunctionDef {
   return define(name, description, [
-    overload([num], dur, ([n], site) => new Duration(finite((n as number) * unitMs, site))),
+    overload([num], dur, ([n], site) => durationOf((n as number) * unitMs, site.state, site.span)),
   ])
 }
 

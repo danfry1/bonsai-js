@@ -1,7 +1,7 @@
 import { BLOCKED_NAMES } from '../syntax/lexer.js'
 import type { Span } from '../errors.js'
 import type { State } from '../runtime/state.js'
-import { Duration, isMap, keyListCost, shown } from '../runtime/values.js'
+import { Duration, isMap, isValidDuration, keyListCost, shown } from '../runtime/values.js'
 import { formatType, type FunctionType, type Type, type TypeVar } from '../types.js'
 
 /** A lambda as seen by a built-in: called with the item and its index. */
@@ -164,10 +164,11 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
       return type.types.some((member) => conforms(value, member, state, depth))
     case 'timestamp':
       // An invalid Date is an opaque host value, not a timestamp.
-      return value instanceof Date && !Number.isNaN(value.getTime())
+      return isValidTime(value)
+    case 'duration':
+      return isValidDuration(value)
     case 'any':
     case 'boolean':
-    case 'duration':
     case 'function':
     case 'literal':
     case 'never':
@@ -183,11 +184,22 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
 
 const CLOCK_SAMPLE = 1024
 
+/** A valid Date, read through Date internals so a subclass or Proxy runs none of its own code. */
+function isValidTime(value: unknown): value is Date {
+  if (!(value instanceof Date)) return false
+  try {
+    return !Number.isNaN(Date.prototype.getTime.call(value))
+  } catch {
+    // A Proxy around a Date has no Date internals.
+    return false
+  }
+}
+
 function describeValue(value: unknown): string {
   if (value === null) return 'null (missing)'
   if (Array.isArray(value)) return 'a list'
-  if (value instanceof Date)
-    return Number.isNaN(value.getTime()) ? 'an invalid Date' : 'a timestamp'
+  if (value instanceof Date) return isValidTime(value) ? 'a timestamp' : 'an invalid Date'
+  if (value instanceof Duration && !isValidDuration(value)) return 'an invalid Duration'
   if (typeof value === 'object') return 'a map'
   if (typeof value === 'string') return `string ${shown(value)}`
   if (typeof value === 'number' || typeof value === 'boolean')
@@ -264,7 +276,9 @@ export function describeMismatch(
       return undefined
     }
   } else if (type.kind === 'timestamp') {
-    if (actual instanceof Date && !Number.isNaN(actual.getTime())) return undefined
+    if (isValidTime(actual)) return undefined
+  } else if (type.kind === 'duration') {
+    if (isValidDuration(actual)) return undefined
   } else if (type.kind !== 'list' && type.kind !== 'map' && matchesKind(actual, type)) {
     return undefined
   }
@@ -332,6 +346,8 @@ export function assertType(value: unknown, path: string, depth = 0): asserts val
           `${path} is a literal type whose value is not a string, number, or boolean`,
         )
       }
+      if (typeof value.value === 'number' && !Number.isFinite(value.value))
+        throw new TypeError(`${path} is a literal type whose number is not finite`)
       return
     case 'list':
       assertType(value.element, `${path}.element`, depth + 1)

@@ -338,7 +338,9 @@ export function print(node: Node, options: PrintOptions = {}): string {
       case 'Literal':
         return literal(n.value)
       case 'Template':
-        return `\`${n.parts.map((part) => (typeof part === 'string' ? templateText(part) : `\${${expr(part)}}`)).join('')}\``
+        return `\`${templateParts(n.parts)
+          .map((part) => (typeof part === 'string' ? templateText(part) : `\${${expr(part)}}`))
+          .join('')}\``
       case 'Variable':
       case 'Local':
         return n.name
@@ -416,6 +418,20 @@ const ESCAPES: Readonly<Record<string, string>> = {
 function stringLiteral(text: string): string {
   // eslint-disable-next-line no-control-regex -- escaping control characters is the point
   return `"${text.replace(/[\u0000-\u001f"\\]/gu, (ch) => ESCAPES[ch] ?? `\\x${ch.charCodeAt(0).toString(HEX).padStart(PAD, '0')}`)}"`
+}
+
+/**
+ * Template parts with adjacent text joined, so text is escaped as a whole: `$`
+ * and `{b}` printed apart would read back as the interpolation `${b}`.
+ */
+function templateParts<P>(parts: readonly (string | P)[]): (string | P)[] {
+  const out: (string | P)[] = []
+  for (const part of parts) {
+    const last = out[out.length - 1]
+    if (typeof part === 'string' && typeof last === 'string') out[out.length - 1] = last + part
+    else out.push(part)
+  }
+  return out
 }
 
 function templateText(text: string): string {
