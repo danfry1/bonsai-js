@@ -537,6 +537,21 @@ describe('toMongo', () => {
   })
 })
 
+describe('known values are validated as evaluation validates them', () => {
+  it('reports INVALID_CONTEXT for known data that does not match its type', () => {
+    const strictEnv = bonsai({
+      variables: { user: t.object({ age: t.number() }), order: t.object({ total: t.number() }) },
+      validateContext: true,
+    })
+    const program = strictEnv.compile('user.age > 30 && order.total > 0')
+    const options = { row: 'order', columns: { total: 'number' }, dialect: 'sqlite' } as const
+    expect(() => toSQL(program, { ...options, known: { user: { age: '36' } } })).toThrow(
+      expect.objectContaining({ code: 'INVALID_CONTEXT' }),
+    )
+    expect(toSQL(program, { ...options, known: { user: { age: 36 } } }).sql).toBe('(`total` > ?1)')
+  })
+})
+
 describe('known values are read as the engine reads them', () => {
   const program = env.compile('order.total in xs')
   const sqlite = { row: 'order', columns, dialect: 'sqlite' } as const

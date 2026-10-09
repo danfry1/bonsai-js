@@ -442,4 +442,22 @@ describe('partial residuals evaluate as the program does', () => {
     expect(program.evaluateSync(session)).toBe(true)
     expect(residualOf(program.partial({ ys: [1] })).evaluateSync(session)).toBe(true)
   })
+
+  it('validates the known variables when validateContext is on', () => {
+    const strictEnv = bonsai({
+      variables: {
+        user: t.object({ age: t.number(), riskScore: t.number() }),
+        order: t.object({ total: t.number() }),
+      },
+      validateContext: true,
+    })
+    const program = strictEnv.compile('user.age > 30 && order.total > user.riskScore')
+    const bad = program.partial({ user: { age: '36', riskScore: 1 } } as never)
+    expect(bad.status === 'error' && bad.error.code).toBe('INVALID_CONTEXT')
+    // A variable with an unknown path inside it is incomplete by design.
+    const partlyKnown = program.partial({ user: { age: 40 } } as never, {
+      unknown: ['order', 'user.riskScore'],
+    })
+    expect(residualOf(partlyKnown).source).toBe('order.total > user.riskScore')
+  })
 })

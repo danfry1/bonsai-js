@@ -1220,6 +1220,28 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       )
       state.reset(context, source, 0, settings.runtimeLimits.maxSteps, settings.timeout, undefined)
       try {
+        // Known variables are validated as evaluation validates them; a variable
+        // with an unknown path inside it is incomplete by design, so it is not.
+        if (settings.validateContext && settings.variables !== undefined) {
+          const unknownPaths = options.unknown ?? []
+          const knownVariables = Object.fromEntries(
+            Object.entries(settings.variables).filter(
+              ([name]) =>
+                Object.hasOwn(context, name) &&
+                !unknownPaths.some((path) => path === name || path.startsWith(`${name}.`)),
+            ),
+          )
+          try {
+            validateContext(context, knownVariables, source, {
+              maxDepth: settings.runtimeLimits.maxValueDepth,
+              maxSteps: settings.runtimeLimits.maxSteps,
+              timeout: settings.timeout,
+            })
+          } catch (error) {
+            if (error instanceof BonsaiRuntimeError) return { status: 'error', error }
+            throw error
+          }
+        }
         const result = partiallyEvaluate<R>(
           {
             analysis,
