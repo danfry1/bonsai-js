@@ -867,6 +867,26 @@ function explainSettings(options: unknown): ExplainSettings {
   }
 }
 
+/** Reads compile() and check() options: only `expect`, which must be a type built with t. */
+function compileExpect(options: unknown): Type | undefined {
+  if (options === undefined) return undefined
+  if (typeof options !== 'object' || options === null || Array.isArray(options))
+    throw new TypeError('Compile options must be an object')
+  let expect: unknown
+  try {
+    for (const key of Object.keys(options)) {
+      if (key !== 'expect')
+        throw new TypeError(`Unknown compile option key "${key}" (expected one of: expect)`)
+    }
+    expect = (options as { expect?: unknown }).expect
+  } catch (error) {
+    if (error instanceof TypeError) throw error
+    throw new TypeError('Compile options could not be read', { cause: error })
+  }
+  if (expect !== undefined) assertType(expect, 'Compile option "expect"')
+  return expect
+}
+
 const PARTIAL_OPTION_KEYS: ReadonlySet<string> = new Set(['unknown', 'callHostFunctions', 'now'])
 const PATH = /^[^.]+(?:\.[^.]+)*$/u
 
@@ -1391,7 +1411,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     check(source: string, options?: CompileOptions): CheckResult {
       let analysis: Analysis
       try {
-        analysis = analyzeSource(source, options?.expect)
+        analysis = analyzeSource(source, compileExpect(options))
       } catch (error) {
         if (!(error instanceof BonsaiError)) throw error
         return {
@@ -1414,7 +1434,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         : { ok: false, type: deepFreeze(analysis.type), diagnostics: analysis.diagnostics }
     },
     compile: <E extends Type = AnyType>(source: string, options?: CompileOptions<E>) =>
-      compile<Infer<E>>(source, options?.expect),
+      compile<Infer<E>>(source, compileExpect(options)),
     evaluate<R>(source: string, ...args: Args<Ctx>): Promise<R> {
       try {
         return cached(source).evaluate(...args) as Promise<R>

@@ -154,3 +154,30 @@ describe('print() rejects trees that would not reparse to the same tree', () => 
     expect(() => print(variable('x'), { calls: 'loud' as never })).toThrow(TypeError)
   })
 })
+
+describe('compile and check options are validated like the others', () => {
+  const env = bonsai({ variables: { x: t.number() } })
+
+  it('rejects unknown keys, so a misspelled expect is never silently dropped', () => {
+    const typo = { expected: t.string() } as never
+    expect(() => env.compile('x', typo)).toThrow(/Unknown compile option key "expected"/u)
+    expect(() => env.check('x', typo)).toThrow(TypeError)
+  })
+
+  it.each([5, 'x', [], null])('rejects %j as the options', (options) => {
+    expect(() => env.compile('x', options as never)).toThrow(TypeError)
+    expect(() => env.check('x', options as never)).toThrow(TypeError)
+  })
+
+  it('requires expect to be a type built with t', () => {
+    expect(() => env.compile('x', { expect: 'number' } as never)).toThrow(
+      /Compile option "expect" must be a type built with t/u,
+    )
+  })
+
+  it('accepts no options, an empty object, and an undefined expect', () => {
+    expect(env.compile('x').type).toEqual(t.number())
+    expect(env.compile('x', {}).type).toEqual(t.number())
+    expect(env.check('x', { expect: undefined }).ok).toBe(true)
+  })
+})
