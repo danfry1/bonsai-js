@@ -75,18 +75,20 @@ async function load(rows: readonly Row[], postgres = true): Promise<void> {
 async function agree(
   source: string,
   rows: readonly Row[],
-  targets: { postgres?: boolean } = {},
+  targets: { postgres?: boolean; now?: Date; mustTranslate?: boolean } = {},
 ): Promise<number[]> {
-  const program = env.compile(source)
-  const want = expected(source, rows)
+  const now = targets.now
+  const program = (now === undefined ? env : bonsai({ clock: () => now })).compile(source)
+  const want = expected(source, rows, now)
   await load(rows, targets.postgres ?? true)
+  const shared = { row: 'order', known, ...(now === undefined ? {} : { now }) }
 
   let sqlite: ReturnType<typeof toSQL>
   try {
-    sqlite = toSQL(program, { row: 'order', columns, dialect: 'sqlite', known })
+    sqlite = toSQL(program, { ...shared, columns, dialect: 'sqlite' })
   } catch (error) {
     // Untranslatable is allowed; exactness is required of whatever translates.
-    if (error instanceof BonsaiTranslationError) return want
+    if (error instanceof BonsaiTranslationError && targets.mustTranslate !== true) return want
     throw error
   }
   const liteIds = lite
@@ -95,8 +97,16 @@ async function agree(
     .map((r) => (r as { id: number }).id)
   expect(liteIds, `sqlite: ${sqlite.sql}`).toEqual(want)
 
+  // Postgres alone may refuse (timestamps outside the years 0001 to 9999).
+  let postgres: ReturnType<typeof toSQL> | undefined
   if (targets.postgres ?? true) {
-    const postgres = toSQL(program, { row: 'order', columns, dialect: 'postgres', known })
+    try {
+      postgres = toSQL(program, { ...shared, columns, dialect: 'postgres' })
+    } catch (error) {
+      if (!(error instanceof BonsaiTranslationError) || targets.mustTranslate === true) throw error
+    }
+  }
+  if (postgres !== undefined) {
     try {
       const pgIds = (
         await pg.query<{ id: number }>(`select id from t where ${postgres.sql} order by id`, [
@@ -113,9 +123,9 @@ async function agree(
 
   let mongo: ReturnType<typeof toMongo> | undefined
   try {
-    mongo = toMongo(program, { row: 'order', fields: columns, known })
+    mongo = toMongo(program, { ...shared, fields: columns })
   } catch (error) {
-    if (!(error instanceof BonsaiTranslationError)) throw error
+    if (!(error instanceof BonsaiTranslationError) || targets.mustTranslate === true) throw error
   }
   if (mongo !== undefined) {
     const filter = mongo.filter
@@ -145,6 +155,90 @@ const row = (id: number, fields: Partial<Row>): Row => ({
   active: null,
   placed: null,
   ...fields,
+})
+
+describe('null-safe text idioms', () => {
+  const rows = [
+    row(1, {}),
+    row(2, { name: 'x@acme.com', active: true }),
+    row(3, { name: 'abc', active: false }),
+  ]
+  const translates = { mustTranslate: true }
+
+  it('translates ?. with ?? and a boolean default', async () => {
+    expect(await agree('order.name?.endsWith("@acme.com") ?? false', rows, translates)).toEqual([2])
+    expect(await agree('order.name?.endsWith("@acme.com") ?? true', rows, translates)).toEqual([
+      1, 2,
+    ])
+    expect(await agree('!(order.name?.endsWith("@acme.com") ?? false)', rows, translates)).toEqual([
+      1, 3,
+    ])
+    expect(await agree('order.name?.startsWith("a") ?? order.active', rows, translates)).toEqual([
+      3,
+    ])
+    expect(await agree('order.active ?? true', rows, translates)).toEqual([1, 2])
+  })
+
+  it('translates a ?. call compared with a boolean or null', async () => {
+    expect(await agree('order.name?.endsWith("@acme.com") == true', rows, translates)).toEqual([2])
+    expect(await agree('order.name?.endsWith("@acme.com") == false', rows, translates)).toEqual([3])
+    expect(await agree('order.name?.endsWith("@acme.com") != true', rows, translates)).toEqual([
+      1, 3,
+    ])
+    expect(await agree('order.name?.endsWith("@acme.com") == null', rows, translates)).toEqual([1])
+    // Without ?., the call fails on a null name, so that row is never selected.
+    expect(await agree('order.name.endsWith("@acme.com") == false', rows, translates)).toEqual([3])
+    expect(await agree('!(order.name.endsWith("@acme.com") == false)', rows, translates)).toEqual([
+      2,
+    ])
+  })
+
+  it('translates a call on a ?? default', async () => {
+    expect(await agree('(order.name ?? "").endsWith("@acme.com")', rows, translates)).toEqual([2])
+    expect(await agree('(order.name ?? "a").startsWith("a")', rows, translates)).toEqual([1, 3])
+    expect(await agree('!(order.name ?? "").includes("b")', rows, translates)).toEqual([1, 2])
+  })
+})
+
+describe('relative dates', () => {
+  const now = new Date('2026-01-15T00:00:00.000Z')
+  const at = (iso: string): Date => new Date(iso)
+  const rows = [
+    row(1, {}),
+    row(2, { placed: at('2026-01-10T00:00:00.000Z') }),
+    row(3, { placed: at('2025-12-01T00:00:00.000Z') }),
+    row(4, { placed: at('2026-01-01T00:00:00.000Z') }),
+    row(5, { placed: at('2026-01-20T00:00:00.000Z') }),
+  ]
+  const options = { now, mustTranslate: true }
+
+  it('translates the distance from now compared with a duration, both ways round', async () => {
+    expect(await agree('now() - order.placed < days(14)', rows, options)).toEqual([2, 5])
+    expect(await agree('days(14) > now() - order.placed', rows, options)).toEqual([2, 5])
+    expect(await agree('now() - order.placed >= days(14)', rows, options)).toEqual([3, 4])
+    expect(await agree('order.placed - now() > days(0)', rows, options)).toEqual([5])
+    // A null timestamp fails the subtraction: excluded from a negation too.
+    expect(await agree('!(now() - order.placed < days(14))', rows, options)).toEqual([3, 4])
+  })
+
+  it('translates a timestamp shifted by a duration', async () => {
+    expect(await agree('order.placed + days(14) > now()', rows, options)).toEqual([2, 5])
+    expect(await agree('order.placed - days(3) < now()', rows, options)).toEqual([2, 3, 4])
+    expect(await agree('!(order.placed + days(14) > now())', rows, options)).toEqual([3, 4])
+  })
+
+  it('fails rows the shift would push out of the Date range', async () => {
+    const edge = [row(1, { placed: new Date(8.64e15 - 1) }), row(2, { placed: new Date(0) })]
+    expect(await agree('order.placed + days(1) > d0', edge, { postgres: false })).toEqual([2])
+    expect(await agree('!(order.placed + days(1) > d0)', edge, { postgres: false })).toEqual([])
+  })
+
+  it('refuses a duration that is not a whole number of milliseconds', () => {
+    const program = bonsai({ clock: () => now }).compile('now() - order.placed < milliseconds(0.5)')
+    expect(() => toSQL(program, { row: 'order', columns, dialect: 'sqlite', known, now })).toThrow(
+      BonsaiTranslationError,
+    )
+  })
 })
 
 describe('edge cases', () => {
@@ -302,6 +396,23 @@ describe('production hardening', () => {
     expect(() =>
       toMongo(env.compile('order.name != user'), { row: 'order', fields: columns }),
     ).toThrow(/user is neither/u)
+  })
+
+  it('suggests the closest row, known value, or column for a misspelled name', () => {
+    expect(() =>
+      toSQL(env.compile('order.total > 1'), { row: 'orders', columns, dialect: 'sqlite' }),
+    ).toThrow(/order is neither the row \(orders\) nor a known value; did you mean "orders"\?/u)
+    expect(() =>
+      toSQL(env.compile('order.total > minTotal'), {
+        row: 'order',
+        columns,
+        dialect: 'sqlite',
+        known: { minTotl: 5 },
+      }),
+    ).toThrow(/minTotal is neither .*; did you mean "minTotl"\?/u)
+    expect(() => toMongo(env.compile('order.totl > 1'), { row: 'order', fields: columns })).toThrow(
+      /order\.totl is not a declared column; did you mean "total"\?/u,
+    )
   })
 
   it('validates configuration', () => {

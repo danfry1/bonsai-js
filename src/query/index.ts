@@ -12,7 +12,8 @@
  */
 import { BonsaiError, type Span } from '../errors.js'
 import type { PartialOptions, PartialResult } from '../partial.js'
-import type { Node, SpreadNode } from '../syntax/ast.js'
+import { Duration } from '../runtime/values.js'
+import type { BinaryNode, CallNode, Node, SpreadNode } from '../syntax/ast.js'
 
 /** A compiled program (from `env.compile`) whose predicate is translated. */
 export interface Translatable {
@@ -114,6 +115,18 @@ type Pred =
     }
   | { readonly kind: 'within'; readonly column: Value; readonly text: string }
   | { readonly kind: 'truthy'; readonly column: Value }
+  | {
+      /**
+       * A timestamp column compared with a bound, from a shifted or subtracted
+       * timestamp: fails (selected by neither side) when the column is null, or
+       * when `limit` does not hold (the shift would leave the Date range).
+       */
+      readonly kind: 'shifted'
+      readonly column: Value
+      readonly op: '<' | '<=' | '>' | '>='
+      readonly bound: Date
+      readonly limit?: { readonly op: '<=' | '>='; readonly ms: number } | undefined
+    }
 
 /** What a target database can express, so untranslatable parts fail with their span. */
 interface Target {
@@ -139,6 +152,52 @@ const FLIP: Readonly<Record<'<' | '<=' | '>' | '>=', '<' | '<=' | '>' | '>='>> =
 }
 
 const COLUMN_TYPES: ReadonlySet<string> = new Set(['text', 'number', 'boolean', 'timestamp'])
+
+/** The largest distance from the epoch a Date can hold, in milliseconds. */
+const MAX_TIME = 8.64e15
+
+/** At most this many names are compared for a "did you mean" hint. */
+const MAX_HINT_CANDIDATES = 1000
+/** A distance larger than any hint threshold. */
+const FAR_APART = 99
+
+function editDistance(a: string, b: string): number {
+  if (Math.abs(a.length - b.length) > 3) return FAR_APART
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i)
+  for (let i = 1; i <= a.length; i++) {
+    let previous = row[0]
+    row[0] = i
+    for (let j = 1; j <= b.length; j++) {
+      const current = row[j]
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1))
+      previous = current
+    }
+  }
+  return row[b.length]
+}
+
+/** `; did you mean "x"?` for the closest candidate, or nothing. */
+function hint(name: string, candidates: Iterable<string>): string {
+  let best: string | undefined
+  let bestDistance = Math.max(2, Math.floor(name.length / 3)) + 1
+  let examined = 0
+  for (const candidate of candidates) {
+    if (++examined > MAX_HINT_CANDIDATES) break
+    const distance = editDistance(name.toLowerCase(), candidate.toLowerCase())
+    if (distance < bestDistance) {
+      best = candidate
+      bestDistance = distance
+    }
+  }
+  return best === undefined ? '' : `; did you mean "${best}"?`
+}
+
+/** What Bonsai's text function returns for known text. */
+function textFunction(op: 'startsWith' | 'endsWith' | 'includes', text: string, needle: string) {
+  if (op === 'startsWith') return text.startsWith(needle)
+  if (op === 'endsWith') return text.endsWith(needle)
+  return text.includes(needle)
+}
 
 function kindOf(value: Value): ColumnType | 'null' {
   if (value.kind === 'column') return value.type
@@ -268,8 +327,12 @@ function lower(
     throw new TypeError(`known must not contain the row variable (${options.row})`)
   // A misspelled row (or a missing known value) would otherwise read as null.
   for (const name of program.references.variables) {
-    if (name !== options.row && !isKnown(name))
-      fail(`${name} is neither the row (${options.row}) nor a known value`)
+    if (name !== options.row && !isKnown(name)) {
+      const names = hostRead(() => Object.keys(knownData), 'the known values')
+      fail(
+        `${name} is neither the row (${options.row}) nor a known value${hint(name, [options.row, ...names])}`,
+      )
+    }
   }
   const result = program.partial(knownData as never, {
     unknown: [options.row],
@@ -303,7 +366,12 @@ function lower(
       )
     const key = path.join('.')
     const declared = columns.get(key)
-    if (declared === undefined) return fail(`${options.row}.${key} is not a declared column`, node)
+    if (declared === undefined) {
+      return fail(
+        `${options.row}.${key} is not a declared column${hint(key, columns.keys())}`,
+        node,
+      )
+    }
     return { kind: 'column', field: declared.field, type: declared.type }
   }
 
@@ -393,6 +461,171 @@ function lower(
     return problem === undefined ? text : fail(problem, at)
   }
 
+  /**
+   * A text function on a text column, or on a column with a known text
+   * default (`(order.email ?? "").endsWith(x)`); undefined for anything else.
+   */
+  const textCall = (node: CallNode): Pred | undefined => {
+    if (hostFunctions.includes(node.name)) return untranslatable(node)
+    const op = node.name
+    if (op !== 'startsWith' && op !== 'endsWith' && op !== 'includes') return undefined
+    const receiver = node.args[0]
+    if (receiver === undefined || receiver.type === 'Spread') return undefined
+    if (receiver.type === 'Binary' && receiver.operator === '??') {
+      const column = columnOf(receiver.left)
+      const fallback = constOf(receiver.right)
+      if (column?.kind !== 'column' || column.type !== 'text' || typeof fallback !== 'string')
+        return undefined
+      const text = textArgument(node.args, node)
+      const matches: Pred = { kind: 'text', op, column, text, nullFails: false }
+      // A null column calls the function on the default, whose answer is known.
+      return textFunction(op, fallback, text)
+        ? { kind: 'or', items: [matches, { kind: 'null', value: column }] }
+        : matches
+    }
+    const column = columnOf(receiver)
+    if (column?.kind !== 'column' || column.type !== 'text') return undefined
+    return {
+      kind: 'text',
+      op,
+      column,
+      text: textArgument(node.args, node),
+      // `?.` gives null on a null receiver, which a condition reads as false.
+      nullFails: !node.optional,
+    }
+  }
+
+  /**
+   * A condition that may be null: a `?.` text call (null when its column is)
+   * or a boolean column. `whenNull` holds exactly when it is null; a condition
+   * without one is never null (it is a boolean, or it fails).
+   */
+  const nullable = (node: Node): { pred: Pred; whenNull?: Pred } | undefined => {
+    if (node.type === 'Call') {
+      const call = textCall(node)
+      if (call === undefined) return undefined
+      if (call.kind !== 'text' || call.nullFails) return { pred: call }
+      return { pred: call, whenNull: { kind: 'null', value: call.column } }
+    }
+    const column = columnOf(node)
+    if (column?.kind === 'column' && column.type === 'boolean')
+      return { pred: { kind: 'truthy', column }, whenNull: { kind: 'null', value: column } }
+    return undefined
+  }
+
+  /** `call == true`, `call != false`, `call == null` for a text call, which value() cannot read. */
+  const conditionEquality = (node: BinaryNode): Pred | undefined => {
+    let side: Node
+    let other: Node
+    if (node.left.type === 'Call') {
+      side = node.left
+      other = node.right
+    } else if (node.right.type === 'Call') {
+      side = node.right
+      other = node.left
+    } else {
+      return undefined
+    }
+    const known = constOf(other)
+    if (known !== null && typeof known !== 'boolean') return undefined
+    const condition = nullable(side)
+    if (condition === undefined) return undefined
+    const { pred: call, whenNull } = condition
+    // Both sides are evaluated: a call that fails on a null column fails the comparison.
+    if (known === null)
+      return whenNull ?? { kind: 'and', items: [call, { kind: 'const', value: false }] }
+    if (known) return call
+    const negated: Pred = { kind: 'not', item: call }
+    return whenNull === undefined
+      ? negated
+      : { kind: 'and', items: [{ kind: 'not', item: whenNull }, negated] }
+  }
+
+  /** A known timestamp or duration, in milliseconds. */
+  const knownTime = (node: Node): { kind: 'timestamp' | 'duration'; ms: number } | undefined => {
+    const constant = constOf(node)
+    if (constant instanceof Date) return { kind: 'timestamp', ms: constant.getTime() }
+    const bound = node.type === 'Variable' ? knownValue(node.name) : undefined
+    return bound instanceof Duration ? { kind: 'duration', ms: bound.ms } : undefined
+  }
+
+  /**
+   * `sign * column + offset` (milliseconds): a timestamp column shifted by a
+   * known duration (a timestamp), or its distance from a known time (a duration).
+   */
+  interface Shift {
+    readonly column: Value
+    readonly sign: 1 | -1
+    readonly offset: number
+    readonly kind: 'timestamp' | 'duration'
+  }
+  const shiftOf = (node: Node): Shift | undefined => {
+    if (node.type !== 'Binary' || (node.operator !== '+' && node.operator !== '-')) return undefined
+    const timestampColumn = (side: Node): Value | undefined => {
+      const column = columnOf(side)
+      return column?.kind === 'column' && column.type === 'timestamp' ? column : undefined
+    }
+    const leftColumn = timestampColumn(node.left)
+    const rightColumn = timestampColumn(node.right)
+    if (leftColumn !== undefined) {
+      const known = knownTime(node.right)
+      if (known?.kind === 'duration') {
+        const offset = node.operator === '+' ? known.ms : -known.ms
+        return { column: leftColumn, sign: 1, offset, kind: 'timestamp' }
+      }
+      if (known?.kind === 'timestamp' && node.operator === '-')
+        return { column: leftColumn, sign: 1, offset: -known.ms, kind: 'duration' }
+      return undefined
+    }
+    if (rightColumn === undefined) return undefined
+    const known = knownTime(node.left)
+    if (known?.kind === 'duration' && node.operator === '+')
+      return { column: rightColumn, sign: 1, offset: known.ms, kind: 'timestamp' }
+    if (known?.kind === 'timestamp' && node.operator === '-')
+      return { column: rightColumn, sign: -1, offset: known.ms, kind: 'duration' }
+    return undefined
+  }
+
+  /** An ordering of a shifted timestamp, rewritten as the column against a known bound. */
+  const timeOrder = (node: BinaryNode, op: '<' | '<=' | '>' | '>='): Pred | undefined => {
+    let shift = shiftOf(node.left)
+    let other = node.right
+    let relation = op
+    if (shift === undefined) {
+      shift = shiftOf(node.right)
+      other = node.left
+      relation = FLIP[op]
+    }
+    if (shift === undefined) return undefined
+    const known = knownTime(other)
+    if (known?.kind !== shift.kind) {
+      return fail(
+        shift.kind === 'timestamp'
+          ? 'A shifted timestamp is translated against a known timestamp'
+          : 'A distance between timestamps is translated against a known duration',
+        node,
+      )
+    }
+    // Timestamps are whole milliseconds; a fractional duration would round differently.
+    if (!Number.isInteger(shift.offset) || !Number.isInteger(known.ms))
+      return fail('Durations are translated in whole milliseconds', node)
+    // sign * column + offset <op> known, solved for the column.
+    const boundMs = shift.sign === 1 ? known.ms - shift.offset : shift.offset - known.ms
+    if (Math.abs(boundMs) > MAX_TIME)
+      return fail('The comparison reaches past the range of dates', node)
+    const bound = exact(new Date(boundMs), node) as Date
+    const columnOp = shift.sign === 1 ? relation : FLIP[relation]
+    // Shifting a timestamp past the Date range is an error, so those rows fail.
+    let limit: { op: '<=' | '>='; ms: number } | undefined
+    if (shift.kind === 'timestamp' && shift.offset > 0)
+      limit = { op: '<=', ms: MAX_TIME - shift.offset }
+    if (shift.kind === 'timestamp' && shift.offset < 0)
+      limit = { op: '>=', ms: -MAX_TIME - shift.offset }
+    if (limit !== undefined && Math.abs(limit.ms) > MAX_TIME)
+      return fail('The shift reaches past the range of dates', node)
+    return { kind: 'shifted', column: shift.column, op: columnOp, bound, limit }
+  }
+
   const pred = (node: Node): Pred => {
     switch (node.type) {
       case 'Literal':
@@ -412,13 +645,16 @@ function lower(
             }
           case '==':
           case '!=': {
-            const eq = equality(value(node.left), value(node.right), node)
+            const eq =
+              conditionEquality(node) ?? equality(value(node.left), value(node.right), node)
             return node.operator === '==' ? eq : { kind: 'not', item: eq }
           }
           case '<':
           case '<=':
           case '>':
           case '>=': {
+            const shifted = timeOrder(node, node.operator)
+            if (shifted !== undefined) return shifted
             const left = value(node.left)
             const right = value(node.right)
             const kinds = [kindOf(left), kindOf(right)]
@@ -444,13 +680,23 @@ function lower(
             const membership = contains(node.left, node.right, node)
             return node.operator === 'in' ? membership : { kind: 'not', item: membership }
           }
+          case '??': {
+            const left = nullable(node.left)
+            if (left === undefined)
+              return fail('"??" is translated after a ?. text call or a boolean field', node)
+            if (left.whenNull === undefined) return left.pred
+            // The right side runs only when the left is null; the left is false then.
+            return {
+              kind: 'or',
+              items: [left.pred, { kind: 'and', items: [left.whenNull, pred(node.right)] }],
+            }
+          }
           case '%':
           case '*':
           case '**':
           case '+':
           case '-':
           case '/':
-          case '??':
           default:
             return fail(`"${node.operator}" is not translated in a condition`, node)
         }
@@ -460,27 +706,8 @@ function lower(
           return { kind: 'truthy', column }
         return fail('Only boolean columns can be used as conditions', node)
       }
-      case 'Call': {
-        if (hostFunctions.includes(node.name)) return untranslatable(node)
-        const receiver = node.args[0]
-        const column =
-          receiver === undefined || receiver.type === 'Spread' ? undefined : columnOf(receiver)
-        if (
-          column?.kind === 'column' &&
-          column.type === 'text' &&
-          (node.name === 'startsWith' || node.name === 'endsWith' || node.name === 'includes')
-        ) {
-          return {
-            kind: 'text',
-            op: node.name,
-            column,
-            text: textArgument(node.args, node),
-            // `?.` gives null on a null receiver, which a condition reads as false.
-            nullFails: !node.optional,
-          }
-        }
-        return fail(`${node.name}() is not translated`, node)
-      }
+      case 'Call':
+        return textCall(node) ?? fail(`${node.name}() is not translated`, node)
       case 'Conditional':
       case 'Has':
       case 'Index':
@@ -631,6 +858,7 @@ function dual<S>(p: Pred, algebra: Algebra<S>): Dual<S> {
     case 'in':
     case 'null':
     case 'order':
+    case 'shifted':
     case 'text':
     case 'truthy':
     case 'within':
@@ -885,6 +1113,26 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
           const condition = pg ? val(p.column) : `(${val(p.column)} = 1)`
           return { t: condition, f: negate(condition), safe: true }
         }
+        case 'shifted': {
+          const column = val(p.column)
+          // The column is not null, and within the range the shift allows (SQLite stores epoch milliseconds).
+          const ok = [`(${column} IS NOT NULL)`]
+          if (p.limit !== undefined) {
+            const ms = placeholder(p.limit.ms, 'numeric')
+            ok.push(
+              pg
+                ? `(extract(epoch from ${column}) * 1000 ${p.limit.op} ${ms})`
+                : `(${column} ${p.limit.op} ${ms})`,
+            )
+          }
+          const condition = `(${column} ${p.op} ${param(p.bound, 'timestamp')})`
+          const valid = ok.join(' AND ')
+          return {
+            t: `(${valid} AND ${condition})`,
+            f: `(${valid} AND NOT ${condition})`,
+            safe: false,
+          }
+        }
         case 'text': {
           const column = val(p.column)
           const condition =
@@ -925,6 +1173,8 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
 // === MongoDB ===
 
 const REGEX_SPECIAL = /[\\^$.*+?()[\]{}|]/gu
+
+const MONGO_ORDER = { '<': '$lt', '<=': '$lte', '>': '$gt', '>=': '$gte' } as const
 
 function escapeRegex(text: string): string {
   return text.replace(REGEX_SPECIAL, (ch) => `\\${ch}`)
@@ -998,8 +1248,20 @@ export function toMongo(program: Translatable, options: MongoOptions): MongoQuer
         case 'eq':
           return safe({ [field(p.left)]: { $eq: constant(p.right) } })
         case 'order': {
-          const op = { '<': '$lt', '<=': '$lte', '>': '$gt', '>=': '$gte' }[p.op]
+          const op = MONGO_ORDER[p.op]
           return safe({ [field(p.left)]: { [op]: constant(p.right) } })
+        }
+        case 'shifted': {
+          const name = field(p.column)
+          const ok: Filter[] = [{ [name]: { $ne: null } }]
+          if (p.limit !== undefined)
+            ok.push({ [name]: { [MONGO_ORDER[p.limit.op]]: new Date(p.limit.ms) } })
+          const condition = { [name]: { [MONGO_ORDER[p.op]]: p.bound } }
+          return {
+            t: { $and: [...ok, condition] },
+            f: { $and: [...ok, not(condition)] },
+            safe: false,
+          }
         }
         case 'in':
           return safe(
