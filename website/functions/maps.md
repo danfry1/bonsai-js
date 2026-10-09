@@ -10,7 +10,7 @@ Every function can be called as `f(x, ...)` or as a method, `x.f(...)`. In the s
 | --- | --- |
 | [`keys`](#keys) | The keys of a map. |
 | [`values`](#values) | The values of a map. |
-| [`entries`](#entries) | The { key, value } pairs of a map. |
+| [`entries`](#entries) | The entries of a map, as a list of { key, value } maps (not [key, value] pairs as in JavaScript), e.g. m.entries().map(.key + "=" + .value). |
 | [`isEmpty`](#isempty) | Whether a list, text, or map has no items; null is empty. |
 | [`type`](#type) | The kind of a value: "null", "boolean", "number", "string", "list", "map", "timestamp", "duration", or "opaque". |
 | [`toString`](#tostring) | Renders a value as text, as a template would. |
@@ -39,7 +39,7 @@ The values of a map.
 
 ## entries
 
-The { key, value } pairs of a map.
+The entries of a map, as a list of { key, value } maps (not [key, value] pairs as in JavaScript), e.g. m.entries().map(.key + "=" + .value).
 
 - `entries({ [key: string]: T }): { key: string, value: T }[]`
 

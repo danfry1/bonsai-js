@@ -239,7 +239,7 @@ Every built-in is callable as `f(x, ...)` or `x.f(...)`. `?` marks an optional p
 - min(T[]): T | null: The smallest value (nulls are skipped); null for an empty list.
 - max(T[]): T | null: The largest value (nulls are skipped); null for an empty list.
 - sum((number | null)[]): number; sum((duration | null)[]): duration: The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is.
-- avg((number | null)[]): number | null: The mean of the numbers in a list (nulls are skipped, summed as sum does); null for no numbers.
+- avg((number | null)[]): number | null; avg((duration | null)[]): duration | null: The mean of the numbers or durations in a list (nulls are skipped, summed as sum does); null for an empty list.
 
 ### Numbers
 
@@ -256,13 +256,13 @@ Every built-in is callable as `f(x, ...)` or `x.f(...)`. `?` marks an optional p
 - min(T[]): T | null; min(number, ...number): number: The smallest value (nulls are skipped); null for an empty list.
 - max(T[]): T | null; max(number, ...number): number: The largest value (nulls are skipped); null for an empty list.
 - sum((number | null)[]): number: The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is.
-- avg((number | null)[]): number | null: The mean of the numbers in a list (nulls are skipped, summed as sum does); null for no numbers.
+- avg((number | null)[]): number | null: The mean of the numbers or durations in a list (nulls are skipped, summed as sum does); null for an empty list.
 
 ### Maps and Values
 
 - keys({ [key: string]: any }): string[]: The keys of a map.
 - values({ [key: string]: T }): T[]: The values of a map.
-- entries({ [key: string]: T }): { key: string, value: T }[]: The { key, value } pairs of a map.
+- entries({ [key: string]: T }): { key: string, value: T }[]: The entries of a map, as a list of { key, value } maps (not [key, value] pairs as in JavaScript), e.g. m.entries().map(.key + "=" + .value).
 - isEmpty(any[] | string | { [key: string]: any } | null): boolean: Whether a list, text, or map has no items; null is empty.
 - type(any): string: The kind of a value: "null", "boolean", "number", "string", "list", "map", "timestamp", "duration", or "opaque".
 - toString(string | number | boolean | null | timestamp | duration): string: Renders a value as text, as a template would.
@@ -271,6 +271,7 @@ Every built-in is callable as `f(x, ...)` or `x.f(...)`. `?` marks an optional p
 
 - now(): timestamp: The current time, fixed for one evaluation.
 - timestamp(string): timestamp; timestamp(number): timestamp; timestamp(timestamp): timestamp: Parses ISO-8601 text or epoch milliseconds into a timestamp.
+- duration(string): duration; duration(duration): duration: Parses ISO-8601 duration text in weeks, days, hours, minutes, and seconds (e.g. "PT1H30M", "-P2DT0.5S"), the text a duration renders as.
 - weeks(number): duration: A duration of n weeks.
 - days(number): duration: A duration of n days (24 hours each).
 - hours(number): duration: A duration of n hours.

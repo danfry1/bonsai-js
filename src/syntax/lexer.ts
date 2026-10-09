@@ -54,6 +54,7 @@ const CH_BACKTICK = 96
 const CH_LOWER_A = 97
 const CH_LOWER_Z = 122
 const CH_PIPE = 124
+const CH_CARET = 94
 const CH_BOM = 0xfeff
 const HEX_WIDTH = 4
 /** Characters that cannot be seen in an error message; they are shown as code points. */
@@ -211,6 +212,7 @@ export function tokenize(source: string, options: LexOptions): Token[] {
       else if (c === CH_HASH) hint = '; comments start with //'
       else if (previous?.kind === 'punct' && previous.value === '/')
         hint = '; patterns are strings, e.g. matches(text, "^a.*z$")'
+      else if (c === CH_CARET) hint = '; use ** for powers'
       const code = source.codePointAt(i) as number
       const ch = String.fromCodePoint(code)
       const shown = INVISIBLE.test(ch)

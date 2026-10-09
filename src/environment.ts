@@ -28,7 +28,13 @@ import {
   type PartialOptions,
   type PartialResult,
 } from './partial.js'
-import { DEFAULT_RUNTIME_LIMITS, State, type RuntimeLimits } from './runtime/state.js'
+import { isStackOverflow, tooDeep } from './runtime/overflow.js'
+import {
+  DEFAULT_RUNTIME_LIMITS,
+  MAX_VALUE_DEPTH_LIMIT,
+  State,
+  type RuntimeLimits,
+} from './runtime/state.js'
 import { recordDeclared } from './declared.js'
 import { errorText, isMap } from './runtime/values.js'
 import {
@@ -44,7 +50,7 @@ import {
 } from './runtime/trace.js'
 import { forEachChild, type CallNode, type Node } from './syntax/ast.js'
 import { isName } from './syntax/lexer.js'
-import { DEFAULT_PARSE_LIMITS, parse, type ParseLimits } from './syntax/parser.js'
+import { DEFAULT_PARSE_LIMITS, MAX_DEPTH_LIMIT, parse, type ParseLimits } from './syntax/parser.js'
 import {
   formatType,
   isNullable,
@@ -760,12 +766,26 @@ function pickLimits(
   const base = current as Numbers
   return Object.freeze(
     Object.fromEntries(
-      Object.keys(defaults).map((name) => [
-        name,
-        numberOption(`Limit "${name}"`, limits[name], base[name], name === 'maxSteps' ? 0 : 1),
-      ]),
+      Object.keys(defaults).map((name) => {
+        const value = numberOption(
+          `Limit "${name}"`,
+          limits[name],
+          base[name],
+          name === 'maxSteps' ? 0 : 1,
+        )
+        const cap = DEPTH_CAPS[name]
+        if (cap !== undefined && value > cap)
+          throw new RangeError(`Limit "${name}" must be at most ${cap}`)
+        return [name, value]
+      }),
     ),
   )
+}
+
+/** Depth limits are capped: deeper nesting would run out of call stack. */
+const DEPTH_CAPS: Readonly<Record<string, number>> = {
+  maxDepth: MAX_DEPTH_LIMIT,
+  maxValueDepth: MAX_VALUE_DEPTH_LIMIT,
 }
 
 function settingsFrom(base: Settings | undefined, options: unknown): Settings {
@@ -1017,6 +1037,7 @@ function validateContext(
  */
 function hostDataFailure(error: unknown, source: string): BonsaiError {
   if (error instanceof BonsaiError) return error
+  if (isStackOverflow(error)) return tooDeep(source)
   return new BonsaiRuntimeError('HOST_ERROR', `Reading host data failed: ${errorText(error)}`, {
     source,
     cause: error,

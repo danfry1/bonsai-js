@@ -5,12 +5,12 @@ Every limit is on by default except `timeout`. The `limits` option of `bonsai()`
 | Limit | Default | Bounds |
 | --- | --- | --- |
 | `maxSourceLength` | 100000 | Expression length in UTF-16 code units. |
-| `maxDepth` | 128 | Syntactic nesting depth. Runs of `&&`, `\|\|`, and `??` are balanced and use few levels; other chains use a level per link (`a + b + c + ...`, `a ? x : b ? y : ...`, runs of `let`). For long lookup ladders, use a map: `{gold: 0.2, silver: 0.1}[tier] ?? 0`. |
+| `maxDepth` | 128 | Syntactic nesting depth. Runs of `&&`, `\|\|`, and `??` are balanced and use few levels; other chains use a level per link (`a + b + c + ...`, `a ? x : b ? y : ...`, runs of `let`). For long lookup ladders, use a map: `{gold: 0.2, silver: 0.1}[tier] ?? 0`. At most 256. |
 | `maxNodes` | 20000 | Syntax tree size (tokens are bounded at four times this). Checking and compiling are charged against this budget too. |
 | `maxSteps` | 1000000 | Work per evaluation. See [Steps](#steps). |
 | `maxStringLength` | 100000 | Length of any string an expression produces. |
 | `maxListLength` | 100000 | Length of any list an expression produces. |
-| `maxValueDepth` | 64 | Nesting of lists and maps an expression builds, and of values walked by equality, templates, `unique`, and `validateContext`. Cyclic data fails here (`VALUE_DEPTH_LIMIT`) instead of looping. |
+| `maxValueDepth` | 64 | Nesting of lists and maps an expression builds, and of values walked by equality, templates, `unique`, and `validateContext`. Cyclic data fails here (`VALUE_DEPTH_LIMIT`) instead of looping. At most 1,024. |
 | `maxPatternLength` | 4096 | Length of a regular expression pattern passed to `matches` (`PATTERN_LIMIT`). |
 | `timeout` | 0 (none) | Wall-clock milliseconds per evaluation. |
 
@@ -63,6 +63,8 @@ The step count is deterministic: the same expression over the same data always u
 ## Parse limits and evaluation limits
 
 Parse limits (`maxSourceLength`, `maxDepth`, `maxNodes`) are enforced before anything runs, and they also bound the work of checking and compiling. `env.check()` reports them as a `LIMIT` diagnostic; `compile()` and `evaluate*()` throw a `BonsaiLimitError`.
+
+`maxDepth` and `maxValueDepth` are capped (a larger value is a `RangeError`) at about half the depth at which the smallest JavaScript call stack measured (Node 22) runs out, so every stage stays inside the stack. If the stack still runs out (a host with a smaller stack, or deep host data), the error is a `BonsaiLimitError` with code `TOO_DEEP`, never a raw `RangeError`.
 
 Evaluation limits are enforced while an expression runs. Sizes are checked before a string or list is allocated, so an expression cannot allocate a large value and fail afterwards.
 

@@ -70,7 +70,7 @@ const AREAS: Area[] = [
       CLOCK +
       '`, so `now()` returns that instant.',
     names: [
-      'now', 'timestamp', 'weeks', 'days', 'hours', 'minutes', 'seconds', 'milliseconds',
+      'now', 'timestamp', 'duration', 'weeks', 'days', 'hours', 'minutes', 'seconds', 'milliseconds',
       'inDays', 'inHours', 'inMinutes', 'inSeconds', 'inMilliseconds', 'year', 'month', 'day',
       'hour', 'minute', 'second', 'dayOfWeek', 'startOfDay', 'startOfMonth', 'startOfYear',
       'addDays', 'addMonths', 'addYears', 'formatDate', 'abs', 'sum',
@@ -153,7 +153,7 @@ const EXAMPLES: Record<string, Record<string, string[]>> = {
     sqrt: ['sqrt(16)', 'try(sqrt(-1), 0)'],
     clamp: ['clamp(150, 0, 100)', '(-5).clamp(0, 100)'],
     toFixed: ['toFixed(3.14159, 2)', '(2).toFixed(1)'],
-    formatNumber: ['formatNumber(1234567.891)', 'formatNumber(1234.5, 2)', 'formatNumber(1234.5, 2, "de-DE")', 'try(formatNumber(1234.5, 2, "xx"), "unsupported")'],
+    formatNumber: ['formatNumber(1234567.891)', 'formatNumber(1234.5, 2)', 'formatNumber(1234.5, 2, "de-DE")'],
     formatCurrency: ['formatCurrency(1234.5, "EUR")', 'formatCurrency(1234.5, "EUR", "de-DE")', 'formatCurrency(99, "JPY")'],
     min: ['min(4, 2, 8)', 'min([4, 2, 8])'],
     max: ['max(4, 2, 8)', '[4, 2, 8].max()'],
@@ -176,6 +176,7 @@ const EXAMPLES: Record<string, Record<string, string[]>> = {
       'timestamp("2026-03-01T12:00:00+02:00")',
       'timestamp(0)',
     ],
+    duration: ['duration("PT1H30M")', 'duration("-P2DT0.5S")', 'duration("P1W") == weeks(1)'],
     weeks: ['weeks(2)'],
     days: ['days(3)', 'now() + days(30)'],
     hours: ['hours(1.5)'],

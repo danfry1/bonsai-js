@@ -286,7 +286,7 @@ describe('number functions', () => {
     expect(await ok('formatNumber(1234.5, d, l)', { d: null, l: null })).toBe('1,234.5')
     expect(await fails('formatNumber(1, 21)')).toBe('INVALID_ARGUMENT')
     expect(await fails('formatNumber(1, -1)')).toBe('INVALID_ARGUMENT')
-    expect(await fails('formatNumber(1, 2, "not a locale!!")')).toBe('INVALID_ARGUMENT')
+    expect(await fails('formatNumber(1, 2, l)', { l: 'not a locale!!' })).toBe('INVALID_ARGUMENT')
   })
 
   // formatNumber documents up to 20 decimals, but 16-20 fail inside round().
@@ -297,7 +297,7 @@ describe('number functions', () => {
   it('formats currencies', async () => {
     expect(await ok('formatCurrency(3.5, "EUR")')).toBe('€3.50')
     expect(await ok('formatCurrency(3.5, "USD", "en-US")')).toBe('$3.50')
-    expect(await fails('formatCurrency(3.5, "EURO")')).toBe('INVALID_ARGUMENT')
+    expect(await fails('formatCurrency(3.5, c)', { c: 'EURO' })).toBe('INVALID_ARGUMENT')
   })
 
   it('keeps working after the number format cache fills up', async () => {

@@ -42,7 +42,7 @@ const context = { items: [{ name: "Pen", price: 2, qty: 3 }, { name: "Book", pri
 | [`min`](#min) | The smallest value (nulls are skipped); null for an empty list. |
 | [`max`](#max) | The largest value (nulls are skipped); null for an empty list. |
 | [`sum`](#sum) | The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is. |
-| [`avg`](#avg) | The mean of the numbers in a list (nulls are skipped, summed as sum does); null for no numbers. |
+| [`avg`](#avg) | The mean of the numbers or durations in a list (nulls are skipped, summed as sum does); null for an empty list. |
 
 ## map
 
@@ -372,9 +372,10 @@ items.map(.price * .qty).sum() // => 48
 
 ## avg
 
-The mean of the numbers in a list (nulls are skipped, summed as sum does); null for no numbers.
+The mean of the numbers or durations in a list (nulls are skipped, summed as sum does); null for an empty list.
 
 - `avg((number | null)[]): number | null`
+- `avg((duration | null)[]): duration | null`
 
 <!-- context: { items: [{ name: "Pen", price: 2, qty: 3 }, { name: "Book", price: 12, qty: 1 }, { name: "Bag", price: 30, qty: 1 }] } -->
 ```bonsai

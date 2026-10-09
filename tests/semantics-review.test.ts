@@ -33,7 +33,11 @@ describe('locales in number formatting', () => {
       'formatNumber(1234.5, 2, "und")',
       'formatCurrency(1234.5, "EUR", "qq")',
     ]) {
-      expect(run(source)).toEqual({ code: 'INVALID_ARGUMENT' })
+      // A literal locale is checked before anything runs; a computed one when it runs.
+      expect(run(source)).toEqual({ code: 'CHECK' })
+      expect(run(source.replace(/"(?<tag>[\w-]+)"\)$/u, '"$<tag>" + "")'))).toEqual({
+        code: 'INVALID_ARGUMENT',
+      })
     }
   })
 

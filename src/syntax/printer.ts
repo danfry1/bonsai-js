@@ -5,6 +5,7 @@ import {
   type Node,
   type SpreadNode,
 } from './ast.js'
+import { isStackOverflow } from '../runtime/overflow.js'
 import { BLOCKED_NAMES, IDENTIFIER, isName } from './lexer.js'
 
 export interface PrintOptions {
@@ -223,6 +224,17 @@ function assertPrintable(root: Node): void {
  * original spacing are not part of the tree and are not reproduced.
  */
 export function print(node: Node, options: PrintOptions = {}): string {
+  try {
+    return printTree(node, options)
+  } catch (error) {
+    // Only a hand-built tree can nest past the parser's depth cap.
+    if (isStackOverflow(error))
+      throw new TypeError('Cannot print this tree: it nests too deeply', { cause: error })
+    throw error
+  }
+}
+
+function printTree(node: Node, options: PrintOptions): string {
   if (typeof options !== 'object' || options === null)
     throw new TypeError('print() options must be an object')
   for (const key of Object.keys(options)) {

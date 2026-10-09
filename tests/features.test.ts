@@ -134,10 +134,11 @@ describe('checker guidance', () => {
     expect(typed.check('{ discount: 5 }', { expect: expected }).diagnostics[0]?.message).toContain(
       'missing "reason"',
     )
-    expect(
-      typed.check('{ discount: 5, reason: "x", reson: "y" }', { expect: expected }).diagnostics[0]
-        ?.message,
-    ).toContain('unexpected "reson"')
+    // Extra fields are allowed (an expected type means "at least these fields"), but flagged.
+    const extra = typed.check('{ discount: 5, reason: "x", reson: "y" }', { expect: expected })
+    expect(extra.ok).toBe(true)
+    expect(extra.diagnostics[0]).toMatchObject({ severity: 'warning', code: 'EXPECTED_TYPE' })
+    expect(extra.diagnostics[0]?.message).toContain('unexpected "reson"')
   })
 
   it('points a nullable receiver diagnostic at the receiver', () => {

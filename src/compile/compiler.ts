@@ -1,6 +1,7 @@
 import { BLOCKED_NAMES } from '../syntax/lexer.js'
 import { signatureText, type Analysis, type CallPlan } from '../check/checker.js'
 import { BonsaiError, BonsaiLimitError, BonsaiRuntimeError, type Span } from '../errors.js'
+import { guardDepth, isStackOverflow, tooDeep } from '../runtime/overflow.js'
 import {
   conforms,
   matchesKind,
@@ -87,6 +88,8 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
  */
 function hostDataError(error: unknown, s: State): unknown {
   if (error instanceof BonsaiError) return error
+  // The engine's own recursion ran out of stack: a limit, never the host's failure.
+  if (isStackOverflow(error)) return tooDeep(s.source)
   return s.error('HOST_ERROR', `Reading host data failed: ${errorText(error)}`, undefined, error)
 }
 
@@ -123,6 +126,14 @@ export function compileProgram(
   analysis: Analysis,
   mode: 'sync' | 'async',
   options: CompileOptions = {},
+): CompiledProgram {
+  return guardDepth(undefined, () => compileTree(analysis, mode, options))
+}
+
+function compileTree(
+  analysis: Analysis,
+  mode: 'sync' | 'async',
+  options: CompileOptions,
 ): CompiledProgram {
   let slots = 0
   const allowAsync = mode === 'async'
