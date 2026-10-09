@@ -16,7 +16,9 @@ import type { AbortSignalLike } from '../environment.js'
 import { BonsaiError, type Span } from '../errors.js'
 import type { PartialOptions, PartialResult } from '../partial.js'
 import { Duration, isMap } from '../runtime/values.js'
+import { declaredVariables } from '../declared.js'
 import { closest, didYouMean } from '../suggest.js'
+import { formatType, type Type } from '../types.js'
 import {
   forEachChild,
   type BinaryNode,
@@ -31,7 +33,7 @@ export interface Translatable {
   /** The checked syntax tree, read to find the known paths the predicate uses. */
   readonly ast: Node
   readonly references: { readonly variables: readonly string[] }
-  partial: (known: never, options?: PartialOptions) => PartialResult<unknown>
+  partial: (known: never, options?: PartialOptions) => PartialResult
 }
 
 /** A duration column holds whole milliseconds (SQL integer, MongoDB number). */
@@ -49,8 +51,12 @@ export type Columns = Readonly<Record<string, ColumnType | Column>>
 interface CommonOptions {
   /** The variable that names the record being filtered, e.g. `order`. */
   readonly row: string
-  /** Values for every other variable the predicate reads. */
-  readonly known?: Readonly<Record<string, unknown>> | undefined
+  /**
+   * Values for every other variable the predicate reads. An object typed by an
+   * interface or a class instance is accepted, like an evaluation context.
+   */
+  // oxlint-disable-next-line typescript/no-explicit-any -- the only index signature interfaces and classes satisfy
+  readonly known?: Readonly<Record<string, any>> | undefined
   /** The time `now()` returns. Required when the predicate calls now(). */
   readonly now?: Date | undefined
   /** Step budget for the partial evaluation translation runs, as for partial(). */
@@ -378,6 +384,57 @@ function declare(
     declared.set(key, { field, type: spec.type as ColumnType })
   }
   return declared
+}
+
+/** Whether every value of a declared type fits a column type (null, any, and never always do). */
+function fitsColumn(type: Type, column: ColumnType): boolean {
+  if (type.kind === 'any' || type.kind === 'never' || type.kind === 'null') return true
+  if (type.kind === 'union') return type.types.every((member) => fitsColumn(member, column))
+  if (type.kind === 'literal') {
+    return column === (typeof type.value === 'string' ? 'text' : typeof type.value)
+  }
+  if (type.kind === 'string') return column === 'text'
+  return column === type.kind
+}
+
+/** The declared type at a field path below a variable's type, if the declaration names it. */
+function typeAt(type: Type, path: readonly string[]): Type | undefined {
+  let current = type
+  for (const key of path) {
+    if (current.kind === 'union') {
+      const present = current.types.filter((member) => member.kind !== 'null')
+      if (present.length !== 1) return undefined
+      current = present[0] as Type
+    }
+    if (current.kind !== 'map') return undefined
+    const field = Object.hasOwn(current.fields, key) ? current.fields[key] : current.rest
+    if (field === undefined) return undefined
+    current = field
+  }
+  return current
+}
+
+/**
+ * Checks declared columns against the types the program's environment
+ * declares for the row, so a list field declared as a text column (which would
+ * turn `"a" in tags` into a substring test) is a configuration error.
+ */
+function checkDeclaredTypes(
+  program: Translatable,
+  row: string,
+  columns: ReadonlyMap<string, Declared>,
+  what: string,
+): void {
+  const rowType = declaredVariables(program)?.[row]
+  if (rowType === undefined) return
+  for (const [key, column] of columns) {
+    const type = typeAt(rowType, key.split('.'))
+    if (type !== undefined && !fitsColumn(type, column.type)) {
+      throw new TypeError(
+        `${what}.${key} is declared ${column.type}, but the environment declares ${row}.${key} as ${formatType(type)}`,
+      )
+    }
+  }
 }
 
 /** The path a static member chain reads from a variable (`limits.max`, `cfg["label"]`), if any. */
@@ -1300,12 +1357,9 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     },
     checkPattern: () => undefined,
   }
-  const predicate = lower(
-    program,
-    options,
-    declare(options, options.columns, 'columns', target),
-    target,
-  )
+  const declaredColumns = declare(options, options.columns, 'columns', target)
+  checkDeclaredTypes(program, options.row, declaredColumns, 'columns')
+  const predicate = lower(program, options, declaredColumns, target)
   const params: unknown[] = []
 
   const quote = (name: string): string =>
@@ -1557,12 +1611,14 @@ export function toMongo(program: Translatable, options: MongoOptions): MongoQuer
       return undefined
     },
   }
-  const predicate = lower(
-    program,
+  const declaredFields = declare(
     options,
-    declare(options, isRecord(options) ? options.fields : undefined, 'fields', target),
+    isRecord(options) ? options.fields : undefined,
+    'fields',
     target,
   )
+  checkDeclaredTypes(program, options.row, declaredFields, 'fields')
+  const predicate = lower(program, options, declaredFields, target)
   type Filter = Record<string, unknown>
   // lower() only leaves field-versus-constant comparisons for MongoDB.
   const field = (value: Value): string => (value as { field: string }).field

@@ -47,7 +47,14 @@ export {
   BonsaiRuntimeError,
   isBonsaiError,
 } from './errors.js'
-export type { Diagnostic, DiagnosticCode, ErrorCode, LimitName, Span } from './errors.js'
+export type {
+  BonsaiErrorJSON,
+  Diagnostic,
+  DiagnosticCode,
+  ErrorCode,
+  LimitName,
+  Span,
+} from './errors.js'
 export { forEachChild, mapChildren } from './syntax/ast.js'
 export type {
   BinaryNode,
@@ -74,7 +81,8 @@ export type {
   UnaryOperator,
   VariableNode,
 } from './syntax/ast.js'
+export { parse, type ParseOptions } from './parse.js'
 export { print } from './syntax/printer.js'
-export type { PartialOptions, PartialResult, ResidualResult } from './partial.js'
+export type { PartialData, PartialOptions, PartialResult, ResidualResult } from './partial.js'
 export type { Iteration, Trace } from './runtime/trace.js'
 export type { PrintOptions } from './syntax/printer.js'

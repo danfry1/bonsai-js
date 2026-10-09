@@ -243,6 +243,51 @@ describe('host functions', () => {
     >()
   })
 
+  it('keeps the declared context when a library is annotated as Library', () => {
+    interface Ctx {
+      a: number
+    }
+    const ctx: Ctx = { a: 1 }
+    const fnsOnly: Library = {
+      name: 'f',
+      functions: { one: fn({ params: [], returns: t.number(), run: () => 1 }) },
+    }
+    const env = bonsai({ variables: { a: t.number() }, libraries: [fnsOnly] })
+    expect(env.evaluateSync('a + one()', ctx)).toBe(2)
+    // @ts-expect-error: `a` is declared, so it is required
+    expect(() => env.evaluateSync('a', {})).not.toThrow()
+    const extended = env.extend({ libraries: [fnsOnly] })
+    expect(extended.evaluateSync('a', ctx)).toBe(1)
+  })
+
+  it('accepts interfaces, class instances, and extra keys with strict: false', () => {
+    interface Ctx {
+      a: number
+    }
+    class Row {
+      readonly a: number
+      readonly name: string
+      constructor(a: number, name: string) {
+        this.a = a
+        this.name = name
+      }
+    }
+    const ctx: Ctx = { a: 1 }
+    const loose = bonsai({ variables: { a: t.number() }, strict: false })
+    expect(loose.evaluateSync('a', ctx)).toBe(1)
+    expect(loose.evaluateSync('a + name.length', new Row(1, 'xy'))).toBe(3)
+    expect(loose.evaluateSync('a + b', { a: 1, b: 2 })).toBe(3)
+    // @ts-expect-error: a declared key keeps its type
+    expect(() => loose.evaluateSync('a', { a: 'x' })).not.toThrow()
+    // @ts-expect-error: a declared key is still required
+    expect(() => loose.evaluateSync('a', { b: 2 })).not.toThrow()
+    expect(loose.compile('a > 0').partial(ctx).status).toBe('value')
+
+    const open = bonsai({ strict: false })
+    expect(open.evaluateSync('a', ctx)).toBe(1)
+    expect(open.evaluateSync('a', new Row(2, 'x'))).toBe(2)
+  })
+
   it('extend adds variables and functions', () => {
     const base = bonsai({ variables: { a: t.number() }, strict: true })
     const child = base.extend({

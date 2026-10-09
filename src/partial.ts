@@ -5,6 +5,7 @@ import { parse, type ParseLimits } from './syntax/parser.js'
 import { print } from './syntax/printer.js'
 import { MAX_TRACE_TEXT, capTraceText } from './runtime/trace.js'
 import { isMap, type Duration } from './runtime/values.js'
+import type { Type } from './types.js'
 import type {
   AbortSignalLike,
   EvaluateOptions,
@@ -182,13 +183,13 @@ export type PartialData<T> = T extends
     ? { [K in keyof T]?: PartialData<T[K]> | undefined }
     : T
 
-export type PartialResult<R, Ctx = object> =
+export type PartialResult<R = unknown, Ctx = object> =
   | { readonly status: 'value'; readonly value: R }
   /** Evaluation fails whatever the unknown data turns out to be. */
   | { readonly status: 'error'; readonly error: BonsaiError }
   | ResidualResult<R, Ctx>
 
-export interface ResidualResult<R, Ctx = object> {
+export interface ResidualResult<R = unknown, Ctx = object> {
   readonly status: 'residual'
   /**
    * The simplified expression that still needs the unknown data. Known values
@@ -204,6 +205,10 @@ export interface ResidualResult<R, Ctx = object> {
   readonly dependsOn: readonly string[]
   /** Host functions the residual still calls (they may replace a built-in of the same name). */
   readonly hostFunctions: readonly string[]
+  /** Whether the residual calls an async host function (evaluateSync rejects it). */
+  readonly async: boolean
+  /** The program's statically inferred result type, which the residual's result also has. */
+  readonly type: Type
   /**
    * Evaluates the residual with the (full) context, taking the same options as
    * Program.evaluateSync; bindings are supplied for you.
@@ -280,10 +285,11 @@ export interface PartialEngine {
     source: string,
     known: Readonly<Record<string, unknown>> | undefined,
   ) => {
+    readonly async: boolean
     runSync: (ctx: unknown, options: unknown) => unknown
     runAsync: (ctx: unknown, options: unknown) => Promise<unknown>
-    explainSync: (ctx: unknown, options: unknown) => Explanation<unknown>
-    explainAsync: (ctx: unknown, options: unknown) => Promise<Explanation<unknown>>
+    explainSync: (ctx: unknown, options: unknown) => Explanation
+    explainAsync: (ctx: unknown, options: unknown) => Promise<Explanation>
   }
 }
 
@@ -664,6 +670,8 @@ export function partiallyEvaluate<R>(
       .filter((path) => !Object.hasOwn(frozenBindings, path.split('.')[0]))
       .sort(),
     hostFunctions,
+    async: compiled.async,
+    type: engine.analysis.type,
     evaluateSync: (context?: object, evaluateOptions?: EvaluateOptions) =>
       compiled.runSync(context, evaluateOptions) as R,
     evaluate: async (context?: object, evaluateOptions?: EvaluateOptions) =>

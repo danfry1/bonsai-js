@@ -20,7 +20,7 @@ const env = bonsai({
 const user = { plan: 'pro' as const, age: 30, country: 'DE', riskScore: 70 }
 const order = { total: 150, status: 'paid', items: [{ sku: 'a', qty: 3 }] }
 
-const residualSource = (result: PartialResult<unknown>): string => {
+const residualSource = (result: PartialResult): string => {
   if (result.status !== 'residual') throw new Error(`expected a residual, got ${result.status}`)
   return result.source
 }

@@ -37,6 +37,24 @@ try {
 
 `isBonsaiError(value)` is a type guard for `BonsaiError`. Checking and evaluating an expression only ever throw `BonsaiError`s, including when your own code fails: a host function that throws (even a `BonsaiError`, for example from an evaluation it runs itself), or a getter, Proxy trap, or `then` hook in the context that throws when read (including while `validateContext` or an `expect` check reads it), becomes a `HOST_ERROR` with the original error as its `cause`. Any other error escaping from Bonsai is a bug. Invalid configuration is reported differently, as a `TypeError` or `RangeError` thrown synchronously: by `bonsai()`, `extend()`, or `fn()` (an unknown option or limit, a limit out of range, a malformed parameter list, a duplicate or invalid name), for invalid per-evaluation options and a context that is not an object (an unknown key, a negative `maxSteps`, a `signal` that is not an `AbortSignal`, a `Map` or a string as the context: `evaluateSync()` throws, and `evaluate()` returns a rejected promise), and by `print()` for a tree the parser could not have produced.
 
+## JSON form
+
+`JSON.stringify(error)` gives the same shape wherever an error is serialized: thrown, in an explanation's JSON, or in a partial result. It holds `name`, `code`, `message`, and, when known, `span` and `position`; a limit error adds `limit`, and a check error adds `diagnostics`. The source text and the `cause` are left out (the cause can be any value your host code threw), so store the source alongside the error if you need it. The `BonsaiErrorJSON` type describes the shape.
+
+<!-- continue -->
+```ts
+let caught: unknown
+try {
+  env.evaluateSync('1 / (count - 3)', { count: 3 })
+} catch (error) {
+  caught = error
+}
+JSON.parse(JSON.stringify(caught)).code // => "DIVISION_BY_ZERO"
+JSON.parse(JSON.stringify(caught)).position // => { line: 1, column: 1 }
+```
+
+The error classes are for `instanceof` checks and reading fields. Their constructors are not public API: Bonsai creates its errors, and the constructor parameters may change in a minor release.
+
 ## Classes and codes
 
 | Class | Code | Meaning |
@@ -98,7 +116,7 @@ interface Diagnostic {
   end: number
   span: { start: number; end: number }
   position: { line: number; column: number } // 1-based, of start
-  formatted: string // the message and a code frame; computed when read, not in the JSON form
+  formatted: string // the message and a code frame; an accessor: not in the JSON form, not copied by spread
   suggestion?: string // for UNKNOWN_VARIABLE, UNKNOWN_PROPERTY, UNKNOWN_FUNCTION: the name to use instead
 }
 ```

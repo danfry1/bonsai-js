@@ -91,8 +91,9 @@ Both accept per-evaluation options:
 | `timeout` | Wall-clock budget in milliseconds. Exceeding it is a `TIMEOUT` error. |
 | `maxSteps` | Step budget, replacing the environment's `limits.maxSteps`. Exceeding it is a `STEP_LIMIT` error. |
 | `signal` | An `AbortSignal`. Aborting stops the evaluation with an `ABORTED` error, including while waiting on an async host function. |
+| `now` | A `Date`: the time `now()` returns in this evaluation, instead of the environment's `clock`. |
 
-They are validated like `limits`: `timeout` and `maxSteps` must be non-negative integers (`0` turns the limit off), `signal` must be an `AbortSignal`, and an unknown key or invalid value throws a `TypeError` or `RangeError` before anything runs, so a miscalculated budget can never turn the limit off by accident.
+They are validated like `limits`: `timeout` and `maxSteps` must be non-negative integers (`0` turns the limit off), `signal` must be an `AbortSignal`, `now` must be a valid `Date`, and an unknown key or invalid value throws a `TypeError` or `RangeError` before anything runs, so a miscalculated budget can never turn the limit off by accident.
 
 <!-- continue -->
 ```ts
@@ -106,7 +107,7 @@ rule.evaluateSync(context, { maxSteps: 2 }) // throws: STEP_LIMIT
 
 Results are plain JavaScript values: `null`, booleans, numbers, strings, arrays, and objects, plus `Date` for timestamps and `Duration` for durations. A host `undefined` is returned as `null`. Lists and maps an expression builds are new values; values read from the context are returned as they are (not copied).
 
-`Duration` is exported from `bonsai-js`. It has a `ms` property with the length in milliseconds and renders as ISO-8601 through `toString()` and `toJSON()`.
+`Duration` is exported from `bonsai-js`. It has a `ms` property with the length in milliseconds and renders as ISO-8601 through `toString()` and `toJSON()`. To pass a duration in the context, create one with `new Duration(ms)`: `ms` must be a finite number, and a fraction of a millisecond rounds to the nearest whole millisecond (halves away from zero), as every duration Bonsai makes is whole milliseconds.
 
 <!-- continue -->
 ```ts

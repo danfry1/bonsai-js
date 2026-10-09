@@ -597,6 +597,69 @@ describe('toSQL', () => {
     })
   })
 
+  it("checks declared columns against the environment's variable types", () => {
+    const typed = bonsai({
+      variables: {
+        event: t.object({
+          tags: t.list(t.string()),
+          name: t.string(),
+          at: t.optional(t.timestamp()),
+          status: t.enum('open', 'closed'),
+          meta: t.object({ count: t.number() }),
+        }),
+      },
+    })
+    const program = typed.compile('"a" in event.tags')
+    expect(() =>
+      toSQL(program, { row: 'event', columns: { tags: 'text' }, dialect: 'sqlite' }),
+    ).toThrow(
+      /columns\.tags is declared text, but the environment declares event\.tags as string\[\]/u,
+    )
+    expect(() => toMongo(program, { row: 'event', fields: { tags: 'text' } })).toThrow(
+      /fields\.tags is declared text/u,
+    )
+    const fine = typed.compile(
+      'event.name == "x" && event.status == "open" && event.meta.count > 1',
+    )
+    const columnsThatFit = {
+      name: 'text',
+      at: 'timestamp',
+      status: 'text',
+      'meta.count': 'number',
+    } as const
+    expect(() =>
+      toSQL(fine, { row: 'event', columns: columnsThatFit, dialect: 'sqlite' }),
+    ).not.toThrow()
+    expect(() =>
+      toSQL(fine, { row: 'event', columns: { 'meta.count': 'text' }, dialect: 'sqlite' }),
+    ).toThrow(/meta\.count is declared text/u)
+    // An open environment declares nothing, so there is nothing to check against.
+    expect(() =>
+      toSQL(bonsai().compile('"a" in event.tags'), {
+        row: 'event',
+        columns: { tags: 'text' },
+        dialect: 'sqlite',
+      }),
+    ).not.toThrow()
+  })
+
+  it('takes known values typed by an interface or a class', () => {
+    interface Known {
+      limit: number
+    }
+    class Limits {
+      readonly limit: number
+      constructor(limit: number) {
+        this.limit = limit
+      }
+    }
+    const fromInterface: Known = { limit: 10 }
+    const program = env.compile('order.total > limit')
+    const options = { row: 'order', columns, dialect: 'postgres' } as const
+    expect(toSQL(program, { ...options, known: fromInterface }).params).toEqual([10])
+    expect(toSQL(program, { ...options, known: new Limits(10) }).params).toEqual([10])
+  })
+
   it('continues parameter numbering from an offset', () => {
     const program = env.compile('order.total > 1')
     expect(

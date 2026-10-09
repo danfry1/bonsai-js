@@ -37,6 +37,12 @@ const cases: SizeCase[] = [
     source: `import { isBonsaiError } from ${entry}\nconsole.log(isBonsaiError(null))`,
     maxGzipBytes: 1000,
   },
+  {
+    // A visual editor that only parses and prints ships the parser, not the engine.
+    name: 'parse and print only',
+    source: `import { parse, print } from ${entry}\nconsole.log(print(parse('a + b')))`,
+    maxGzipBytes: 12_000,
+  },
 ]
 
 const dir = mkdtempSync(join(tmpdir(), 'bonsai-size-'))

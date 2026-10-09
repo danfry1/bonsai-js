@@ -39,7 +39,7 @@ Every field a filter may read is declared, with its type. Anything else is rejec
 
 Use `{ type, name }` when the column (or MongoDB field path) differs from the key: `{ city: { type: 'text', name: 'ship_city' } }`. Nested keys (`'address.city'`) are dotted field paths in MongoDB. In SQL, a nested key is one column named after the whole key (`"address.city"`) unless `name` says otherwise.
 
-The types are part of the contract, and results are exact only when the data keeps it. The translator does not see the environment's variable types, so declare each column with the type the field really has: a list field, for example, is not a `text` column (`"a" in order.tags` on a `text` column is a substring test).
+The types are part of the contract, and results are exact only when the data keeps it. When the program's environment declares a type for a field, the column must fit it, or `toSQL` and `toMongo` throw a `TypeError` naming the field: a list field, for example, is not a `text` column (`"a" in order.tags` on a `text` column would be a substring test). In an open environment nothing is declared, so declare each column with the type the field really has.
 
 - Number columns hold finite values, never `NaN` or infinities (Bonsai and the databases order them differently). Postgres `int8` and `numeric` are compared as `float8`, which matches Bonsai when your application reads them as JavaScript numbers.
 - SQLite databases use UTF-8 (the default), tables are `STRICT`, text columns use the default `BINARY` collation (not `NOCASE`), and boolean columns hold only 0 or 1 (`CHECK (active IN (0, 1))`).

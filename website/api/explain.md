@@ -55,7 +55,7 @@ rule.explainSync({ user }, { exhaustive: true }).reasons().map((r) => r.text)
 | `iterations` | For calls that take a lambda: `{ index, item, result or error, trace }` for each item the lambda ran on (reduce adds `accumulator`) |
 | `omittedIterations` | Lambda runs beyond `maxIterations`, counted but not recorded |
 
-Values in `trace` are the live values from your context, not copies. To send an explanation to a browser or store it, use `JSON.stringify(explanation)` (or `explanation.toJSON()`): values become bounded, cycle-safe copies (at most 10,000 values in total, however often a value recurs), getters are never run, host collections such as typed arrays and `Map` are summarized by type, and a value that throws when read becomes `"[unreadable]"`.
+Values in `trace` are the live values from your context, not copies. The trace is typed read-only but not frozen at run time (a trace can hold thousands of records, and freezing each would cost more than recording it), so treat it as read-only. An error in the JSON form has the same shape as `JSON.stringify(error)` (see [Errors](/api/errors#json-form)). To send an explanation to a browser or store it, use `JSON.stringify(explanation)` (or `explanation.toJSON()`): values become bounded, cycle-safe copies (at most 10,000 values in total, however often a value recurs), getters are never run, host collections such as typed arrays and `Map` are summarized by type, and a value that throws when read becomes `"[unreadable]"`.
 
 ## Errors
 
@@ -76,7 +76,7 @@ Syntax and check errors reject from `env.explain(source)` and throw from `env.ex
 
 ## Options
 
-`explain(context, options)` accepts the evaluation options (`timeout`, `maxSteps`, `signal`) plus:
+`explain(context, options)` accepts the evaluation options (`timeout`, `maxSteps`, `signal`, `now`) plus:
 
 | Option | Default | Effect |
 |---|---|---|

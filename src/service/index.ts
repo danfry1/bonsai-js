@@ -72,7 +72,7 @@ function clampOffset(source: string, offset: number): number {
  * Editor features over an environment. Nothing here evaluates an expression or
  * calls a host function: completions and hovers come from the static checker.
  */
-export function createLanguageService(env: Environment<never>): LanguageService {
+export function createLanguageService(env: Environment): LanguageService {
   const { checkEnv, parseLimits } = internalsOf(env)
 
   function tryAnalyze(source: string, probe?: string): Analysis | undefined {

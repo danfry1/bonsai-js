@@ -94,7 +94,7 @@ text.evaluateSync('total(1, 2, 3)') // => 6
 
 ## The call: context and cancellation
 
-With `call: true`, `run` receives a frozen `call` object before the declared parameters: `call.context` is the evaluation context (read-only), and `call.signal` is an `AbortSignal` for this call. Expressions stay short, and the function reads what it needs:
+With `call: true`, `run` receives a frozen `call` object before the declared parameters: `call.context` is the evaluation context, and `call.signal` is an `AbortSignal` for this call. The context is your caller's own object (typed read-only, not copied or frozen), so do not change it: other parts of the evaluation, and your caller, see the same object. Expressions stay short, and the function reads what it needs:
 
 <!-- continue -->
 ```ts
