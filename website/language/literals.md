@@ -17,6 +17,14 @@ Numbers are IEEE-754 doubles, written as in JavaScript. `_` may separate digits,
 .5 // error: SYNTAX
 ```
 
+Doubles are binary floating point, so most decimal fractions are approximate, as in JavaScript. For money, keep amounts in integer cents (or the currency's smallest unit) and round only to display; `round(x, 2)` and `formatCurrency` round the value as written.
+
+```bonsai
+0.1 + 0.2 // => 0.30000000000000004
+(10 + 20) / 100 // => 0.3
+round(0.1 + 0.2, 2) // => 0.3
+```
+
 ## Strings
 
 Strings use double or single quotes. Escapes are `\n \t \r \0 \\ \' \" \` \$`, `\xHH`, `\uHHHH`, and `\u{H...}`.

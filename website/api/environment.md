@@ -77,7 +77,7 @@ type CheckResult<Context, Result> = (
 
 `ok` is `false` when any diagnostic has `severity: "error"`. Warnings can appear either way. `type` is the inferred result type (undefined when the expression did not parse). See [Static Checking](/language/checking) and [Errors](/api/errors) for the `Diagnostic` shape, which includes the line, column, and a code frame of each finding.
 
-When `ok`, `program` is the compiled expression: the same program `compile()` returns, built from this check when first read, so a rule editor that validates a rule and then saves or runs it parses and checks it once. `ast` is the checked tree and `typeOf(node)` the inferred type of any of its nodes (see [Types of nodes](/api/syntax-tree#types-of-nodes)). `program`, `ast`, and `typeOf` are not part of the JSON form, which stays `{ ok, type, diagnostics }`.
+When `ok`, `program` is the compiled expression, equivalent to what `compile()` returns (an equal program, built from this check when first read, not the cached object `compile()` hands out), so a rule editor that validates a rule and then saves or runs it parses and checks it once. `ast` is the checked tree and `typeOf(node)` the inferred type of any of its nodes (see [Types of nodes](/api/syntax-tree#types-of-nodes)). `program`, `ast`, and `typeOf` are accessors computed on demand: they are not part of the JSON form, which stays `{ ok, type, diagnostics }`, and spreading a result (`{ ...result }`) or `structuredClone` does not copy them. Read them from the result itself.
 
 <!-- continue -->
 ```ts
@@ -160,7 +160,7 @@ pricedPartial.status // => "residual"
 
 ## env.extend(options)
 
-Returns a new environment with more variables, functions, or libraries, and optionally different `strict`, `limits`, or `clock`. The original is unchanged. Adding a function that the base environment already defines as a host function replaces it; defining the same name twice within one `extend()` call is an error.
+Returns a new environment with more variables, functions, or libraries. It takes the same options as `bonsai()`, so it can also change `strict`, `limits`, `clock`, `cacheSize`, or `validateContext`; options it does not set keep the base environment's values. The original is unchanged. Adding a function that the base environment already defines as a host function replaces it; defining the same name twice within one `extend()` call is an error.
 
 <!-- continue -->
 ```ts

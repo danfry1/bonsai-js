@@ -54,6 +54,7 @@ An expression with errors does not compile: `env.compile()` throws a `BonsaiChec
 | `INVALID_LAMBDA` | `.` outside a function argument, `.` inside an explicit lambda, or a spread into a function that takes a lambda. |
 | `BLOCKED_PROPERTY` | A blocked key (`__proto__`, `constructor`, `prototype`) as a static computed key. |
 | `EXPECTED_TYPE` | The result does not match the type passed as `expect`. |
+| `INVALID_ARGUMENT` | A literal argument with an invalid value, such as an unknown `formatDate` pattern letter. |
 
 <!-- continue -->
 ```ts
@@ -98,7 +99,7 @@ premium.diagnostics[0].message // => 'This comparison is always false: "free" | 
 env.compile('user.age > 18').warnings[0].message // => "This value may be null, and a comparison with null is false; check it first (x != null && ...) or use ??"
 ```
 
-Warnings currently use the `TYPE_ERROR` code; distinguish them by `severity`.
+Warnings have their own codes (`ALWAYS_FALSE`, `ALWAYS_TRUE`, `NEVER_NULL`, `MAYBE_NULL`, `UNSAFE_INTEGER`; see [Errors](/api/errors#diagnostics)) and `severity: "warning"`.
 
 ## Overloads and `any`
 

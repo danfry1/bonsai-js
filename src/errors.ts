@@ -81,6 +81,24 @@ function codeFrame(
   return `${gutter} | ${text}\n${' '.repeat(gutter.length)} | ${' '.repeat(cutLeft.length + start - from)}${'^'.repeat(width)}`
 }
 
+/**
+ * The JSON form of a {@link BonsaiError} (`JSON.stringify(error)`), the same
+ * wherever an error is serialized: thrown, in an explanation, or in a partial
+ * result. The source text and the `cause` are left out; keep the source with
+ * the error if you store it.
+ */
+export interface BonsaiErrorJSON {
+  readonly name: string
+  readonly code: ErrorCode
+  readonly message: string
+  readonly span?: Span
+  readonly position?: { readonly line: number; readonly column: number }
+  /** For a limit error: the option that bounds it, when there is one. */
+  readonly limit?: LimitName
+  /** For a check error: every finding. */
+  readonly diagnostics?: readonly Diagnostic[]
+}
+
 /** Options for constructing a {@link BonsaiError}. */
 export interface ErrorInit {
   readonly source?: string | undefined
@@ -112,6 +130,18 @@ export class BonsaiError extends Error {
   get formatted(): string {
     if (this.source === undefined || this.span === undefined) return this.message
     return `${this.message}\n${codeFrame(this.source, this.span, positionOf(this.source, this.span.start))}`
+  }
+
+  /** The stable JSON form; see {@link BonsaiErrorJSON}. */
+  toJSON(): BonsaiErrorJSON {
+    const position = this.position
+    return {
+      name: this.name,
+      code: this.code,
+      message: this.message,
+      ...(this.span === undefined ? {} : { span: { start: this.span.start, end: this.span.end } }),
+      ...(position === undefined ? {} : { position }),
+    }
   }
 }
 
@@ -168,6 +198,10 @@ export class BonsaiLimitError extends BonsaiError {
     // `null` marks a bound that is not configurable even though the code usually is.
     this.limit = init.limit === null ? undefined : (init.limit ?? LIMIT_OF[code])
   }
+
+  override toJSON(): BonsaiErrorJSON {
+    return this.limit === undefined ? super.toJSON() : { ...super.toJSON(), limit: this.limit }
+  }
 }
 
 /** Evaluation failed: a type mismatch, invalid argument, or host failure. */
@@ -187,8 +221,9 @@ export interface Diagnostic {
   /** 1-based line and column of `start`, as on a {@link BonsaiError}. */
   readonly position: { readonly line: number; readonly column: number }
   /**
-   * The message followed by a code frame, as on a {@link BonsaiError}.
-   * Computed when read, and not part of the JSON form.
+   * The message followed by a code frame, as on a {@link BonsaiError}. An
+   * accessor computed when read: not part of the JSON form, and not copied by
+   * spreading the diagnostic.
    */
   readonly formatted: string
   /**
@@ -242,12 +277,12 @@ class SourceDiagnostic implements Diagnostic {
  * Ties findings to their source: spans, 1-based positions (one pass over the
  * source, however many findings), and a code frame computed when read.
  */
-export function locate(source: string, findings: readonly Finding[]): Diagnostic[] {
+export function locate(source: string, findings: readonly Finding[]): readonly Diagnostic[] {
   const lineStarts = [0]
   for (let i = source.indexOf('\n'); i !== -1; i = source.indexOf('\n', i + 1)) {
     lineStarts.push(i + 1)
   }
-  return findings.map((finding) => {
+  const located = findings.map((finding) => {
     const offset = Math.min(Math.max(finding.start, 0), source.length)
     // The last line starting at or before the offset.
     let low = 0
@@ -257,11 +292,14 @@ export function locate(source: string, findings: readonly Finding[]): Diagnostic
       if (lineStarts[middle] <= offset) low = middle
       else high = middle - 1
     }
-    return new SourceDiagnostic(source, finding, {
-      line: low + 1,
-      column: offset - lineStarts[low] + 1,
-    })
+    return Object.freeze(
+      new SourceDiagnostic(source, finding, {
+        line: low + 1,
+        column: offset - lineStarts[low] + 1,
+      }),
+    )
   })
+  return Object.freeze(located)
 }
 
 export type DiagnosticCode =
@@ -297,6 +335,10 @@ export class BonsaiCheckError extends BonsaiError {
       span: first === undefined ? undefined : { start: first.start, end: first.end },
     })
     this.diagnostics = locate(source, diagnostics)
+  }
+
+  override toJSON(): BonsaiErrorJSON {
+    return { ...super.toJSON(), diagnostics: this.diagnostics }
   }
 }
 

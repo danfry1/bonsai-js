@@ -1,5 +1,5 @@
 import { BonsaiError, type ErrorCode } from '../errors.js'
-import { forEachChild, type Node } from '../syntax/ast.js'
+import { forEachChild, type BinaryOperator, type Node, type UnaryOperator } from '../syntax/ast.js'
 import { Duration, isMap } from './values.js'
 
 /** One evaluated (or skipped) sub-expression. */
@@ -9,7 +9,7 @@ export interface Trace {
   /** Syntax node type, e.g. `Binary`, `Member`, `Call`. */
   readonly kind: Node['type']
   /** The operator of a `Binary` or `Unary` node. */
-  readonly operator?: string
+  readonly operator?: BinaryOperator | UnaryOperator
   readonly start: number
   readonly end: number
   /** The source text of this sub-expression. */

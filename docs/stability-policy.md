@@ -1,9 +1,10 @@
 # Stability Policy
 
-Bonsai follows Semantic Versioning for its two package entrypoints:
+Bonsai follows Semantic Versioning for its three package entrypoints:
 
 - `bonsai-js`
 - `bonsai-js/service`
+- `bonsai-js/query`
 
 ## What is covered
 
@@ -11,6 +12,16 @@ Bonsai follows Semantic Versioning for its two package entrypoints:
   `tests/conformance.test.ts`. Changing the result of an expression that
   evaluates successfully, or making it fail, requires a major release.
 - **The API.** Exported functions, classes, types, options, and error codes.
+  Error classes are covered for `instanceof` checks and reading their fields
+  (and their JSON form); their constructors are not public API, since Bonsai
+  creates its errors and the constructor parameters may change. `toSQL` and
+  `toMongo` take compiled programs: the `Translatable` type describes what they
+  read from one, and only a program from `env.compile` (or
+  `env.check(...).program`) satisfies it.
+- **SQL and MongoDB translation.** A filter that translates selects exactly
+  the records Bonsai accepts. The generated text and parameter numbering may
+  change in a minor release (for example to use an index), and a filter that
+  is refused today may translate in a later one.
 - **Runtimes.** Node.js 22 and newer, current Bun, and modern ESM browsers with
   ES2022 and `Intl.DateTimeFormat` time zone support.
 
@@ -21,7 +32,8 @@ Bonsai follows Semantic Versioning for its two package entrypoints:
   include:
   - the reserved `|>`;
   - chained comparisons;
-  - `??` mixed with `&&`/`||`;
+  - `??` beside another binary operator without parentheses (`&&`, `||`,
+    comparisons, arithmetic);
   - a prefix operator left of `**`.
 - **New built-in functions.** Adding one never changes an existing environment's
   expressions, because a host function of the same name takes precedence and
@@ -37,9 +49,10 @@ Bonsai follows Semantic Versioning for its two package entrypoints:
   rather than implementing exported interfaces (such as `Limits`) in full.
   `Environment`, `Program`, `Explanation`, `Trace`, and `LanguageService` are
   for using, not implementing: they may gain members in a minor release.
-- **New variants in exported unions.** This covers syntax node types, `Type`
-  kinds, `ErrorCode`, `DiagnosticCode`, a diagnostic's `severity`,
-  `CompletionKind`, a `Trace`'s `kind`, and partial evaluation's `status`.
+- **New variants in exported unions.** This covers syntax node types,
+  `BinaryOperator` and `UnaryOperator`, `Type` kinds, `ErrorCode`,
+  `DiagnosticCode`, a diagnostic's `severity`, `LimitName`, `CompletionKind`,
+  a `Trace`'s `kind`, partial evaluation's `status`, and the query `ColumnType`.
   Avoid exhaustive switches without a default branch.
 - **More precise static types.** A result type may become narrower when
   inference improves (for example `any` becoming `number`). New warnings may

@@ -13,6 +13,14 @@ print(tree, { calls: 'method' })   // 'name.trim().toUpperCase()'
 print(tree, { calls: 'function' }) // 'toUpperCase(trim(name))'
 ```
 
+A tool that only parses and prints can use the standalone `parse(source, limits?)` instead of an environment. It parses as `env.parse` does, with the same parse limits (`maxSourceLength`, `maxDepth`, `maxNodes`), and a bundle that imports only `parse` and `print` stays around 10 KB gzipped instead of including the type checker and evaluator:
+
+```ts
+import { parse, print } from 'bonsai-js'
+
+print(parse('a+b*2')) // 'a + b * 2'
+```
+
 ## Guarantees
 
 - The tree is plain JSON. Every node has `type`, `start`, and `end` (UTF-16 offsets into the source). The [Syntax Tree Reference](./syntax-tree) lists every node type and its fields.

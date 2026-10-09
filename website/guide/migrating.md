@@ -149,7 +149,7 @@ name || "Anonymous" // error: TYPE_ERROR
 | `expr.evaluateSync(src, ctx)` | `env.evaluateSync(src, ctx)` (unchanged) |
 | `expr.evaluate(src, ctx)` | `env.evaluate(src, ctx)`. Only functions declared `async: true` are awaited; any other function returning a promise is an error. |
 | `expr.compile(src)` | `env.compile(src, { expect })` returns a checked `Program` with `source`, `ast`, `type`, `async`, `warnings`, and `references`. |
-| `expr.validate(src)` returning `{ valid, errors, ast, references }` | `env.check(src)` returns `{ ok, type, diagnostics }` and never throws. Each diagnostic has `code`, `message`, `severity`, and `start`/`end` offsets instead of a line and column. For the syntax tree, call `env.parse(src)`; for references, `env.compile(src).references`. |
+| `expr.validate(src)` returning `{ valid, errors, ast, references }` | `env.check(src)` returns `{ ok, type, diagnostics }` and never throws. Each diagnostic has `code`, `message`, `severity`, `start`/`end` offsets, and a 1-based `position` (`{ line, column }`). For the syntax tree, call `env.parse(src)`; for references, `env.compile(src).references`. |
 | `result.references.identifiers`, `.functions` | `program.references.variables`, `.functions`. `transforms` is gone: transforms are functions. |
 | `evaluateExpression(src, ctx)` | `bonsai().evaluateSync(src, ctx)` |
 | `allowedProperties`, `deniedProperties`, `getPolicy()` | Removed. Pass only the data expressions may read. Declare variables with `t` to catch unknown names and fields at check time. |
@@ -157,7 +157,7 @@ name || "Anonymous" // error: TYPE_ERROR
 | `cacheSize` option, `clearCache()` | `cacheSize` option (unchanged). There is no `clearCache()`; create a new environment to start with an empty cache. |
 | `listFunctions()`, `hasFunction()`, `listTransforms()`, `hasTransform()`, `isContextFunction()` | `env.listFunctions()` and `env.describeFunction(name)` (`undefined` when the function does not exist). |
 | `bonsai-js/autocomplete`, `createAutocomplete(expr, { context })`, `complete()` returning `Completion[]` | `bonsai-js/service`, `createLanguageService(env)`. `complete(source, offset)` returns `{ start, end, items }`, computed from types rather than by evaluating a sample context. |
-| `tokenize`, `parse`, `compile` exports | `env.parse(src)` returns the syntax tree; `print(tree)` turns it back into source. |
+| `tokenize`, `parse`, `compile` exports | `parse(src)` (or `env.parse(src)`) returns the 1.0 syntax tree, whose node types are renamed; `print(tree)` turns it back into source. `tokenize` and `compile` are removed: use `env.compile(src)`. |
 | `formatError(e)`, `formatBonsaiError(e)` | `error.formatted` |
 
 ### TypeScript types

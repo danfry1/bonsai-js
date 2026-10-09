@@ -8,7 +8,7 @@ import { createLanguageService } from 'bonsai-js/service'
 
 <!-- no-run -->
 ```ts
-function createLanguageService(env: Environment<never>): LanguageService
+function createLanguageService(env: Environment): LanguageService
 
 interface LanguageService {
   complete(source: string, offset: number): CompletionResult
@@ -17,7 +17,7 @@ interface LanguageService {
 }
 ```
 
-Offsets are UTF-16 code unit offsets into `source`, the same unit as JavaScript string indices and `Diagnostic.start`/`end`. `Environment<never>` accepts an environment of any context type.
+Offsets are UTF-16 code unit offsets into `source`, the same unit as JavaScript string indices and `Diagnostic.start`/`end`. A bare `Environment` accepts an environment of any context type.
 
 ## complete(source, offset)
 

@@ -29,6 +29,7 @@ import {
   type PartialResult,
 } from './partial.js'
 import { DEFAULT_RUNTIME_LIMITS, State, type RuntimeLimits } from './runtime/state.js'
+import { recordDeclared } from './declared.js'
 import { errorText, isMap } from './runtime/values.js'
 import {
   DEFAULT_MAX_ITERATIONS,
@@ -214,10 +215,13 @@ export function withContext<Ctx>() {
       (
         | {
             readonly async?: false | undefined
+            /** Implied; may be written out when moving a function over from `fn`. */
+            readonly call?: true | undefined
             readonly run: (call: HostCall<Ctx>, ...args: RunArgs<P, RT>) => RunResult<R>
           }
         | {
             readonly async: true
+            readonly call?: true | undefined
             readonly run: (call: HostCall<Ctx>, ...args: RunArgs<P, RT>) => Promise<RunResult<R>>
           }
       ),
@@ -245,14 +249,31 @@ export interface Library<
 type NoVariables = Record<never, never>
 
 /**
+ * The variables one library declares. A library annotated `: Library` has the
+ * wide default (any string key), which names no variable, so it adds nothing.
+ */
+type VariablesOf<Lib> = Lib extends { readonly variables?: infer V }
+  ? string extends keyof NonNullable<V>
+    ? NoVariables
+    : NonNullable<V>
+  : NoVariables
+
+/**
  * The variables a list of libraries declares, merged. Only a list whose
  * elements are known (written inline, or `as const`) contributes; a value
  * typed as `Library[]` adds nothing to the context type.
  */
 type LibraryVariables<L> = L extends readonly [infer First, ...infer Rest]
-  ? (First extends { readonly variables?: infer V } ? NonNullable<V> : NoVariables) &
-      LibraryVariables<Rest>
+  ? VariablesOf<First> & LibraryVariables<Rest>
   : NoVariables
+
+/**
+ * Any further keys, as a context with `strict: false` may carry. Its values are
+ * `any` because only that lets an interface or a class instance (which have no
+ * index signature) still satisfy it; declared keys keep their own types.
+ */
+// oxlint-disable-next-line typescript/no-explicit-any -- the only index signature interfaces and classes satisfy
+type MoreKeys = Readonly<Record<string, any>>
 
 /**
  * The context type of an environment with variables `V` and libraries `L`.
@@ -260,7 +281,7 @@ type LibraryVariables<L> = L extends readonly [infer First, ...infer Rest]
  * may carry keys beyond the declared ones.
  */
 type ContextFor<V, L, S = undefined> = [S] extends [false]
-  ? ContextOf<V & LibraryVariables<L>> & Readonly<Record<string, unknown>>
+  ? ContextOf<V & LibraryVariables<L>> & MoreKeys
   : ContextOf<V & LibraryVariables<L>>
 
 export interface EnvironmentOptions<
@@ -295,7 +316,11 @@ export interface EnvironmentOptions<
   readonly validateContext?: boolean | undefined
 }
 
-/** What check() found. Only `ok`, `type`, and `diagnostics` are part of the JSON form. */
+/**
+ * What check() found. Only `ok`, `type`, and `diagnostics` are data (and the
+ * JSON form); `program`, `ast`, and `typeOf` are accessors computed on demand,
+ * so spreading the result or `structuredClone` does not copy them.
+ */
 // oxlint-disable-next-line typescript/no-explicit-any -- the same erased context as a bare Program
 export type CheckResult<Ctx = any, R = unknown> = (
   | {
@@ -303,8 +328,8 @@ export type CheckResult<Ctx = any, R = unknown> = (
       readonly type: Type
       readonly diagnostics: readonly Diagnostic[]
       /**
-       * The checked expression, compiled when first read: the same program
-       * compile() returns, without parsing and checking again.
+       * The checked expression, compiled when first read: a program equal to
+       * the one compile() returns, without parsing and checking again.
        */
       readonly program: Program<Ctx, R>
     }
@@ -387,7 +412,7 @@ type ExplainArgs<Ctx> =
     : [context: Ctx, options?: ExplainOptions]
 
 /** The result of explain(): the outcome plus a trace of every sub-expression. */
-export type Explanation<R> = (
+export type Explanation<R = unknown> = (
   | { readonly ok: true; readonly value: R }
   | { readonly ok: false; readonly error: BonsaiError }
 ) & {
@@ -419,6 +444,10 @@ export interface FunctionInfo {
   readonly description: string
   readonly host: boolean
   readonly async: boolean
+  /** Whether a host function receives a {@link HostCall} (declared `call: true`). */
+  readonly call: boolean
+  /** Steps charged per call, when the host function declares a `cost` (otherwise 32). */
+  readonly cost?: number
   readonly signatures: readonly {
     readonly params: readonly Type[]
     readonly required: number
@@ -1190,10 +1219,12 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
 
   /** How a partial-evaluation residual runs and explains, with the caller's context. */
   interface ResidualRunner {
+    /** Whether the residual calls an async host function. */
+    async: boolean
     runSync: (ctx: unknown, options: unknown) => unknown
     runAsync: (ctx: unknown, options: unknown) => Promise<unknown>
-    explainSync: (ctx: unknown, options: unknown) => Explanation<unknown>
-    explainAsync: (ctx: unknown, options: unknown) => Promise<Explanation<unknown>>
+    explainSync: (ctx: unknown, options: unknown) => Explanation
+    explainAsync: (ctx: unknown, options: unknown) => Promise<Explanation>
   }
 
   function makeProgram<R>(
@@ -1371,7 +1402,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
             ok: outcome.ok,
             ...(outcome.ok
               ? { value: snapshot(outcome.value, budget) }
-              : { error: { code: outcome.error.code, message: outcome.error.message } }),
+              : { error: outcome.error.toJSON() }),
             truncated,
             trace: snapshotTrace(trace, budget),
           }
@@ -1656,17 +1687,18 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     }
 
     asResidual?.({
+      async: analysis.async,
       runSync: (ctx, options) => runSync(ctx, options as EvaluateOptions | undefined),
       runAsync: (ctx, options) => runAsync(ctx, options as EvaluateOptions | undefined),
       explainSync: (ctx, options) => explainSync(ctx, options as ExplainOptions | undefined),
       explainAsync: (ctx, options) => explainAsync(ctx, options as ExplainOptions | undefined),
     })
     // Programs are shared: the tree compiles lazily, so it must not change afterwards.
-    return Object.freeze({
+    const program: Program<Ctx, R> = Object.freeze({
       explain: (...args: ExplainArgs<Ctx>) => explainAsync(args[0], args[1]),
       explainSync: (...args: ExplainArgs<Ctx>) => explainSync(args[0], args[1]),
       partial: (known: object, options?: PartialOptions) =>
-        partial(known as Record<string, unknown>, options),
+        Object.freeze(partial(known as Record<string, unknown>, options)),
       source,
       ast: deepFreeze(analysis.root),
       type: deepFreeze(analysis.type),
@@ -1681,6 +1713,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       evaluate: (...args: Args<Ctx>) => runAsync(args[0], args[1]),
       evaluateSync: (...args: Args<Ctx>) => runSync(args[0], args[1]),
     })
+    recordDeclared(program, settings.variables)
+    return program
   }
 
   function compile<R>(source: string, expect: Type | undefined): Program<Ctx, R> {
@@ -1716,6 +1750,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       description: def.description,
       host: def.host === true,
       async: def.async === true,
+      call: def.call === true,
+      ...(def.cost === undefined ? {} : { cost: def.cost }),
       signatures: def.overloads.map((o) => ({
         params: o.params,
         required: o.required ?? o.params.length,
@@ -1748,19 +1784,27 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
             end: error.span?.end ?? source.length,
           },
         ])
-        return new CheckFailure(undefined, diagnostics, undefined) as CheckResult<Ctx, Infer<E>>
+        return Object.freeze(new CheckFailure(undefined, diagnostics, undefined)) as CheckResult<
+          Ctx,
+          Infer<E>
+        >
       }
       const diagnostics =
         analysis.diagnostics.length === 0 ? NO_DIAGNOSTICS : locate(source, analysis.diagnostics)
       const type = deepFreeze(analysis.type)
       if (analysis.diagnostics.some((d) => d.severity === 'error'))
-        return new CheckFailure(type, diagnostics, analysis) as CheckResult<Ctx, Infer<E>>
+        return Object.freeze(new CheckFailure(type, diagnostics, analysis)) as CheckResult<
+          Ctx,
+          Infer<E>
+        >
       let program: Program<Ctx, Infer<E>> | undefined
-      return new CheckSuccess(
-        type,
-        diagnostics,
-        analysis,
-        () => (program ??= makeProgram<Infer<E>>(source, analysis, expect)),
+      return Object.freeze(
+        new CheckSuccess(
+          type,
+          diagnostics,
+          analysis,
+          () => (program ??= makeProgram<Infer<E>>(source, analysis, expect)),
+        ),
       ) as CheckResult<Ctx, Infer<E>>
     },
     compile: <E extends Type = AnyType>(source: string, options?: CompileOptions<E>) =>
