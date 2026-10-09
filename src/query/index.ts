@@ -182,7 +182,14 @@ interface Declared {
   readonly type: ColumnType
 }
 
-const SQL_OPTION_KEYS: readonly string[] = ['row', 'known', 'now', 'dialect', 'columns', 'paramOffset']
+const SQL_OPTION_KEYS: readonly string[] = [
+  'row',
+  'known',
+  'now',
+  'dialect',
+  'columns',
+  'paramOffset',
+]
 const MONGO_OPTION_KEYS: readonly string[] = ['row', 'known', 'now', 'fields']
 
 /** Rejects option keys a translator does not read, so a misspelled one is never ignored. */

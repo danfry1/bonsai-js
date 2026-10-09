@@ -76,6 +76,6 @@ export type {
 } from './syntax/ast.js'
 export type { ParseLimits } from './syntax/parser.js'
 export { print } from './syntax/printer.js'
-export type { PartialOptions, PartialResult } from './partial.js'
+export type { PartialOptions, PartialResult, ResidualResult } from './partial.js'
 export type { Iteration, Trace } from './runtime/trace.js'
 export type { PrintOptions } from './syntax/printer.js'

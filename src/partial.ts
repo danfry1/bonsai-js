@@ -196,14 +196,14 @@ export interface PartialOptions {
    * known yet. Unknown wins over a value present in `known`. Default: every
    * variable the expression reads that `known` does not have.
    */
-  readonly unknown?: readonly string[]
+  readonly unknown?: readonly string[] | undefined
   /**
    * Evaluate host function calls whose inputs are known. Default false: they
    * stay in the residual. Only sync host functions can be called.
    */
-  readonly callHostFunctions?: boolean
+  readonly callHostFunctions?: boolean | undefined
   /** The time now() returns. Default: now() stays in the residual. */
-  readonly now?: Date
+  readonly now?: Date | undefined
 }
 
 /** How the partial evaluator reaches the engine. */

@@ -20,7 +20,7 @@ import {
 } from './functions/define.js'
 import { partiallyEvaluate, type PartialOptions, type PartialResult } from './partial.js'
 import { DEFAULT_RUNTIME_LIMITS, State, type RuntimeLimits } from './runtime/state.js'
-import { errorText, isMap } from './runtime/values.js'
+import { errorText, isMap, type Duration } from './runtime/values.js'
 import {
   DEFAULT_MAX_ITERATIONS,
   DEFAULT_MAX_TRACE_NODES,
@@ -267,24 +267,34 @@ export interface Program<Ctx = object, R = unknown> {
    * the full data gives the same result as evaluating this program.
    */
   partial: (
-    known: Partial<Ctx> & Record<string, unknown>,
+    known: KnownData<Ctx> & Record<string, unknown>,
     options?: PartialOptions,
   ) => PartialResult<R>
 }
 
 export interface ExplainOptions extends EvaluateOptions {
   /** How many lambda runs to record per call (the rest are counted). Default 20. */
-  readonly maxIterations?: number
+  readonly maxIterations?: number | undefined
   /** Sub-expressions to record in total before stopping (the result stays exact). Default 10,000. */
-  readonly maxTraceNodes?: number
+  readonly maxTraceNodes?: number | undefined
   /**
    * Also evaluate the side of && and || that short-circuiting would skip, so
    * reasons() lists every failing condition rather than the first. Those
    * parts are marked `extra`; their errors are ignored and the result is
    * unchanged. Host functions on those parts do run. Default false.
    */
-  readonly exhaustive?: boolean
+  readonly exhaustive?: boolean | undefined
 }
+
+/**
+ * Known data for partial(): any part of the context, at any depth, since a
+ * dotted path in `unknown` (`user.riskScore`) leaves the rest of that object known.
+ */
+type KnownData<T> = T extends readonly unknown[] | Date | Duration | ((...args: never) => unknown)
+  ? T
+  : T extends object
+    ? { [K in keyof T]?: KnownData<T[K]> }
+    : T
 
 type ExplainArgs<Ctx> =
   Record<string, never> extends Ctx

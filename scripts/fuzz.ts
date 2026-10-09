@@ -544,7 +544,7 @@ const scenarioArbitrary: fc.Arbitrary<Scenario> = fc
 
 type Outcome =
   | { ok: true; value: unknown }
-  | { ok: false; code: string; message: string; span?: { start: number; end: number } }
+  | { ok: false; code: string; message: string; span?: { start: number; end: number } | undefined }
 
 class FuzzViolation extends Error {}
 

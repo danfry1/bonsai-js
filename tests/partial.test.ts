@@ -455,9 +455,12 @@ describe('partial residuals evaluate as the program does', () => {
     const bad = program.partial({ user: { age: '36', riskScore: 1 } } as never)
     expect(bad.status === 'error' && bad.error.code).toBe('INVALID_CONTEXT')
     // A variable with an unknown path inside it is incomplete by design.
-    const partlyKnown = program.partial({ user: { age: 40 } } as never, {
-      unknown: ['order', 'user.riskScore'],
-    })
+    const partlyKnown = program.partial(
+      { user: { age: 40 } },
+      {
+        unknown: ['order', 'user.riskScore'],
+      },
+    )
     expect(residualOf(partlyKnown).source).toBe('order.total > user.riskScore')
   })
 })

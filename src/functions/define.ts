@@ -24,7 +24,7 @@ export interface Overload {
   readonly result: Type
   readonly run: (args: unknown[], site: CallSite) => unknown
   /** Variant used when a lambda argument is asynchronous. */
-  readonly runAsync?: (args: unknown[], site: CallSite) => Promise<unknown>
+  readonly runAsync?: ((args: unknown[], site: CallSite) => Promise<unknown>) | undefined
   /** Type variables that must bind to one orderable kind (number, string, timestamp, duration). */
   readonly ordered?: readonly string[]
   /**
@@ -32,7 +32,7 @@ export interface Overload {
    * not a literal). Returns an error message, so mistakes in constant
    * patterns are reported when the expression is checked.
    */
-  readonly literals?: (values: readonly unknown[]) => string | undefined
+  readonly literals?: ((values: readonly unknown[]) => string | undefined) | undefined
 }
 
 export interface FunctionDef {
