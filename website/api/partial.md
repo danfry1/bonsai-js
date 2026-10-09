@@ -54,7 +54,7 @@ Short primitives (numbers, booleans, `null`, strings up to 200 characters) are w
 | `callHostFunctions` | `false` | Call host functions whose inputs are known (only synchronous ones); otherwise they stay in the residual |
 | `now` | none | The time `now()` returns; otherwise `now()` stays in the residual |
 
-Limit errors (steps, time) are thrown from `partial()` rather than guessed. Every sub-expression evaluated during one `partial()` call shares one step budget.
+Limit errors (steps, time) are thrown from `partial()` rather than guessed. Every sub-expression evaluated during one `partial()` call shares one step budget. Options follow the same rules as everywhere else: an unknown option or a wrong type is a `TypeError`.
 
 ## Details
 
@@ -62,5 +62,7 @@ Limit errors (steps, time) are thrown from `partial()` rather than guessed. Ever
 - **Known parts of every branch are evaluated**, including branches the unknown data may never choose. They count toward the step budget, and context getters they read run during `partial()`.
 - **Host functions** are called only with `callHostFunctions: true`, never when they are async, and context functions (`context: true`) only when you also pass `unknown: []`, since they can read variables the expression does not name.
 - **With an explicit `unknown` list**, a variable that is neither in `known` nor listed reads as `null`, as it would in normal evaluation.
+- **`expect` still applies.** A program compiled with `expect` checks a decided `value` against it (a mismatch is a `TYPE_ERROR` result), and its residual checks results the same way.
+- **Context getters run against the merged context.** The residual's context is your context plus the bindings, copied property by property (getters are copied, not run). A getter that relies on `this` being your original object (a private field, a `WeakMap` lookup) sees the merged object instead.
 - **Storing a residual.** `result.evaluateSync` and `result.evaluate` are the reliable way to run it. If you store `source` and `bindings` and compile them yourself, use a non-strict environment (the binding names are not declared variables) and pass the bindings in the context; inlined values can also make a type error in an untaken branch visible to the checker.
 

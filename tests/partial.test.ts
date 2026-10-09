@@ -282,3 +282,100 @@ describe('partial', () => {
     })
   })
 })
+
+describe('partial on the hardened engine', () => {
+  const open = bonsai()
+
+  it('folds long chains with many unknowns quickly', () => {
+    const program = open.compile(Array.from({ length: 9900 }, (_, i) => `v${i}`).join(' && '))
+    const unknown = Array.from({ length: 10_000 }, (_, i) => `u${i}`)
+    const start = performance.now()
+    expect(program.partial({}).status).toBe('residual')
+    program.partial({}, { unknown })
+    // Unindexed, this took seconds.
+    expect(performance.now() - start).toBeLessThan(2000)
+  })
+
+  it('applies expect to decided results and residuals', () => {
+    const decided = open.compile('x', { expect: t.number() }).partial({ x: 'str' })
+    expect(decided).toMatchObject({ status: 'error', error: { code: 'TYPE_ERROR' } })
+    const result = open
+      .compile('x ?? y', { expect: t.number() })
+      .partial({ x: null }, { unknown: ['y'] })
+    expect(result.status).toBe('residual')
+    if (result.status === 'residual') {
+      expect(() => result.evaluateSync({ y: 'str' })).toThrow(
+        expect.objectContaining({ code: 'TYPE_ERROR' }),
+      )
+      expect(result.evaluateSync({ y: 2 })).toBe(2)
+    }
+  })
+
+  it('never lets try() swallow a host contract violation', () => {
+    const hosted = bonsai({
+      functions: {
+        f: fn({ params: [], returns: t.number(), run: () => 'bad' as unknown as number }),
+      },
+    })
+    const program = hosted.compile('try(f() + u, 0)')
+    expect(() => program.evaluateSync({ u: 1 })).toThrow(
+      expect.objectContaining({ code: 'HOST_CONTRACT' }),
+    )
+    const result = program.partial({}, { unknown: ['u'], callHostFunctions: true })
+    expect(result).toMatchObject({ status: 'error', error: { code: 'HOST_CONTRACT' } })
+  })
+
+  it('reports unreadable host data as Bonsai errors', () => {
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error('ownKeys trap')
+        },
+      },
+    )
+    expect(() => open.compile('x + y').partial(hostile, { unknown: ['y'] })).toThrow(
+      expect.objectContaining({ code: 'HOST_ERROR' }),
+    )
+    const result = open.compile('x + y').partial({ x: 1 })
+    if (result.status !== 'residual') throw new Error('expected a residual')
+    expect(() => result.evaluateSync(new Map([['y', 1]]) as never)).toThrow(
+      expect.objectContaining({ code: 'INVALID_ARGUMENT' }),
+    )
+    const unreadable = new Proxy(
+      { y: 1 },
+      {
+        getOwnPropertyDescriptor() {
+          throw new Error('trap')
+        },
+      },
+    )
+    expect(() => result.evaluateSync(unreadable)).toThrow(
+      expect.objectContaining({ code: 'HOST_ERROR' }),
+    )
+  })
+
+  it('validates options like the other APIs', () => {
+    const program = open.compile('now() > x')
+    const run = (options: unknown): void => {
+      program.partial({}, options as never)
+    }
+    for (const options of [
+      null,
+      { unknwon: ['x'] },
+      { unknown: 'x' },
+      { unknown: [1] },
+      { callHostFunctions: 'yes' },
+      { now: new Date(Number.NaN) },
+      { now: 'tomorrow' },
+      { now: Object.create(Date.prototype) },
+    ]) {
+      expect(
+        () => {
+          run(options)
+        },
+        String(Object.keys(options ?? {})),
+      ).toThrow(TypeError)
+    }
+  })
+})

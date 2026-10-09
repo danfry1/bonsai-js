@@ -867,6 +867,47 @@ function explainSettings(options: unknown): ExplainSettings {
   }
 }
 
+const PARTIAL_OPTION_KEYS: ReadonlySet<string> = new Set(['unknown', 'callHostFunctions', 'now'])
+const PATH = /^[^.]+(?:\.[^.]+)*$/u
+
+/** Reads partial() options once, with the same TypeError rules as the other options. */
+function partialOptions(options: unknown): PartialOptions {
+  if (options === undefined) return {}
+  if (typeof options !== 'object' || options === null || Array.isArray(options))
+    throw new TypeError('Partial options must be an object')
+  let copy: Record<string, unknown>
+  try {
+    copy = { ...(options as Record<string, unknown>) }
+    if (Array.isArray(copy.unknown)) copy.unknown = [...(copy.unknown as unknown[])]
+  } catch {
+    throw new TypeError('Partial options could not be read')
+  }
+  for (const key of Object.keys(copy)) {
+    if (!PARTIAL_OPTION_KEYS.has(key)) {
+      throw new TypeError(
+        `Unknown partial option key "${key}" (expected one of: ${[...PARTIAL_OPTION_KEYS].join(', ')})`,
+      )
+    }
+  }
+  const unknown = copy.unknown
+  if (
+    unknown !== undefined &&
+    (!Array.isArray(unknown) || !unknown.every((p) => typeof p === 'string' && PATH.test(p)))
+  )
+    throw new TypeError('Partial option "unknown" must be a list of variable names or dotted paths')
+  if (copy.callHostFunctions !== undefined && typeof copy.callHostFunctions !== 'boolean')
+    throw new TypeError('Partial option "callHostFunctions" must be a boolean')
+  const now = copy.now
+  let validNow = now === undefined
+  try {
+    validNow ||= now instanceof Date && !Number.isNaN(Date.prototype.getTime.call(now))
+  } catch {
+    // An object that only inherits from Date.prototype is not a Date.
+  }
+  if (!validNow) throw new TypeError('Partial option "now" must be a valid Date')
+  return copy
+}
+
 function contextOf(value: unknown): Record<string, unknown> {
   if (value === undefined || value === null) return EMPTY_CONTEXT
   let map: boolean
@@ -1148,7 +1189,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     // Sub-trees compiled on their own for partial evaluation, by free locals.
     const subtrees = new WeakMap<Node, Map<string, CompiledProgram>>()
 
-    function partial(known: Record<string, unknown>, options: PartialOptions): PartialResult<R> {
+    function partial(known: Record<string, unknown>, rawOptions: unknown): PartialResult<R> {
+      const options = partialOptions(rawOptions)
       const context = contextOf(known)
       const now = options.now
       const state = new State(
@@ -1157,9 +1199,10 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       )
       state.reset(context, source, 0, settings.runtimeLimits.maxSteps, settings.timeout, undefined)
       try {
-        return partiallyEvaluate<R>(
+        const result = partiallyEvaluate<R>(
           {
             analysis,
+            contextOf,
             hostKind: (name) => {
               const def = settings.host.get(name)
               return def === undefined
@@ -1198,7 +1241,12 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
               // cannot push it past the parse depth limit.
               const program = makeProgram<unknown>(
                 source,
-                analyze(residual, { ...checkEnv, variables: undefined, strict: false }),
+                analyze(
+                  residual,
+                  { ...checkEnv, variables: undefined, strict: false },
+                  { expected: expect },
+                ),
+                expect,
               )
               return {
                 evaluateSync: (ctx) => (program as Program).evaluateSync(ctx),
@@ -1209,6 +1257,19 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
           context,
           options,
         )
+        // A decided result still has to match `expect`, as evaluation would check it.
+        if (result.status === 'value') {
+          try {
+            checked(result.value, state)
+          } catch (error) {
+            if (error instanceof BonsaiRuntimeError) return { status: 'error', error }
+            throw error
+          }
+        }
+        return result
+      } catch (error) {
+        // Reading `known` is reading host data: a throwing Proxy or getter is a HOST_ERROR.
+        throw hostDataFailure(error, source)
       } finally {
         state.release()
       }
@@ -1218,7 +1279,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     return Object.freeze({
       explain: (...args: ExplainArgs<Ctx>) => explainSync(args[0], args[1]),
       explainAsync: (...args: ExplainArgs<Ctx>) => explainAsync(args[0], args[1]),
-      partial: (known: Record<string, unknown>, options: PartialOptions = {}) =>
+      partial: (known: Record<string, unknown>, options?: PartialOptions) =>
         partial(known, options),
       source,
       ast: deepFreeze(analysis.root),

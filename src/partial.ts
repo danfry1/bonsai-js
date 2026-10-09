@@ -136,9 +136,24 @@ function dependencies(hostKind: (name: string) => HostKind | undefined): (node: 
   return visit
 }
 
-/** Whether a read of `path` could observe an unknown path. */
-function touchesUnknown(path: string, unknown: readonly string[]): boolean {
-  return unknown.some((u) => u === path || path.startsWith(`${u}.`) || u.startsWith(`${path}.`))
+/**
+ * Whether a read of a path could observe an unknown path: the path itself, a
+ * prefix of it, or a path under it is unknown. Built once, each test walks only
+ * the path's own segments, so checking costs nothing like paths x unknowns.
+ */
+function unknownIndex(unknown: readonly string[]): (path: string) => boolean {
+  const exact = new Set(unknown)
+  const parents = new Set<string>()
+  for (const path of unknown) {
+    for (let dot = path.indexOf('.'); dot !== -1; dot = path.indexOf('.', dot + 1))
+      parents.add(path.slice(0, dot))
+  }
+  return (path) => {
+    if (exact.has(path) || parents.has(path)) return true
+    for (let dot = path.indexOf('.'); dot !== -1; dot = path.indexOf('.', dot + 1))
+      if (exact.has(path.slice(0, dot))) return true
+    return false
+  }
 }
 
 // === public types ===
@@ -190,6 +205,8 @@ export interface PartialEngine {
   readonly hostKind: (name: string) => HostKind | undefined
   /** Charges one step of partial-evaluation work against the shared budget. */
   readonly charge: () => void
+  /** Checks an evaluation context as evaluation does (a list or a Map is not one). */
+  readonly contextOf: (value: unknown) => Record<string, unknown>
   /**
    * Evaluates a subtree against the known context with the given free locals,
    * sharing one step budget and deadline across the whole partial evaluation.
@@ -248,6 +265,7 @@ export function partiallyEvaluate<R>(
     [...new Set([...rootDeps.paths].map((path) => path.split('.')[0]))].filter(
       (name) => !Object.hasOwn(known, name),
     )
+  const touchesUnknown = unknownIndex(unknown)
   const callHost = options.callHostFunctions === true
   const nowKnown = options.now !== undefined
 
@@ -278,7 +296,7 @@ export function partiallyEvaluate<R>(
     // A context function can read variables the expression never names, so it
     // runs only when the caller says nothing is unknown.
     if (deps.wholeContext && (options.unknown === undefined || unknown.length > 0)) return false
-    for (const path of deps.paths) if (touchesUnknown(path, unknown)) return false
+    for (const path of deps.paths) if (touchesUnknown(path)) return false
     for (const name of deps.locals) if (env.get(name)?.known !== true) return false
     return true
   }
@@ -340,8 +358,11 @@ export function partiallyEvaluate<R>(
       }
       case 'Try': {
         const body = peval(node.body, env)
-        // try() recovers from evaluation errors: a body that always fails is the fallback.
-        if (!body.known && body.fails !== undefined) return peval(node.fallback, env)
+        // try() recovers from evaluation errors: a body that always fails with one is the
+        // fallback. A host contract violation is never recovered, so it propagates.
+        if (!body.known && body.fails !== undefined) {
+          return body.fails.code === 'HOST_CONTRACT' ? body : peval(node.fallback, env)
+        }
         if (body.known) return body
         return residual({ ...node, body: body.node, fallback: asNode(peval(node.fallback, env)) })
       }
@@ -481,9 +502,16 @@ export function partiallyEvaluate<R>(
   const compiled = engine.compileResidual(outcome.node)
   const frozenBindings = Object.freeze({ ...bindings })
   const withBindings = (context: object | undefined): object => {
+    const base = engine.contextOf(context)
     // Copy property descriptors so the caller's getters are not run here.
     const merged: object = Object.create(null) as object
-    Object.defineProperties(merged, Object.getOwnPropertyDescriptors(context ?? {}))
+    try {
+      Object.defineProperties(merged, Object.getOwnPropertyDescriptors(base))
+    } catch (error) {
+      throw new BonsaiRuntimeError('HOST_ERROR', 'Reading the evaluation context failed', {
+        cause: error,
+      })
+    }
     for (const [name, value] of Object.entries(frozenBindings)) {
       Object.defineProperty(merged, name, { value, enumerable: true })
     }
