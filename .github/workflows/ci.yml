@@ -72,6 +72,9 @@ jobs:
       - name: Performance gate
         run: bun run bench:gate
 
+      - name: Bundle size budget
+        run: bun run check:size
+
       # Absolute floors only catch catastrophic slowdowns; this runs the same
       # cases against the PR's base commit on the same runner and fails on a
       # relative drop, which is what actually catches a regression.

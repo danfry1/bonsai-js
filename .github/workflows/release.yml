@@ -75,6 +75,9 @@ jobs:
       - name: Packed package smoke test
         run: bun run check:package
 
+      - name: Bundle size budget
+        run: bun run check:size
+
       - name: Check package exports
         run: |
           npm pack --ignore-scripts --pack-destination /tmp
