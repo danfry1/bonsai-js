@@ -129,7 +129,14 @@ try {
       'withContext',
     ],
     'service/index.d.mts': [
-      ...['Completion', 'CompletionKind', 'CompletionResult', 'HoverResult', 'LanguageService'],
+      ...[
+        'Completion',
+        'CompletionKind',
+        'CompletionResult',
+        'HoverResult',
+        'LanguageService',
+        'LanguageServiceOptions',
+      ],
       'createLanguageService',
     ],
     'query/index.d.mts': [

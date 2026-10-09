@@ -312,6 +312,39 @@ function printTree(node: Node, options: PrintOptions): string {
     return wrap(expr(child), needed)
   }
 
+  /**
+   * Prints a run of one logical operator. The parser reads `a && b && c && d`
+   * as a balanced tree, so the run prints flat only when it is that tree;
+   * otherwise a nested run keeps its parentheses and parses back the same.
+   */
+  function logicalRun(n: Extract<Node, { type: 'Binary' }>): string {
+    const op = n.operator
+    const operands: Node[] = []
+    const collect = (child: Node): void => {
+      if (child.type === 'Binary' && child.operator === op) {
+        collect(child.left)
+        collect(child.right)
+      } else operands.push(child)
+    }
+    collect(n)
+    const balanced = (child: Node, from: number, to: number): boolean => {
+      if (to - from === 1) return child === operands[from]
+      if (child.type !== 'Binary' || child.operator !== op) return false
+      const middle = from + Math.ceil((to - from) / 2)
+      return balanced(child.left, from, middle) && balanced(child.right, middle, to)
+    }
+    if (balanced(n, 0, operands.length)) {
+      return operands
+        .map((operand, i) => binaryOperand(n, operand, i === 0 ? 'left' : 'right'))
+        .join(` ${op} `)
+    }
+    const side = (child: Node, which: 'left' | 'right'): string =>
+      child.type === 'Binary' && child.operator === op
+        ? `(${expr(child)})`
+        : binaryOperand(n, child, which)
+    return `${side(n.left, 'left')} ${op} ${side(n.right, 'right')}`
+  }
+
   function args(list: readonly (Node | SpreadNode)[]): string {
     return list
       .map((arg) => {
@@ -383,6 +416,7 @@ function printTree(node: Node, options: PrintOptions): string {
         return `${n.operator}${space}${operand}`
       }
       case 'Binary':
+        if (ASSOCIATIVE.has(n.operator)) return logicalRun(n)
         return `${binaryOperand(n, n.left, 'left')} ${n.operator} ${binaryOperand(n, n.right, 'right')}`
       case 'Conditional':
         return `${at(n.test, CONDITIONAL + 1)} ? ${expr(n.then)} : ${expr(n.otherwise)}`

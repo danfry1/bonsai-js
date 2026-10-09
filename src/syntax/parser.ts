@@ -63,6 +63,12 @@ const NULLISH_MIXED = Object.keys(BINARY_LEVEL).filter(
   (op) => op !== '??' && op !== '&&' && op !== '||',
 )
 
+/** Number literals written with an exponent, such as `1e308`: no one expects their digits exact. */
+const exponentLiterals = new WeakSet<Node>()
+
+/** Whether a parsed number literal was written with an exponent. */
+export const writtenWithExponent = (node: Node): boolean => exponentLiterals.has(node)
+
 /** Parses an expression into a syntax tree. Throws BonsaiSyntaxError or BonsaiLimitError. */
 export function parse(source: string, limits: ParseLimits = DEFAULT_PARSE_LIMITS): Node {
   return guardDepth(source, () => parseTree(source, limits))
@@ -546,14 +552,19 @@ function parseTree(source: string, limits: ParseLimits): Node {
   function parsePrimary(): Node {
     const token = peek()
     switch (token.kind) {
-      case 'number':
+      case 'number': {
         next()
-        return node({
+        const literal = node({
           type: 'Literal',
           value: token.number as number,
           start: token.start,
           end: token.end,
         })
+        // 1e308, not 0xE (whose E is a digit).
+        if (/[eE]/u.test(token.value) && !/^0[xXoObB]/u.test(token.value))
+          exponentLiterals.add(literal)
+        return literal
+      }
       case 'string':
         next()
         return node({ type: 'Literal', value: token.value, start: token.start, end: token.end })
@@ -592,7 +603,12 @@ function parseTree(source: string, limits: ParseLimits): Node {
             }
             next()
             const inner = parseExpression()
-            expectPunct(')')
+            const close = expectPunct(')')
+            // A parenthesized node's span includes its parentheses, so every span
+            // is balanced: slicing the source at it gives source that parses alone.
+            const spanned = inner as { start: number; end: number }
+            spanned.start = token.start
+            spanned.end = close.end
             parenthesized.add(inner)
             return inner
           }

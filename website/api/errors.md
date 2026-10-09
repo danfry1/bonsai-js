@@ -158,8 +158,8 @@ Errors have `severity: "error"` and make `check()` return `ok: false`. Warnings 
 | `ALWAYS_FALSE` | warning | A comparison or membership test that can never hold, such as `plan == "premium"` when `plan` is `"free" \| "pro"`. |
 | `ALWAYS_TRUE` | warning | The negation of one: `!=` or `not in` that always holds, such as `plan != "premium"`. |
 | `NEVER_NULL` | warning | `??` applied to a value that is never `null`. |
-| `MAYBE_NULL` | warning | A value that may be `null` where it decides something: an ordering comparison (it is `false`), the operand of `!`, `&&`, or `\|\|`, a `?:` condition, or what a lambda returns where a boolean is expected (null counts as `false`, which `!` turns into `true`). |
-| `UNSAFE_INTEGER` | warning | A number literal past 2^53, where neighbouring integers are not all distinct: `9007199254740993` reads as `9007199254740992`. |
+| `MAYBE_NULL` | warning | A value that may be `null` where it decides something: the operand of `!`, `&&`, or `\|\|`, a `?:` condition, or what a lambda returns where a boolean is expected (null counts as `false`, which `!` turns into `true`). An ordering comparison is not flagged: with null it is `false` by definition, so `users.filter(.age >= 18)` skips users without an age. |
+| `UNSAFE_INTEGER` | warning | A number literal written with all its digits past 2^53, where neighbouring integers are not all distinct: `9007199254740993` reads as `9007199254740992`. A literal written with an exponent (`1e308`) does not claim exact digits and is not flagged. |
 
 The same mistake can surface statically or at run time depending on what the checker knows. With declared types, `"a" + price` is a `TYPE_ERROR` diagnostic and the expression does not compile. With an untyped `price`, it compiles and fails at run time with `TYPE_ERROR`.
 

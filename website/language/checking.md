@@ -85,7 +85,7 @@ try {
 Warnings do not stop compilation. They point at expressions that are valid but probably not what the author meant. `env.check()` returns them among the diagnostics with `severity: "warning"`, and a compiled program lists them in `program.warnings`.
 
 - a comparison that can never hold, such as comparing an enum with a value it cannot have;
-- an ordering comparison with a value that may be `null` (it is `false` when the value is `null`);
+- a condition (`!`, `&&`, `||`, `?:`) that may be `null`, which counts as `false`;
 - `??` on a value that is never `null`;
 - a lambda that may return `null` where a boolean is expected;
 - a map literal with fields an expected type does not name (see [Expected types](#expected-types)).
@@ -97,8 +97,11 @@ premium.ok // => true
 premium.diagnostics[0].severity // => "warning"
 premium.diagnostics[0].message // => 'This comparison is always false: "free" | "pro" and "premium" have no values in common'
 
-env.compile('user.age > 18').warnings[0].message // => "This value may be null, and a comparison with null is false; check it first (x != null && ...) or use ??"
+env.compile('items.length ?? 0').warnings[0].message // => 'The left side of "??" is never null'
+env.compile('user.age > 18').warnings // => []
 ```
+
+An ordering with a value that may be `null` is not a warning: it is `false` when the value is `null`, by definition, so `users.filter(.age >= 18)` skips users without an age.
 
 Warnings have their own codes (`ALWAYS_FALSE`, `ALWAYS_TRUE`, `NEVER_NULL`, `MAYBE_NULL`, `UNSAFE_INTEGER`; see [Errors](/api/errors#diagnostics)) and `severity: "warning"`, except an extra field for an expected type, which keeps the `EXPECTED_TYPE` code.
 

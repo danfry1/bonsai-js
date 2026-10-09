@@ -93,7 +93,7 @@ Timestamps are instants; durations are exact, in whole milliseconds (a day is 24
 
 ## Static checking
 
-Gradual: unknown values are `any` (open environments, undeclared variables in non-strict environments, open records, and `values()`/`entries()`/computed reads on declared objects, which may carry extra keys). Declaring `variables` makes an environment strict unless `strict: false`. Errors: `UNKNOWN_VARIABLE` (strict), `UNKNOWN_PROPERTY` (closed records and map literals), `UNKNOWN_FUNCTION`, `NO_OVERLOAD`, `TYPE_ERROR`, `NULLABLE_RECEIVER`, `INVALID_LAMBDA`, `BLOCKED_PROPERTY`, `EXPECTED_TYPE`, `INVALID_ARGUMENT`, plus `SYNTAX` and `LIMIT` from `check()`. Warnings (severity "warning"): `ALWAYS_FALSE` (comparisons that can never hold), `ALWAYS_TRUE` (`!=` or `not in` that always holds), `MAYBE_NULL` (a possibly-null value in an ordering comparison, under `!`, `&&`, `||`, as a `?:` condition, or returned by a lambda where a boolean is expected), `NEVER_NULL` (`??` on never-null values), `UNSAFE_INTEGER` (number literals past 2^53).
+Gradual: unknown values are `any` (open environments, undeclared variables in non-strict environments, open records, and `values()`/`entries()`/computed reads on declared objects, which may carry extra keys). Declaring `variables` makes an environment strict unless `strict: false`. Errors: `UNKNOWN_VARIABLE` (strict), `UNKNOWN_PROPERTY` (closed records and map literals), `UNKNOWN_FUNCTION`, `NO_OVERLOAD`, `TYPE_ERROR`, `NULLABLE_RECEIVER`, `INVALID_LAMBDA`, `BLOCKED_PROPERTY`, `EXPECTED_TYPE`, `INVALID_ARGUMENT`, plus `SYNTAX` and `LIMIT` from `check()`. Warnings (severity "warning"): `ALWAYS_FALSE` (comparisons that can never hold), `ALWAYS_TRUE` (`!=` or `not in` that always holds), `MAYBE_NULL` (a possibly-null value under `!`, `&&`, `||`, as a `?:` condition, or returned by a lambda where a boolean is expected; an ordering with null is false by definition and not flagged), `NEVER_NULL` (`??` on never-null values), `UNSAFE_INTEGER` (number literals written with all their digits past 2^53; `1e308` is not flagged).
 
 ## API
 
@@ -169,7 +169,7 @@ All errors from checking and evaluating extend `BonsaiError` with `code`, `sourc
 
 ### Language service (bonsai-js/service)
 
-`createLanguageService(env)` -> `{ complete(src, offset), hover(src, offset), diagnostics(src) }`. `complete` returns `{ start, end, items: [{ label, kind, detail, documentation?, insertText, range? }] }` with kinds `value`, `variable`, `local`, `property`, `function`, `method`, `keyword`. It never evaluates or calls host functions.
+`createLanguageService(env, { expect? })` (expect adds EXPECTED_TYPE to diagnostics) -> `{ complete(src, offset), hover(src, offset), diagnostics(src) }`. `complete` returns `{ start, end, items: [{ label, kind, detail, documentation?, insertText, range? }] }` with kinds `value`, `variable`, `local`, `property`, `function`, `method`, `keyword`. It never evaluates or calls host functions.
 
 ## Security model
 

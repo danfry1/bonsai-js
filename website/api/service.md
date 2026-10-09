@@ -8,7 +8,12 @@ import { createLanguageService } from 'bonsai-js/service'
 
 <!-- no-run -->
 ```ts
-function createLanguageService(env: Environment): LanguageService
+function createLanguageService(env: Environment, options?: LanguageServiceOptions): LanguageService
+
+interface LanguageServiceOptions {
+  // The type every expression must have, as check(source, { expect }) takes it.
+  expect?: Type
+}
 
 interface LanguageService {
   complete(source: string, offset: number): CompletionResult
@@ -17,7 +22,19 @@ interface LanguageService {
 }
 ```
 
-Offsets are UTF-16 code unit offsets into `source`, the same unit as JavaScript string indices and `Diagnostic.start`/`end`. A bare `Environment` accepts an environment of any context type.
+Offsets are UTF-16 code unit offsets into `source`, the same unit as JavaScript string indices and `Diagnostic.start`/`end`. An offset past the end (or `NaN`) means the end; a negative or fractional offset throws a `RangeError`. A bare `Environment` accepts an environment of any context type.
+
+With `expect`, diagnostics include `EXPECTED_TYPE` when an expression cannot have that type, as `env.check(source, { expect })` reports it. A filter editor passes `t.boolean()`, so `account.mrr` is flagged while it is typed:
+
+```ts
+import { bonsai, t } from 'bonsai-js'
+import { createLanguageService } from 'bonsai-js/service'
+
+const env = bonsai({ variables: { account: t.object({ mrr: t.number() }) } })
+const filters = createLanguageService(env, { expect: t.boolean() })
+filters.diagnostics('account.mrr')[0].code // => "EXPECTED_TYPE"
+filters.diagnostics('account.mrr > 100') // => []
+```
 
 ## complete(source, offset)
 
@@ -93,7 +110,7 @@ service.hover('items.map(', 3) // => undefined
 
 ## diagnostics(source)
 
-Returns every syntax and check diagnostic for `source`, exactly as `env.check(source).diagnostics`, and never throws.
+Returns every syntax and check diagnostic for `source`, exactly as `env.check(source).diagnostics` (or `env.check(source, { expect })` for a service created with `expect`), and never throws.
 
 <!-- continue -->
 ```ts
