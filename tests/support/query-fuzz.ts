@@ -177,6 +177,15 @@ const atom: fc.Arbitrary<string> = fc.oneof(
   fc
     .tuple(numCol, fc.constantFrom('*', '+', '-'), fc.oneof(numConst, numCol), cmp, numConst)
     .map(([c, op, x, rel, k]) => `${c} ${op} ${x} ${rel} ${k}`),
+  // Unary minus, alone or around arithmetic.
+  fc
+    .tuple(
+      numCol,
+      fc.constantFrom('', ' * 2', ' + order.qty', ' - 1'),
+      cmp,
+      fc.oneof(numConst, numCol),
+    )
+    .map(([c, tail, rel, k]) => (tail === '' ? `-${c} ${rel} ${k}` : `-(${c}${tail}) ${rel} ${k}`)),
   fc
     .tuple(
       numCol,

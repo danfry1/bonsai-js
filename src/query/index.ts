@@ -15,7 +15,7 @@
 import type { AbortSignalLike } from '../environment.js'
 import { BonsaiError, BonsaiLimitError, type Span } from '../errors.js'
 import type { PartialOptions, PartialResult } from '../partial.js'
-import { Duration, isMap } from '../runtime/values.js'
+import { Duration, isMap, isValidDuration } from '../runtime/values.js'
 import { declaredVariables } from '../declared.js'
 import { closest, didYouMean } from '../suggest.js'
 import { formatType, type Type } from '../types.js'
@@ -59,11 +59,19 @@ interface CommonOptions {
   readonly known?: Readonly<Record<string, any>> | undefined
   /** The time `now()` returns. Required when the predicate calls now(). */
   readonly now?: Date | undefined
-  /** Step budget for the partial evaluation translation runs, as for partial(). */
+  /**
+   * Step budget for the whole translation: checking the known values, the
+   * partial evaluation it runs, and writing the query. Validated as for
+   * partial(). When not given, the partial evaluation uses the environment's
+   * limit and the rest of the work is bounded by 1,000,000 steps.
+   */
   readonly maxSteps?: number | undefined
-  /** Wall-clock budget in milliseconds for that partial evaluation, as for partial(). */
+  /**
+   * Wall-clock budget in milliseconds for the whole translation, as `maxSteps`
+   * covers it. When not given, the partial evaluation uses the environment's timeout.
+   */
   readonly timeout?: number | undefined
-  /** Cancels that partial evaluation, as for partial(). */
+  /** Cancels the translation, including the partial evaluation it runs. */
   readonly signal?: AbortSignalLike | undefined
   /**
    * Call sync host functions whose inputs are all known before translating,
@@ -295,15 +303,18 @@ function isValidDate(value: unknown): value is Date {
   }
 }
 
-function isPrimitive(value: unknown): value is Primitive {
-  return (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'boolean' ||
-    (typeof value === 'number' && Number.isFinite(value)) ||
-    isValidDate(value) ||
-    (value instanceof Duration && Number.isFinite(value.ms))
-  )
+/**
+ * A known value as the constant it is, or undefined for anything else. A Date or
+ * Duration is checked as evaluation checks it (a forged Duration is opaque) and
+ * copied, so later steps never read host data again. Reads host data: call it
+ * inside hostRead.
+ */
+function primitiveOf(value: unknown): Primitive | undefined {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (isValidDate(value)) return new Date(msOf(value))
+  if (isValidDuration(value)) return new Duration(value.ms)
+  return undefined
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -322,28 +333,40 @@ const DEFAULT_MAX_STEPS = 1_000_000
 /** Steps between two checks of the clock and the abort signal. */
 const CLOCK_SAMPLE = 1024
 
+interface Budget {
+  readonly charge: Charge
+  /**
+   * Runs partial evaluation on what is left of the budget: the steps not yet
+   * charged and the time to the deadline, when the caller gave them.
+   */
+  readonly partial: (
+    run: (limits: { maxSteps?: unknown; timeout?: unknown }) => PartialResult,
+  ) => PartialResult
+}
+
 /**
- * The budget translation work outside partial evaluation is charged against:
- * the same `maxSteps`, and the same deadline and signal, which run from the
- * start of the translation.
+ * The translation's budget: `maxSteps` (1,000,000 when not given), and a
+ * deadline and signal that run from the start of the translation. Work outside
+ * partial evaluation is charged here; with `maxSteps` or `timeout` given,
+ * partial evaluation runs on what is left of them, and otherwise on the
+ * environment's own limits.
  */
-function budget(options: CommonOptions, source: string): Charge {
+function budget(options: CommonOptions, source: string): Budget {
   const { maxSteps, timeout, signal } = options
-  // Invalid values are rejected by partial(), which runs before most of the work.
-  const max = typeof maxSteps === 'number' && maxSteps >= 0 ? maxSteps : DEFAULT_MAX_STEPS
-  const deadline = typeof timeout === 'number' && timeout > 0 ? performance.now() + timeout : 0
+  // Invalid values are passed on to partial(), which rejects them as it always does.
+  const validSteps = typeof maxSteps === 'number' && Number.isInteger(maxSteps) && maxSteps >= 0
+  const validTimeout = typeof timeout === 'number' && Number.isInteger(timeout) && timeout >= 0
+  const max = validSteps ? maxSteps : DEFAULT_MAX_STEPS
+  const deadline = validTimeout && timeout > 0 ? performance.now() + timeout : 0
   let steps = 0
   let nextSample = 0
-  return (n = 1) => {
-    steps += n
-    if (steps < nextSample) return
-    if (max > 0 && steps > max) {
-      throw new BonsaiLimitError('STEP_LIMIT', `Translation exceeded the step limit of ${max}`, {
-        source,
-      })
-    }
-    if (deadline !== 0 && performance.now() > deadline)
-      throw new BonsaiLimitError('TIMEOUT', 'Translation timed out', { source })
+  const overSteps = (): BonsaiLimitError =>
+    new BonsaiLimitError('STEP_LIMIT', `Translation exceeded the step limit of ${max}`, { source })
+  const overTime = (): BonsaiLimitError =>
+    new BonsaiLimitError('TIMEOUT', 'Translation timed out', { source })
+  const check = (): void => {
+    if (max > 0 && steps > max) throw overSteps()
+    if (deadline !== 0 && performance.now() > deadline) throw overTime()
     let aborted: boolean
     let cause: unknown
     try {
@@ -354,8 +377,42 @@ function budget(options: CommonOptions, source: string): Charge {
       cause = error
     }
     if (aborted) throw new BonsaiLimitError('ABORTED', 'Translation was aborted', { source, cause })
+  }
+  const charge: Charge = (n = 1) => {
+    steps += n
+    if (steps < nextSample) return
+    check()
     nextSample = max > 0 ? Math.min(steps + CLOCK_SAMPLE, max + 1) : steps + CLOCK_SAMPLE
   }
+  const partial: Budget['partial'] = (run) => {
+    check()
+    const limits: { maxSteps?: unknown; timeout?: unknown } = {}
+    if (maxSteps !== undefined) {
+      // 0 turns the limit off, so a budget used up exactly is over, not off.
+      if (validSteps && max > 0 && steps >= max) throw overSteps()
+      limits.maxSteps = validSteps && max > 0 ? max - steps : maxSteps
+    }
+    if (timeout !== undefined) {
+      if (deadline === 0) limits.timeout = timeout
+      else {
+        // Whole milliseconds, as partial() takes them: rounded up, since the deadline still holds.
+        const left = Math.ceil(deadline - performance.now())
+        if (left <= 0) throw overTime()
+        limits.timeout = left
+      }
+    }
+    try {
+      return run(limits)
+    } catch (error) {
+      // Partial evaluation ran on part of the translation's budget: name the whole one.
+      if (error instanceof BonsaiLimitError && error.code === 'STEP_LIMIT' && validSteps && max > 0)
+        throw overSteps()
+      if (error instanceof BonsaiLimitError && error.code === 'TIMEOUT' && deadline !== 0)
+        throw overTime()
+      throw error
+    }
+  }
+  return { charge, partial }
 }
 
 /** Characters of known text a translation reads or sends per step. */
@@ -502,47 +559,38 @@ function checkDeclaredTypes(
   }
 }
 
-/** One key of a static member chain, with the node that reads it. */
-interface Step {
-  readonly key: string
-  readonly node: Node
-}
-
-/** A static member chain from a variable: `limits.max`, `cfg["a.b"]`, or `l.max` after `let l = limits`. */
+/**
+ * A static member path from a variable: `limits.max`, `cfg["a.b"]`, or `l.max`
+ * after `let l = limits`. A path links to the one a key shorter, so a let name
+ * shares the path it stands for instead of copying it.
+ */
 interface Chain {
   readonly root: string
-  readonly steps: readonly Step[]
+  /** The path one key shorter; undefined for the variable itself. */
+  readonly parent: Chain | undefined
+  readonly key: string
+  /** The number of keys after the variable. */
+  readonly length: number
+  /** Equal for paths with the same keys, however the predicate reaches them. */
+  readonly id: number
 }
 
 /** What each `let` name stands for: the chain it aliases, or undefined (shadowing). */
 type Scope = ReadonlyMap<string, Chain | undefined>
 
 const NO_SCOPE: Scope = new Map()
-const NO_FLOW: ReadonlySet<string> = new Set()
+const NO_FLOW: ReadonlySet<number> = new Set()
 
-function chainOf(node: Node, scope: Scope): Chain | undefined {
-  const steps: Step[] = []
-  let current = node
-  while (current.type === 'Member' || current.type === 'Index') {
-    if (current.type === 'Member') steps.unshift({ key: current.name, node: current })
-    else if (current.index.type === 'Literal' && typeof current.index.value === 'string')
-      steps.unshift({ key: current.index.value, node: current })
-    else return undefined
-    current = current.object
-  }
-  if (current.type === 'Variable') return { root: current.name, steps }
-  if (current.type !== 'Local') return undefined
-  const alias = scope.get(current.name)
-  return alias === undefined ? undefined : { root: alias.root, steps: [...alias.steps, ...steps] }
+/** A chain's keys after the variable, in order. */
+function keysOf(chain: Chain): string[] {
+  const keys: string[] = []
+  for (let at: Chain | undefined = chain; at?.parent !== undefined; at = at.parent)
+    keys.push(at.key)
+  return keys.reverse()
 }
 
-/** An unambiguous key for the first `length` keys of a chain (a key may itself contain "."). */
-const pathKey = (chain: Chain, length: number): string =>
-  JSON.stringify([chain.root, ...chain.steps.slice(0, length).map((step) => step.key)])
-
 /** A chain's dotted name, for messages. */
-const pathName = (chain: Chain, length: number): string =>
-  [chain.root, ...chain.steps.slice(0, length).map((step) => step.key)].join('.')
+const pathName = (chain: Chain): string => [chain.root, ...keysOf(chain)].join('.')
 
 /** The non-null member of `T | null`, or the type itself. */
 function withoutNull(type: Type): Type {
@@ -594,17 +642,105 @@ function checkKnownPaths(
   const isPresent = (map: Record<string, unknown>, key: string): boolean =>
     read(() => Object.hasOwn(map, key) && map[key] !== undefined)
 
-  const union = (a: ReadonlySet<string>, b: ReadonlySet<string>): ReadonlySet<string> => {
+  // Paths are numbered as a tree of keys, so naming one costs a step however long it is.
+  const roots = new Map<string, number>()
+  const children = new Map<number, Map<string, number>>()
+  let paths = 0
+  const number = (table: Map<string, number>, key: string): number => {
+    let id = table.get(key)
+    if (id === undefined) {
+      id = paths++
+      table.set(key, id)
+    }
+    return id
+  }
+  const childOf = (parent: Chain, key: string): Chain => {
+    let table = children.get(parent.id)
+    if (table === undefined) {
+      table = new Map()
+      children.set(parent.id, table)
+    }
+    return { root: parent.root, parent, key, length: parent.length + 1, id: number(table, key) }
+  }
+  // A node is always seen in the same scope, so its chain is worked out once.
+  const chains = new WeakMap<Node, Chain | null>()
+  /** The key a member read takes, or undefined for a computed read. */
+  const keyOf = (node: Node): string | undefined => {
+    if (node.type === 'Member') return node.name
+    if (node.type === 'Index' && node.index.type === 'Literal')
+      return typeof node.index.value === 'string' ? node.index.value : undefined
+    return undefined
+  }
+  const chainOf = (node: Node, scope: Scope): Chain | undefined => {
+    // Down to the variable (or a read already worked out), then back up: no recursion.
+    const reads: Node[] = []
+    let current = node
+    let chain: Chain | undefined
+    for (;;) {
+      const done = chains.get(current)
+      if (done !== undefined) {
+        chain = done ?? undefined
+        break
+      }
+      if (current.type === 'Variable') {
+        const root = current.name
+        chain = { root, parent: undefined, key: root, length: 0, id: number(roots, root) }
+      } else if (current.type === 'Local') {
+        chain = scope.get(current.name)
+      } else if (
+        (current.type === 'Member' || current.type === 'Index') &&
+        keyOf(current) !== undefined
+      ) {
+        reads.push(current)
+        current = current.object
+        continue
+      }
+      chains.set(current, chain ?? null)
+      break
+    }
+    for (let i = reads.length - 1; i >= 0; i--) {
+      const at = reads[i]
+      const key = keyOf(at)
+      if (chain !== undefined && key !== undefined) chain = childOf(chain, key)
+      chains.set(at, chain ?? null)
+    }
+    return chain
+  }
+
+  /** Whether every path in `small` is in `big`, charging for the test. */
+  const within = (small: ReadonlySet<number>, big: ReadonlySet<number>): boolean => {
+    charge(small.size)
+    for (const id of small) if (!big.has(id)) return false
+    return true
+  }
+  const union = (a: ReadonlySet<number>, b: ReadonlySet<number>): ReadonlySet<number> => {
+    // The same paths proven again (`has(p) && has(p) && ...`) cost no copy.
+    if (a === b || b.size === 0) return a
     if (a.size === 0) return b
-    if (b.size === 0) return a
+    if (b.size <= a.size && within(b, a)) return a
+    if (a.size < b.size && within(a, b)) return b
     charge(a.size + b.size)
     return new Set([...a, ...b])
   }
+  // Each path's prefixes are listed once, however many conditions prove it.
+  const prefixes = new Map<number, ReadonlySet<number>>()
+  const prefixesOf = (chain: Chain): ReadonlySet<number> => {
+    let ids = prefixes.get(chain.id)
+    if (ids === undefined) {
+      charge(chain.length)
+      const all = new Set<number>()
+      for (let at: Chain | undefined = chain; at?.parent !== undefined; at = at.parent)
+        all.add(at.id)
+      ids = all
+      prefixes.set(chain.id, ids)
+    }
+    return ids
+  }
   // A node is always seen in the same scope, so what it proves is worked out once:
   // a long chain of `||` would otherwise be walked again for every operand.
-  const provenWhen = { true: new WeakMap<Node, ReadonlySet<string>>(), false: new WeakMap() }
+  const provenWhen = { true: new WeakMap<Node, ReadonlySet<number>>(), false: new WeakMap() }
   /** The paths a condition proves present when it is `when`. */
-  const proven = (node: Node, scope: Scope, when: boolean): ReadonlySet<string> => {
+  const proven = (node: Node, scope: Scope, when: boolean): ReadonlySet<number> => {
     const memo = provenWhen[`${when}`]
     const done = memo.get(node)
     if (done !== undefined) return done
@@ -621,40 +757,59 @@ function checkKnownPaths(
         else if (node.left.type === 'Literal' && node.left.value === null) target = node.right
       }
       const chain = target === undefined ? undefined : chainOf(target, scope)
-      if (chain !== undefined) {
-        charge(chain.steps.length)
-        out = new Set(chain.steps.map((_, i) => pathKey(chain, i + 1)))
-      }
+      // Proving a path proves every path on the way to it.
+      if (chain !== undefined) out = prefixesOf(chain)
     }
     memo.set(node, out)
     return out
   }
   const extend = (
-    flow: ReadonlySet<string>,
+    flow: ReadonlySet<number>,
     node: Node,
     scope: Scope,
     when: boolean,
-  ): ReadonlySet<string> => union(flow, proven(node, scope, when))
+  ): ReadonlySet<number> => union(flow, proven(node, scope, when))
 
   /**
-   * The known value a chain reads, or undefined where a key is missing or the
-   * value is not an object. `missing` is called with the length read so far.
+   * What reading a path from the known values gives: its value, the shortest
+   * path on the way that is missing, or undefined where a value on the way is
+   * not an object (null, lists, and other values are left to evaluation).
    */
-  const resolve = (chain: Chain, missing?: (length: number) => void): unknown => {
-    let value: unknown = read(() => known[chain.root])
-    for (const [i, step] of chain.steps.entries()) {
-      charge()
-      const current = value
-      // Only an object is read by key; null, lists, and other values are left to evaluation.
-      if (!read(() => isMap(current))) return undefined
-      const map = current as Record<string, unknown>
-      if (!isPresent(map, step.key)) {
-        missing?.(i + 1)
-        return undefined
+  type Resolved = { readonly value: unknown } | { readonly missing: Chain } | undefined
+  // Each path is read once, however many reads share it.
+  const resolved = new Map<number, Resolved>()
+  const resolve = (chain: Chain): Resolved => {
+    const pending: Chain[] = []
+    let result: Resolved
+    let at: Chain = chain
+    for (;;) {
+      if (resolved.has(at.id)) {
+        result = resolved.get(at.id)
+        break
       }
-      value = read(() => map[step.key])
+      if (at.parent === undefined) {
+        const { root } = at
+        charge()
+        result = { value: read(() => known[root]) }
+        resolved.set(at.id, result)
+        break
+      }
+      pending.push(at)
+      at = at.parent
     }
-    return value
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const step = pending[i]
+      charge()
+      if (result !== undefined && 'value' in result) {
+        const current = result.value
+        if (!read(() => isMap(current))) result = undefined
+        else if (!isPresent(current as Record<string, unknown>, step.key))
+          result = { missing: step }
+        else result = { value: read(() => (current as Record<string, unknown>)[step.key]) }
+      }
+      resolved.set(step.id, result)
+    }
+    return result
   }
 
   /** Checks a known value read whole against its declared type: every declared field is there. */
@@ -688,16 +843,16 @@ function checkKnownPaths(
   const reads: {
     readonly chain: Chain
     readonly node: Node
-    readonly flow: ReadonlySet<string>
+    readonly flow: ReadonlySet<number>
   }[] = []
   const wholes: { readonly chain: Chain; readonly node: Node }[] = []
 
   /** `whole`: the value is used as it is, not only to read a member of it or test it for null. */
-  const visit = (node: Node, scope: Scope, flow: ReadonlySet<string>, whole: boolean): void => {
+  const visit = (node: Node, scope: Scope, flow: ReadonlySet<number>, whole: boolean): void => {
     charge()
     const chain = chainOf(node, scope)
     if (chain !== undefined && chain.root !== row) {
-      if (chain.steps.length > 0) reads.push({ chain, node, flow })
+      if (chain.length > 0) reads.push({ chain, node, flow })
       if (whole && declared?.[chain.root] !== undefined) wholes.push({ chain, node })
     }
     switch (node.type) {
@@ -765,20 +920,21 @@ function checkKnownPaths(
   }
   visit(ast, NO_SCOPE, NO_FLOW, true)
   for (const { chain, node, flow } of reads) {
-    resolve(chain, (length) => {
-      if (guardedUses.has(node) || flow.has(pathKey(chain, length))) return
-      fail(
-        `${pathName(chain, length)} is missing from the known values: pass it (null when it has no value), or guard it with has() or ??`,
-        node,
-      )
-    })
+    const result = resolve(chain)
+    if (result === undefined || !('missing' in result)) continue
+    if (guardedUses.has(node) || flow.has(result.missing.id)) continue
+    fail(
+      `${pathName(result.missing)} is missing from the known values: pass it (null when it has no value), or guard it with has() or ??`,
+      node,
+    )
   }
   for (const { chain, node } of wholes) {
-    const keys = chain.steps.map((step) => step.key)
-    const type = typeAt(declared?.[chain.root] as Type, keys)
+    charge(chain.length)
+    const type = typeAt(declared?.[chain.root] as Type, keysOf(chain))
     if (type === undefined) continue
-    const value = resolve(chain)
-    if (value !== undefined) checkWhole(value, type, pathName(chain, keys.length), node)
+    const result = resolve(chain)
+    if (result !== undefined && 'value' in result && result.value !== undefined)
+      checkWhole(result.value, type, pathName(chain), node)
   }
 }
 
@@ -788,8 +944,9 @@ function lower(
   options: CommonOptions,
   columns: ReadonlyMap<string, Declared>,
   target: Target,
-  charge: Charge,
+  translation: Budget,
 ): Pred {
+  const { charge } = translation
   const source = program.source
   const fail = (message: string, at?: Span): never => {
     throw new BonsaiTranslationError(
@@ -835,16 +992,17 @@ function lower(
     fail,
     charge,
   })
-  const result = program.partial(knownData as never, {
-    unknown: [options.row],
-    ...(options.callHostFunctions === undefined
-      ? {}
-      : { callHostFunctions: options.callHostFunctions }),
-    ...(options.now === undefined ? {} : { now: options.now }),
-    ...(options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps }),
-    ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  })
+  const result = translation.partial((limits) =>
+    program.partial(knownData as never, {
+      unknown: [options.row],
+      ...(options.callHostFunctions === undefined
+        ? {}
+        : { callHostFunctions: options.callHostFunctions }),
+      ...(options.now === undefined ? {} : { now: options.now }),
+      ...(limits as Pick<PartialOptions, 'maxSteps' | 'timeout'>),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    }),
+  )
   if (result.status === 'error') throw result.error
   if (result.status === 'value') {
     if (typeof result.value !== 'boolean' && result.value !== null)
@@ -950,7 +1108,8 @@ function lower(
     charge()
     if (constants.has(node.name)) return constants.get(node.name)
     const bound = knownValue(node.name)
-    const constant = isPrimitive(bound) ? charged(bound, node) : undefined
+    const primitive = hostRead(() => primitiveOf(bound), 'the known values')
+    const constant = primitive === undefined ? undefined : charged(primitive, node)
     constants.set(node.name, constant)
     return constant
   }
@@ -969,12 +1128,13 @@ function lower(
     }
     if (node.type !== 'Variable') return undefined
     if (lists.has(node.name)) return lists.get(node.name)
-    const list = knownList(node.name, knownValue(node.name), node)
+    const list = knownList(knownValue(node.name), node)
     lists.set(node.name, list)
     return list
   }
-  const knownList = (name: string, items: unknown, at: Node): Primitive[] | undefined => {
-    const what = `the known list ${name}`
+  const knownList = (items: unknown, at: Node): Primitive[] | undefined => {
+    // A residual names known values by internal bindings, so the message does not.
+    const what = 'the known values'
     if (!hostRead(() => Array.isArray(items), what)) return undefined
     const list = items as unknown[]
     const out: Primitive[] = []
@@ -982,8 +1142,8 @@ function lower(
     // A hole, or undefined, reads as null.
     const length = hostRead(() => list.length, what)
     for (let i = 0; i < length; i++) {
-      const item: unknown = hostRead(() => list[i], what) ?? null
-      if (!isPrimitive(item)) return undefined
+      const item = hostRead(() => primitiveOf(list[i] ?? null), what)
+      if (item === undefined) return undefined
       out.push(charged(item, at))
     }
     return out
@@ -1081,6 +1241,13 @@ function lower(
         return fail(`"${node.operator}" is translated for numbers only`, node)
       }
       return { kind: 'arith', op: node.operator, left, right }
+    }
+    if (node.type === 'Unary' && node.operator === '-') {
+      if (!target.arithmetic) return fail(`Arithmetic is not translated for ${target.name}`, node)
+      const operand = value(node.operand)
+      if (kindOf(operand) !== 'number') return fail('"-" is translated for numbers only', node)
+      // Multiplying by -1 is exact, and fails on null as negation does.
+      return { kind: 'arith', op: '*', left: { kind: 'const', value: -1 }, right: operand }
     }
     return untranslatable(node)
   }
@@ -1199,8 +1366,7 @@ function lower(
   const knownTime = (node: Node): { kind: 'timestamp' | 'duration'; ms: number } | undefined => {
     const constant = constOf(node)
     if (constant instanceof Date) return { kind: 'timestamp', ms: msOf(constant) }
-    const bound = node.type === 'Variable' ? knownValue(node.name) : undefined
-    return bound instanceof Duration ? { kind: 'duration', ms: bound.ms } : undefined
+    return constant instanceof Duration ? { kind: 'duration', ms: constant.ms } : undefined
   }
 
   /**
@@ -1708,10 +1874,11 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     },
     checkPattern: () => undefined,
   }
-  const charge = budget(options, program.source)
+  const translation = budget(options, program.source)
+  const { charge } = translation
   const declaredColumns = declare(options, options.columns, 'columns', target)
   checkDeclaredTypes(program, options.row, declaredColumns, 'columns')
-  const predicate = lower(program, options, declaredColumns, target, charge)
+  const predicate = lower(program, options, declaredColumns, target, translation)
   const params: unknown[] = []
   const tooManyParams = (): BonsaiTranslationError =>
     new BonsaiTranslationError(
@@ -2011,7 +2178,8 @@ function escapeRegex(text: string): string {
 export function toMongo(program: Translatable, options: MongoOptions): MongoQuery {
   checkProgram(program, 'toMongo')
   checkKeys(options, MONGO_OPTION_KEYS, 'toMongo')
-  const charge = budget(options, program.source)
+  const translation = budget(options, program.source)
+  const { charge } = translation
   const target: Target = {
     name: 'MongoDB',
     arithmetic: false,
@@ -2038,7 +2206,7 @@ export function toMongo(program: Translatable, options: MongoOptions): MongoQuer
     target,
   )
   checkDeclaredTypes(program, options.row, declaredFields, 'fields')
-  const predicate = lower(program, options, declaredFields, target, charge)
+  const predicate = lower(program, options, declaredFields, target, translation)
   type Filter = Record<string, unknown>
   // lower() only leaves field-versus-constant comparisons for MongoDB.
   const field = (value: Value): string => (value as { field: string }).field
