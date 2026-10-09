@@ -2,7 +2,6 @@ import type { Analysis } from './check/checker.js'
 import { BonsaiRuntimeError, type BonsaiError } from './errors.js'
 import { forEachChild, type LambdaNode, type Node, type SpreadNode } from './syntax/ast.js'
 import { print } from './syntax/printer.js'
-import { t, type Type } from './types.js'
 import type { EvaluateOptions } from './environment.js'
 
 // === dependencies ===
@@ -222,15 +221,11 @@ export interface PartialEngine {
    */
   readonly evaluate: (node: Node, locals: readonly (readonly [string, unknown])[]) => unknown
   /**
-   * Compiles a residual for later evaluation. `bindingTypes` are the static
-   * types of the known values it refers to by name. The compiled residual reads
+   * Compiles a residual for later evaluation. The compiled residual reads
    * variables from `ctx` (the caller's context plus the bindings); context host
    * functions receive `hostContext`, the caller's own context.
    */
-  readonly compileResidual: (
-    residual: Node,
-    bindingTypes: Readonly<Record<string, Type>>,
-  ) => {
+  readonly compileResidual: (residual: Node) => {
     runSync: (ctx: object, hostContext: object, options: unknown) => unknown
     runAsync: (ctx: object, hostContext: object, options: unknown) => Promise<unknown>
   }
@@ -243,8 +238,7 @@ export interface PartialEngine {
  * raises that error when evaluation reaches it, whatever the unknowns are.
  */
 type Outcome =
-  /** `type` is the static type of the sub-expression that produced the value. */
-  | { readonly known: true; readonly value: unknown; readonly type?: Type }
+  | { readonly known: true; readonly value: unknown }
   | { readonly known: false; readonly node: Node; readonly fails?: BonsaiRuntimeError }
 
 const at = { start: 0, end: 0 }
@@ -286,7 +280,6 @@ export function partiallyEvaluate<R>(
   const nowKnown = options.now !== undefined
 
   const bindings: Record<string, unknown> = {}
-  const bindingTypes: Record<string, Type> = {}
   const taken = new Set([...rootDeps.paths].map((path) => path.split('.')[0]))
   for (const name of Object.keys(known)) taken.add(name)
   for (const name of boundNames(root)) taken.add(name)
@@ -296,12 +289,11 @@ export function partiallyEvaluate<R>(
     for (let i = 2; taken.has(name); i++) name = `${base}${i}`
     return name
   }
-  const bind = (value: unknown, type: Type | undefined): Node => {
+  const bind = (value: unknown): Node => {
     let name: string
     do name = `__known${++bindingCount}`
     while (taken.has(name))
     bindings[name] = value
-    bindingTypes[name] = type ?? t.any()
     return { type: 'Variable', name, ...at }
   }
 
@@ -328,20 +320,11 @@ export function partiallyEvaluate<R>(
 
   /** A known value as syntax: an inline literal, or a reference to a binding. */
   const asNode = (outcome: Outcome): Node =>
-    outcome.known ? (literalFor(outcome.value) ?? bind(outcome.value, outcome.type)) : outcome.node
+    outcome.known ? (literalFor(outcome.value) ?? bind(outcome.value)) : outcome.node
   const residual = (node: Node, fails?: BonsaiRuntimeError): Outcome =>
     fails === undefined ? { known: false, node } : { known: false, node, fails }
 
-  // A known value carries the static type of the sub-expression it came from,
-  // so a binding in the residual keeps the type the original was checked with.
   const peval = (node: Node, env: Env): Outcome => {
-    const outcome = pevalNode(node, env)
-    if (!outcome.known || outcome.type !== undefined) return outcome
-    const type = engine.analysis.types.get(node)
-    return type === undefined ? outcome : { known: true, value: outcome.value, type }
-  }
-
-  const pevalNode = (node: Node, env: Env): Outcome => {
     engine.charge()
     if (closed(node, env)) {
       try {
@@ -532,7 +515,7 @@ export function partiallyEvaluate<R>(
 
   // An expression that is known except for an error it always raises.
   const residualDeps = dependencies(engine.hostKind)(outcome.node)
-  const compiled = engine.compileResidual(outcome.node, bindingTypes)
+  const compiled = engine.compileResidual(outcome.node)
   const frozenBindings = Object.freeze({ ...bindings })
   const withBindings = (base: Record<string, unknown>): object => {
     // Copy property descriptors so the caller's getters are not run here.

@@ -59,7 +59,7 @@ Values in `trace` are the live values from your context, not copies. To send an 
 
 ## Errors
 
-`explain()` never throws for evaluation errors. It returns `{ ok: false, error }` and marks the node that failed, so you can show where a rule broke. Invalid options and an invalid context throw, as they do for `evaluate()`:
+`explain()` never rejects for evaluation errors (and `explainSync()` never throws for them). It returns `{ ok: false, error }` and marks the node that failed, so you can show where a rule broke; a context that fails `validateContext` is returned the same way, as an `INVALID_CONTEXT` error. Invalid options and a context that is not an object are your own mistakes: `explain()` rejects and `explainSync()` throws, as `evaluate()` and `evaluateSync()` do:
 
 ```ts
 import { bonsai } from 'bonsai-js'

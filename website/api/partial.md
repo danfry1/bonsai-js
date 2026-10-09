@@ -54,7 +54,7 @@ Short primitives (numbers, booleans, `null`, strings up to 200 characters) are w
 | `callHostFunctions` | `false` | Call host functions whose inputs are known (only synchronous ones); otherwise they stay in the residual |
 | `now` | none | The time `now()` returns; otherwise `now()` stays in the residual (the environment's `clock` is not used, so a stored residual reads the time when it is evaluated) |
 
-Limit errors (steps, time) are thrown from `partial()` rather than guessed. Every sub-expression evaluated during one `partial()` call shares one step budget. Options follow the same rules as everywhere else: an unknown option or a wrong type is a `TypeError`. With `validateContext`, the variables in `known` are validated as evaluation validates them (a mismatch is an `INVALID_CONTEXT` result); a variable with an unknown path inside it is incomplete by design and is not validated.
+Limit errors (steps, time) are thrown from `partial()` rather than guessed. Every sub-expression evaluated during one `partial()` call shares one step budget. Options follow the same rules as everywhere else: an unknown option or a wrong type is a `TypeError`. With `validateContext`, the variables in `known` are validated as evaluation validates them (a mismatch is an `INVALID_CONTEXT` result), so a known object must have all its declared fields; a missing field would otherwise be read as `null`. To leave part of an object unknown, list its path in `unknown` (`user.riskScore`): a variable with an unknown path inside it is not validated.
 
 ## Details
 

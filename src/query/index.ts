@@ -701,8 +701,9 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
   if (dialect !== 'postgres' && dialect !== 'sqlite')
     throw new TypeError(`dialect must be 'postgres' or 'sqlite'`)
   const pg = dialect === 'postgres'
+  if (options.paramOffset !== undefined && typeof options.paramOffset !== 'number')
+    throw new TypeError('paramOffset must be a number')
   const offset = options.paramOffset ?? 0
-  if (typeof offset !== 'number') throw new TypeError('paramOffset must be a number')
   if (!Number.isSafeInteger(offset) || offset < 0)
     throw new RangeError('paramOffset must be a non-negative integer')
   const target: Target = {

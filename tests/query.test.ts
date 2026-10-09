@@ -554,6 +554,7 @@ describe('translator options are validated like the others', () => {
 
   it('reports a wrongly typed paramOffset as a TypeError and a bad value as a RangeError', () => {
     expect(() => toSQL(program, { ...sql, paramOffset: '3' } as never)).toThrow(TypeError)
+    expect(() => toSQL(program, { ...sql, paramOffset: null } as never)).toThrow(TypeError)
     expect(() => toSQL(program, { ...sql, paramOffset: -1 })).toThrow(RangeError)
     expect(toSQL(program, { ...sql, paramOffset: 2 }).sql).toContain('$3')
   })

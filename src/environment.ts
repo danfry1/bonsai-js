@@ -1,4 +1,4 @@
-import { analyze, type Analysis, type CheckEnv } from './check/checker.js'
+import { analyze, type Analysis, type CallPlan, type CheckEnv } from './check/checker.js'
 import { compileProgram, type CompiledProgram } from './compile/compiler.js'
 import {
   BonsaiCheckError,
@@ -32,7 +32,7 @@ import {
   snapshotTrace,
   type Trace,
 } from './runtime/trace.js'
-import type { Node } from './syntax/ast.js'
+import { forEachChild, type CallNode, type Node } from './syntax/ast.js'
 import { isName } from './syntax/lexer.js'
 import { DEFAULT_PARSE_LIMITS, parse, type ParseLimits } from './syntax/parser.js'
 import {
@@ -1237,6 +1237,39 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       }
     }
 
+    // Each call the original program checked, by its source span and name. A
+    // residual keeps the spans of the calls it copies, so it can run each one
+    // with the overloads the original chose from the declared types: checking
+    // the residual again would see other types (a known branch removed, an
+    // open environment) and could pick another overload.
+    let callsBySpan: Map<string, CallPlan | null> | undefined
+    const callKey = (call: CallNode): string => `${call.start}:${call.end}:${call.name}`
+
+    function originalPlans(
+      residual: Node,
+      checkedCalls: ReadonlyMap<CallNode, CallPlan>,
+    ): ReadonlyMap<CallNode, CallPlan> {
+      if (callsBySpan === undefined) {
+        callsBySpan = new Map()
+        for (const [call, plan] of analysis.calls) {
+          const key = callKey(call)
+          // Two calls with one span cannot be told apart; neither is reused.
+          callsBySpan.set(key, callsBySpan.has(key) ? null : plan)
+        }
+      }
+      const bySpan = callsBySpan
+      const plans = new Map(checkedCalls)
+      const visit = (node: Node): void => {
+        if (node.type === 'Call') {
+          const plan = bySpan.get(callKey(node))
+          if (plan !== undefined && plan !== null) plans.set(node, plan)
+        }
+        forEachChild(node, visit)
+      }
+      visit(residual)
+      return plans
+    }
+
     // Sub-trees compiled on their own for partial evaluation, by free locals.
     const subtrees = new WeakMap<Node, Map<string, CompiledProgram>>()
 
@@ -1306,23 +1339,22 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
                 throw hostDataFailure(error, source)
               }
             },
-            compileResidual: (residual, bindingTypes) => {
-              // Checked with the declared types (and each known value's type
-              // from the original analysis), so calls resolve to the overloads
-              // the original program chose. The original expression passed
-              // the checker; inlining known values can make a failing branch
-              // statically visible, and that failure must happen at run time,
-              // as it would have, so findings here do not stop compilation.
-              // Analyzed as a tree (not re-parsed), so the printer's parentheses
-              // cannot push it past the parse depth limit.
-              const variables =
-                settings.variables === undefined
-                  ? undefined
-                  : { ...settings.variables, ...bindingTypes }
+            compileResidual: (residual) => {
+              // The original expression passed the checker; inlining known
+              // values can make a failing branch statically visible, and that
+              // failure must happen at run time, as it would have, so findings
+              // here do not stop compilation. Analyzed as a tree (not
+              // re-parsed), so the printer's parentheses cannot push it past
+              // the parse depth limit.
+              const reanalyzed = analyze(
+                residual,
+                { ...checkEnv, variables: undefined, strict: false },
+                { expected: expect },
+              )
               let runner: ResidualRunner | undefined
               makeProgram<unknown>(
                 source,
-                analyze(residual, { ...checkEnv, variables, strict: false }, { expected: expect }),
+                { ...reanalyzed, calls: originalPlans(residual, reanalyzed.calls) },
                 expect,
                 (made) => {
                   runner = made

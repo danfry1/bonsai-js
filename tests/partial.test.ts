@@ -406,6 +406,27 @@ describe('partial residuals evaluate as the program does', () => {
     expect(String(result.evaluateSync({ ds: [], xs: [] }))).toBe('PT0S')
   })
 
+  it('runs each call with the overload the original chose, even when folding narrows it', () => {
+    const typed = bonsai({
+      variables: { b: t.boolean(), a: t.any(), ds: t.list(t.duration()), ns: t.list(t.number()) },
+    })
+    // The original sums a list that may hold numbers or durations, so an empty
+    // one sums to 0; the residual ds.sum() must not switch to the duration overload.
+    const branch = typed.compile('(b ? ds : ns).sum()')
+    const residual = residualOf(branch.partial({ b: true }))
+    expect(residual.source).toBe('ds.sum()')
+    expect(residual.evaluateSync({ b: true, ds: [], ns: [] })).toBe(0)
+    expect(branch.evaluateSync({ b: true, ds: [], ns: [] })).toBe(0)
+    const fallback = typed.compile('(a ?? ds).sum()')
+    expect(residualOf(fallback.partial({ a: null })).evaluateSync({ a: null, ds: [] })).toBe(0)
+  })
+
+  it('keeps the original overloads in an open environment', () => {
+    const program = bonsai().compile('(n > 0 ? [hours(k)].filter(v => v > hours(9)) : []).sum()')
+    expect(String(program.evaluateSync({ n: 1, k: 1 }))).toBe('PT0S')
+    expect(String(residualOf(program.partial({ k: 1 })).evaluateSync({ n: 1, k: 1 }))).toBe('PT0S')
+  })
+
   it('applies evaluation options', async () => {
     const program = bonsai().compile('xs.map(. * 2).sum() + k')
     const result = residualOf(program.partial({ k: 1 }, { unknown: ['xs'] }))

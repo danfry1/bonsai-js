@@ -19,7 +19,7 @@ const { filter: mongoFilter, options } = toMongo(filter, { row: 'order', fields:
 
 ## The contract
 
-- A filter is an expression over one record variable (`row`). Every other variable must be in `known`, which is applied by [partial evaluation](./partial) before translating; a variable that is neither is rejected, so a misspelled `row` cannot silently read as null.
+- A filter is an expression over one record variable (`row`). Every other variable must be in `known`, which is applied by [partial evaluation](./partial) before translating; a variable that is neither is rejected, so a misspelled `row` cannot silently read as null. With `validateContext`, the known values are validated as evaluation validates them (`INVALID_CONTEXT`).
 - The query selects **exactly** the records for which the filter evaluates to `true` in Bonsai. Records for which it would fail (for example calling `startsWith` on a null field) are excluded, as `try(filter, false)` would.
 - SQL's three-valued `NULL` logic is converted to Bonsai's: `x != "a"` includes rows where `x` is `NULL`, comparisons with `NULL` are false, and `!` of a failing condition stays excluded. The returned SQL is true for the selected rows and may be `NULL` for the others, so negate a filter by translating `!(filter)`, not by wrapping the SQL in `NOT`.
 - This is verified by differential tests that run random filters over random rows and compare the selected records with Bonsai's evaluation: in SQLite and PGlite on every run, and against Postgres 13 and 17 (through `pg` and `postgres`) and MongoDB 8.0 (through the official driver) with `bun run test:servers`.
