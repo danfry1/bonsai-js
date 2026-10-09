@@ -455,7 +455,8 @@ export function compileProgram(
       try {
         r(s)
       } catch (error) {
-        if (!(error instanceof BonsaiRuntimeError)) throw error
+        // Only limits stop the extra work; its failures (host data included) are ignored.
+        if (error instanceof BonsaiLimitError) throw error
       } finally {
         tracer.extraDepth--
       }
@@ -480,7 +481,7 @@ export function compileProgram(
           try {
             await right.fn(s)
           } catch (error) {
-            if (!(error instanceof BonsaiRuntimeError)) throw error
+            if (error instanceof BonsaiLimitError) throw error
           } finally {
             tracer.extraDepth--
           }

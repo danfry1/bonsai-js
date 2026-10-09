@@ -23,6 +23,7 @@ import { errorText, isMap } from './runtime/values.js'
 import {
   DEFAULT_MAX_ITERATIONS,
   DEFAULT_MAX_TRACE_NODES,
+  SNAPSHOT_ENTRIES,
   Tracer,
   reasonsOf,
   renderTrace,
@@ -791,16 +792,68 @@ function checkedClock(clock: () => Date): () => Date {
   }
 }
 
-/** The evaluation options inside explain options (explain's own keys removed). */
-function evaluateOptionsOf(options: ExplainOptions | undefined): EvaluateOptions | undefined {
-  if (options === undefined || options === null || typeof options !== 'object') return options
+const EXPLAIN_OPTION_KEYS: ReadonlySet<string> = new Set([
+  ...EVALUATE_OPTION_KEYS,
+  'maxIterations',
+  'maxTraceNodes',
+  'exhaustive',
+])
+
+interface ExplainSettings {
+  readonly maxIterations: number
+  readonly maxNodes: number
+  readonly exhaustive: boolean
+  /** The evaluation options among them, validated by evaluationLimits. */
+  readonly evaluate: EvaluateOptions | undefined
+}
+
+/** Reads explain options once, with the same TypeError/RangeError rules as evaluate's. */
+function explainSettings(options: unknown): ExplainSettings {
+  if (options === undefined) {
+    return {
+      maxIterations: DEFAULT_MAX_ITERATIONS,
+      maxNodes: DEFAULT_MAX_TRACE_NODES,
+      exhaustive: false,
+      evaluate: undefined,
+    }
+  }
+  if (typeof options !== 'object' || options === null || Array.isArray(options))
+    throw new TypeError('Explain options must be an object')
+  let copy: Record<string, unknown>
+  try {
+    copy = { ...(options as Record<string, unknown>) }
+  } catch {
+    throw new TypeError('Explain options could not be read')
+  }
+  for (const key of Object.keys(copy)) {
+    if (!EXPLAIN_OPTION_KEYS.has(key)) {
+      throw new TypeError(
+        `Unknown explain option key "${key}" (expected one of: ${[...EXPLAIN_OPTION_KEYS].join(', ')})`,
+      )
+    }
+  }
+  const count = (name: string, fallback: number): number => {
+    const value = copy[name]
+    if (value === undefined) return fallback
+    if (typeof value !== 'number') throw new TypeError(`Explain option "${name}" must be a number`)
+    if (!Number.isSafeInteger(value) || value < 0)
+      throw new RangeError(`Explain option "${name}" must be a non-negative integer`)
+    return value
+  }
+  if (copy.exhaustive !== undefined && typeof copy.exhaustive !== 'boolean')
+    throw new TypeError('Explain option "exhaustive" must be a boolean')
   const {
     maxIterations: _iterations,
     maxTraceNodes: _nodes,
     exhaustive: _exhaustive,
-    ...rest
-  } = options
-  return rest
+    ...evaluate
+  } = copy
+  return {
+    maxIterations: count('maxIterations', DEFAULT_MAX_ITERATIONS),
+    maxNodes: count('maxTraceNodes', DEFAULT_MAX_TRACE_NODES),
+    exhaustive: copy.exhaustive === true,
+    evaluate,
+  }
 }
 
 function contextOf(value: unknown): Record<string, unknown> {
@@ -994,14 +1047,18 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         truncated,
         reasons: () => reasonsOf(trace),
         toString: () => renderTrace(trace, truncated),
-        toJSON: () => ({
-          ok: outcome.ok,
-          ...(outcome.ok
-            ? { value: snapshot(outcome.value) }
-            : { error: { code: outcome.error.code, message: outcome.error.message } }),
-          truncated,
-          trace: snapshotTrace(trace),
-        }),
+        toJSON: () => {
+          // One budget for the whole snapshot, however often a value recurs in the trace.
+          const budget = { left: SNAPSHOT_ENTRIES }
+          return {
+            ok: outcome.ok,
+            ...(outcome.ok
+              ? { value: snapshot(outcome.value, budget) }
+              : { error: { code: outcome.error.code, message: outcome.error.message } }),
+            truncated,
+            trace: snapshotTrace(trace, budget),
+          }
+        },
       })
     }
 
@@ -1009,28 +1066,19 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       return { ok: false, error: hostDataFailure(error, source) }
     }
 
-    function tracerFor(options: ExplainOptions | undefined): Tracer {
-      const maxIterations = options?.maxIterations ?? DEFAULT_MAX_ITERATIONS
-      const maxNodes = options?.maxTraceNodes ?? DEFAULT_MAX_TRACE_NODES
-      for (const [name, value] of [
-        ['maxIterations', maxIterations],
-        ['maxTraceNodes', maxNodes],
-      ] as const) {
-        if (!Number.isInteger(value) || value < 0) {
-          throw new TypeError(`Explain option "${name}" must be a non-negative integer`)
-        }
-      }
+    function tracerFor(explain: ExplainSettings): Tracer {
       return new Tracer(
         source,
         analysis.root,
-        maxIterations,
-        maxNodes,
-        options?.exhaustive === true,
+        explain.maxIterations,
+        explain.maxNodes,
+        explain.exhaustive,
       )
     }
 
     function explainSync(context: unknown, options: ExplainOptions | undefined): Explanation<R> {
-      const tracer = tracerFor(options)
+      const explain = explainSettings(options)
+      const tracer = tracerFor(explain)
       if (analysis.async) {
         return explanation(
           tracer,
@@ -1044,7 +1092,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         )
       }
       const code = (traceSync ??= compileProgram(analysis, 'sync', { trace: true }))
-      const limits = evaluationLimits(evaluateOptionsOf(options), settings)
+      const limits = evaluationLimits(explain.evaluate, settings)
       const ctx = contextOf(context)
       const state = new State(settings.runtimeLimits, settings.clock)
       try {
@@ -1066,9 +1114,10 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       options: ExplainOptions | undefined,
     ): Promise<Explanation<R>> {
       if (!analysis.async) return explainSync(context, options)
-      const tracer = tracerFor(options)
+      const explain = explainSettings(options)
+      const tracer = tracerFor(explain)
       const code = (traceAsync ??= compileProgram(analysis, 'async', { trace: true }))
-      const limits = evaluationLimits(evaluateOptionsOf(options), settings)
+      const limits = evaluationLimits(explain.evaluate, settings)
       const ctx = contextOf(context)
       const state = new State(settings.runtimeLimits, settings.clock)
       try {

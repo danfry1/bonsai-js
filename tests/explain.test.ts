@@ -279,3 +279,91 @@ describe('explain: review findings and extras', () => {
     expect(!explanation.ok && explanation.error.code).toBe('HOST_ERROR')
   })
 })
+
+describe('explain on the hardened engine', () => {
+  it('bounds toJSON however large or shared the values are', () => {
+    const big = new Uint8Array(20_000_000)
+    const start = performance.now()
+    const json = JSON.stringify(env.explain('try(b.length, -1)', { b: big }))
+    expect(performance.now() - start).toBeLessThan(2000)
+    expect(json).toContain('[Uint8Array]')
+    const cube = Array.from({ length: 50 }, () =>
+      Array.from({ length: 50 }, () => Array.from({ length: 50 }, (_, i) => i)),
+    )
+    const shared = `[${Array.from({ length: 500 }, () => 'd').join(', ')}].length`
+    expect(JSON.stringify(env.explain(shared, { d: cube })).length).toBeLessThan(2_000_000)
+  })
+
+  it('never runs getters or lets a throwing Proxy break toJSON', () => {
+    let calls = 0
+    const list = [1, 2]
+    Object.defineProperty(list, 0, {
+      enumerable: true,
+      get() {
+        calls++
+        return 1
+      },
+    })
+    const json = JSON.stringify(env.explain('xs', { xs: list }))
+    expect(calls).toBe(0)
+    expect(json).toContain('[getter]')
+    const hostile = new Proxy(
+      { a: 1 },
+      {
+        ownKeys() {
+          throw new Error('ownKeys trap')
+        },
+      },
+    )
+    const explanation = env.explain('try(p.a, 0)', { p: hostile })
+    expect(explanation.ok).toBe(true)
+    expect(() => JSON.stringify(explanation)).not.toThrow()
+  })
+
+  it('ignores host failures in the extra work of exhaustive explanations', () => {
+    const x = Object.defineProperty({}, 'a', {
+      enumerable: true,
+      get() {
+        throw new Error('boom')
+      },
+    })
+    expect(env.evaluateSync('true || x.a', { x })).toBe(true)
+    const explanation = env.explain('true || x.a', { x }, { exhaustive: true })
+    expect(explanation.ok && explanation.value).toBe(true)
+  })
+
+  it('validates options like evaluate does', () => {
+    const run = (options: unknown): void => {
+      env.explain('1', {}, options as never)
+    }
+    expect(() => {
+      run({ maxIterations: -1 })
+    }).toThrow(RangeError)
+    expect(() => {
+      run({ maxTraceNodes: Number.POSITIVE_INFINITY })
+    }).toThrow(RangeError)
+    expect(() => {
+      run({ maxIterations: 'x' })
+    }).toThrow(TypeError)
+    expect(() => {
+      run({ exhaustive: 'yes' })
+    }).toThrow(TypeError)
+    expect(() => {
+      run({ maxIteration: 1 })
+    }).toThrow(/maxIterations/u)
+    expect(() => {
+      run({ maxSteps: -1 })
+    }).toThrow(RangeError)
+    const unreadable = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error('trap')
+        },
+      },
+    )
+    expect(() => {
+      run(unreadable)
+    }).toThrow(TypeError)
+  })
+})

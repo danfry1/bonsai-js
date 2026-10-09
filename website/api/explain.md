@@ -23,7 +23,7 @@ String(explanation)
 
 `explanation.reasons()` returns only the conditions that decided the result: it follows `&&`, `||`, and `!` down to the comparisons and values (or the error) behind the outcome.
 
-By default `&&` stops at the first false condition, so there is one reason. Pass `exhaustive: true` to evaluate the remaining conditions for the explanation, and every failing one is listed. Those parts are marked `extra: true`; their errors are ignored and the result does not change. Host functions on those parts do run.
+By default `&&` stops at the first false condition, so there is one reason. Pass `exhaustive: true` to evaluate the remaining conditions for the explanation, and every failing one is listed. Those parts are marked `extra: true`, and an error in them (a failing comparison, a throwing getter) is ignored, so the result does not change. The extra work counts toward the step budget and other limits, so a limit error there does fail the explanation. Host functions on those parts do run.
 
 ```ts
 import { bonsai } from 'bonsai-js'
@@ -55,11 +55,11 @@ rule.explain({ user }, { exhaustive: true }).reasons().map((r) => r.text)
 | `iterations` | For calls that take a lambda: `{ index, item, result or error, trace }` for each item the lambda ran on (reduce adds `accumulator`) |
 | `omittedIterations` | Lambda runs beyond `maxIterations`, counted but not recorded |
 
-Values in `trace` are the live values from your context, not copies. To send an explanation to a browser or store it, use `JSON.stringify(explanation)` (or `explanation.toJSON()`): values become bounded, cycle-safe copies, and getters are never run.
+Values in `trace` are the live values from your context, not copies. To send an explanation to a browser or store it, use `JSON.stringify(explanation)` (or `explanation.toJSON()`): values become bounded, cycle-safe copies (at most 10,000 values in total, however often a value recurs), getters are never run, host collections such as typed arrays and `Map` are summarized by type, and a value that throws when read becomes `"[unreadable]"`.
 
 ## Errors
 
-`explain()` never throws for evaluation errors. It returns `{ ok: false, error }` and marks the node that failed, so you can show where a rule broke:
+`explain()` never throws for evaluation errors. It returns `{ ok: false, error }` and marks the node that failed, so you can show where a rule broke. Invalid options and an invalid context throw, as they do for `evaluate()`:
 
 ```ts
 import { bonsai } from 'bonsai-js'

@@ -196,7 +196,7 @@ rule.explain({ user }, { exhaustive: true }).reasons().map((r) => r.text)
 // ['user.age >= 18', 'user.plan == "pro"']
 ```
 
-`explanation.trace` is the full tree: each node has an `id`, `kind`, `text`, `start`/`end` source offsets, `value` or `error`, and `children`. Parts skipped by short-circuiting are marked `evaluated: false`, and lambdas record each item they ran on under `iterations` (up to `maxIterations`, default 20; `maxTraceNodes` caps the whole trace). `JSON.stringify(explanation)` gives a bounded, cycle-safe snapshot that never runs getters. Evaluation errors are returned (`ok: false`, `error`) with the failing node marked, never thrown. Use `explainAsync()` for expressions that call async host functions. Explaining uses a separately compiled program, so ordinary evaluation is not slowed down.
+`explanation.trace` is the full tree: each node has an `id`, `kind`, `text`, `start`/`end` source offsets, `value` or `error`, and `children`. Parts skipped by short-circuiting are marked `evaluated: false`, and lambdas record each item they ran on under `iterations` (up to `maxIterations`, default 20; `maxTraceNodes` caps the whole trace). `JSON.stringify(explanation)` gives a bounded, cycle-safe snapshot that never runs getters. Evaluation errors are returned (`ok: false`, `error`) with the failing node marked, never thrown; invalid options or context throw, as with `evaluate()`. Use `explainAsync()` for expressions that call async host functions. Explaining uses a separately compiled program, so ordinary evaluation is not slowed down.
 
 ## Syntax trees and visual editors
 

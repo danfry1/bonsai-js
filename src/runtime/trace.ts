@@ -1,6 +1,6 @@
 import { BonsaiError } from '../errors.js'
 import { forEachChild, type Node } from '../syntax/ast.js'
-import { Duration } from './values.js'
+import { Duration, isMap } from './values.js'
 
 /** One evaluated (or skipped) sub-expression. */
 export interface Trace {
@@ -271,7 +271,31 @@ const SNAPSHOT_ITEMS = 50
 const SNAPSHOT_TEXT = 1000
 
 /** A bounded, cycle-safe, JSON-ready copy of a value. Never runs getters. */
-export function snapshot(value: unknown, depth = 0, seen = new Set<object>()): unknown {
+/**
+ * How many values one snapshot may describe in total. Shared across a whole
+ * toJSON() call, so a value referenced from many trace nodes cannot multiply
+ * its cost.
+ */
+export const SNAPSHOT_ENTRIES = 10_000
+
+export interface SnapshotBudget {
+  left: number
+}
+
+/**
+ * A bounded, JSON-safe copy of a value. Getters are described, never run, and
+ * host collections (typed arrays, Map, Set, and other opaque values) are
+ * summarized by type. Host data that throws when read (a Proxy trap) becomes
+ * `[unreadable]`.
+ */
+export function snapshot(
+  value: unknown,
+  budget: SnapshotBudget = { left: SNAPSHOT_ENTRIES },
+  depth = 0,
+  seen = new Set<object>(),
+): unknown {
+  if (budget.left <= 0) return '...'
+  budget.left--
   if (value === null || value === undefined) return null
   switch (typeof value) {
     case 'string':
@@ -290,27 +314,52 @@ export function snapshot(value: unknown, depth = 0, seen = new Set<object>()): u
     default:
       return `[${typeof value}]`
   }
-  if (value instanceof Date)
-    return Number.isNaN(value.getTime()) ? 'Invalid Date' : value.toISOString()
-  if (value instanceof Duration) return value.toString()
-  if (seen.has(value)) return '[Circular]'
-  if (depth >= SNAPSHOT_DEPTH) return Array.isArray(value) ? `[${value.length} items]` : '{...}'
-  seen.add(value)
   try {
-    if (Array.isArray(value)) {
-      const items = value.slice(0, SNAPSHOT_ITEMS).map((item) => snapshot(item, depth + 1, seen))
-      if (value.length > SNAPSHOT_ITEMS) items.push(`... ${value.length - SNAPSHOT_ITEMS} more`)
-      return items
+    if (value instanceof Duration) return value.toString()
+    const time = dateTime(value)
+    if (time !== undefined)
+      return Number.isNaN(time) ? 'Invalid Date' : new Date(time).toISOString()
+    const list = Array.isArray(value)
+    if (!list && !isMap(value)) return `[${opaqueName(value)}]`
+    if (seen.has(value)) return '[Circular]'
+    const length = list ? (ownData(value, 'length') as number) : 0
+    if (depth >= SNAPSHOT_DEPTH) return list ? `[${length} items]` : '{...}'
+    seen.add(value)
+    try {
+      if (list) {
+        const items: unknown[] = []
+        for (let i = 0; i < Math.min(length, SNAPSHOT_ITEMS); i++)
+          items.push(snapshot(ownData(value, String(i)), budget, depth + 1, seen))
+        if (length > SNAPSHOT_ITEMS) items.push(`... ${length - SNAPSHOT_ITEMS} more`)
+        return items
+      }
+      const out: Record<string, unknown> = {}
+      const keys = Object.keys(value)
+      for (const key of keys.slice(0, SNAPSHOT_ITEMS))
+        out[key] = snapshot(ownData(value, key), budget, depth + 1, seen)
+      if (keys.length > SNAPSHOT_ITEMS) out['...'] = `${keys.length - SNAPSHOT_ITEMS} more keys`
+      return out
+    } finally {
+      seen.delete(value)
     }
-    const out: Record<string, unknown> = {}
-    const keys = Object.keys(value)
-    for (const key of keys.slice(0, SNAPSHOT_ITEMS))
-      out[key] = snapshot(ownData(value, key), depth + 1, seen)
-    if (keys.length > SNAPSHOT_ITEMS) out['...'] = `${keys.length - SNAPSHOT_ITEMS} more keys`
-    return out
-  } finally {
-    seen.delete(value)
+  } catch {
+    return '[unreadable]'
   }
+}
+
+/** The milliseconds of a real Date (not one that only inherits from Date.prototype). */
+function dateTime(value: object): number | undefined {
+  if (!(value instanceof Date)) return undefined
+  try {
+    return Date.prototype.getTime.call(value)
+  } catch {
+    return undefined
+  }
+}
+
+/** A short name for a value expressions cannot read into (its built-in type tag). */
+function opaqueName(value: object): string {
+  return Object.prototype.toString.call(value).slice('[object '.length, -1)
 }
 
 /** An own data property's value; accessors are described, never invoked. */
@@ -321,7 +370,10 @@ function ownData(object: object, key: string): unknown {
 }
 
 /** The trace with every value replaced by its snapshot. */
-export function snapshotTrace(trace: Trace): unknown {
+export function snapshotTrace(
+  trace: Trace,
+  budget: SnapshotBudget = { left: SNAPSHOT_ENTRIES },
+): unknown {
   return {
     id: trace.id,
     kind: trace.kind,
@@ -331,22 +383,24 @@ export function snapshotTrace(trace: Trace): unknown {
     text: trace.text,
     evaluated: trace.evaluated,
     ...(trace.extra === true ? { extra: true } : {}),
-    ...(trace.evaluated && trace.error === undefined ? { value: snapshot(trace.value) } : {}),
+    ...(trace.evaluated && trace.error === undefined
+      ? { value: snapshot(trace.value, budget) }
+      : {}),
     ...(trace.error === undefined ? {} : { error: trace.error }),
-    children: trace.children.map(snapshotTrace),
+    children: trace.children.map((child) => snapshotTrace(child, budget)),
     ...(trace.iterations === undefined
       ? {}
       : {
           iterations: trace.iterations.map((iteration) => ({
             index: iteration.index,
-            item: snapshot(iteration.item),
+            item: snapshot(iteration.item, budget),
             ...(iteration.accumulator === undefined
               ? {}
-              : { accumulator: snapshot(iteration.accumulator) }),
+              : { accumulator: snapshot(iteration.accumulator, budget) }),
             ...(iteration.error === undefined
-              ? { result: snapshot(iteration.result) }
+              ? { result: snapshot(iteration.result, budget) }
               : { error: iteration.error }),
-            trace: snapshotTrace(iteration.trace),
+            trace: snapshotTrace(iteration.trace, budget),
           })),
         }),
     ...(trace.omittedIterations === undefined
@@ -359,10 +413,14 @@ export function snapshotTrace(trace: Trace): unknown {
 
 const MAX_PREVIEW = 60
 const PREVIEW_DEPTH = 2
+/** Values one preview may describe. */
+const PREVIEW_ENTRIES = 200
 
 /** A short, readable rendering of a value. Never runs getters. */
 function preview(value: unknown): string {
-  const text = JSON.stringify(snapshot(value, SNAPSHOT_DEPTH - PREVIEW_DEPTH)) ?? 'null'
+  const text =
+    JSON.stringify(snapshot(value, { left: PREVIEW_ENTRIES }, SNAPSHOT_DEPTH - PREVIEW_DEPTH)) ??
+    'null'
   return text.length > MAX_PREVIEW * 2 ? `${text.slice(0, MAX_PREVIEW * 2)}...` : text
 }
 
