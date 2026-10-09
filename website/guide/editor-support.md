@@ -36,7 +36,7 @@ partial.items[0].label // => "name"
 partial.items[0].insertText // => "name"
 ```
 
-Each item has a `label`, a `kind` (`variable`, `local`, `property`, `function`, `method`, or `keyword`), a `detail` (a type or signature), an optional `documentation` string, and the `insertText` to insert. Functions insert an opening parenthesis, for example `sum()` or `filter(`.
+Each item has a `label`, a `kind` (`value` for a literal value such as an enum member inside quotes, `variable`, `local`, `property`, `function`, `method`, or `keyword`; more kinds may be added), a `detail` (a type or signature), an optional `documentation` string, and the `insertText` to insert. Functions insert an opening parenthesis, for example `sum()` or `filter(`.
 
 ## Hover
 
@@ -51,7 +51,7 @@ service.hover('orders.map(.total)', 8)?.documentation // => "Transforms each ite
 
 ## Diagnostics
 
-`diagnostics(source)` returns every syntax and check finding with its range. It is the same list as `env.check(source).diagnostics` and never throws.
+`diagnostics(source)` returns every syntax and check finding with its range, its 1-based `position`, and, for an unknown name, the `suggestion` to offer as a quick-fix. It is the same list as `env.check(source).diagnostics` and never throws.
 
 <!-- continue -->
 ```ts

@@ -1,6 +1,6 @@
 import { acceptsArgument, analyze, signatureText, type Analysis } from '../check/checker.js'
 import { internalsOf, type Environment } from '../environment.js'
-import { BonsaiError, type Diagnostic } from '../errors.js'
+import { BonsaiError, locate, type Diagnostic } from '../errors.js'
 import type { FunctionDef } from '../functions/define.js'
 import { forEachChild, type Node } from '../syntax/ast.js'
 import { parse } from '../syntax/parser.js'
@@ -370,11 +370,15 @@ export function createLanguageService(env: Environment<never>): LanguageService 
 
   function diagnostics(source: string): readonly Diagnostic[] {
     // Spans stay inside the source (an error at the end is zero-width there).
-    return env.check(source).diagnostics.map((d) => {
-      const start = Math.min(Math.max(d.start, 0), source.length)
-      const end = Math.min(Math.max(d.end, start), source.length)
-      return start === d.start && end === d.end ? d : { ...d, start, end }
-    })
+    const found = env.check(source).diagnostics
+    if (found.every((d) => d.start >= 0 && d.end >= d.start && d.end <= source.length)) return found
+    return locate(
+      source,
+      found.map((d) => {
+        const start = Math.min(Math.max(d.start, 0), source.length)
+        return { ...d, start, end: Math.min(Math.max(d.end, start), source.length) }
+      }),
+    )
   }
 
   return Object.freeze({ complete, hover, diagnostics })

@@ -48,7 +48,7 @@ export {
   isBonsaiError,
 } from './errors.js'
 export type { Diagnostic, DiagnosticCode, ErrorCode, Span } from './errors.js'
-export { forEachChild } from './syntax/ast.js'
+export { forEachChild, mapChildren } from './syntax/ast.js'
 export type {
   BinaryNode,
   BinaryOperator,

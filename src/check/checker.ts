@@ -1,4 +1,4 @@
-import { BonsaiLimitError, type Diagnostic, type DiagnosticCode } from '../errors.js'
+import { BonsaiLimitError, type DiagnosticCode, type Finding } from '../errors.js'
 import { RESULT_REFINERS } from '../functions/builtins.js'
 import {
   isItemLambdaPosition,
@@ -65,7 +65,7 @@ export interface Analysis {
   /** The tree with implicit lambdas made explicit. */
   readonly root: Node
   readonly type: Type
-  readonly diagnostics: readonly Diagnostic[]
+  readonly diagnostics: readonly Finding[]
   readonly calls: ReadonlyMap<CallNode, CallPlan>
   readonly types: ReadonlyMap<Node, Type>
   /** Whether evaluation may call an async host function. */
@@ -199,8 +199,7 @@ function expectationProblem(actual: Type, expected: Type): string | undefined {
 }
 
 function suggestAll(names: readonly string[], candidates: readonly string[]): string {
-  const hints = names.map((name) => suggest(name, () => candidates)).filter((hint) => hint !== '')
-  return hints.length > 0 ? hints.join('') : ''
+  return names.map((name) => didYouMean(suggest(name, () => candidates))).join('')
 }
 
 const pathKeys = new WeakMap<Node, string | null>()
@@ -457,7 +456,7 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
 }
 
 function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analysis {
-  const diagnostics: Diagnostic[] = []
+  const diagnostics: Finding[] = []
   const calls = new Map<CallNode, CallPlan>()
   const types = new Map<Node, Type>()
   const asyncNodes = new Set<Node>()
@@ -471,11 +470,16 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     message: string,
     at: { start: number; end: number },
     severity: 'error' | 'warning' = 'error',
+    suggestion?: string,
   ): void => {
     const key = `${at.start}:${at.end}:${code}:${message}`
     if (reported.has(key)) return
     reported.add(key)
-    diagnostics.push({ code, message, severity, start: at.start, end: at.end })
+    diagnostics.push(
+      suggestion === undefined
+        ? { code, message, severity, start: at.start, end: at.end }
+        : { code, message, severity, start: at.start, end: at.end, suggestion },
+    )
   }
   /** Drops diagnostics after `mark` (a re-check or a speculative check). */
   const truncate = (mark: number): void => {
@@ -500,7 +504,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       expected: Type | undefined
       inputs: readonly Type[]
       type: Type
-      diagnostics: readonly Diagnostic[]
+      diagnostics: readonly Finding[]
     }
   >()
 
@@ -655,10 +659,13 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
             : undefined
         if (declared !== undefined) return declared
         if (env.strict) {
+          const suggestion = suggest(node.name, () => Object.keys(env.variables ?? {}))
           report(
             'UNKNOWN_VARIABLE',
-            `Unknown variable "${node.name}"${suggest(node.name, () => Object.keys(env.variables ?? {}))}`,
+            `Unknown variable "${node.name}"${didYouMean(suggestion)}`,
             node,
+            'error',
+            suggestion,
           )
         }
         return ANY
@@ -878,10 +885,13 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       if (objectType.rest !== undefined) return t.optional(objectType.rest)
       // A map literal holds no other keys; a declared object may.
       if (quiet) return isExact(objectType) ? NULL : ANY
+      const suggestion = suggest(name, () => Object.keys(objectType.fields))
       report(
         'UNKNOWN_PROPERTY',
-        `Property "${name}" does not exist on ${formatType(objectType)}${suggest(name, () => Object.keys(objectType.fields))}`,
+        `Property "${name}" does not exist on ${formatType(objectType)}${didYouMean(suggestion)}`,
         at,
+        'error',
+        suggestion,
       )
       return ANY
     }
@@ -1191,7 +1201,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       last.inputs.length === inputs.length &&
       last.inputs.every((input, i) => sameType(input, inputs[i] ?? ANY))
     ) {
-      for (const d of last.diagnostics) report(d.code, d.message, d, d.severity)
+      for (const d of last.diagnostics) report(d.code, d.message, d, d.severity, d.suggestion)
       return last.type
     }
     const mark = diagnostics.length
@@ -1251,12 +1261,19 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       const alias = Object.hasOwn(FUNCTION_ALIASES, node.name)
         ? FUNCTION_ALIASES[node.name]
         : undefined
-      const hint =
-        alias === undefined ? suggest(node.name, () => env.functionNames()) : `; ${alias}`
-      report('UNKNOWN_FUNCTION', `Unknown function "${node.name}"${hint}`, {
-        start: node.nameStart,
-        end: node.nameEnd,
-      })
+      // An alias hint names its replacement in quotes ('did you mean "includes"?').
+      const suggestion =
+        alias === undefined
+          ? suggest(node.name, () => env.functionNames())
+          : /"(?<name>[^"]+)"/u.exec(alias)?.groups?.name
+      const hint = alias === undefined ? didYouMean(suggestion) : `; ${alias}`
+      report(
+        'UNKNOWN_FUNCTION',
+        `Unknown function "${node.name}"${hint}`,
+        { start: node.nameStart, end: node.nameEnd },
+        'error',
+        suggestion,
+      )
       for (const arg of node.args) if (arg.type === 'Lambda') checkLambda(arg, [], scope)
       return ANY
     }
@@ -2102,7 +2119,6 @@ const JS_GLOBALS: Readonly<Record<string, string>> = {
   Array: 'use a list literal [...]',
 }
 
-/** "Did you mean" suffix using edit distance. */
 /**
  * "Did you mean" hints cost an edit distance per candidate, so a source full of
  * typos against a large schema is bounded: hints for the first unknown names
@@ -2112,8 +2128,14 @@ const MAX_SUGGESTIONS = 16
 const MAX_SUGGESTION_CANDIDATES = 1000
 let suggestionsLeft = MAX_SUGGESTIONS
 
-function suggest(name: string, candidatesOf: () => Iterable<string>): string {
-  if (suggestionsLeft <= 0) return ''
+/** The message suffix for a suggestion, or nothing. */
+function didYouMean(suggestion: string | undefined): string {
+  return suggestion === undefined ? '' : `; did you mean "${suggestion}"?`
+}
+
+/** The closest candidate by edit distance, if one is close enough. */
+function suggest(name: string, candidatesOf: () => Iterable<string>): string | undefined {
+  if (suggestionsLeft <= 0) return undefined
   suggestionsLeft--
   const candidates = candidatesOf()
   let best: string | undefined
@@ -2127,7 +2149,7 @@ function suggest(name: string, candidatesOf: () => Iterable<string>): string {
       bestDistance = distance
     }
   }
-  return best === undefined ? '' : `; did you mean "${best}"?`
+  return best
 }
 
 /** Any distance larger than every suggestion threshold. */

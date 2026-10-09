@@ -81,7 +81,7 @@ jobs:
       - name: Check package exports
         run: |
           npm pack --ignore-scripts --pack-destination /tmp
-          bun run attw /tmp/bonsai-js-*.tgz --ignore-rules no-resolution cjs-resolves-to-esm
+          bun run attw /tmp/bonsai-js-*.tgz --ignore-rules cjs-resolves-to-esm
 
       # The tag must name the version being published. Prerelease versions
       # (1.0.0-rc.1) go to the `next` dist-tag so `latest` stays on the last
