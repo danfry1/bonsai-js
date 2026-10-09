@@ -3,7 +3,7 @@ import { PGlite } from '@electric-sql/pglite'
 import { test } from '@fast-check/vitest'
 import { Query } from 'mingo'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { bonsai, fn, t } from '../src/index.js'
+import { BonsaiError, bonsai, fn, t } from '../src/index.js'
 import {
   BonsaiTranslationError,
   toMongo,
@@ -534,5 +534,71 @@ describe('toMongo', () => {
     expect(toMongo(program, { row: 'order', fields: { 'address.city': 'text' } }).filter).toEqual({
       'address.city': { $eq: 'Paris' },
     })
+  })
+})
+
+describe('known values are read as the engine reads them', () => {
+  const program = env.compile('order.total in xs')
+  const sqlite = { row: 'order', columns, dialect: 'sqlite' } as const
+
+  it('reads a known list by index, never through its own iterator', () => {
+    const xs = [5]
+    Object.defineProperty(xs, Symbol.iterator, {
+      *value() {
+        yield 20
+      },
+    })
+    expect(toSQL(program, { ...sqlite, known: { xs } }).params).toEqual([5])
+    class Odd extends Array<number> {
+      *[Symbol.iterator](): ArrayIterator<number> {
+        yield 20
+      }
+    }
+    expect(toSQL(program, { ...sqlite, known: { xs: Odd.from([5]) } }).params).toEqual([5])
+  })
+
+  it('only ever throws Bonsai errors for host data that cannot be read', () => {
+    const failing = (data: Record<string, unknown>, source = 'order.total > 1 || k > 1'): void => {
+      let error: unknown
+      try {
+        toSQL(env.compile(source), { ...sqlite, known: data })
+      } catch (caught) {
+        error = caught
+      }
+      expect(error).toBeInstanceOf(BonsaiError)
+    }
+    const { proxy, revoke } = Proxy.revocable([1], {})
+    revoke()
+    const throwing = [1]
+    Object.defineProperty(throwing, 0, {
+      get() {
+        throw new Error('boom')
+      },
+    })
+    failing({ k: Object.create(Date.prototype) }, 'order.placed != k')
+    failing(
+      Object.defineProperty({}, 'k', {
+        enumerable: true,
+        get() {
+          throw new Error('boom')
+        },
+      }),
+    )
+    failing({ xs: throwing }, 'order.total > 1 || order.total in xs')
+    failing({ xs: proxy }, 'order.total > 1 || order.total in xs')
+    failing(
+      new Proxy(
+        {},
+        {
+          has: () => {
+            throw new Error('trap')
+          },
+          getOwnPropertyDescriptor: () => {
+            throw new Error('trap')
+          },
+        },
+      ),
+      'order.total > 1',
+    )
   })
 })

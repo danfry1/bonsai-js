@@ -154,13 +154,23 @@ function kindOf(value: Value): ColumnType | 'null' {
 // A lone surrogate reaches the database as U+FFFD, a different string.
 const LONE_SURROGATE = /\p{Cs}/u
 
+/** A real, valid Date (an object that only inherits from Date.prototype is not one). */
+function isValidDate(value: unknown): value is Date {
+  if (!(value instanceof Date)) return false
+  try {
+    return !Number.isNaN(Date.prototype.getTime.call(value))
+  } catch {
+    return false
+  }
+}
+
 function isPrimitive(value: unknown): value is Primitive {
   return (
     value === null ||
     typeof value === 'string' ||
     typeof value === 'boolean' ||
     (typeof value === 'number' && Number.isFinite(value)) ||
-    (value instanceof Date && !Number.isNaN(Date.prototype.getTime.call(value)))
+    isValidDate(value)
   )
 }
 
@@ -184,10 +194,7 @@ function declare(
     throw new TypeError('row must name the record variable')
   if (options.known !== undefined && !isRecord(options.known))
     throw new TypeError('known must be an object')
-  if (
-    options.now !== undefined &&
-    (!(options.now instanceof Date) || Number.isNaN(Date.prototype.getTime.call(options.now)))
-  )
+  if (options.now !== undefined && !isValidDate(options.now))
     throw new TypeError('now must be a valid Date')
   if (!isRecord(columns)) throw new TypeError(`${what} must be an object`)
   const declared = new Map<string, Declared>()
@@ -222,11 +229,19 @@ function lower(
     )
   }
   const knownData = options.known ?? {}
-  if (Object.hasOwn(knownData, options.row))
+  /** Known data is host data: a Proxy or getter that throws is an untranslatable value. */
+  const hostRead = <T>(read: () => T, what: string): T => {
+    try {
+      return read()
+    } catch {
+      return fail(`Reading ${what} failed`)
+    }
+  }
+  if (hostRead(() => Object.hasOwn(knownData, options.row), 'the known values'))
     throw new TypeError(`known must not contain the row variable (${options.row})`)
   // A misspelled row (or a missing known value) would otherwise read as null.
   for (const name of program.references.variables) {
-    if (name !== options.row && !Object.hasOwn(knownData, name))
+    if (name !== options.row && !hostRead(() => Object.hasOwn(knownData, name), 'the known values'))
       fail(`${name} is neither the row (${options.row}) nor a known value`)
   }
   const result = program.partial(knownData as never, {
@@ -271,10 +286,10 @@ function lower(
     return problem === undefined ? value : fail(problem, at)
   }
 
-  const knownValue = (name: string): unknown => {
-    if (Object.hasOwn(bindings, name)) return bindings[name]
-    return name !== options.row && Object.hasOwn(knownData, name) ? knownData[name] : undefined
-  }
+  // Partial evaluation turned every known value it could read into a literal or a
+  // binding; a known variable still in the residual is one whose read failed.
+  const knownValue = (name: string): unknown =>
+    Object.hasOwn(bindings, name) ? bindings[name] : undefined
   const constOf = (node: Node): Primitive | undefined => {
     if (node.type === 'Literal') return exact(node.value, node)
     if (node.type === 'Variable') {
@@ -283,6 +298,8 @@ function lower(
     }
     return undefined
   }
+
+  const describeName = (node: Node): string => (node.type === 'Variable' ? node.name : 'value')
 
   const listOf = (node: Node): readonly Primitive[] | undefined => {
     if (node.type === 'List') {
@@ -295,12 +312,15 @@ function lower(
       return out
     }
     const items = node.type === 'Variable' ? knownValue(node.name) : undefined
-    if (!Array.isArray(items)) return undefined
+    if (!hostRead(() => Array.isArray(items), `the known list ${describeName(node)}`))
+      return undefined
+    const list = items as unknown[]
     const out: Primitive[] = []
-    // Iterated (not filtered or tested with every()), which visits holes: Bonsai reads a
-    // hole, or undefined, as null.
-    for (const entry of items as unknown[]) {
-      const item: unknown = entry ?? null
+    // Read by index, as Bonsai reads a list: never through the list's own iterator.
+    // A hole, or undefined, reads as null.
+    const length = hostRead(() => list.length, `the known list ${describeName(node)}`)
+    for (let i = 0; i < length; i++) {
+      const item: unknown = hostRead(() => list[i], `the known list ${describeName(node)}`) ?? null
       if (!isPrimitive(item)) return undefined
       out.push(exact(item, node))
     }

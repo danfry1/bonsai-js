@@ -64,7 +64,7 @@ Anything else throws a `BonsaiTranslationError` (code `UNTRANSLATABLE`) with the
 
 A failing `&&` or `||` repeats part of its left side in the query, so deeply nested filters grow quickly; a translation larger than 1,000,000 characters of SQL or 100,000 MongoDB filter nodes is rejected, as is one needing more parameters than the database accepts (65,535 in Postgres, 32,766 in SQLite).
 
-A filter that fails whatever the record is (say `limit / 0 > 1` with `limit` known) throws that `BonsaiRuntimeError` instead of translating to a query that selects nothing. The environment's runtime limits (`maxSteps`, `timeout`) apply to translating, not to the database: a filter that would exceed them per record in Bonsai (for example over a known list of millions of items) still matches rows in the database.
+A filter that fails whatever the record is (say `limit / 0 > 1` with `limit` known) throws that `BonsaiRuntimeError` instead of translating to a query that selects nothing. The environment's runtime limits (`maxSteps`, `timeout`) apply to translating, not to the database: a filter that would exceed them per record in Bonsai (for example over a known list of millions of items) still matches rows in the database. Translating evaluates every known part of the filter up front, so a known part that evaluation would skip by short-circuiting still counts toward the limit.
 
 ## Indexes
 
