@@ -961,7 +961,18 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     }
   }
 
-  function makeProgram<R>(source: string, analysis: Analysis, expect?: Type): Program<Ctx, R> {
+  /** How a partial-evaluation residual runs: its context plus the caller's own one. */
+  interface ResidualRunner {
+    runSync: (ctx: object, hostContext: object, options: unknown) => unknown
+    runAsync: (ctx: object, hostContext: object, options: unknown) => Promise<unknown>
+  }
+
+  function makeProgram<R>(
+    source: string,
+    analysis: Analysis,
+    expect?: Type,
+    asResidual?: (runner: ResidualRunner) => void,
+  ): Program<Ctx, R> {
     // When the checker cannot prove the result matches `expect` (part of it is
     // `any`, or an open object may hold an unlisted key), it is checked at run
     // time, so the declared result type holds.
@@ -996,6 +1007,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       ctx: Record<string, unknown>,
       limits: EvaluationLimits,
       locals: number,
+      hostContext: Record<string, unknown> | undefined,
     ): void {
       if (settings.validateContext && settings.variables !== undefined) {
         validateContext(ctx, settings.variables, source, {
@@ -1005,9 +1017,14 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         })
       }
       state.reset(ctx, source, locals, limits.maxSteps, limits.timeout, limits.signal)
+      if (hostContext !== undefined) state.hostCtx = hostContext
     }
 
-    function runSync(context: unknown, options: EvaluateOptions | undefined): R {
+    function runSync(
+      context: unknown,
+      options: EvaluateOptions | undefined,
+      hostContext?: Record<string, unknown>,
+    ): R {
       if (analysis.async) {
         throw new BonsaiRuntimeError(
           'ASYNC_IN_SYNC',
@@ -1028,7 +1045,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         state = new State(settings.runtimeLimits, settings.clock)
       }
       try {
-        prepare(state, ctx, limits, code.localCount)
+        prepare(state, ctx, limits, code.localCount, hostContext)
         const result = code.run(state)
         checked(result, state)
         state.checkTime()
@@ -1041,9 +1058,13 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       }
     }
 
-    async function runAsync(context: unknown, options: EvaluateOptions | undefined): Promise<R> {
+    async function runAsync(
+      context: unknown,
+      options: EvaluateOptions | undefined,
+      hostContext?: Record<string, unknown>,
+    ): Promise<R> {
       if (!analysis.async) {
-        const result = runSync(context, options)
+        const result = runSync(context, options, hostContext)
         try {
           return settle(result)
         } catch (error) {
@@ -1055,7 +1076,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       const ctx = contextOf(context)
       const state = new State(settings.runtimeLimits, settings.clock)
       try {
-        prepare(state, ctx, limits, code.localCount)
+        prepare(state, ctx, limits, code.localCount, hostContext)
         const result = await code.run(state)
         checked(result, state)
         state.checkTime()
@@ -1148,7 +1169,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       const ctx = contextOf(context)
       const state = new State(settings.runtimeLimits, settings.clock)
       try {
-        prepare(state, ctx, limits, code.localCount)
+        prepare(state, ctx, limits, code.localCount, undefined)
         state.tracer = tracer
         const value = code.run(state) as R
         checked(value, state)
@@ -1173,7 +1194,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       const ctx = contextOf(context)
       const state = new State(settings.runtimeLimits, settings.clock)
       try {
-        prepare(state, ctx, limits, code.localCount)
+        prepare(state, ctx, limits, code.localCount, undefined)
         state.tracer = tracer
         const value = settle((await code.run(state)) as R)
         checked(value, state)
@@ -1233,25 +1254,29 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
                 throw hostDataFailure(error, source)
               }
             },
-            compileResidual: (residual) => {
-              // The original expression passed the checker; inlining known
-              // values can make a failing branch statically visible, and that
-              // failure must happen at run time, as it would have.
+            compileResidual: (residual, bindingTypes) => {
+              // Checked with the declared types (and each known value's type
+              // from the original analysis), so calls resolve to the overloads
+              // the original program chose. The original expression passed
+              // the checker; inlining known values can make a failing branch
+              // statically visible, and that failure must happen at run time,
+              // as it would have, so findings here do not stop compilation.
               // Analyzed as a tree (not re-parsed), so the printer's parentheses
               // cannot push it past the parse depth limit.
-              const program = makeProgram<unknown>(
+              const variables =
+                settings.variables === undefined
+                  ? undefined
+                  : { ...settings.variables, ...bindingTypes }
+              let runner: ResidualRunner | undefined
+              makeProgram<unknown>(
                 source,
-                analyze(
-                  residual,
-                  { ...checkEnv, variables: undefined, strict: false },
-                  { expected: expect },
-                ),
+                analyze(residual, { ...checkEnv, variables, strict: false }, { expected: expect }),
                 expect,
+                (made) => {
+                  runner = made
+                },
               )
-              return {
-                evaluateSync: (ctx) => (program as Program).evaluateSync(ctx),
-                evaluate: (ctx) => (program as Program).evaluate(ctx),
-              }
+              return runner as ResidualRunner
             },
           },
           context,
@@ -1275,6 +1300,20 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       }
     }
 
+    asResidual?.({
+      runSync: (ctx, hostContext, options) =>
+        runSync(
+          ctx,
+          options as EvaluateOptions | undefined,
+          hostContext as Record<string, unknown>,
+        ),
+      runAsync: (ctx, hostContext, options) =>
+        runAsync(
+          ctx,
+          options as EvaluateOptions | undefined,
+          hostContext as Record<string, unknown>,
+        ),
+    })
     // Programs are shared: the tree compiles lazily, so it must not change afterwards.
     return Object.freeze({
       explain: (...args: ExplainArgs<Ctx>) => explainSync(args[0], args[1]),

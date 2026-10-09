@@ -828,7 +828,7 @@ export function compileProgram(
       let thenable: boolean
       try {
         result =
-          def.context === true ? overload.run([s.ctx, ...args], site) : overload.run(args, site)
+          def.context === true ? overload.run([s.hostCtx, ...args], site) : overload.run(args, site)
         thenable = isThenable(result)
       } catch (error) {
         throw hostError(s, def.name, error, span)

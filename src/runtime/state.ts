@@ -42,6 +42,12 @@ class Failed {
 /** Mutable per-evaluation state. Created (or reset) once per run. */
 export class State {
   ctx: Record<string, unknown> = NO_CONTEXT
+  /**
+   * The caller's context, as `context: true` host functions receive it. The
+   * same object as `ctx`, except for a partial-evaluation residual, whose
+   * `ctx` also holds the known values it refers to.
+   */
+  hostCtx: Record<string, unknown> = NO_CONTEXT
   source = ''
   locals: unknown[] = []
   steps = 0
@@ -78,6 +84,7 @@ export class State {
     signal: AbortSignal | undefined,
   ): void {
     this.ctx = ctx
+    this.hostCtx = ctx
     this.source = source
     if (this.locals.length < localCount) this.locals = new Array<unknown>(localCount)
     this.steps = 0
@@ -101,6 +108,7 @@ export class State {
   release(): void {
     this.tracer = undefined
     this.ctx = NO_CONTEXT
+    this.hostCtx = NO_CONTEXT
     this.resources = undefined
     this.shapes = undefined
     this.zones = undefined

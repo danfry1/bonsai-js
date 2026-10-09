@@ -379,3 +379,67 @@ describe('partial on the hardened engine', () => {
     }
   })
 })
+
+describe('partial residuals evaluate as the program does', () => {
+  const residualOf = <R>(result: PartialResult<R>) => {
+    if (result.status !== 'residual') throw new Error(`expected a residual, got ${result.status}`)
+    return result
+  }
+
+  it('resolves overloads with the declared types', () => {
+    const typed = bonsai({ variables: { xs: t.list(t.duration()), k: t.number() } })
+    const context = { xs: [], k: 1 }
+    const sum = typed.compile('xs.sum()')
+    expect(String(sum.evaluateSync(context))).toBe('PT0S')
+    expect(
+      String(residualOf(sum.partial({ k: 1 }, { unknown: ['xs'] })).evaluateSync(context)),
+    ).toBe('PT0S')
+    const plus = typed.compile('xs.sum() + hours(k)')
+    expect(String(residualOf(plus.partial({ k: 1 })).evaluateSync(context))).toBe('PT1H')
+  })
+
+  it('keeps the static type of a known value it refers to by name', () => {
+    const typed = bonsai({ variables: { ds: t.list(t.duration()), xs: t.list(t.duration()) } })
+    const program = typed.compile('(ds + xs).sum()')
+    const result = residualOf(program.partial({ ds: [] }))
+    expect(Object.keys(result.bindings)).toEqual(['__known1'])
+    expect(String(result.evaluateSync({ ds: [], xs: [] }))).toBe('PT0S')
+  })
+
+  it('applies evaluation options', async () => {
+    const program = bonsai().compile('xs.map(. * 2).sum() + k')
+    const result = residualOf(program.partial({ k: 1 }, { unknown: ['xs'] }))
+    expect(() => result.evaluateSync({ xs: [1, 2, 3] }, { maxSteps: 2 })).toThrow(
+      expect.objectContaining({ code: 'STEP_LIMIT' }),
+    )
+    const aborted = AbortSignal.abort()
+    await expect(result.evaluate({ xs: [1] }, { signal: aborted })).rejects.toMatchObject({
+      code: 'ABORTED',
+    })
+    expect(() => result.evaluateSync({ xs: [1] }, { maxSteps: -1 })).toThrow(RangeError)
+  })
+
+  it('passes context functions the caller context, prototype included', () => {
+    class Session {
+      readonly n = 1
+      readonly ys = [1]
+      can(role: string): boolean {
+        return role === 'admin'
+      }
+    }
+    const host = bonsai({
+      functions: {
+        can: fn({
+          params: [t.string()],
+          returns: t.boolean(),
+          context: true,
+          run: (ctx, role) => (ctx as unknown as Session).can(role),
+        }),
+      },
+    })
+    const program = host.compile('can("admin") && n in ys')
+    const session = new Session()
+    expect(program.evaluateSync(session)).toBe(true)
+    expect(residualOf(program.partial({ ys: [1] })).evaluateSync(session)).toBe(true)
+  })
+})

@@ -2,6 +2,8 @@ import type { Analysis } from './check/checker.js'
 import { BonsaiRuntimeError, type BonsaiError } from './errors.js'
 import { forEachChild, type LambdaNode, type Node, type SpreadNode } from './syntax/ast.js'
 import { print } from './syntax/printer.js'
+import { t, type Type } from './types.js'
+import type { EvaluateOptions } from './environment.js'
 
 // === dependencies ===
 
@@ -180,9 +182,12 @@ export interface ResidualResult<R> {
   readonly dependsOn: readonly string[]
   /** Host functions the residual still calls (they may replace a built-in of the same name). */
   readonly hostFunctions: readonly string[]
-  /** Evaluates the residual with the (full) context; bindings are supplied for you. */
-  readonly evaluateSync: (context?: object) => R
-  readonly evaluate: (context?: object) => Promise<R>
+  /**
+   * Evaluates the residual with the (full) context, taking the same options as
+   * Program.evaluateSync; bindings are supplied for you.
+   */
+  readonly evaluateSync: (context?: object, options?: EvaluateOptions) => R
+  readonly evaluate: (context?: object, options?: EvaluateOptions) => Promise<R>
 }
 
 export interface PartialOptions {
@@ -216,10 +221,18 @@ export interface PartialEngine {
    * a limit is reached.
    */
   readonly evaluate: (node: Node, locals: readonly (readonly [string, unknown])[]) => unknown
-  /** Compiles a residual for later evaluation with its bindings. */
-  readonly compileResidual: (residual: Node) => {
-    evaluateSync: (context: object) => unknown
-    evaluate: (context: object) => Promise<unknown>
+  /**
+   * Compiles a residual for later evaluation. `bindingTypes` are the static
+   * types of the known values it refers to by name. The compiled residual reads
+   * variables from `ctx` (the caller's context plus the bindings); context host
+   * functions receive `hostContext`, the caller's own context.
+   */
+  readonly compileResidual: (
+    residual: Node,
+    bindingTypes: Readonly<Record<string, Type>>,
+  ) => {
+    runSync: (ctx: object, hostContext: object, options: unknown) => unknown
+    runAsync: (ctx: object, hostContext: object, options: unknown) => Promise<unknown>
   }
 }
 
@@ -230,7 +243,8 @@ export interface PartialEngine {
  * raises that error when evaluation reaches it, whatever the unknowns are.
  */
 type Outcome =
-  | { readonly known: true; readonly value: unknown }
+  /** `type` is the static type of the sub-expression that produced the value. */
+  | { readonly known: true; readonly value: unknown; readonly type?: Type }
   | { readonly known: false; readonly node: Node; readonly fails?: BonsaiRuntimeError }
 
 const at = { start: 0, end: 0 }
@@ -272,6 +286,7 @@ export function partiallyEvaluate<R>(
   const nowKnown = options.now !== undefined
 
   const bindings: Record<string, unknown> = {}
+  const bindingTypes: Record<string, Type> = {}
   const taken = new Set([...rootDeps.paths].map((path) => path.split('.')[0]))
   for (const name of Object.keys(known)) taken.add(name)
   for (const name of boundNames(root)) taken.add(name)
@@ -281,11 +296,12 @@ export function partiallyEvaluate<R>(
     for (let i = 2; taken.has(name); i++) name = `${base}${i}`
     return name
   }
-  const bind = (value: unknown): Node => {
+  const bind = (value: unknown, type: Type | undefined): Node => {
     let name: string
     do name = `__known${++bindingCount}`
     while (taken.has(name))
     bindings[name] = value
+    bindingTypes[name] = type ?? t.any()
     return { type: 'Variable', name, ...at }
   }
 
@@ -312,11 +328,20 @@ export function partiallyEvaluate<R>(
 
   /** A known value as syntax: an inline literal, or a reference to a binding. */
   const asNode = (outcome: Outcome): Node =>
-    outcome.known ? (literalFor(outcome.value) ?? bind(outcome.value)) : outcome.node
+    outcome.known ? (literalFor(outcome.value) ?? bind(outcome.value, outcome.type)) : outcome.node
   const residual = (node: Node, fails?: BonsaiRuntimeError): Outcome =>
     fails === undefined ? { known: false, node } : { known: false, node, fails }
 
+  // A known value carries the static type of the sub-expression it came from,
+  // so a binding in the residual keeps the type the original was checked with.
   const peval = (node: Node, env: Env): Outcome => {
+    const outcome = pevalNode(node, env)
+    if (!outcome.known || outcome.type !== undefined) return outcome
+    const type = engine.analysis.types.get(node)
+    return type === undefined ? outcome : { known: true, value: outcome.value, type }
+  }
+
+  const pevalNode = (node: Node, env: Env): Outcome => {
     engine.charge()
     if (closed(node, env)) {
       try {
@@ -507,10 +532,9 @@ export function partiallyEvaluate<R>(
 
   // An expression that is known except for an error it always raises.
   const residualDeps = dependencies(engine.hostKind)(outcome.node)
-  const compiled = engine.compileResidual(outcome.node)
+  const compiled = engine.compileResidual(outcome.node, bindingTypes)
   const frozenBindings = Object.freeze({ ...bindings })
-  const withBindings = (context: object | undefined): object => {
-    const base = engine.contextOf(context)
+  const withBindings = (base: Record<string, unknown>): object => {
     // Copy property descriptors so the caller's getters are not run here.
     const merged: object = Object.create(null) as object
     try {
@@ -534,8 +558,14 @@ export function partiallyEvaluate<R>(
       .filter((path) => !Object.hasOwn(frozenBindings, path.split('.')[0]))
       .sort(),
     hostFunctions: hostCalls(outcome.node, engine.hostKind),
-    evaluateSync: (context?: object) => compiled.evaluateSync(withBindings(context)) as R,
-    evaluate: (context?: object) => compiled.evaluate(withBindings(context)) as Promise<R>,
+    evaluateSync: (context?: object, evaluateOptions?: EvaluateOptions) => {
+      const base = engine.contextOf(context)
+      return compiled.runSync(withBindings(base), base, evaluateOptions) as R
+    },
+    evaluate: async (context?: object, evaluateOptions?: EvaluateOptions) => {
+      const base = engine.contextOf(context)
+      return (await compiled.runAsync(withBindings(base), base, evaluateOptions)) as R
+    },
   })
 }
 
