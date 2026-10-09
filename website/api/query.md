@@ -19,7 +19,7 @@ const { filter: mongoFilter, options } = toMongo(filter, { row: 'order', fields:
 
 ## The contract
 
-- A filter is an expression over one record variable (`row`). Every other variable must be in `known`, which is applied by [partial evaluation](./partial) before translating; a variable that is neither is rejected, so a misspelled `row` cannot silently read as null. With `validateContext`, the known values are validated as evaluation validates them (`INVALID_CONTEXT`).
+- A filter is an expression over one record variable (`row`). Every other variable must be in `known`, which is applied by [partial evaluation](./partial) before translating; a variable that is neither is rejected, so a misspelled `row` cannot silently read as null; the error names the closest row, known value, or declared column. With `validateContext`, the known values are validated as evaluation validates them (`INVALID_CONTEXT`).
 - The query selects **exactly** the records for which the filter evaluates to `true` in Bonsai. Records for which it would fail (for example calling `startsWith` on a null field) are excluded, as `try(filter, false)` would.
 - SQL's three-valued `NULL` logic is converted to Bonsai's: `x != "a"` includes rows where `x` is `NULL`, comparisons with `NULL` are false, and `!` of a failing condition stays excluded. The returned SQL is true for the selected rows and may be `NULL` for the others, so negate a filter by translating `!(filter)`, not by wrapping the SQL in `NOT`.
 - This is verified by differential tests that run random filters over random rows and compare the selected records with Bonsai's evaluation: in SQLite and PGlite on every run, and against Postgres 13 and 17 (through `pg` and `postgres`) and MongoDB 8.0 (through the official driver) with `bun run test:servers`.
@@ -55,10 +55,25 @@ Invalid options (an unknown option key, an unknown `dialect` or column type, a m
 | `x in [...]`, `x not in [...]` | with a known list |
 | `order.flag` | boolean columns as conditions |
 | `startsWith`, `endsWith`, `includes` | on text columns, with a known argument; `?.` calls read a null column as false |
+| `order.email?.endsWith(x) ?? false`, `order.flag ?? true` | `??` after a `?.` text call or a boolean column, with any translatable condition on the right |
+| `order.email?.endsWith(x) == true`, `!= false`, `== null` | a text call compared with a boolean or `null` |
+| `(order.email ?? "").endsWith(x)` | a text call on a column with a known text default |
 | `"text" in order.name` | substring test |
 | `order.name in text` | substring test, SQL only |
 | `order.a == order.b`, `order.a < order.b` | comparing two columns, SQL only |
 | `+ - *` | numbers, SQL only; a null operand or a non-finite result fails |
+| `now() - order.placed < days(14)`, `order.placed + days(3) > now()` | relative dates: a timestamp column shifted by a known duration, or its distance from a known time, compared with a known timestamp or duration (either way round) |
+
+A text function on a nullable column has three exact forms. With a declared environment the checker rejects `order.email.endsWith(x)` on an optional field and suggests `?.` or `??`; all of these translate:
+
+<!-- context: { order: { email: null } } -->
+```bonsai
+order.email != null && order.email.endsWith("@acme.com") // => false
+order.email?.endsWith("@acme.com") ?? false // => false
+(order.email ?? "").endsWith("@acme.com") // => false
+```
+
+Relative dates need `now`, from the `now` option (or a known timestamp in its place); the comparison is rewritten as the column against a fixed instant, so it can use an index. A null timestamp fails the subtraction, so the record is excluded from the filter and from its negation, as in Bonsai, and so is a record that a shift would push past the range of dates. Durations must be whole milliseconds; anything else is rejected as `UNTRANSLATABLE`.
 
 Anything else throws a `BonsaiTranslationError` (code `UNTRANSLATABLE`) with the span of the part that has no exact equivalent, including calls to host functions (which may replace a built-in of the same name). Deliberately not translated: ordering text (databases order by code point, Bonsai by UTF-16 unit), `toLowerCase`/`toUpperCase` (databases do not match JavaScript's Unicode case mapping), and division (databases differ on division by zero). Text with a lone surrogate is rejected, since drivers send it as U+FFFD.
 

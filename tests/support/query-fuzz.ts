@@ -23,7 +23,12 @@ export interface Row {
 }
 
 export const env = bonsai()
+const duration = (source: string): unknown => env.evaluateSync(source)
 export const known = {
+  // Durations: whole days, a fraction of a millisecond, and one that overflows the Date range.
+  span: duration('days(14)'),
+  halfMs: duration('milliseconds(0.5)'),
+  farSpan: duration('days(1e8)'),
   // A hole reads as null.
   // oxlint-disable-next-line no-sparse-arrays
   sparse: [1, , 'a'],
@@ -185,6 +190,49 @@ const atom: fc.Arbitrary<string> = fc.oneof(
     .tuple(fc.constantFrom('>=', '<'), fc.constantFrom('since'))
     .map(([op, k]) => `order.placed ${op} ${k}`),
   fc.constantFrom('true', 'false'),
+  // The null-safe idioms: ?. with ??, compared with a boolean, and a ?? default receiver.
+  fc
+    .tuple(
+      textCol,
+      fc.constantFrom('.', '?.'),
+      fc.constantFrom('startsWith', 'endsWith', 'includes'),
+      strConst,
+      fc.constantFrom(
+        '?? false',
+        '?? true',
+        '?? flag',
+        '?? order.active',
+        '== true',
+        '== false',
+        '!= true',
+        '!= false',
+        '== null',
+        '!= null',
+      ),
+    )
+    .map(([c, dot, f, k, tail]) => `(${c}${dot}${f}(${k}) ${tail})`),
+  fc
+    .tuple(textCol, strConst, fc.constantFrom('startsWith', 'endsWith', 'includes'), strConst)
+    .map(([c, d, f, k]) => `(${c} ?? ${d}).${f}(${k})`),
+  fc.constantFrom('(order.active ?? false)', '(order.active ?? true)', '(order.active ?? flag)'),
+  // Relative dates: a timestamp shifted by a duration, or a distance between timestamps.
+  fc
+    .tuple(
+      fc.constantFrom(
+        'since - order.placed',
+        'order.placed - since',
+        'order.placed + span',
+        'span + order.placed',
+        'order.placed - span',
+        'order.placed + farSpan',
+        'order.placed - halfMs',
+        'since - order.placed',
+      ),
+      cmp,
+      fc.constantFrom('span', 'since', 'halfMs', 'farSpan', 'd0'),
+      fc.boolean(),
+    )
+    .map(([e, op, k, flip]) => (flip ? `${k} ${op} ${e}` : `${e} ${op} ${k}`)),
   fc
     .tuple(
       fc.constantFrom('order.name', 'order.active', 'order.placed'),
@@ -305,8 +353,8 @@ export const predicate: fc.Arbitrary<string> = fc.letrec<{ p: string }>((tie) =>
 })).p
 
 /** The rows for which the predicate evaluates to true (failures excluded, as try(p, false)). */
-export function expected(source: string, rows: readonly Row[]): number[] {
-  const program = env.compile(source)
+export function expected(source: string, rows: readonly Row[], now?: Date): number[] {
+  const program = (now === undefined ? env : bonsai({ clock: () => now })).compile(source)
   return rows
     .filter((order) => {
       try {
