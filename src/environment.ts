@@ -573,6 +573,22 @@ export function internalsOf(env: Environment<never>): EnvironmentInternals {
 /** Compiled programs kept per environment unless `cacheSize` says otherwise. */
 const DEFAULT_CACHE_SIZE = 256
 
+/** Subtrees compiled for partial evaluation, in nodes, kept per program: this times its own. */
+const SUBTREE_CACHE_FACTOR = 2
+
+/** The nodes in a tree, counted without recursion. */
+function countNodes(root: Node): number {
+  let count = 0
+  const pending: Node[] = [root]
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    count++
+    forEachChild(node, (child) => {
+      pending.push(child)
+    })
+  }
+  return count
+}
+
 /** A plain data object, which an overlay may copy without losing a prototype. */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) return false
@@ -581,70 +597,88 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * One pair of objects an overlay merges: a known object, the given object at
+ * its place, and their merged copy, with the keys it adds or replaces.
+ */
+interface OverlayPair {
+  readonly mine: Readonly<Record<string, unknown>>
+  readonly theirs: Record<string, unknown>
+  readonly out: Record<string, unknown>
+  /** Known values the given object lacks, and merged copies of plain objects both hold. */
+  readonly put: [string, unknown][]
+}
+
+/**
  * The known data of a partial evaluation overlaid at every depth with the
  * context a residual is given (the given values win): `given` itself when it
  * already has every known value, otherwise a frozen copy with the rest added.
  * Plain objects on both sides are merged; anything else given replaces the
- * known value whole. Each pair of objects is merged once, however many paths
- * reach it, and a reference back into a pair still being merged (a cycle) sees
- * the given object. Every own key looked at or copied costs a step, and
- * charging checks the deadline, so the overlay is bounded like evaluation.
+ * known value whole. Each pair of objects is merged once, wherever it is
+ * reached, and a reference back into a pair (a cycle) gets that pair's merged
+ * copy, so the result is the same at every depth. The work runs in a loop, so
+ * deep data costs no call stack and is never cut short, and every own key
+ * looked at or copied costs a step (charging checks the deadline), so the
+ * overlay is bounded like evaluation.
  */
 function overlayKnown(
   known: Readonly<Record<string, unknown>>,
   given: Record<string, unknown>,
   state: State,
-  maxDepth: number,
 ): Record<string, unknown> {
-  const merged = new Map<object, Map<object, Record<string, unknown>>>()
-  const merge = (
+  const pairs = new Map<object, Map<object, OverlayPair>>()
+  const all: OverlayPair[] = []
+  let adds = false
+  const pairOf = (
     mine: Readonly<Record<string, unknown>>,
     theirs: Record<string, unknown>,
-    depth: number,
-  ): Record<string, unknown> => {
-    state.charge(1)
-    let byGiven = merged.get(mine)
-    const done = byGiven?.get(theirs)
-    if (done !== undefined) return done
-    if (byGiven === undefined) merged.set(mine, (byGiven = new Map()))
-    // Until this pair is merged, a cycle back into it sees the given object.
-    byGiven.set(theirs, theirs)
-    let changes: Map<string, unknown> | undefined
+  ): OverlayPair => {
+    let byGiven = pairs.get(mine)
+    if (byGiven === undefined) pairs.set(mine, (byGiven = new Map()))
+    let pair = byGiven.get(theirs)
+    if (pair === undefined) {
+      state.charge(1)
+      // Each copy exists before any is filled, so a cycle refers to the copy.
+      pair = { mine, theirs, out: {}, put: [] }
+      byGiven.set(theirs, pair)
+      all.push(pair)
+    }
+    return pair
+  }
+  const root = pairOf(known, given)
+  // Every pair reached, and what each adds (the loop also visits pairs found during it).
+  for (const { mine, theirs, put } of all) {
     const names = Object.keys(mine)
     state.charge(names.length)
     for (const name of names) {
       const value = mine[name]
       if (value === undefined) continue
       const other = Object.hasOwn(theirs, name) ? theirs[name] : undefined
-      let next = value
-      if (other !== undefined) {
-        if (depth <= 0 || !isPlainObject(value) || !isPlainObject(other)) continue
-        next = merge(value, other, depth - 1)
-        if (next === other) continue
+      if (other === undefined) {
+        put.push([name, value])
+        adds = true
+      } else if (isPlainObject(value) && isPlainObject(other)) {
+        put.push([name, pairOf(value, other).out])
       }
-      changes ??= new Map()
-      changes.set(name, next)
     }
-    if (changes === undefined) return theirs
-    const out: Record<string, unknown> = {}
-    // Defined, not assigned, so a key named __proto__ stays a key.
-    const put = (name: string, value: unknown): void => {
-      Object.defineProperty(out, name, {
-        value,
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      })
-    }
-    const own = Object.keys(theirs)
-    state.charge(own.length + changes.size)
-    for (const name of own) put(name, theirs[name])
-    for (const [name, value] of changes) put(name, value)
-    const result = Object.freeze(out)
-    byGiven.set(theirs, result)
-    return result
   }
-  return merge(known, given, maxDepth)
+  if (!adds) return given
+  // Defined, not assigned, so a key named __proto__ stays a key.
+  const define = (out: object, name: string, value: unknown): void => {
+    Object.defineProperty(out, name, {
+      value,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    })
+  }
+  for (const { theirs, out, put } of all) {
+    const own = Object.keys(theirs)
+    state.charge(own.length + put.length)
+    for (const name of own) define(out, name, theirs[name])
+    for (const [name, value] of put) define(out, name, value)
+    Object.freeze(out)
+  }
+  return root.out
 }
 
 interface Settings {
@@ -1349,6 +1383,20 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     }
   }
 
+  /** What a residual keeps from its partial evaluation. */
+  interface ResidualOf {
+    /** Its printed source: the text of its explanations. */
+    readonly source: string
+    /**
+     * A frozen copy of the known data (without the paths listed as unknown),
+     * when the residual's context is validated or read by `call: true` host
+     * functions: the residual runs on it overlaid with the caller's context.
+     */
+    readonly known: Readonly<Record<string, unknown>> | undefined
+    /** Whether `call: true` host functions read the overlaid context. */
+    readonly readsContext: boolean
+  }
+
   /** How a partial-evaluation residual runs and explains, with the caller's context. */
   interface ResidualRunner {
     /** Whether the residual calls an async host function. */
@@ -1366,10 +1414,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     expect: Type | undefined,
     asResidual: (runner: ResidualRunner) => void,
     constants: ReadonlyMap<string, unknown>,
-    residualOf: {
-      readonly source: string
-      readonly known: Readonly<Record<string, unknown>> | undefined
-    },
+    residualOf: ResidualOf,
   ): undefined
   function makeProgram<R>(
     source: string,
@@ -1377,14 +1422,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     expect?: Type,
     asResidual?: (runner: ResidualRunner) => void,
     constants?: ReadonlyMap<string, unknown>,
-    /**
-     * For a residual: its printed source (the text of its explanations) and
-     * the known data `call: true` host functions see under the caller's context.
-     */
-    residualOf?: {
-      readonly source: string
-      readonly known: Readonly<Record<string, unknown>> | undefined
-    },
+    residualOf?: ResidualOf,
   ): Program<Ctx, R> | undefined {
     // When the checker cannot prove the result matches `expect` (part of it is
     // `any`, or an open object may hold an unlisted key), it is checked at run
@@ -1425,23 +1463,29 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       limits: EvaluationLimits,
       locals: number,
     ): void {
+      const known = residualOf?.known
+      if (known === undefined) validate(ctx, limits)
+      state.reset(ctx, source, locals, limits.maxSteps, limits.timeout, limits.signal)
+      if (limits.now !== undefined) state.nowValue = limits.now
+      if (known === undefined) return
+      // A residual runs on the known data its partial evaluation had (kept
+      // when its context is validated or read by call: true functions),
+      // overlaid at every depth with the context it is given: that context
+      // itself (prototype included) when it already has everything the known
+      // data gives, otherwise a copy with the rest. That is the context
+      // validated, and the one its call: true functions read.
+      const overlaid = overlayKnown(known, ctx, state)
+      validate(overlaid, limits)
+      if (residualOf?.readsContext === true && overlaid !== ctx) state.hostCtx = overlaid
+    }
+
+    function validate(context: Record<string, unknown>, limits: EvaluationLimits): void {
       if (settings.validateContext && settings.variables !== undefined) {
-        validateContext(ctx, settings.variables, source, {
+        validateContext(context, settings.variables, source, {
           maxDepth: settings.runtimeLimits.maxValueDepth,
           maxSteps: limits.maxSteps,
           timeout: limits.timeout,
         })
-      }
-      state.reset(ctx, source, locals, limits.maxSteps, limits.timeout, limits.signal)
-      if (limits.now !== undefined) state.nowValue = limits.now
-      const known = residualOf?.known
-      if (known !== undefined) {
-        // The residual's call: true functions read the known data the partial
-        // evaluation had, overlaid at every depth with the context the residual
-        // was given: that context itself (prototype included) when it already
-        // has everything the known data gives, otherwise a copy with the rest.
-        const overlaid = overlayKnown(known, ctx, state, settings.runtimeLimits.maxValueDepth)
-        if (overlaid !== ctx) state.hostCtx = overlaid
       }
     }
 
@@ -1695,7 +1739,16 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     }
 
     // Sub-trees compiled on their own for partial evaluation, by free locals.
-    const subtrees = new WeakMap<Node, Map<string, CompiledProgram>>()
+    // Which subtrees are closed depends on the data, so the cache holds at most
+    // a few times the program's own nodes, and starts over when full.
+    let subtrees = new Map<Node, Map<string, CompiledProgram>>()
+    let subtreeNodes = 0
+    let programNodes = 0
+    // The variables evaluation validates, which a residual keeps known values of.
+    const validated =
+      settings.validateContext && settings.variables !== undefined
+        ? new Set(Object.keys(settings.variables))
+        : undefined
 
     function partial(known: Record<string, unknown>, rawOptions: unknown): PartialResult<R, Ctx> {
       const options = partialOptions(rawOptions)
@@ -1760,16 +1813,23 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
                 throw hostDataFailure(error, source)
               }
             },
-            evaluate: (node, locals) => {
+            validated,
+            evaluate: (node, locals, size) => {
               const key = locals.map(([name]) => name).join('\u0000')
-              let byLocals = subtrees.get(node)
-              if (byLocals === undefined) subtrees.set(node, (byLocals = new Map()))
-              let code = byLocals.get(key)
+              let code = subtrees.get(node)?.get(key)
               if (code === undefined) {
+                if (programNodes === 0) programNodes = countNodes(analysis.root)
+                if (subtreeNodes + size > SUBTREE_CACHE_FACTOR * programNodes) {
+                  subtrees = new Map()
+                  subtreeNodes = 0
+                }
                 code = compileProgram({ ...analysis, root: node }, 'sync', {
                   locals: locals.map(([name]) => name),
                 })
+                let byLocals = subtrees.get(node)
+                if (byLocals === undefined) subtrees.set(node, (byLocals = new Map()))
                 byLocals.set(key, code)
+                subtreeNodes += size
               }
               state.ensureLocals(code.localCount)
               locals.forEach(([, value], slot) => {
@@ -1802,7 +1862,11 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
                   runner = made
                 },
                 new Map(Object.entries(bindings)),
-                { source: residualSource, known: residualKnown },
+                {
+                  source: residualSource,
+                  known: residualKnown?.data,
+                  readsContext: residualKnown?.readsContext === true,
+                },
               )
               return runner as ResidualRunner
             },
