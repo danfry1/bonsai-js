@@ -105,9 +105,13 @@
     "vitest": "4.1.10"
   },
   "overrides": {
-    "vite": "7.3.6",
-    "smol-toml": "1.8.0",
+    "brace-expansion": "5.0.12",
+    "browserslist": "4.28.9",
     "fast-uri": "3.1.8",
-    "browserslist": "4.28.9"
+    "smol-toml": "1.8.0",
+    "source-map-js": "1.2.2",
+    "tinypool": "2.1.2",
+    "vite": "7.3.6",
+    "vue": "3.5.43"
   }
 }
