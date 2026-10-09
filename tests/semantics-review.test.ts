@@ -102,6 +102,13 @@ describe('host keys holding undefined', () => {
     expect(run('{a: 1, b: null} == {a: 1}')).toEqual({ value: false })
     expect(run('"b" in {b: null}')).toEqual({ value: true })
   })
+
+  it('never match a key with data, in either order', () => {
+    const pair = { a: { x: null }, b: { x: undefined, y: 1 } }
+    expect(run('a == b', pair)).toEqual({ value: false })
+    expect(run('b == a', pair)).toEqual({ value: false })
+    expect(run('a == b', { a: { x: 1 }, b: { x: 1, y: undefined } })).toEqual({ value: true })
+  })
 })
 
 describe('toNumber', () => {

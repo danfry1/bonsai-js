@@ -555,7 +555,9 @@ export function equals(a: unknown, b: unknown, s: State, depth = 0, at?: Span): 
     const key = names[i]
     // An own enumerable key, as Object.keys(b) lists: a non-enumerable key is not data.
     if (!isEnumerable.call(b, key)) return false
-    if (!equals(values[i], b[key], s, depth + 1, at)) return false
+    const value = b[key]
+    // A key holding undefined is absent, so it never matches a key with data.
+    if (value === undefined || !equals(values[i], value, s, depth + 1, at)) return false
   }
   return true
 }
