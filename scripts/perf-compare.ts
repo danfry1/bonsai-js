@@ -52,13 +52,25 @@ function git(...args: string[]): string {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
 }
 
+// The absolute floors are enforced by their own CI step. Here a single noisy
+// round below a floor must not abort the comparison, so a failing gate still
+// counts as a round as long as it wrote its measurements.
 function runGate(cwd: string, jsonPath: string): Record<string, number> {
-  execFileSync('bun', ['run', 'scripts/perf-gate.ts'], {
-    cwd,
-    stdio: ['ignore', 'ignore', 'inherit'],
-    env: { ...process.env, PERF_GATE_JSON: jsonPath },
-  })
-  return JSON.parse(readFileSync(jsonPath, 'utf8')) as Record<string, number>
+  let gateError: unknown
+  try {
+    execFileSync('bun', ['run', 'scripts/perf-gate.ts'], {
+      cwd,
+      stdio: ['ignore', 'ignore', 'inherit'],
+      env: { ...process.env, PERF_GATE_JSON: jsonPath },
+    })
+  } catch (error) {
+    gateError = error
+  }
+  try {
+    return JSON.parse(readFileSync(jsonPath, 'utf8')) as Record<string, number>
+  } catch (error) {
+    throw gateError ?? error
+  }
 }
 
 // Exports the gate relies on. A base without them has an incompatible API.

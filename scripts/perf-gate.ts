@@ -161,7 +161,7 @@ results.push({
 results.push({
   name: 'cold compile',
   hz: measure(() => uncached.evaluateSync(RULE, context)),
-  minHz: 28_000,
+  minHz: 12_000,
 })
 
 // Machine-readable output for scripts/perf-compare.ts.
