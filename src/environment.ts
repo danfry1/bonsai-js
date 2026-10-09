@@ -368,6 +368,7 @@ export interface Environment<Ctx = object> {
   /** Every callable function, host functions first. */
   listFunctions: () => FunctionInfo[]
   /** A new environment with more variables, functions, or libraries. */
+  // oxlint-disable-next-line typescript/no-generated-empty-object-type -- no variables adds nothing to Ctx
   extend: <V2 extends Readonly<Record<string, Type>> = Record<never, never>>(
     options: EnvironmentOptions<V2>,
   ) => Environment<Ctx & ContextOf<V2>>
@@ -1520,6 +1521,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
  * adult.evaluateSync({ user: { age: 30 } }) // true
  * ```
  */
+// oxlint-disable-next-line typescript/no-generated-empty-object-type -- no variables means an empty context
 export function bonsai<const V extends Readonly<Record<string, Type>> = Record<never, never>>(
   options: EnvironmentOptions<V> = {},
 ): Environment<ContextOf<V>> {

@@ -134,11 +134,15 @@ try {
   }
   for (const [file, expected] of Object.entries(publicExports)) {
     const declarations = readFileSync(join(extractDir, 'package', 'dist', file), 'utf8')
-    const list = /export \{(?<names>[^}]*)\};\s*$/u.exec(declarations)?.groups?.names
-    if (list === undefined) throw new Error(`Could not find the export list of ${file}`)
-    const actual = list
-      .split(',')
-      .map((name) => name.trim().replace(/^type /u, ''))
+    // Exports appear in a trailing `export { ... }` list, inline
+    // (`export interface X`, `export declare function f`), or both.
+    const list = /^export \{(?<names>[^}]*)\};\s*$/mu.exec(declarations)?.groups?.names ?? ''
+    const inline = [
+      ...declarations.matchAll(
+        /^export (?:declare )?(?:function|const|class|interface|type|enum) (?<name>\w+)/gmu,
+      ),
+    ].map((match) => match.groups?.name ?? '')
+    const actual = [...list.split(',').map((name) => name.trim().replace(/^type /u, '')), ...inline]
       .filter((name) => name !== '')
       .sort()
     const want = [...expected].sort()

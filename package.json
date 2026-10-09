@@ -116,7 +116,7 @@
     "npm": "11.19.0",
     "oxfmt": "0.71.0",
     "oxlint": "1.86.0",
-    "oxlint-tsgolint": "0.24.0",
+    "oxlint-tsgolint": "7.0.2003",
     "pg": "8.23.1",
     "postgres": "3.4.9",
     "tsdown": "0.23.0",
