@@ -8,22 +8,34 @@
  * records for which it would fail (as `try(predicate, false)`) are excluded.
  *
  * Exactness depends on the declared columns: each column's type is part of
- * the contract, and only declared columns can be queried.
+ * the contract, and only declared columns can be queried. The translator does
+ * not see the environment's variable types, so a column must be declared with
+ * the type the field really has.
  */
+import type { AbortSignalLike } from '../environment.js'
 import { BonsaiError, type Span } from '../errors.js'
 import type { PartialOptions, PartialResult } from '../partial.js'
-import { Duration } from '../runtime/values.js'
+import { Duration, isMap } from '../runtime/values.js'
 import { closest, didYouMean } from '../suggest.js'
-import type { BinaryNode, CallNode, Node, SpreadNode } from '../syntax/ast.js'
+import {
+  forEachChild,
+  type BinaryNode,
+  type CallNode,
+  type Node,
+  type SpreadNode,
+} from '../syntax/ast.js'
 
 /** A compiled program (from `env.compile`) whose predicate is translated. */
 export interface Translatable {
   readonly source: string
+  /** The checked syntax tree, read to find the known paths the predicate uses. */
+  readonly ast: Node
   readonly references: { readonly variables: readonly string[] }
   partial: (known: never, options?: PartialOptions) => PartialResult<unknown>
 }
 
-export type ColumnType = 'text' | 'number' | 'boolean' | 'timestamp'
+/** A duration column holds whole milliseconds (SQL integer, MongoDB number). */
+export type ColumnType = 'text' | 'number' | 'boolean' | 'timestamp' | 'duration'
 
 export interface Column {
   readonly type: ColumnType
@@ -41,6 +53,12 @@ interface CommonOptions {
   readonly known?: Readonly<Record<string, unknown>> | undefined
   /** The time `now()` returns. Required when the predicate calls now(). */
   readonly now?: Date | undefined
+  /** Step budget for the partial evaluation translation runs, as for partial(). */
+  readonly maxSteps?: number | undefined
+  /** Wall-clock budget in milliseconds for that partial evaluation, as for partial(). */
+  readonly timeout?: number | undefined
+  /** Cancels that partial evaluation, as for partial(). */
+  readonly signal?: AbortSignalLike | undefined
 }
 
 export interface SQLOptions extends CommonOptions {
@@ -81,10 +99,16 @@ export class BonsaiTranslationError extends BonsaiError {
 
 // === a small predicate language both targets are generated from ===
 
-type Primitive = string | number | boolean | Date | null
+type Primitive = string | number | boolean | Date | Duration | null
+
+interface ColumnValue {
+  readonly kind: 'column'
+  readonly field: string
+  readonly type: ColumnType
+}
 
 type Value =
-  | { readonly kind: 'column'; readonly field: string; readonly type: ColumnType }
+  | ColumnValue
   | { readonly kind: 'const'; readonly value: Primitive }
   | {
       readonly kind: 'arith'
@@ -92,6 +116,14 @@ type Value =
       readonly left: Value
       readonly right: Value
     }
+  /** `column ?? fallback`: never null (SQL only; compared with a known value it is rewritten). */
+  | {
+      readonly kind: 'coalesce'
+      readonly column: ColumnValue
+      readonly fallback: Exclude<Primitive, null>
+    }
+  /** `inMilliseconds(column)` of a duration column: a number, failing on null (SQL only). */
+  | { readonly kind: 'ms'; readonly column: ColumnValue }
 
 type Pred =
   | { readonly kind: 'const'; readonly value: boolean }
@@ -152,7 +184,33 @@ const FLIP: Readonly<Record<'<' | '<=' | '>' | '>=', '<' | '<=' | '>' | '>='>> =
   '>=': '<=',
 }
 
-const COLUMN_TYPES: ReadonlySet<string> = new Set(['text', 'number', 'boolean', 'timestamp'])
+const COLUMN_TYPES: ReadonlySet<string> = new Set([
+  'text',
+  'number',
+  'boolean',
+  'timestamp',
+  'duration',
+])
+
+/** Calendar functions: their answer depends on time zone rules databases do not apply as Bonsai does. */
+const CALENDAR = new Set([
+  'year',
+  'month',
+  'day',
+  'hour',
+  'minute',
+  'second',
+  'dayOfWeek',
+  'startOfDay',
+  'startOfMonth',
+  'startOfYear',
+  'addDays',
+  'addMonths',
+  'addYears',
+  'formatDate',
+])
+
+const COMPARISONS = new Set(['==', '!=', '<', '<=', '>', '>=', 'in', 'not in', '&&', '||'])
 
 /** The largest distance from the epoch a Date can hold, in milliseconds. */
 const MAX_TIME = 8.64e15
@@ -171,13 +229,41 @@ function textFunction(op: 'startsWith' | 'endsWith' | 'includes', text: string, 
 
 function kindOf(value: Value): ColumnType | 'null' {
   if (value.kind === 'column') return value.type
-  if (value.kind === 'arith') return 'number'
-  const v = value.value
+  if (value.kind === 'arith' || value.kind === 'ms') return 'number'
+  if (value.kind === 'coalesce') return value.column.type
+  return constantKind(value.value)
+}
+
+function constantKind(v: Primitive): ColumnType | 'null' {
   if (v === null) return 'null'
   if (v instanceof Date) return 'timestamp'
+  if (v instanceof Duration) return 'duration'
   if (typeof v === 'string') return 'text'
   if (typeof v === 'number') return 'number'
   return 'boolean'
+}
+
+/** Bonsai's `==` on two known primitives. */
+function sameValue(a: Primitive, b: Primitive): boolean {
+  if (constantKind(a) !== constantKind(b)) return false
+  if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime()
+  if (a instanceof Duration && b instanceof Duration) return a.ms === b.ms
+  return a === b
+}
+
+/** Bonsai's ordering of two known primitives of the same orderable kind. */
+function ordered(a: Primitive, op: '<' | '<=' | '>' | '>=', b: Primitive): boolean {
+  const number = (v: Primitive): number => {
+    if (v instanceof Date) return v.getTime()
+    if (v instanceof Duration) return v.ms
+    return v as number
+  }
+  const x = number(a)
+  const y = number(b)
+  if (op === '<') return x < y
+  if (op === '<=') return x <= y
+  if (op === '>') return x > y
+  return x >= y
 }
 
 // A lone surrogate reaches the database as U+FFFD, a different string.
@@ -199,7 +285,8 @@ function isPrimitive(value: unknown): value is Primitive {
     typeof value === 'string' ||
     typeof value === 'boolean' ||
     (typeof value === 'number' && Number.isFinite(value)) ||
-    isValidDate(value)
+    isValidDate(value) ||
+    (value instanceof Duration && Number.isFinite(value.ms))
   )
 }
 
@@ -211,15 +298,38 @@ interface Declared {
   readonly type: ColumnType
 }
 
-const SQL_OPTION_KEYS: readonly string[] = [
+/** Options both translators read; the budget options are passed to partial(), which validates them. */
+const COMMON_OPTION_KEYS: readonly string[] = [
   'row',
   'known',
   'now',
+  'maxSteps',
+  'timeout',
+  'signal',
+]
+const SQL_OPTION_KEYS: readonly string[] = [
+  ...COMMON_OPTION_KEYS,
   'dialect',
   'columns',
   'paramOffset',
 ]
-const MONGO_OPTION_KEYS: readonly string[] = ['row', 'known', 'now', 'fields']
+const MONGO_OPTION_KEYS: readonly string[] = [...COMMON_OPTION_KEYS, 'fields']
+
+/** Rejects anything but a compiled program, such as a partial-evaluation residual. */
+function checkProgram(program: unknown, translator: string): void {
+  const isProgram =
+    isRecord(program) &&
+    typeof program.source === 'string' &&
+    typeof program.partial === 'function' &&
+    isRecord(program.ast) &&
+    isRecord(program.references) &&
+    Array.isArray(program.references.variables)
+  if (!isProgram) {
+    throw new TypeError(
+      `${translator} takes a compiled program (from env.compile); to translate after partial evaluation, pass the original program and the values in known`,
+    )
+  }
+}
 
 /** Rejects option keys a translator does not read, so a misspelled one is never ignored. */
 function checkKeys(options: unknown, allowed: readonly string[], translator: string): void {
@@ -251,7 +361,9 @@ function declare(
   for (const [key, column] of Object.entries(columns)) {
     const spec: unknown = typeof column === 'string' ? { type: column } : column
     if (!isRecord(spec) || typeof spec.type !== 'string' || !COLUMN_TYPES.has(spec.type))
-      throw new TypeError(`${what}.${key} must be one of text, number, boolean, timestamp`)
+      throw new TypeError(
+        `${what}.${key} must be one of text, number, boolean, timestamp, duration`,
+      )
     if (spec.name !== undefined && typeof spec.name !== 'string')
       throw new TypeError(`${what}.${key}.name must be a string`)
     const field = spec.name ?? key
@@ -261,6 +373,78 @@ function declare(
     declared.set(key, { field, type: spec.type as ColumnType })
   }
   return declared
+}
+
+/** The path a static member chain reads from a variable (`limits.max`, `cfg["label"]`), if any. */
+function staticPath(node: Node): { readonly root: string; readonly path: string[] } | undefined {
+  const path: string[] = []
+  let current = node
+  while (current.type === 'Member' || current.type === 'Index') {
+    if (current.type === 'Member') path.unshift(current.name)
+    else if (current.index.type === 'Literal' && typeof current.index.value === 'string')
+      path.unshift(current.index.value)
+    else return undefined
+    current = current.object
+  }
+  return current.type === 'Variable' && path.length > 0 ? { root: current.name, path } : undefined
+}
+
+/**
+ * Refuses a predicate that reads a path missing from a known object. With the
+ * row as the only unknown variable, partial evaluation reads such a path as
+ * null and can decide the condition silently; a missing field is far more
+ * often an incomplete `known` than a meant null. A path the predicate guards
+ * itself (`has(p)`, `p ?? x`, `p == null`, `p != null`) is allowed.
+ */
+function checkKnownPaths(
+  ast: Node,
+  row: string,
+  known: Readonly<Record<string, unknown>>,
+  hostRead: <T>(read: () => T, what: string) => T,
+  fail: (message: string, at?: Span) => never,
+): void {
+  const reads: { readonly root: string; readonly path: string[]; readonly node: Node }[] = []
+  const guarded = new Set<string>()
+  const guard = (node: Node): void => {
+    const found = staticPath(node)
+    if (found === undefined) return
+    for (let i = 1; i <= found.path.length; i++)
+      guarded.add([found.root, ...found.path.slice(0, i)].join('.'))
+  }
+  const visit = (node: Node): void => {
+    if (node.type === 'Has') guard(node.target)
+    else if (node.type === 'Binary' && node.operator === '??') guard(node.left)
+    else if (node.type === 'Binary' && (node.operator === '==' || node.operator === '!=')) {
+      if (node.right.type === 'Literal' && node.right.value === null) guard(node.left)
+      if (node.left.type === 'Literal' && node.left.value === null) guard(node.right)
+    }
+    const found = staticPath(node)
+    if (found !== undefined && found.root !== row) reads.push({ ...found, node })
+    forEachChild(node, visit)
+  }
+  visit(ast)
+  for (const { root, path, node } of reads) {
+    let value: unknown = hostRead(() => known[root], 'the known values')
+    for (const [i, segment] of path.entries()) {
+      const current = value
+      // Only an object is read by key; null, lists, and other values are left to evaluation.
+      if (!hostRead(() => isMap(current), 'the known values')) break
+      const map = current as Record<string, unknown>
+      const name = [root, ...path.slice(0, i + 1)].join('.')
+      const present = hostRead(
+        () => Object.hasOwn(map, segment) && map[segment] !== undefined,
+        'the known values',
+      )
+      if (!present) {
+        if (guarded.has(name)) break
+        fail(
+          `${name} is missing from the known values: pass it (null when it has no value), or guard it with has() or ??`,
+          node,
+        )
+      }
+      value = hostRead(() => map[segment], 'the known values')
+    }
+  }
 }
 
 /** Partially evaluates the program and lowers the residual to a predicate. */
@@ -304,9 +488,13 @@ function lower(
       )
     }
   }
+  checkKnownPaths(program.ast, options.row, knownData, hostRead, fail)
   const result = program.partial(knownData as never, {
     unknown: [options.row],
     ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps }),
+    ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   })
   if (result.status === 'error') throw result.error
   if (result.status === 'value') {
@@ -315,13 +503,53 @@ function lower(
     return { kind: 'const', value: result.value === true }
   }
   const { bindings, hostFunctions } = result
-  /** The reason a node does not translate: specific for a host function call. */
-  const untranslatable = (node: Node): never =>
-    node.type === 'Call' && hostFunctions.includes(node.name)
-      ? fail(`${node.name}() is a host function, which has no database equivalent`, node)
-      : fail('This expression has no exact database equivalent', node)
+  /** Why a node does not translate, as specifically as the node allows. */
+  const untranslatable = (node: Node): never => {
+    switch (node.type) {
+      case 'Call':
+        if (hostFunctions.includes(node.name))
+          return fail(`${node.name}() is a host function, which has no database equivalent`, node)
+        if (node.name === 'now')
+          return fail('now() is translated only with the `now` option, which fixes its time', node)
+        if (CALENDAR.has(node.name)) {
+          return fail(
+            `${node.name}() depends on time zone calendar rules, which databases do not apply as Bonsai does; compare the timestamp with known bounds instead`,
+            node,
+          )
+        }
+        return fail(`${node.name}() is not translated`, node)
+      case 'Let':
+        return fail('let is not translated; write the value in place', node)
+      case 'Conditional':
+        return fail('?: is not translated; write the condition with && and ||', node)
+      case 'Try':
+        return fail('try() is not translated', node)
+      case 'Template':
+        return fail('Templates are not translated', node)
+      case 'Index':
+        return fail('Computed reads ([...]) are not translated', node)
+      case 'Has':
+        return fail('has() is not translated', node)
+      case 'Binary':
+        return COMPARISONS.has(node.operator)
+          ? fail('A comparison is translated as a condition, not as a value', node)
+          : fail(`"${node.operator}" is not translated`, node)
+      case 'Unary':
+        return fail(`"${node.operator}" is not translated here`, node)
+      case 'It':
+      case 'Lambda':
+      case 'List':
+      case 'Literal':
+      case 'Local':
+      case 'Map':
+      case 'Member':
+      case 'Variable':
+      default:
+        return fail('This expression has no exact database equivalent', node)
+    }
+  }
 
-  const columnOf = (node: Node): Value | undefined => {
+  const columnOf = (node: Node): ColumnValue | undefined => {
     const path: string[] = []
     let current: Node = node
     while (current.type === 'Member') {
@@ -397,11 +625,65 @@ function lower(
     return out
   }
 
+  /**
+   * `column ?? fallback` with a known fallback of the column's kind; the
+   * column itself for a null fallback; undefined when the node is not `??`.
+   */
+  const defaultOf = (
+    node: Node,
+  ): Extract<Value, { kind: 'coalesce' }> | ColumnValue | undefined => {
+    if (node.type !== 'Binary' || node.operator !== '??') return undefined
+    const column = columnOf(node.left)
+    if (column === undefined)
+      return fail('"??" is translated for a field with a known default', node)
+    const fallback = constOf(node.right)
+    if (fallback === undefined)
+      return fail('"??" is translated for a field with a known default', node)
+    if (fallback === null) return column
+    if (constantKind(fallback) !== column.type)
+      return fail(`The default of a ${column.type} field must be a ${column.type}`, node)
+    return { kind: 'coalesce', column, fallback }
+  }
+  /** A `??` default that is not the field itself (a non-null fallback). */
+  const coalesced = (node: Node): Extract<Value, { kind: 'coalesce' }> | undefined => {
+    const found = defaultOf(node)
+    return found?.kind === 'coalesce' ? found : undefined
+  }
+
+  /** `inMilliseconds(column)` of a duration column. */
+  const millisecondsOf = (node: CallNode): Value | undefined => {
+    if (node.name !== 'inMilliseconds' || hostFunctions.includes(node.name)) return undefined
+    const arg = node.args[0]
+    if (node.args.length !== 1 || arg === undefined || arg.type === 'Spread') return undefined
+    const column = columnOf(arg)
+    if (column?.type !== 'duration') return undefined
+    // `?.` gives null on a null duration, which compares as null does: the stored number.
+    if (node.optional) return { kind: 'column', field: column.field, type: 'number' }
+    // Without `?.` a null duration fails, which SQL detects; MongoDB cannot.
+    if (!target.arithmetic)
+      return fail(`inMilliseconds() is translated for ${target.name} only with ?.`, node)
+    return { kind: 'ms', column }
+  }
+
   const value = (node: Node): Value => {
     const column = columnOf(node)
     if (column !== undefined) return column
     const constant = constOf(node)
     if (constant !== undefined) return { kind: 'const', value: constant }
+    const fallback = defaultOf(node)
+    if (fallback !== undefined) {
+      if (fallback.kind === 'coalesce' && !target.columnPairs) {
+        return fail(
+          `A "??" default is translated for ${target.name} only when compared with a known value`,
+          node,
+        )
+      }
+      return fallback
+    }
+    if (node.type === 'Call') {
+      const ms = millisecondsOf(node)
+      if (ms !== undefined) return ms
+    }
     if (
       node.type === 'Binary' &&
       (node.operator === '+' || node.operator === '-' || node.operator === '*')
@@ -613,7 +895,9 @@ function lower(
           case '==':
           case '!=': {
             const eq =
-              conditionEquality(node) ?? equality(value(node.left), value(node.right), node)
+              conditionEquality(node) ??
+              defaultEquality(node) ??
+              equality(value(node.left), value(node.right), node)
             return node.operator === '==' ? eq : { kind: 'not', item: eq }
           }
           case '<':
@@ -622,25 +906,9 @@ function lower(
           case '>=': {
             const shifted = timeOrder(node, node.operator)
             if (shifted !== undefined) return shifted
-            const left = value(node.left)
-            const right = value(node.right)
-            const kinds = [kindOf(left), kindOf(right)]
-            if (kinds.includes('text')) {
-              return fail(
-                'Ordering text is not translated (databases order by code point, Bonsai by UTF-16 unit)',
-                node,
-              )
-            }
-            if (kinds.includes('boolean')) return fail('Booleans cannot be ordered', node)
-            // Ordering with null is false, unless the other side fails first.
-            if (kinds.includes('null'))
-              return { kind: 'in', value: kinds[0] === 'null' ? right : left, list: [] }
-            if (kinds[0] !== kinds[1])
-              return fail('Both sides of an ordering must be numbers or both timestamps', node)
-            pair(left, right, node)
-            return left.kind === 'const'
-              ? { kind: 'order', op: FLIP[node.operator], left: right, right: left }
-              : { kind: 'order', op: node.operator, left, right }
+            const defaulted = defaultOrdering(node, node.operator)
+            if (defaulted !== undefined) return defaulted
+            return ordering(value(node.left), node.operator, value(node.right), node)
           }
           case 'in':
           case 'not in': {
@@ -674,7 +942,7 @@ function lower(
         return fail('Only boolean columns can be used as conditions', node)
       }
       case 'Call':
-        return textCall(node) ?? fail(`${node.name}() is not translated`, node)
+        return textCall(node) ?? untranslatable(node)
       case 'Conditional':
       case 'Has':
       case 'Index':
@@ -688,8 +956,80 @@ function lower(
       case 'Try':
       case 'Variable':
       default:
-        return fail('This expression has no exact database equivalent', node)
+        return untranslatable(node)
     }
+  }
+
+  const ordering = (left: Value, op: '<' | '<=' | '>' | '>=', right: Value, node: Node): Pred => {
+    const kinds = [kindOf(left), kindOf(right)]
+    if (kinds.includes('text')) {
+      return fail(
+        'Ordering text is not translated (databases order by code point, Bonsai by UTF-16 unit)',
+        node,
+      )
+    }
+    if (kinds.includes('boolean')) return fail('Booleans cannot be ordered', node)
+    // Ordering with null is false, unless the other side fails first.
+    if (kinds.includes('null'))
+      return { kind: 'in', value: kinds[0] === 'null' ? right : left, list: [] }
+    if (kinds[0] !== kinds[1]) {
+      return fail('Both sides of an ordering must be numbers, timestamps, or durations alike', node)
+    }
+    pair(left, right, node)
+    return left.kind === 'const'
+      ? { kind: 'order', op: FLIP[op], left: right, right: left }
+      : { kind: 'order', op, left, right }
+  }
+
+  /** One side a `field ?? default`, the other a known value: the default's side and that value. */
+  const defaultAgainstKnown = (
+    node: BinaryNode,
+  ):
+    | {
+        readonly fallback: Extract<Value, { kind: 'coalesce' }>
+        readonly known: Primitive
+        readonly flipped: boolean
+      }
+    | undefined => {
+    const left = coalesced(node.left)
+    if (left !== undefined) {
+      const known = constOf(node.right)
+      return known === undefined ? undefined : { fallback: left, known, flipped: false }
+    }
+    const right = coalesced(node.right)
+    if (right === undefined) return undefined
+    const known = constOf(node.left)
+    return known === undefined ? undefined : { fallback: right, known, flipped: true }
+  }
+
+  /**
+   * `(field ?? d) op k`: where the field is null the answer is `d op k`, known
+   * now; elsewhere it is `field op k`. Exact for every target, and indexable.
+   */
+  const defaultOrdering = (node: BinaryNode, op: '<' | '<=' | '>' | '>='): Pred | undefined => {
+    const found = defaultAgainstKnown(node)
+    if (found === undefined) return undefined
+    const relation = found.flipped ? FLIP[op] : op
+    const { column, fallback } = found.fallback
+    const onField = ordering(column, relation, { kind: 'const', value: found.known }, node)
+    const onDefault =
+      found.known !== null &&
+      constantKind(found.known) === column.type &&
+      ordered(fallback, relation, found.known)
+    return onDefault ? { kind: 'or', items: [{ kind: 'null', value: column }, onField] } : onField
+  }
+
+  /** `(field ?? d) == k`, rewritten as for an ordering. */
+  const defaultEquality = (node: BinaryNode): Pred | undefined => {
+    const found = defaultAgainstKnown(node)
+    if (found === undefined) return undefined
+    const { column, fallback } = found.fallback
+    // The default is never null, so neither is the left side.
+    if (found.known === null) return { kind: 'const', value: false }
+    const onField = equality(column, { kind: 'const', value: found.known }, node)
+    return sameValue(fallback, found.known)
+      ? { kind: 'or', items: [{ kind: 'null', value: column }, onField] }
+      : onField
   }
 
   const equality = (left: Value, right: Value, at: Node): Pred => {
@@ -704,9 +1044,12 @@ function lower(
       // Bonsai evaluates both sides of == first.
       const failing = [a, b].find(failable)
       if (failing !== undefined) return { kind: 'in', value: failing, list: [] }
-      // Different kinds are equal only when both are null (b is non-null if constant).
+      // Different kinds are equal only when both are null (b is non-null if constant,
+      // and a field with a default never is).
       const isNull = (v: Value): Pred =>
-        v.kind === 'const' ? { kind: 'const', value: false } : { kind: 'null', value: v }
+        v.kind === 'const' || v.kind === 'coalesce'
+          ? { kind: 'const', value: false }
+          : { kind: 'null', value: v }
       return { kind: 'and', items: [isNull(a), isNull(b)] }
     }
     pair(a, b, at)
@@ -714,6 +1057,23 @@ function lower(
   }
 
   const contains = (itemNode: Node, containerNode: Node, at: Node): Pred => {
+    const fallback = coalesced(itemNode)
+    if (fallback !== undefined) {
+      const known = listOf(containerNode)
+      if (known !== undefined) {
+        // The field with its default is never null: it matches the entries of its kind,
+        // and a null field matches when the default is in the list.
+        const { column } = fallback
+        const onField: Pred = {
+          kind: 'in',
+          value: column,
+          list: known.filter((entry) => constantKind(entry) === column.type),
+        }
+        return known.some((entry) => sameValue(entry, fallback.fallback))
+          ? { kind: 'or', items: [{ kind: 'null', value: column }, onField] }
+          : onField
+      }
+    }
     const item = value(itemNode)
     const list = listOf(containerNode)
     if (list !== undefined) {
@@ -834,9 +1194,12 @@ function dual<S>(p: Pred, algebra: Algebra<S>): Dual<S> {
   }
 }
 
-/** Whether evaluating the value can fail (arithmetic on null, or a non-finite result). */
+/**
+ * Whether evaluating the value can fail: arithmetic on null or with a
+ * non-finite result, and `inMilliseconds()` of a null duration.
+ */
 function failable(value: Value): boolean {
-  return value.kind === 'arith'
+  return value.kind === 'arith' || value.kind === 'ms'
 }
 
 const tooLarge = (source: string): BonsaiTranslationError =>
@@ -885,18 +1248,21 @@ const PG_CASTS: Readonly<Record<ColumnType, string>> = {
   number: 'float8',
   boolean: 'boolean',
   timestamp: 'timestamptz',
+  // Whole milliseconds: exact in a double up to 2^53.
+  duration: 'float8',
 }
 
 /**
  * Translates a predicate to a SQL WHERE expression.
  *
- * Postgres: columns hold `text`, a numeric type, `boolean`, or `timestamptz`;
- * text comparisons use the C collation. SQLite (UTF-8 databases): columns
- * hold TEXT, REAL or INTEGER numbers, booleans as 0/1, and timestamps as
- * epoch milliseconds, and should be declared STRICT so they cannot hold
- * other types.
+ * Postgres: columns hold `text`, a numeric type, `boolean`, or `timestamptz`,
+ * and durations as a numeric type of milliseconds; text comparisons use the C
+ * collation. SQLite (UTF-8 databases): columns hold TEXT, REAL or INTEGER
+ * numbers, booleans as 0/1, timestamps as epoch milliseconds, and durations as
+ * milliseconds, and should be declared STRICT so they cannot hold other types.
  */
 export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
+  checkProgram(program, 'toSQL')
   checkKeys(options, SQL_OPTION_KEYS, 'toSQL')
   const dialect = options.dialect
   if (dialect !== 'postgres' && dialect !== 'sqlite')
@@ -941,6 +1307,7 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     pg ? `"${name.replaceAll('"', '""')}"` : `\`${name.replaceAll('`', '``')}\``
   const encode = (value: Exclude<Primitive, null>): unknown => {
     if (value instanceof Date) return pg ? value.toISOString() : value.getTime()
+    if (value instanceof Duration) return value.ms
     if (typeof value === 'boolean' && !pg) return value ? 1 : 0
     return value
   }
@@ -963,13 +1330,22 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     if (sql !== undefined) return sql
     switch (value.kind) {
       case 'column':
-        sql = pg && value.type === 'number' ? `${quote(value.field)}::float8` : quote(value.field)
+        sql =
+          pg && (value.type === 'number' || value.type === 'duration')
+            ? `${quote(value.field)}::float8`
+            : quote(value.field)
         break
       case 'const': {
         const kind = kindOf(value)
         sql = value.value === null ? 'NULL' : param(value.value, kind === 'null' ? 'text' : kind)
         break
       }
+      case 'coalesce':
+        sql = `COALESCE(${val(value.column)}, ${param(value.fallback, value.column.type)})`
+        break
+      case 'ms':
+        sql = val(value.column)
+        break
       case 'arith':
       default:
         sql = `(${operand(value.left)} ${value.op} ${operand(value.right)})`
@@ -979,7 +1355,9 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
   }
   // SQLite INTEGER arithmetic is exact past 2^53; Bonsai's (and REAL's) is double.
   const operand = (value: Value): string =>
-    !pg && value.kind === 'column' ? `CAST(${val(value)} AS REAL)` : val(value)
+    !pg && (value.kind === 'column' || value.kind === 'coalesce' || value.kind === 'ms')
+      ? `CAST(${val(value)} AS REAL)`
+      : val(value)
   const typed = (value: Value): string => (kindOf(value) === 'text' ? text(val(value)) : val(value))
   // Column against column: a text-like type (citext) would otherwise pick its own operator.
   const plain = (value: Value): string =>
@@ -1153,6 +1531,7 @@ function escapeRegex(text: string): string {
  * is binary whatever the collection's default collation.
  */
 export function toMongo(program: Translatable, options: MongoOptions): MongoQuery {
+  checkProgram(program, 'toMongo')
   checkKeys(options, MONGO_OPTION_KEYS, 'toMongo')
   const target: Target = {
     name: 'MongoDB',
@@ -1182,7 +1561,9 @@ export function toMongo(program: Translatable, options: MongoOptions): MongoQuer
   type Filter = Record<string, unknown>
   // lower() only leaves field-versus-constant comparisons for MongoDB.
   const field = (value: Value): string => (value as { field: string }).field
-  const constant = (value: Value): Primitive => (value as { value: Primitive }).value
+  // MongoDB stores a duration as its milliseconds.
+  const stored = (item: Primitive): unknown => (item instanceof Duration ? item.ms : item)
+  const constant = (value: Value): unknown => stored((value as { value: Primitive }).value)
 
   const sizes = new WeakMap<object, number>()
   /** Filter nodes counted with repeats: what the driver serializes. */
@@ -1232,7 +1613,9 @@ export function toMongo(program: Translatable, options: MongoOptions): MongoQuer
         }
         case 'in':
           return safe(
-            p.list.length === 0 ? { $expr: false } : { [field(p.value)]: { $in: [...p.list] } },
+            p.list.length === 0
+              ? { $expr: false }
+              : { [field(p.value)]: { $in: p.list.map(stored) } },
           )
         case 'truthy':
           return safe({ [field(p.column)]: { $eq: true } })

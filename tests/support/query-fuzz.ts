@@ -1,6 +1,6 @@
 /** Random filters and records shared by the differential query tests. */
 import { fc } from '@fast-check/vitest'
-import { BonsaiError, bonsai } from '../../src/index.js'
+import { BonsaiError, Duration, bonsai } from '../../src/index.js'
 import type { Columns } from '../../src/query/index.js'
 
 export const columns: Columns = {
@@ -10,6 +10,7 @@ export const columns: Columns = {
   qty: 'number',
   active: 'boolean',
   placed: 'timestamp',
+  wait: 'duration',
 }
 
 export interface Row {
@@ -20,6 +21,8 @@ export interface Row {
   qty: number | null
   active: boolean | null
   placed: Date | null
+  /** Stored as whole milliseconds. */
+  wait: Duration | null
 }
 
 export const env = bonsai()
@@ -108,6 +111,10 @@ const NUMBERS = [
 const DATES = ['2025-06-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-03-15T12:30:45.123Z']
   .map((d) => new Date(d))
   .concat([new Date(-1), new Date(0), new Date(1), new Date(-2208988800001)])
+// Whole milliseconds, as durations are: around the known spans, negative, and large.
+const DURATIONS = [0, 1, -5, 999, 1000, 1_209_600_000, 1_209_600_001, 2 ** 40].map(
+  (ms) => new Duration(ms),
+)
 
 const text = fc.oneof(fc.constantFrom(...STRINGS), fc.constant(null))
 const num = fc.oneof(fc.constantFrom(...NUMBERS), fc.constant(null))
@@ -120,6 +127,7 @@ const rowArbitrary = (id: number): fc.Arbitrary<Row> =>
     qty: num,
     active: fc.oneof(fc.boolean(), fc.constant(null)),
     placed: fc.oneof(fc.constantFrom(...DATES), fc.constant(null)),
+    wait: fc.oneof(fc.constantFrom(...DURATIONS), fc.constant(null)),
   })
 export const rowsArbitrary = fc
   .integer({ min: 1, max: 10 })
@@ -339,6 +347,53 @@ const atom: fc.Arbitrary<string> = fc.oneof(
       fc.constantFrom('flag', 'true', 'false', 'nothing', 'nothing == null'),
     )
     .map(([a, op, b]) => `(${a} ${op} ${b})`),
+  // A column with a known default: compared with a known value, a list, or another column.
+  fc
+    .tuple(
+      numCol,
+      fc.oneof(numConst, fc.constantFrom('nothing', '"x"')),
+      fc.constantFrom('<', '<=', '>', '>=', '==', '!='),
+      fc.oneof(numConst, fc.constantFrom('nothing', 'order.qty', 'order.total * 2')),
+      fc.boolean(),
+    )
+    .map(([c, d, op, k, flip]) =>
+      flip ? `${k} ${op} (${c} ?? ${d})` : `(${c} ?? ${d}) ${op} ${k}`,
+    ),
+  fc
+    .tuple(
+      numCol,
+      numConst,
+      fc.constantFrom('in', 'not in'),
+      fc.constantFrom('nums', '[1, 2.5, 10]'),
+    )
+    .map(([c, d, op, l]) => `(${c} ?? ${d}) ${op} ${l}`),
+  fc
+    .tuple(textCol, strConst, fc.constantFrom('==', '!='), fc.oneof(strConst, textCol))
+    .map(([c, d, op, k]) => `(${c} ?? ${d}) ${op} ${k}`),
+  // A duration column, stored as whole milliseconds: compared with durations, and its
+  // milliseconds with numbers.
+  fc
+    .tuple(
+      fc.constantFrom('<', '<=', '>', '>=', '==', '!='),
+      fc.constantFrom('span', 'halfMs', 'farSpan', 'seconds(1)', 'nothing'),
+    )
+    .map(([op, k]) => `order.wait ${op} ${k}`),
+  fc
+    .tuple(fc.constantFrom('==', '!='), fc.constantFrom('1000', 'limit'))
+    .map(([op, k]) => `order.wait ${op} ${k}`),
+  fc
+    .tuple(
+      fc.constantFrom('inMilliseconds(order.wait)', 'order.wait?.inMilliseconds()'),
+      fc.constantFrom('<', '<=', '>', '>=', '==', '!='),
+      fc.constantFrom('1000', '0', '-5', 'limit', 'nothing'),
+    )
+    .map(([c, op, k]) => `${c} ${op} ${k}`),
+  fc
+    .tuple(
+      fc.constantFrom('in', 'not in'),
+      fc.constantFrom('[span, seconds(1)]', 'mixed', '[nothing]'),
+    )
+    .map(([op, l]) => `order.wait ${op} ${l}`),
 )
 
 export const predicate: fc.Arbitrary<string> = fc.letrec<{ p: string }>((tie) => ({

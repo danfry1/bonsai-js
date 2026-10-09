@@ -37,9 +37,9 @@ const TIMEOUT = 60 * 60 * 1000
 // The plain contract, and the looser one the docs allow (varchar, numeric compared as float8).
 const TABLES = {
   bonsai_q_plain:
-    'id int, name text, city text, total float8, qty float8, active boolean, placed timestamptz',
+    'id int, name text, city text, total float8, qty float8, active boolean, placed timestamptz, wait bigint',
   bonsai_q_loose:
-    'id int, name varchar(200), city varchar(200), total numeric, qty numeric, active boolean, placed timestamptz',
+    'id int, name varchar(200), city varchar(200), total numeric, qty numeric, active boolean, placed timestamptz, wait numeric',
 }
 
 interface Server {
@@ -90,7 +90,7 @@ async function loadPostgres(server: Server, rows: readonly Row[]): Promise<void>
   for (const table of Object.keys(TABLES)) {
     await server.nodePg.query(`delete from ${table}`)
     for (const r of rows) {
-      await server.nodePg.query(`insert into ${table} values ($1, $2, $3, $4, $5, $6, $7)`, [
+      await server.nodePg.query(`insert into ${table} values ($1, $2, $3, $4, $5, $6, $7, $8)`, [
         r.id,
         r.name,
         r.city,
@@ -98,6 +98,7 @@ async function loadPostgres(server: Server, rows: readonly Row[]): Promise<void>
         r.qty,
         r.active,
         r.placed?.toISOString() ?? null,
+        r.wait?.ms ?? null,
       ])
     }
   }
@@ -105,7 +106,9 @@ async function loadPostgres(server: Server, rows: readonly Row[]): Promise<void>
 
 async function loadMongo(rows: readonly Row[]): Promise<void> {
   // Odd ids leave null fields out entirely: missing and null must read the same.
-  const docs = rows.map((r) =>
+  // A duration is stored as its milliseconds.
+  const stored = rows.map((r) => ({ ...r, wait: r.wait?.ms ?? null }))
+  const docs = stored.map((r) =>
     r.id % 2 === 1 ? Object.fromEntries(Object.entries(r).filter(([, v]) => v !== null)) : { ...r },
   )
   for (const collection of [plain, caseInsensitive]) {
@@ -246,5 +249,14 @@ describe.skipIf(!enabled)('server-specific behavior', () => {
 })
 
 function emptyRow(id: number): Row {
-  return { id, name: null, city: null, total: null, qty: null, active: null, placed: null }
+  return {
+    id,
+    name: null,
+    city: null,
+    total: null,
+    qty: null,
+    active: null,
+    placed: null,
+    wait: null,
+  }
 }
