@@ -222,7 +222,7 @@ if (result.status === 'residual') {
 }
 ```
 
-Use it to decide early (can this user ever pass?), to precompute the per-user part of a rule once and evaluate the rest per request, or to push a filter down to where the data lives. Unknowns default to the variables and fields missing from what you pass; `unknown: ['order', 'user.riskScore']` names them explicitly (unknown wins over a value you did pass).
+Use it to decide early (can this user ever pass?), to precompute the per-user part of a rule once and evaluate the rest per request, or to push a filter down to where the data lives. Unknowns default to the variables and fields missing from what you pass, and an object you pass is not read whole (`{...user}`, `user.keys()`, `user == saved`), since it may be only part of the object; `unknown: ['order', 'user.riskScore']` names the unknowns explicitly and says the rest is complete (unknown wins over a value you did pass).
 
 The result is exact: evaluating the residual with the full data gives the same value or error as evaluating the original. Short primitives are written into the residual; other known values (lists, maps, dates) are kept in `result.bindings` and referenced by name, and `evaluateSync`/`evaluate` on the result supply them. `now()` and host functions stay in the residual unless you pass `now` or `callHostFunctions: true`. When the known data already decides that evaluation fails, the result is `{ status: 'error', error }`.
 

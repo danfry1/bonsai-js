@@ -277,7 +277,7 @@ describe('partial', () => {
     it('reports dependencies without binding paths', () => {
       const result = bonsai()
         .compile('let o = obj; u ? 1 : o.a.b')
-        .partial({ obj: { a: 5 } })
+        .partial({ obj: { a: 5 } }, { unknown: ['u'] })
       expect(result.status === 'residual' && result.dependsOn).toEqual(['u'])
     })
   })

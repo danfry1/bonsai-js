@@ -571,6 +571,67 @@ export function internalsOf(env: Environment<never>): EnvironmentInternals {
 /** Compiled programs kept per environment unless `cacheSize` says otherwise. */
 const DEFAULT_CACHE_SIZE = 256
 
+/** A plain data object, which an overlay may copy without losing a prototype. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) return false
+  const proto: unknown = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
+
+/**
+ * The known data of a partial evaluation overlaid at every depth with the
+ * context a residual is given (the given values win): `given` itself when it
+ * already has every known value, otherwise a frozen copy with the rest added.
+ * Plain objects on both sides are merged; anything else given replaces the
+ * known value whole. The keys looked at and copied are charged (KNOWN_KEYS_PER_STEP
+ * a step), and charging checks the deadline, so a large context cannot make
+ * the overlay unbounded work.
+ */
+function overlayKnown(
+  known: Readonly<Record<string, unknown>>,
+  given: Record<string, unknown>,
+  state: State,
+  depth: number,
+): Record<string, unknown> {
+  let changes: Map<string, unknown> | undefined
+  let count = 0
+  for (const name in known) {
+    if (!Object.hasOwn(known, name)) continue
+    if (++count % KNOWN_KEYS_PER_STEP === 0) state.charge(1)
+    const mine = known[name]
+    if (mine === undefined) continue
+    const theirs = Object.hasOwn(given, name) ? given[name] : undefined
+    let value = mine
+    if (theirs !== undefined) {
+      if (depth <= 0 || !isPlainObject(mine) || !isPlainObject(theirs)) continue
+      value = overlayKnown(mine, theirs, state, depth - 1)
+      if (value === theirs) continue
+    }
+    changes ??= new Map()
+    changes.set(name, value)
+  }
+  state.charge(1)
+  if (changes === undefined) return given
+  const out: Record<string, unknown> = {}
+  // Defined, not assigned, so a key named __proto__ stays a key.
+  const put = (name: string, value: unknown): void => {
+    Object.defineProperty(out, name, {
+      value,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    })
+  }
+  count = 0
+  for (const name in given) {
+    if (!Object.hasOwn(given, name)) continue
+    if (++count % KNOWN_KEYS_PER_STEP === 0) state.charge(1)
+    put(name, given[name])
+  }
+  for (const [name, value] of changes) put(name, value)
+  return Object.freeze(out)
+}
+
 interface Settings {
   readonly variables: Readonly<Record<string, Type>> | undefined
   /** The explicit `strict` option, if one was given (here or in a base environment). */
@@ -1247,28 +1308,6 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     }
   }
 
-  /**
-   * The declared type of a context path (`cart.total`), when the environment
-   * declares one: through object fields (an optional object's too), not
-   * through open records or lists.
-   */
-  function declaredAt(path: string): Type | undefined {
-    const variables = settings.variables
-    if (variables === undefined) return undefined
-    const [name, ...rest] = path.split('.')
-    let type: Type | undefined =
-      name !== undefined && Object.hasOwn(variables, name) ? variables[name] : undefined
-    for (const segment of rest) {
-      if (type === undefined) return undefined
-      const maps: Type[] =
-        type.kind === 'union' ? type.types.filter((member) => member.kind === 'map') : [type]
-      const map = maps.length === 1 ? maps[0] : undefined
-      if (map?.kind !== 'map' || !Object.hasOwn(map.fields, segment)) return undefined
-      type = map.fields[segment]
-    }
-    return type
-  }
-
   /** How a partial-evaluation residual runs and explains, with the caller's context. */
   interface ResidualRunner {
     /** Whether the residual calls an async host function. */
@@ -1279,6 +1318,18 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     explainAsync: (ctx: unknown, options: unknown) => Promise<Explanation>
   }
 
+  function makeProgram<R>(source: string, analysis: Analysis, expect?: Type): Program<Ctx, R>
+  function makeProgram(
+    source: string,
+    analysis: Analysis,
+    expect: Type | undefined,
+    asResidual: (runner: ResidualRunner) => void,
+    constants: ReadonlyMap<string, unknown>,
+    residualOf: {
+      readonly source: string
+      readonly known: Readonly<Record<string, unknown>> | undefined
+    },
+  ): undefined
   function makeProgram<R>(
     source: string,
     analysis: Analysis,
@@ -1293,7 +1344,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       readonly source: string
       readonly known: Readonly<Record<string, unknown>> | undefined
     },
-  ): Program<Ctx, R> {
+  ): Program<Ctx, R> | undefined {
     // When the checker cannot prove the result matches `expect` (part of it is
     // `any`, or an open object may hold an unlisted key), it is checked at run
     // time, so the declared result type holds.
@@ -1345,13 +1396,11 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       const known = residualOf?.known
       if (known !== undefined) {
         // The residual's call: true functions read the known data the partial
-        // evaluation had, overlaid with the context the residual was given:
-        // that context itself (prototype included) when it already has every
-        // known key, otherwise a copy with the known keys it lacks added.
-        const names = Object.keys(known)
-        state.charge(1 + Math.ceil(names.length / KNOWN_KEYS_PER_STEP))
-        if (names.some((name) => !Object.hasOwn(ctx, name)))
-          state.hostCtx = Object.freeze({ ...known, ...ctx })
+        // evaluation had, overlaid at every depth with the context the residual
+        // was given: that context itself (prototype included) when it already
+        // has everything the known data gives, otherwise a copy with the rest.
+        const overlaid = overlayKnown(known, ctx, state, settings.runtimeLimits.maxValueDepth)
+        if (overlaid !== ctx) state.hostCtx = overlaid
       }
     }
 
@@ -1660,15 +1709,6 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
               state.checkTime()
             },
             maxSourceLength: settings.parseLimits.maxSourceLength,
-            incomplete: (path, value) => {
-              const type = declaredAt(path)
-              return (
-                type !== undefined &&
-                value !== null &&
-                typeof value === 'object' &&
-                !conforms(value, type, state)
-              )
-            },
             evaluate: (node, locals) => {
               const key = locals.map(([name]) => name).join('\u0000')
               let byLocals = subtrees.get(node)
@@ -1703,7 +1743,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
                 { expected: expect },
               )
               let runner: ResidualRunner | undefined
-              makeProgram<unknown>(
+              makeProgram(
                 source,
                 { ...reanalyzed, calls: originalPlans(residual, reanalyzed.calls) },
                 expect,
@@ -1738,13 +1778,20 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       }
     }
 
-    asResidual?.({
-      async: analysis.async,
-      runSync: (ctx, options) => runSync(ctx, options as EvaluateOptions | undefined),
-      runAsync: (ctx, options) => runAsync(ctx, options as EvaluateOptions | undefined),
-      explainSync: (ctx, options) => explainSync(ctx, options as ExplainOptions | undefined),
-      explainAsync: (ctx, options) => explainAsync(ctx, options as ExplainOptions | undefined),
-    })
+    if (asResidual !== undefined) {
+      asResidual({
+        async: analysis.async,
+        runSync: (ctx, options) => runSync(ctx, options as EvaluateOptions | undefined),
+        runAsync: (ctx, options) => runAsync(ctx, options as EvaluateOptions | undefined),
+        explainSync: (ctx, options) => explainSync(ctx, options as ExplainOptions | undefined),
+        explainAsync: (ctx, options) => explainAsync(ctx, options as ExplainOptions | undefined),
+      })
+      // A residual is used only through its runner, so no Program is built for
+      // it (freezing its type and references would be work on every partial());
+      // its tree is the result's `residual`, and compiles lazily, so it is frozen.
+      deepFreeze(analysis.root)
+      return undefined
+    }
     // Programs are shared: the tree compiles lazily, so it must not change afterwards.
     const program: Program<Ctx, R> = Object.freeze({
       explain: (...args: ExplainArgs<Ctx>) => explainAsync(args[0], args[1]),
