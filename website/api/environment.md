@@ -64,14 +64,20 @@ Parses and checks without evaluating. Never throws for a bad expression: syntax 
 
 <!-- no-run -->
 ```ts
-check(source: string, options?: { expect?: Type }): CheckResult
+check<E extends Type>(source: string, options?: { expect?: E }): CheckResult<Context, Infer<E>>
 
-type CheckResult =
-  | { ok: true; type: Type; diagnostics: Diagnostic[] }
+type CheckResult<Context, Result> = (
+  | { ok: true; type: Type; diagnostics: Diagnostic[]; program: Program<Context, Result> }
   | { ok: false; type: Type | undefined; diagnostics: Diagnostic[] }
+) & {
+  ast: Node | undefined
+  typeOf(node: Node): Type | undefined
+}
 ```
 
-`ok` is `false` when any diagnostic has `severity: "error"`. Warnings can appear either way. `type` is the inferred result type (undefined when the expression did not parse). See [Static Checking](/language/checking) and [Errors](/api/errors) for the `Diagnostic` shape.
+`ok` is `false` when any diagnostic has `severity: "error"`. Warnings can appear either way. `type` is the inferred result type (undefined when the expression did not parse). See [Static Checking](/language/checking) and [Errors](/api/errors) for the `Diagnostic` shape, which includes the line, column, and a code frame of each finding.
+
+When `ok`, `program` is the compiled expression: the same program `compile()` returns, built from this check when first read, so a rule editor that validates a rule and then saves or runs it parses and checks it once. `ast` is the checked tree and `typeOf(node)` the inferred type of any of its nodes (see [Types of nodes](/api/syntax-tree#types-of-nodes)). `program`, `ast`, and `typeOf` are not part of the JSON form, which stays `{ ok, type, diagnostics }`.
 
 <!-- continue -->
 ```ts
@@ -79,6 +85,11 @@ const result = typed.check('a +')
 result.ok // => false
 result.diagnostics[0].code // => "SYNTAX"
 result.type // => undefined
+
+const valid = typed.check('a + 1', { expect: t.number() })
+valid.ok // => true
+const program = valid.ok ? valid.program : undefined
+program?.evaluateSync({ a: 2, b: 0 }) // => 3
 ```
 
 ## env.compile(source, options?)

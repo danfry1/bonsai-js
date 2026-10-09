@@ -103,6 +103,7 @@ export default defineConfig({
           { text: 'Partial Evaluation', link: '/api/partial' },
           { text: 'Database Filters', link: '/api/query' },
           { text: 'Syntax Trees and print()', link: '/api/printer' },
+          { text: 'Syntax Tree Reference', link: '/api/syntax-tree' },
         ],
       },
     ],

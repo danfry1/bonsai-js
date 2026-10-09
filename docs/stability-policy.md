@@ -41,7 +41,12 @@ Bonsai follows Semantic Versioning for its two package entrypoints:
   appear. New errors appear only for expressions that could not have evaluated
   successfully.
 - **Messages and performance.** Error and diagnostic wording, benchmark
-  numbers, and internal modules under `src/`.
+  numbers, and internal modules under `src/`. A diagnostic's `suggestion` may
+  name a different (better) candidate.
+- **Partial-evaluation output.** The residual a `partial()` call produces may
+  get simpler, and the names of its bindings (`__known1`) may change. A stored
+  residual stays valid as long as its `source` and `bindings` are stored and
+  used together, which is the only supported way to store one.
 - **Step costs.** The number of steps an operation charges may be adjusted to
   follow its real cost, so an expression close to its `maxSteps` budget may
   start or stop hitting it. Leave headroom in the budgets you set. Within one

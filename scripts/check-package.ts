@@ -121,7 +121,8 @@ try {
       ...['OpaqueType', 'PrintOptions', 'Program', 'Span'],
       ...['SpreadNode', 'StringType', 'TemplateNode', 'TimestampType', 'TryNode', 'Type'],
       ...['TypeVar', 'UnaryNode', 'UnaryOperator', 'UnionType', 'VariableNode', 'bonsai', 'fn'],
-      ...['forEachChild', 'formatType', 'isAssignable', 'isBonsaiError', 'print', 't'],
+      ...['forEachChild', 'formatType', 'isAssignable', 'isBonsaiError', 'mapChildren', 'print'],
+      't',
       'withContext',
     ],
     'service/index.d.mts': [

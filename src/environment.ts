@@ -5,6 +5,7 @@ import {
   BonsaiError,
   BonsaiLimitError,
   BonsaiRuntimeError,
+  locate,
   type Diagnostic,
 } from './errors.js'
 import { BUILTINS } from './functions/builtins.js'
@@ -267,13 +268,33 @@ export interface EnvironmentOptions<
   readonly validateContext?: boolean | undefined
 }
 
-export type CheckResult =
-  | { readonly ok: true; readonly type: Type; readonly diagnostics: readonly Diagnostic[] }
+/** What check() found. Only `ok`, `type`, and `diagnostics` are part of the JSON form. */
+// oxlint-disable-next-line typescript/no-explicit-any -- the same erased context as a bare Program
+export type CheckResult<Ctx = any, R = unknown> = (
+  | {
+      readonly ok: true
+      readonly type: Type
+      readonly diagnostics: readonly Diagnostic[]
+      /**
+       * The checked expression, compiled when first read: the same program
+       * compile() returns, without parsing and checking again.
+       */
+      readonly program: Program<Ctx, R>
+    }
   | {
       readonly ok: false
       readonly type: Type | undefined
       readonly diagnostics: readonly Diagnostic[]
     }
+) & {
+  /**
+   * The checked syntax tree (implicit lambdas made explicit, as `program.ast`),
+   * or undefined when the source did not parse.
+   */
+  readonly ast: Node | undefined
+  /** The inferred type of a node of `ast`, or undefined for another tree's node. */
+  readonly typeOf: (node: Node) => Type | undefined
+}
 
 type Args<Ctx> =
   Record<string, never> extends Ctx
@@ -390,8 +411,14 @@ export interface Environment<Ctx = any> {
   readonly strict: boolean
   /** Parses without checking. */
   parse: (source: string) => Node
-  /** Parses and checks, reporting every finding instead of throwing. */
-  check: (source: string, options?: CompileOptions) => CheckResult
+  /**
+   * Parses and checks, reporting every finding instead of throwing. When `ok`,
+   * `program` is the compiled expression, so an editor needs only this call.
+   */
+  check: <E extends Type = AnyType>(
+    source: string,
+    options?: CompileOptions<E>,
+  ) => CheckResult<Ctx, Infer<E>>
   /** Parses, checks, and compiles. Throws BonsaiSyntaxError / BonsaiCheckError / BonsaiLimitError. */
   compile: <E extends Type = AnyType>(
     source: string,
@@ -1437,7 +1464,12 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       ast: deepFreeze(analysis.root),
       type: deepFreeze(analysis.type),
       async: analysis.async,
-      warnings: deepFreeze(analysis.diagnostics.filter((d) => d.severity === 'warning')),
+      warnings: deepFreeze(
+        locate(
+          source,
+          analysis.diagnostics.filter((d) => d.severity === 'warning'),
+        ),
+      ),
       references: deepFreeze(analysis.references),
       evaluate: (...args: Args<Ctx>) => runAsync(args[0], args[1]),
       evaluateSync: (...args: Args<Ctx>) => runSync(args[0], args[1]),
@@ -1449,6 +1481,17 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     const errors = analysis.diagnostics.filter((d) => d.severity === 'error')
     if (errors.length > 0) throw new BonsaiCheckError(source, errors)
     return makeProgram<R>(source, analysis, expect)
+  }
+
+  /** Adds check()'s tree accessors, kept out of the JSON form. */
+  function withTree<T extends object>(
+    result: T,
+    ast: (() => Node) | undefined,
+    typeOf: (node: Node) => Type | undefined,
+  ): T & { readonly ast: Node | undefined; readonly typeOf: (node: Node) => Type | undefined } {
+    Object.defineProperty(result, 'ast', { get: () => ast?.() })
+    Object.defineProperty(result, 'typeOf', { value: typeOf })
+    return result as T & { ast: Node | undefined; typeOf: (node: Node) => Type | undefined }
   }
 
   function cached(source: string): Program<Ctx> {
@@ -1479,30 +1522,45 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     variables: settings.variables,
     strict: settings.strict,
     parse: parseSource,
-    check(source: string, options?: CompileOptions): CheckResult {
+    check<E extends Type = AnyType>(
+      source: string,
+      options?: CompileOptions<E>,
+    ): CheckResult<Ctx, Infer<E>> {
+      const expect = compileExpect(options)
       let analysis: Analysis
       try {
-        analysis = analyzeSource(source, compileExpect(options))
+        analysis = analyzeSource(source, expect)
       } catch (error) {
         if (!(error instanceof BonsaiError)) throw error
-        return {
-          ok: false,
-          type: undefined,
-          diagnostics: [
-            {
-              code: error.code === 'SYNTAX' ? 'SYNTAX' : 'LIMIT',
-              message: error.message,
-              severity: 'error',
-              start: error.span?.start ?? 0,
-              end: error.span?.end ?? source.length,
-            },
-          ],
-        }
+        const diagnostics = locate(source, [
+          {
+            code: error.code === 'SYNTAX' ? 'SYNTAX' : 'LIMIT',
+            message: error.message,
+            severity: 'error',
+            start: error.span?.start ?? 0,
+            end: error.span?.end ?? source.length,
+          },
+        ])
+        return withTree({ ok: false, type: undefined, diagnostics }, undefined, () => undefined)
       }
-      const ok = !analysis.diagnostics.some((d) => d.severity === 'error')
-      return ok
-        ? { ok: true, type: deepFreeze(analysis.type), diagnostics: analysis.diagnostics }
-        : { ok: false, type: deepFreeze(analysis.type), diagnostics: analysis.diagnostics }
+      const diagnostics = locate(source, analysis.diagnostics)
+      const type = deepFreeze(analysis.type)
+      // The tree, a node's type, and the program are read on demand, so an
+      // editor checking on every keystroke pays only for what it uses.
+      const typeOf = (node: Node): Type | undefined => {
+        const found = analysis.types.get(node)
+        return found === undefined ? undefined : deepFreeze(found)
+      }
+      const ast = (): Node => deepFreeze(analysis.root)
+      if (analysis.diagnostics.some((d) => d.severity === 'error')) {
+        return withTree({ ok: false, type, diagnostics }, ast, typeOf)
+      }
+      let program: Program<Ctx, Infer<E>> | undefined
+      const result = withTree({ ok: true as const, type, diagnostics }, ast, typeOf)
+      Object.defineProperty(result, 'program', {
+        get: () => (program ??= makeProgram<Infer<E>>(source, analysis, expect)),
+      })
+      return result as typeof result & { readonly program: Program<Ctx, Infer<E>> }
     },
     compile: <E extends Type = AnyType>(source: string, options?: CompileOptions<E>) =>
       compile<Infer<E>>(source, compileExpect(options)),

@@ -60,6 +60,12 @@ export interface MemberNode extends Base {
   readonly object: Node
   readonly name: string
   readonly optional: boolean
+  /**
+   * Span of the property name (after `.` or `?.`). The parser always sets it;
+   * it is optional so trees built by hand for print() need not.
+   */
+  readonly nameStart?: number
+  readonly nameEnd?: number
 }
 
 export interface IndexNode extends Base {

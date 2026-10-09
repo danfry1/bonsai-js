@@ -6,6 +6,16 @@
   "sideEffects": false,
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
+  "typesVersions": {
+    "*": {
+      "service": [
+        "./dist/service/index.d.mts"
+      ],
+      "query": [
+        "./dist/query/index.d.mts"
+      ]
+    }
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.mts",

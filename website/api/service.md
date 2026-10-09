@@ -98,6 +98,7 @@ Returns every syntax and check diagnostic for `source`, exactly as `env.check(so
 <!-- continue -->
 ```ts
 service.diagnostics('items.map(.qtty)')[0].message // => 'Property "qtty" does not exist on { sku: string, qty: number }; did you mean "qty"?'
+service.diagnostics('items.map(.qtty)')[0].suggestion // => "qty"
 service.diagnostics('items.length > 0') // => []
 ```
 

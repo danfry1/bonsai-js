@@ -260,7 +260,7 @@ print(tree, { calls: 'method' })   // 'name.trim().toUpperCase()'
 print(tree, { calls: 'function' }) // 'toUpperCase(trim(name))'
 ```
 
-`f(x)` and `x.f()` produce the same call node, so a builder can show any chain as a list of steps and choose how to print it. `env.listFunctions()` provides the palette (names, signatures, descriptions), and the language service provides the types at any position for dropdowns. Comments are not part of the tree.
+`f(x)` and `x.f()` produce the same call node, so a builder can show any chain as a list of steps and choose how to print it. `env.listFunctions()` provides the palette (names, signatures, descriptions), and the language service provides the types at any position for dropdowns. `forEachChild` walks a tree, `mapChildren` rewrites one, and `env.check(source).typeOf(node)` gives the type of any checked node. Comments and spacing are not part of the tree, so printing drops them; to change a saved rule and keep its comments, edit the source at the spans the parser records (`nameStart` and `nameEnd` cover a property or function name). See the [syntax tree reference](https://danfry1.github.io/bonsai-js/api/syntax-tree).
 
 ## Editor support
 

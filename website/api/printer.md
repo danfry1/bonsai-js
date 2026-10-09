@@ -15,11 +15,11 @@ print(tree, { calls: 'function' }) // 'toUpperCase(trim(name))'
 
 ## Guarantees
 
-- The tree is plain JSON. Every node has `type`, `start`, and `end` (UTF-16 offsets into the source).
+- The tree is plain JSON. Every node has `type`, `start`, and `end` (UTF-16 offsets into the source). The [Syntax Tree Reference](./syntax-tree) lists every node type and its fields.
 - Printing is deterministic. Parsing printed text and printing it again gives the same text.
 - Printed text means the same as the tree: it evaluates to the same result or fails with the same error.
 - Parentheses are added only where they change meaning, and where the language requires them (for example `(-2) ** 2` and `(a ?? b) || c`).
-- Comments and original spacing are not part of the tree and are not printed.
+- Comments and original spacing are not part of the tree and are not printed. To change a saved rule and keep its comments, edit the source text at the spans the parser records instead (see [editing source in place](./syntax-tree#transforming-a-tree)).
 - A tree the parser could not have produced is rejected with a `TypeError` instead of printing text that would mean something else or not parse: a variable named like a keyword (`null`) or not an identifier (`a b`), an unknown operator (`===`) or node type, `__proto__`, `constructor`, or `prototype` as a property or key, a call named `has`, `try`, `__proto__`, `constructor`, or `prototype`, a `Local` that no `let` or lambda binds, a `Variable` hidden by a binding of the same name, a lambda anywhere but a function argument, a cycle, or a tree nested more than 2000 levels deep. An unknown `print()` option is a `TypeError` too.
 
 ## Options
@@ -45,4 +45,6 @@ print({
 }) // 'user.age >= 18'
 ```
 
-For the rest of an editor, `env.listFunctions()` lists every function with its signatures and description, `env.check()` reports diagnostics with source ranges, and the [language service](./service) returns completions and the type at any position.
+A hand-built `Call` needs `nameStart` and `nameEnd` too; `print()` ignores every offset, so `0` will do. To change a tree, `mapChildren` copies a node with its children replaced (see [Transforming a tree](./syntax-tree#transforming-a-tree)).
+
+For the rest of an editor, `env.listFunctions()` lists every function with its signatures and description, `env.check()` reports diagnostics with source ranges and positions and returns the checked tree with the type of each node, and the [language service](./service) returns completions and the type at any position.

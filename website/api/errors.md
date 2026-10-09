@@ -71,7 +71,7 @@ try {
 
 ## Diagnostics
 
-`env.check()` returns, and `BonsaiCheckError.diagnostics` carries, a list of findings:
+`env.check()` returns, and `BonsaiCheckError.diagnostics`, `program.warnings`, and the language service carry, a list of findings. Each one locates itself the way a `BonsaiError` does:
 
 <!-- no-run -->
 ```ts
@@ -79,10 +79,32 @@ interface Diagnostic {
   code: DiagnosticCode
   message: string
   severity: 'error' | 'warning'
-  start: number // UTF-16 offset
+  start: number // UTF-16 offset (the same as span.start)
   end: number
+  span: { start: number; end: number }
+  position: { line: number; column: number } // 1-based, of start
+  formatted: string // the message and a code frame; computed when read, not in the JSON form
+  suggestion?: string // for UNKNOWN_VARIABLE, UNKNOWN_PROPERTY, UNKNOWN_FUNCTION: the name to use instead
 }
 ```
+
+An admin screen can show `formatted` as it is, and an editor quick-fix can replace the range with `suggestion`:
+
+<!-- continue -->
+```ts
+import { t } from 'bonsai-js'
+
+const shop = bonsai({ variables: { order: t.object({ total: t.number() }) } })
+const [finding] = shop.check('ordr.total > 100').diagnostics
+finding?.position // => { line: 1, column: 1 }
+finding?.suggestion // => "order"
+console.log(finding?.formatted)
+// Unknown variable "ordr"; did you mean "order"?
+// 1 | ordr.total > 100
+//   | ^^^^
+```
+
+`DiagnosticCode` and `severity` may gain members in a minor release, so a `switch` over them needs a `default` branch.
 
 Errors have `severity: "error"` and make `check()` return `ok: false`. Warnings (`severity: "warning"`) point at expressions that are valid but probably wrong; they appear in `check().diagnostics` and in `program.warnings` without stopping compilation.
 
@@ -108,7 +130,7 @@ The same mistake can surface statically or at run time depending on what the che
 
 <!-- continue -->
 ```ts
-import { BonsaiCheckError, t } from 'bonsai-js'
+import { BonsaiCheckError } from 'bonsai-js'
 
 const typed = bonsai({ variables: { price: t.number() } })
 typed.check('"a" + price').diagnostics[0].code // => "TYPE_ERROR"

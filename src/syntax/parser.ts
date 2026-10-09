@@ -397,7 +397,16 @@ export function parse(source: string, limits: ParseLimits = DEFAULT_PARSE_LIMITS
     }
     if (BLOCKED_NAMES.has(name))
       fail(`Property "${name}" is not accessible`, nameToken.start, nameToken.end)
-    return node({ type: 'Member', object, name, optional, start: object.start, end: nameToken.end })
+    return node({
+      type: 'Member',
+      object,
+      name,
+      optional,
+      start: object.start,
+      end: nameToken.end,
+      nameStart: nameToken.start,
+      nameEnd: nameToken.end,
+    })
   }
 
   function parseIndex(object: Node, optional: boolean): Node {
