@@ -120,7 +120,7 @@
     "pg": "8.23.1",
     "postgres": "3.4.9",
     "tsdown": "0.23.0",
-    "typescript": "6.0.3",
+    "typescript": "7.0.2",
     "vitepress": "1.6.4",
     "vitest": "4.1.11"
   },
