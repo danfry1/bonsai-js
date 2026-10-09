@@ -58,7 +58,7 @@ describe('option validation', () => {
     expect(() => bonsai({ limits: { timeout: Number.NaN } })).toThrow(RangeError)
     expect(() => bonsai({ limits: { timeout: Number.POSITIVE_INFINITY } })).toThrow(RangeError)
     // A timeout is milliseconds, fractions included: only 0 turns it off.
-    expect(bonsai({ limits: { timeout: 1.5 } }).evaluateSync('1 + 1')).toBe(2)
+    expect(bonsai({ limits: { timeout: 5_000.5 } }).evaluateSync('1 + 1')).toBe(2)
     expect(bonsai({ limits: { maxSteps: 0, timeout: 0 } }).evaluateSync('1 + 1')).toBe(2)
   })
 

@@ -174,15 +174,7 @@ export function createLanguageService(
     const probeText = afterDot ? `${before}${PROBE}` : `${prefix}${PROBE}`
 
     let analysis: Analysis | undefined
-    for (const suffix of [
-      scan.closers,
-      ` : null${scan.closers}`,
-      `; null${scan.closers}`,
-      ` 0${scan.closers}`,
-      // try(x, fallback) and a computed key [k]: v need their second half.
-      `, null${scan.closers}`,
-      `${scan.closers.slice(0, 1)}: null${scan.closers.slice(1)}`,
-    ]) {
+    for (const suffix of probeSuffixes(scan.closers)) {
       analysis = tryAnalyze(probeText + suffix, PROBE)
       if (analysis !== undefined) break
     }
@@ -288,7 +280,9 @@ export function createLanguageService(
       return isExact(member) ? t.null() : t.any()
     }
     for (const name of names) {
-      const detail = formatType(unionOf(maps.map((member) => readOf(member, name))))
+      const detail = formatType(
+        analysis.probeMembers?.get(name) ?? unionOf(maps.map((member) => readOf(member, name))),
+      )
       if (IDENTIFIER.test(name)) {
         items.push({ label: name, kind: 'property', detail, insertText: name })
       } else {
@@ -517,6 +511,34 @@ function commentSpans(text: string): { start: number; end: number }[] {
     } else i++
   }
   return spans
+}
+
+/** Open constructs a filler is tried inside of, innermost first. */
+const PROBE_SPLITS = 4
+
+/**
+ * Endings that make a prefix ending in the probe parse, cheapest first: the
+ * closers alone, a missing branch or value inside them, the missing half of
+ * an enclosing try(x, fallback) or computed key [k]: v, and a `let` body or
+ * `?:` branch after them.
+ */
+function probeSuffixes(closers: string): string[] {
+  const out = [
+    closers,
+    ` : null${closers}`,
+    `; null${closers}`,
+    ` 0${closers}`,
+    `, null${closers}`,
+    `${closers}; null`,
+    `${closers} : null`,
+    `${closers} : null; null`,
+  ]
+  for (let at = 1; at <= Math.min(closers.length, PROBE_SPLITS); at++) {
+    const inner = closers.slice(0, at)
+    const outer = closers.slice(at)
+    out.push(`${inner}: null${outer}`, `${inner}, null${outer}`)
+  }
+  return [...new Set(out)]
 }
 
 /** Tracks open brackets, strings, and templates in a prefix to synthesize closers. */

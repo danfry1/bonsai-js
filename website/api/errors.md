@@ -152,14 +152,14 @@ Errors have `severity: "error"` and make `check()` return `ok: false`. Warnings 
 | `TYPE_ERROR` | error | Operands of incompatible types. |
 | `NULLABLE_RECEIVER` | error | A possibly-null value where `null` is not accepted. |
 | `INVALID_LAMBDA` | error | A misplaced `.` or lambda. |
-| `BLOCKED_PROPERTY` | error | A blocked key used as a static key. |
+| `BLOCKED_PROPERTY` | error | A blocked key (`__proto__`, `constructor`, `prototype`) used as a static or constant computed key, such as `{["__proto__"]: 1}`. |
 | `EXPECTED_TYPE` | error | The result does not match `expect`. |
 | `INVALID_ARGUMENT` | error | A literal argument with an invalid value, such as an unknown `formatDate` pattern letter. |
 | `ALWAYS_FALSE` | warning | A comparison or membership test that can never hold, such as `plan == "premium"` when `plan` is `"free" \| "pro"`. |
 | `ALWAYS_TRUE` | warning | The negation of one: `!=` or `not in` that always holds, such as `plan != "premium"`. |
 | `NEVER_NULL` | warning | `??` applied to a value that is never `null`. |
-| `MAYBE_NULL` | warning | A value that may be `null` where it decides something: the operand of `!`, `&&`, or `\|\|`, a `?:` condition, or what a lambda returns where a boolean is expected (null counts as `false`, which `!` turns into `true`). An ordering comparison is not flagged: with null it is `false` by definition, so `users.filter(.age >= 18)` skips users without an age. |
-| `UNSAFE_INTEGER` | warning | A number literal written with all its digits past 2^53, where neighbouring integers are not all distinct: `9007199254740993` reads as `9007199254740992`. A literal written with an exponent (`1e308`) does not claim exact digits and is not flagged. |
+| `MAYBE_NULL` | warning | A value that may be `null` where it decides something: the operand of `!`, `&&`, or `\|\|`, a `?:` condition, or what a lambda returns where a boolean is expected (null counts as `false`, which `!` turns into `true`). An ordering comparison with a side that may be null is flagged only where its `false` becomes a verdict: under `!`, as a `?:` test, as the predicate of `every` or `none`, or compared with `false` (or `!= true`). Where `false` means "skip" it is not flagged: `users.filter(.age >= 18)` skips users without an age, but `user.age < 18 ? "deny" : "allow"` allows them. |
+| `UNSAFE_INTEGER` | warning | A number literal written with all its digits past 2^53, where neighbouring integers are not all distinct: `9007199254740993` reads as `9007199254740992`. A literal written with an exponent is flagged only when the number cannot keep the digits written: `9007199254740993e0` is, `1e308` and `1.5e300` are not. |
 
 The same mistake can surface statically or at run time depending on what the checker knows. With declared types, `"a" + price` is a `TYPE_ERROR` diagnostic and the expression does not compile. With an untyped `price`, it compiles and fails at run time with `TYPE_ERROR`.
 
