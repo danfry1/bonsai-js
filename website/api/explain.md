@@ -59,7 +59,7 @@ rule.explainSync({ user }, { exhaustive: true }).reasons().map((r) => r.text)
 | `id` | Stable id of the syntax node, shared by every run of it (for example in each iteration) |
 | `kind` | Syntax node type: `Binary`, `Member`, `Call`, ... |
 | `operator` | For `Binary` and `Unary` nodes |
-| `text`, `start`, `end` | The source text of the sub-expression (at most 120 characters, then `...`) and its offsets, to highlight it; slice the source with `start` and `end` for the full text |
+| `text`, `start`, `end` | The source text of the sub-expression (at most 120 characters, then `...`) and its offsets, to highlight it; slice the source with `start` and `end` for the full text, which includes the node's own parentheses (`(a == 1)` in `!(a == 1)`) |
 | `evaluated` | `false` when short-circuiting skipped it (`false && x`, the untaken branch of `?:`) |
 | `value` | What it produced |
 | `error` | `{ code, message }` when it failed |

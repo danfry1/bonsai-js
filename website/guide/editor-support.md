@@ -65,6 +65,14 @@ problem.suggestion // => "email"
 
 Map `start` and `end` to your editor's positions to underline the range. For an unknown name the range is the name itself (`emial`), so a quick-fix replaces it with `suggestion`. Warnings (`severity: "warning"`) point out expressions that are valid but probably wrong, such as a comparison that can never be true.
 
+When every expression must have one type, such as a filter that must be a boolean, create the service with `expect`. Its diagnostics then include `EXPECTED_TYPE`, as `env.check(source, { expect })` does:
+
+<!-- continue -->
+```ts
+const filters = createLanguageService(env, { expect: t.boolean() })
+filters.diagnostics('user.email')[0].code // => "EXPECTED_TYPE"
+```
+
 ## Wiring it to an editor
 
 Any editor component that can ask for completions at an offset works. The pattern is the same for CodeMirror, Monaco, or a plain `<textarea>`:

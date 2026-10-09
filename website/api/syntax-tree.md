@@ -2,6 +2,8 @@
 
 `env.parse(source)` returns the syntax tree of an expression as plain, JSON-serializable objects. Every node has a `type`, and `start` and `end`: UTF-16 offsets into the source. `print(tree)` turns a tree back into source; see [Syntax Trees and print()](./printer).
 
+Spans are balanced: a parenthesized expression's span includes its parentheses, so `source.slice(node.start, node.end)` is always an expression that parses on its own (`(a + 1)` in `(a + 1) * 2`), a child's span lies inside its parent's, and replacing a node's span with other source leaves no stray parenthesis. Explanation text, error spans, and code frames use the same spans.
+
 Treat node types as an open set: a minor release may add node types (for new syntax) and fields, so give a `switch` over `node.type` a `default` branch.
 
 ## Node types

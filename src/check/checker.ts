@@ -2,6 +2,7 @@ import { BonsaiLimitError, type DiagnosticCode, type Finding } from '../errors.j
 import { RESULT_REFINERS } from '../functions/builtins.js'
 import { isStackOverflow, tooDeep } from '../runtime/overflow.js'
 import { closest, didYouMean } from '../suggest.js'
+import { writtenWithExponent } from '../syntax/parser.js'
 import {
   isItemLambdaPosition,
   isLambdaPosition,
@@ -453,8 +454,11 @@ function mergeMaps(type: Type & { kind: 'union' }): MapType | undefined {
   for (const key of keys) {
     const found = members.map((m) => fieldOf(m, key) ?? m.rest)
     const present = found.filter((f): f is Type => f !== undefined)
-    if (present.length === members.length) fields[key] = unionOf(present)
-    else partial.push(...present)
+    if (present.length < members.length) partial.push(...present)
+    // A member that has the key only through `rest` may not hold it at all.
+    else if (members.some((m) => fieldOf(m, key) === undefined))
+      fields[key] = t.optional(unionOf(present))
+    else fields[key] = unionOf(present)
   }
   for (const m of members) if (m.rest !== undefined) partial.push(m.rest)
   if (partial.length > 0) {
@@ -666,7 +670,8 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         if (
           typeof node.value === 'number' &&
           Number.isInteger(node.value) &&
-          Math.abs(node.value) > Number.MAX_SAFE_INTEGER
+          Math.abs(node.value) > Number.MAX_SAFE_INTEGER &&
+          !writtenWithExponent(node)
         ) {
           report(
             'UNSAFE_INTEGER',
@@ -834,9 +839,16 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
                 for (const [key, field] of Object.entries(mapped.fields)) {
                   fields[key] = Object.hasOwn(fields, key)
                     ? unionOf([fields[key], field])
-                    : t.optional(field)
+                    : t.optional(rest === undefined ? field : unionOf([rest, field]))
                 }
-              } else Object.assign(fields, mapped.fields)
+              } else {
+                for (const [key, field] of Object.entries(mapped.fields)) {
+                  // An optional field may be absent and leave an earlier value in place.
+                  const earlier = Object.hasOwn(fields, key) ? fields[key] : rest
+                  fields[key] =
+                    earlier !== undefined && mayBeNull(field) ? unionOf([earlier, field]) : field
+                }
+              }
               if (mapped.rest !== undefined)
                 rest = rest === undefined ? mapped.rest : unionOf([rest, mapped.rest])
               else if (!spreadExact) exact = false
@@ -862,7 +874,11 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
           const valueType = fit(check(entry.value, scope, expectedField), expectedField)
           markAsync(node, entry.value)
           if (typeof entry.key === 'string') fields[entry.key] = valueType
-          else {
+          else if (entry.key.type === 'Literal' && typeof entry.key.value === 'string') {
+            // ["a"]: a constant key is a static one.
+            check(entry.key, scope)
+            fields[entry.key.value] = valueType
+          } else {
             const keyType = check(entry.key, scope)
             markAsync(node, entry.key)
             if (!isAssignable(keyType, t.union(STRING, NUMBER))) {
@@ -872,10 +888,15 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
                 entry.key,
               )
             }
+            // A computed key may overwrite any earlier field.
+            const keys = Object.keys(fields)
+            chargeTypeWork(keys.length)
+            for (const key of keys) fields[key] = unionOf([fields[key], valueType])
             rest = rest === undefined ? valueType : unionOf([rest, valueType])
           }
         }
-        if (rest !== undefined) return { kind: 'map', fields, rest }
+        // A spread declared object may hold any other key, with any value.
+        if (rest !== undefined) return { kind: 'map', fields, rest: exact ? rest : ANY }
         return exact ? exactObject(fields) : t.object(fields)
       }
       case 'Lambda':
@@ -1080,21 +1101,10 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
           )
           return BOOLEAN
         }
+        // A side that may be null is not a warning: `users.filter(.age >= 18)`
+        // skipping users without an age is the defined, idiomatic behavior.
         const a = widen(nonNull(left))
         const b = widen(nonNull(right))
-        for (const [side, sideType] of [
-          [node.left, left],
-          [node.right, right],
-        ] as const) {
-          if (mayBeNull(sideType)) {
-            report(
-              'MAYBE_NULL',
-              'This value may be null, and a comparison with null is false; check it first (x != null && ...) or use ??',
-              side,
-              'warning',
-            )
-          }
-        }
         const comparable = ['number', 'string', 'timestamp', 'duration']
         const ok = (x: Type): boolean =>
           x.kind === 'any' || x.kind === 'var' || x.kind === 'never' || comparable.includes(x.kind)

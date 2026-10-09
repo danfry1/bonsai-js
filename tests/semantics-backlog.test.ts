@@ -106,8 +106,13 @@ describe('warnings that say what a comparison does', () => {
       'UNSAFE_INTEGER',
       'UNSAFE_INTEGER',
     ])
-    expect(codes('1e20 + 1 == 1e20')).toEqual(['UNSAFE_INTEGER', 'UNSAFE_INTEGER'])
-    expect(codes('9007199254740991 + 0.5 + 1.5e300')).toEqual(['UNSAFE_INTEGER'])
+    expect(codes('0x20000000000001 == 9007199254740993')).toEqual([
+      'UNSAFE_INTEGER',
+      'UNSAFE_INTEGER',
+    ])
+    // A literal written with an exponent does not claim exact digits.
+    expect(codes('1e20 + 1 == 1e20')).toEqual([])
+    expect(codes('9007199254740991 + 0.5 + 1.5e300')).toEqual([])
     expect(codes('9007199254740991 + 0.5 + 1e-300')).toEqual([])
   })
 })

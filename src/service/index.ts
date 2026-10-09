@@ -1,10 +1,21 @@
 import { acceptsArgument, analyze, signatureText, type Analysis } from '../check/checker.js'
 import { internalsOf, type Environment } from '../environment.js'
 import { BonsaiError, locate, type Diagnostic } from '../errors.js'
-import type { FunctionDef } from '../functions/define.js'
+import { assertType, type FunctionDef } from '../functions/define.js'
 import { forEachChild, type Node } from '../syntax/ast.js'
 import { parse } from '../syntax/parser.js'
-import { formatType, nonNull, unionMembers, widen, type Type } from '../types.js'
+import {
+  fieldOf,
+  formatType,
+  isExact,
+  nonNull,
+  t,
+  unionMembers,
+  unionOf,
+  widen,
+  type MapType,
+  type Type,
+} from '../types.js'
 
 export type CompletionKind =
   | 'value'
@@ -62,22 +73,56 @@ const KEYWORDS = ['true', 'false', 'null', 'let', 'has', 'try', 'not in', 'in']
 const IDENT_CHAR = /[A-Za-z0-9_$]/u
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/u
 
-/** A UTF-16 offset inside `source` (an out-of-range or non-numeric offset means the end). */
+/**
+ * A UTF-16 offset inside `source`: one past the end, or a non-numeric offset,
+ * means the end. A negative or fractional offset is a caller bug: RangeError.
+ */
 function clampOffset(source: string, offset: number): number {
   if (!Number.isFinite(offset)) return source.length
-  return Math.max(0, Math.min(Math.trunc(offset), source.length))
+  if (offset < 0 || !Number.isInteger(offset)) {
+    throw new RangeError(`An offset must be a whole number of at least 0, not ${offset}`)
+  }
+  return Math.min(offset, source.length)
+}
+
+export interface LanguageServiceOptions {
+  /**
+   * The type every expression must have, as `check(source, { expect })` takes
+   * it: diagnostics then include EXPECTED_TYPE (a filter editor passes
+   * `t.boolean()`).
+   */
+  readonly expect?: Type | undefined
+}
+
+/** Reads the service options once: only `expect`, which must be a type built with t. */
+function serviceExpect(options: unknown): Type | undefined {
+  if (options === undefined) return undefined
+  if (typeof options !== 'object' || options === null || Array.isArray(options))
+    throw new TypeError('Language service options must be an object')
+  for (const key of Object.keys(options)) {
+    if (key !== 'expect')
+      throw new TypeError(`Unknown language service option key "${key}" (expected one of: expect)`)
+  }
+  const expect = (options as { expect?: unknown }).expect
+  if (expect !== undefined) assertType(expect, 'Language service option "expect"')
+  return expect
 }
 
 /**
  * Editor features over an environment. Nothing here evaluates an expression or
  * calls a host function: completions and hovers come from the static checker.
  */
-export function createLanguageService(env: Environment): LanguageService {
+export function createLanguageService(
+  env: Environment,
+  options?: LanguageServiceOptions,
+): LanguageService {
   const { checkEnv, parseLimits } = internalsOf(env)
+  const expect = serviceExpect(options)
+  const checkOptions = expect === undefined ? undefined : { expect }
 
   function tryAnalyze(source: string, probe?: string): Analysis | undefined {
     try {
-      return analyze(parse(source, parseLimits), checkEnv, { probe })
+      return analyze(parse(source, parseLimits), checkEnv, { probe, expected: expect })
     } catch (error) {
       if (error instanceof BonsaiError) return undefined
       throw error
@@ -134,6 +179,9 @@ export function createLanguageService(env: Environment): LanguageService {
       ` : null${scan.closers}`,
       `; null${scan.closers}`,
       ` 0${scan.closers}`,
+      // try(x, fallback) and a computed key [k]: v need their second half.
+      `, null${scan.closers}`,
+      `${scan.closers.slice(0, 1)}: null${scan.closers.slice(1)}`,
     ]) {
       analysis = tryAnalyze(probeText + suffix, PROBE)
       if (analysis !== undefined) break
@@ -229,15 +277,18 @@ export function createLanguageService(env: Environment): LanguageService {
     const items: Completion[] = []
     const members = unionMembers(target)
     // Fields of every map member (a union of records offers each one's keys).
-    const fields = new Map<string, Type[]>()
-    for (const member of members) {
-      if (member.kind !== 'map') continue
-      for (const [name, type] of Object.entries(member.fields)) {
-        fields.set(name, [...(fields.get(name) ?? []), type])
-      }
+    const maps = members.filter((member): member is MapType => member.kind === 'map')
+    const names = new Set(maps.flatMap((member) => Object.keys(member.fields)))
+    // The type a read has, as check() and hover report it: a member without
+    // the field reads its `rest` (or null), and a declared object may hold any key.
+    const readOf = (member: MapType, name: string): Type => {
+      const field = fieldOf(member, name)
+      if (field !== undefined) return field
+      if (member.rest !== undefined) return t.optional(member.rest)
+      return isExact(member) ? t.null() : t.any()
     }
-    for (const [name, found] of fields) {
-      const detail = found.map((type) => formatType(type)).join(' | ')
+    for (const name of names) {
+      const detail = formatType(unionOf(maps.map((member) => readOf(member, name))))
       if (IDENTIFIER.test(name)) {
         items.push({ label: name, kind: 'property', detail, insertText: name })
       } else {
@@ -370,7 +421,7 @@ export function createLanguageService(env: Environment): LanguageService {
 
   function diagnostics(source: string): readonly Diagnostic[] {
     // Spans stay inside the source (an error at the end is zero-width there).
-    const found = env.check(source).diagnostics
+    const found = env.check(source, checkOptions).diagnostics
     if (found.every((d) => d.start >= 0 && d.end >= d.start && d.end <= source.length)) return found
     return locate(
       source,

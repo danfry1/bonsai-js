@@ -120,10 +120,10 @@ describe('checker guidance', () => {
     },
   })
 
-  it('warns when a comparison may see null', () => {
+  it('does not warn when an ordering may see null, which is defined as false', () => {
     const result = typed.check('events.every(.durationMs < 5000)')
     expect(result.ok).toBe(true)
-    expect(result.diagnostics[0]).toMatchObject({ severity: 'warning' })
+    expect(result.diagnostics).toEqual([])
     expect(
       typed.check('events.every(.durationMs != null && .durationMs < 5000)').diagnostics,
     ).toEqual([])
