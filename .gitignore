@@ -10,3 +10,8 @@ website/.vitepress/cache
 # Mutation testing (Stryker)
 .stryker-tmp/
 reports/
+
+# Local agent/tooling state (worktrees, local settings)
+.claude/
+.claire/
+/.examples-typecheck-*/

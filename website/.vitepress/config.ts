@@ -1,21 +1,28 @@
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vitepress'
 
+const src = (path: string) => fileURLToPath(new URL(`../../src/${path}`, import.meta.url))
+
 export default defineConfig({
   title: 'Bonsai',
   description:
-    'A safe expression language for rules, filters, templates, and user-authored logic. Runs in any JavaScript runtime.',
+    'A small, safe, typed expression language for rules, filters, formulas, and templates. Zero dependencies; runs in Node.js, Bun, and modern browsers.',
   lang: 'en-US',
   base: '/bonsai-js/',
   cleanUrls: true,
   lastUpdated: true,
   sitemap: { hostname: 'https://danfry1.github.io/bonsai-js/' },
+  markdown: {
+    // Bonsai syntax is a subset of JavaScript expression syntax.
+    languageAlias: { bonsai: 'js' },
+  },
   vite: {
     resolve: {
       alias: {
-        'bonsai-src': fileURLToPath(new URL('../../src/index.ts', import.meta.url)),
-        'bonsai-stdlib': fileURLToPath(new URL('../../src/stdlib/index.ts', import.meta.url)),
-        'bonsai-autocomplete': fileURLToPath(new URL('../../src/autocomplete/index.ts', import.meta.url)),
+        'bonsai-src': src('index.ts'),
+        'bonsai-service': src('service/index.ts'),
+        // Internal: the How It Works page shows raw tokens.
+        'bonsai-lexer': src('syntax/lexer.ts'),
       },
     },
   },
@@ -27,76 +34,72 @@ export default defineConfig({
     ['meta', { property: 'og:image', content: 'https://danfry1.github.io/bonsai-js/og-card.png' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
     ['meta', { name: 'twitter:image', content: 'https://danfry1.github.io/bonsai-js/og-card.png' }],
-    ['meta', { property: 'og:title', content: 'Bonsai — Safe Expressions for Rules, Filters, and Templates' }],
-    ['meta', { name: 'twitter:title', content: 'Bonsai — Safe Expressions for Rules, Filters, and Templates' }],
+    ['meta', { property: 'og:title', content: 'Bonsai: safe, typed expressions for rules, filters, and templates' }],
+    ['meta', { name: 'twitter:title', content: 'Bonsai: safe, typed expressions for rules, filters, and templates' }],
   ],
   themeConfig: {
     search: { provider: 'local' },
-    socialLinks: [
-      { icon: 'github', link: 'https://github.com/danfry1/bonsai-js' },
-    ],
+    socialLinks: [{ icon: 'github', link: 'https://github.com/danfry1/bonsai-js' }],
     nav: [
       { text: 'Guide', link: '/guide/' },
+      { text: 'Language', link: '/language/' },
+      { text: 'Functions', link: '/functions/' },
+      { text: 'API', link: '/api/environment' },
       { text: 'Playground', link: '/playground' },
-      { text: 'API', link: '/api/bonsai' },
       { text: 'How It Works', link: '/how-it-works' },
       { text: 'npm', link: 'https://www.npmjs.com/package/bonsai-js' },
     ],
     sidebar: [
       {
-        text: 'Introduction',
+        text: 'Guide',
         items: [
           { text: 'What is Bonsai', link: '/guide/' },
           { text: 'Install', link: '/guide/install' },
           { text: 'Quick Start', link: '/guide/quick-start' },
           { text: 'Mental Model', link: '/guide/mental-model' },
+          { text: 'Safety', link: '/guide/safety' },
+          { text: 'Performance', link: '/guide/performance' },
+          { text: 'Editor Support', link: '/guide/editor-support' },
+          { text: 'Migrating from 0.x', link: '/guide/migrating' },
         ],
       },
       {
         text: 'Language',
         items: [
-          { text: 'Literals & Types', link: '/language/literals' },
+          { text: 'Overview and Values', link: '/language/' },
+          { text: 'Literals and Comments', link: '/language/literals' },
           { text: 'Operators', link: '/language/operators' },
           { text: 'Property Access', link: '/language/property-access' },
-          { text: 'Pipe Operator', link: '/language/pipe' },
-          { text: 'Collections', link: '/language/collections' },
-          { text: 'Template Literals', link: '/language/templates' },
-          { text: 'Lambda Predicates', link: '/language/lambdas' },
+          { text: 'Functions and Calls', link: '/language/functions' },
+          { text: 'Lambdas', link: '/language/lambdas' },
+          { text: 'let, try, and has', link: '/language/let-try-has' },
+          { text: 'Templates', link: '/language/templates' },
+          { text: 'Time', link: '/language/time' },
+          { text: 'Static Checking', link: '/language/checking' },
+        ],
+      },
+      {
+        text: 'Built-in Functions',
+        items: [
+          { text: 'Overview', link: '/functions/' },
+          { text: 'Text', link: '/functions/text' },
+          { text: 'Lists', link: '/functions/lists' },
+          { text: 'Numbers', link: '/functions/numbers' },
+          { text: 'Maps and Values', link: '/functions/maps' },
+          { text: 'Time', link: '/functions/time' },
         ],
       },
       {
         text: 'API Reference',
         items: [
-          { text: 'bonsai(options)', link: '/api/bonsai' },
-          { text: 'evaluateSync & evaluate', link: '/api/evaluate' },
-          { text: 'compile & validate', link: '/api/compile' },
-          { text: 'Extending', link: '/api/extending' },
-          { text: 'Instance Methods', link: '/api/instance-methods' },
-          { text: 'evaluateExpression', link: '/api/evaluate-expression' },
-          { text: 'Error Handling', link: '/api/errors' },
-        ],
-      },
-      {
-        text: 'Standard Library',
-        items: [
-          { text: 'Strings', link: '/stdlib/strings' },
-          { text: 'Arrays', link: '/stdlib/arrays' },
-          { text: 'Math', link: '/stdlib/math' },
-          { text: 'Types', link: '/stdlib/types' },
-          { text: 'Dates', link: '/stdlib/dates' },
-          { text: 'All (bundle)', link: '/stdlib/all' },
-        ],
-      },
-      {
-        text: 'Guides',
-        items: [
-          { text: 'Writing Plugins', link: '/guide/plugins' },
-          { text: 'Safety & Sandboxing', link: '/guide/safety' },
-          { text: 'Performance', link: '/guide/performance' },
-          { text: 'Autocomplete: Setup', link: '/guide/autocomplete-setup' },
-          { text: 'Autocomplete: API', link: '/guide/autocomplete-api' },
-          { text: 'Autocomplete: Editor', link: '/guide/autocomplete-editor' },
-          { text: 'Autocomplete: Security', link: '/guide/autocomplete-security' },
+          { text: 'bonsai() and Environment', link: '/api/environment' },
+          { text: 'Programs', link: '/api/programs' },
+          { text: 'Host Functions', link: '/api/host-functions' },
+          { text: 'Types (t)', link: '/api/types' },
+          { text: 'Errors', link: '/api/errors' },
+          { text: 'Limits', link: '/api/limits' },
+          { text: 'Language Service', link: '/api/service' },
+          { text: 'Syntax Trees and print()', link: '/api/printer' },
         ],
       },
     ],

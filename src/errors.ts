@@ -1,263 +1,154 @@
-import type { SourcePosition } from './types.js'
+/** Stable machine-readable error codes. Adding a code is a minor change; renaming one is major. */
+export type ErrorCode =
+  // syntax
+  | 'SYNTAX'
+  // static checking (the individual diagnostics carry their own codes)
+  | 'CHECK'
+  // resource limits
+  | 'SOURCE_TOO_LONG'
+  | 'TOO_DEEP'
+  | 'TOO_MANY_NODES'
+  | 'TOO_COMPLEX'
+  | 'STEP_LIMIT'
+  | 'STRING_LIMIT'
+  | 'PATTERN_LIMIT'
+  | 'LIST_LIMIT'
+  | 'TIMEOUT'
+  | 'ABORTED'
+  // evaluation
+  | 'TYPE_ERROR'
+  | 'NO_OVERLOAD'
+  | 'NULL_RECEIVER'
+  | 'DIVISION_BY_ZERO'
+  | 'NON_FINITE'
+  | 'BLOCKED_PROPERTY'
+  | 'INVALID_ARGUMENT'
+  | 'ASYNC_IN_SYNC'
+  | 'HOST_ERROR'
+  | 'HOST_CONTRACT'
+  | 'INVALID_CONTEXT'
 
-const NEWLINE_CODE = 10
-
-export interface ErrorLocation {
-  source: string
-  start: number
-  end: number
-}
-
-/** Syntax error thrown during parsing. Contains source location and formatted caret display. */
-export class ExpressionError extends Error {
-  /** Literal discriminant: narrow a caught error with `switch (err.name)`. */
-  readonly name = 'ExpressionError'
-  readonly rawMessage: string
+export interface Span {
   readonly start: number
   readonly end: number
-  readonly source: string
-  readonly suggestion?: string
-
-  constructor(message: string, location: ErrorLocation, suggestion?: string) {
-    const formatted = formatError(message, location, suggestion)
-    super(formatted)
-    this.rawMessage = message
-    this.start = location.start
-    this.end = location.end
-    this.source = location.source
-    this.suggestion = suggestion
-  }
 }
 
-/** Runtime type error when a transform, function, or method receives an unexpected value type. */
-export class BonsaiTypeError extends Error {
-  /** Literal discriminant: narrow a caught error with `switch (err.name)`. */
-  readonly name = 'BonsaiTypeError'
-  readonly transform: string
-  readonly expected: string
-  readonly received: string
-  location?: ErrorLocation
-  formatted?: string
+const LINE_FEED = 10
 
-  constructor(transform: string, expected: string, value: unknown) {
-    let received: string
-    if (value === null) received = 'null'
-    else if (value instanceof Promise) received = 'Promise'
-    else if (Array.isArray(value)) received = 'array'
-    else received = typeof value
-    super(`"${transform}" expects ${expected}, got ${received}`)
-    this.transform = transform
-    this.expected = expected
-    this.received = received
-  }
-}
-
-/**
- * Why a {@link BonsaiSecurityError} was raised. A closed set so consumers can
- * branch on it exhaustively (e.g. surface a `TIMEOUT` differently from a
- * `BLOCKED_PROPERTY`).
- */
-export type BonsaiSecurityCode =
-  | 'BLOCKED_PROPERTY'
-  | 'PROPERTY_NOT_ALLOWED'
-  | 'PROPERTY_DENIED'
-  | 'METHOD_NOT_ALLOWED'
-  | 'MAX_DEPTH'
-  | 'MAX_ARRAY_LENGTH'
-  | 'MAX_STRING_LENGTH'
-  | 'MAX_STEPS'
-  | 'TIMEOUT'
-
-/** Security violation: blocked property access, timeout, depth limit, or array size limit. */
-export class BonsaiSecurityError extends Error {
-  /** Literal discriminant: narrow a caught error with `switch (err.name)`. */
-  readonly name = 'BonsaiSecurityError'
-  /** Which guard fired. See {@link BonsaiSecurityCode}. */
-  readonly code: BonsaiSecurityCode
-  location?: ErrorLocation
-  formatted?: string
-
-  constructor(code: BonsaiSecurityCode, message: string) {
-    super(message)
-    this.code = code
-  }
-}
-
-/** Unknown transform, function, or method name. Includes a "did you mean?" suggestion when possible. */
-export class BonsaiReferenceError extends Error {
-  /** Literal discriminant: narrow a caught error with `switch (err.name)`. */
-  readonly name = 'BonsaiReferenceError'
-  readonly identifier: string
-  readonly kind: 'transform' | 'function' | 'method'
-  readonly suggestion?: string
-  location?: ErrorLocation
-  formatted?: string
-
-  constructor(kind: 'transform' | 'function' | 'method', identifier: string, suggestion?: string) {
-    const msg =
-      suggestion !== undefined && suggestion !== ''
-        ? `Unknown ${kind} "${identifier}". Did you mean "${suggestion}"?`
-        : `Unknown ${kind} "${identifier}"`
-    super(msg)
-    this.identifier = identifier
-    this.kind = kind
-    this.suggestion = suggestion
-  }
-}
-
-export type BonsaiRuntimeError = BonsaiTypeError | BonsaiSecurityError | BonsaiReferenceError
-export type BonsaiError = ExpressionError | BonsaiRuntimeError
-
-/**
- * Type guard for any error Bonsai throws (parse or runtime). Use it in a `catch`
- * to narrow `unknown` to {@link BonsaiError}, then switch on `error.name` or read
- * the per-error fields.
- */
-export function isBonsaiError(error: unknown): error is BonsaiError {
-  return (
-    error instanceof ExpressionError ||
-    error instanceof BonsaiTypeError ||
-    error instanceof BonsaiSecurityError ||
-    error instanceof BonsaiReferenceError
-  )
-}
-
-/** Type guard for the runtime subset (everything except parse-time {@link ExpressionError}). */
-export function isBonsaiRuntimeError(error: unknown): error is BonsaiRuntimeError {
-  return (
-    error instanceof BonsaiTypeError ||
-    error instanceof BonsaiSecurityError ||
-    error instanceof BonsaiReferenceError
-  )
-}
-
-function clampOffset(source: string, offset: number): number {
-  return Math.max(0, Math.min(offset, source.length))
-}
-
-function getLineStart(source: string, offset: number): number {
-  let index = clampOffset(source, offset)
-  while (index > 0 && source.charCodeAt(index - 1) !== NEWLINE_CODE) index--
-  return index
-}
-
-function getLineEnd(source: string, offset: number): number {
-  let index = clampOffset(source, offset)
-  while (index < source.length && source.charCodeAt(index) !== NEWLINE_CODE) index++
-  return index
-}
-
-export function offsetToPosition(source: string, offset: number): SourcePosition {
-  const safeOffset = clampOffset(source, offset)
+/** 1-based line and column of an offset in `source`. */
+function positionOf(source: string, offset: number): { line: number; column: number } {
   let line = 1
-  let column = 1
-
-  for (let index = 0; index < safeOffset; index++) {
-    if (source.charCodeAt(index) === NEWLINE_CODE) {
+  let lineStart = 0
+  const end = Math.min(Math.max(offset, 0), source.length)
+  for (let i = 0; i < end; i++) {
+    if (source.charCodeAt(i) === LINE_FEED) {
       line++
-      column = 1
-    } else {
-      column++
+      lineStart = i + 1
     }
   }
-
-  return { line, column, offset: safeOffset }
+  return { line, column: end - lineStart + 1 }
 }
 
-function hasErrorLocation(
-  error: unknown,
-): error is BonsaiRuntimeError & { location: ErrorLocation } {
-  return (
-    (error instanceof BonsaiTypeError ||
-      error instanceof BonsaiSecurityError ||
-      error instanceof BonsaiReferenceError) &&
-    error.location !== undefined
-  )
+/** A source excerpt with a caret line under `span`, e.g. for terminal output. */
+function codeFrame(source: string, span: Span): string {
+  const { line, column } = positionOf(source, span.start)
+  const lines = source.split('\n')
+  const text = lines[line - 1] ?? ''
+  const width = Math.max(1, Math.min(span.end, span.start + text.length - column + 1) - span.start)
+  const gutter = String(line)
+  return `${gutter} | ${text}\n${' '.repeat(gutter.length)} | ${' '.repeat(column - 1)}${'^'.repeat(width)}`
 }
 
-export function attachLocation(error: unknown, source: string, start: number, end: number): void {
-  if (
-    error instanceof BonsaiTypeError ||
-    error instanceof BonsaiSecurityError ||
-    error instanceof BonsaiReferenceError
-  ) {
-    if (!error.location) {
-      error.location = { source, start, end }
-      error.formatted = formatError(error.message, error.location)
-    }
+/** Options for constructing a {@link BonsaiError}. */
+export interface ErrorInit {
+  readonly source?: string | undefined
+  readonly span?: Span | undefined
+  readonly cause?: unknown
+}
+
+/** Base class of every error Bonsai throws. */
+export class BonsaiError extends Error {
+  readonly code: ErrorCode
+  readonly source: string | undefined
+  readonly span: Span | undefined
+
+  constructor(code: ErrorCode, message: string, init: ErrorInit = {}) {
+    super(message, init.cause === undefined ? undefined : { cause: init.cause })
+    this.name = new.target.name
+    this.code = code
+    this.source = init.source
+    this.span = init.span
+  }
+
+  /** 1-based position of the error, when it is tied to a source span. */
+  get position(): { line: number; column: number } | undefined {
+    if (this.source === undefined || this.span === undefined) return undefined
+    return positionOf(this.source, this.span.start)
+  }
+
+  /** The message followed by a code frame, when a span is known. */
+  get formatted(): string {
+    if (this.source === undefined || this.span === undefined) return this.message
+    return `${this.message}\n${codeFrame(this.source, this.span)}`
   }
 }
 
-/** Format an error message with source context, caret display, and position info. */
-export function formatError(message: string, location: ErrorLocation, suggestion?: string): string {
-  const { source } = location
-  const start = clampOffset(source, location.start)
-  const rawEnd = clampOffset(source, location.end)
-  const end = Math.max(start + 1, rawEnd)
-  const startPos = offsetToPosition(source, start)
-  const lineStart = getLineStart(source, start)
-  const lineEnd = getLineEnd(source, start)
-  const lineText = source.slice(lineStart, lineEnd)
-  const caretStart = start - lineStart
-  const caretEnd = Math.min(end, lineEnd)
-  const caretLength = Math.max(1, caretEnd - start)
-  const gutter = `${startPos.line} | `
-  const padding = ' '.repeat(gutter.length + caretStart)
-  const carets = '^'.repeat(caretLength)
-
-  let result = `${message}\n\n${gutter}${lineText}\n${padding}${carets}`
-
-  if (suggestion !== undefined && suggestion !== '') {
-    result += ` Did you mean "${suggestion}"?`
+/** The expression text is not valid Bonsai syntax. */
+export class BonsaiSyntaxError extends BonsaiError {
+  constructor(message: string, init: ErrorInit = {}) {
+    super('SYNTAX', message, init)
   }
-
-  result += `\n\nat line ${startPos.line}, column ${startPos.column} (offset ${start}-${end})`
-
-  return result
 }
 
-/** Format any Bonsai error into a human-readable string with source context when available. */
-export function formatBonsaiError(error: unknown): string {
-  if (error instanceof ExpressionError) return error.message
-  if (hasErrorLocation(error)) {
-    return error.formatted ?? formatError(error.message, error.location)
-  }
-  if (error instanceof Error) return error.message
-  return String(error)
+/** A resource limit, timeout, or cancellation stopped parsing or evaluation. */
+export class BonsaiLimitError extends BonsaiError {}
+
+/** Evaluation failed: a type mismatch, invalid argument, or host failure. */
+export class BonsaiRuntimeError extends BonsaiError {}
+
+/** One static-checking finding. */
+export interface Diagnostic {
+  readonly code: DiagnosticCode
+  readonly message: string
+  readonly severity: 'error' | 'warning'
+  readonly start: number
+  readonly end: number
 }
 
-const MAX_SUGGEST_LENGTH = 64
+export type DiagnosticCode =
+  // warnings
+  | 'ALWAYS_FALSE'
+  | 'NEVER_NULL'
+  | 'MAYBE_NULL'
+  // errors
+  | 'SYNTAX'
+  | 'LIMIT'
+  | 'UNKNOWN_VARIABLE'
+  | 'UNKNOWN_PROPERTY'
+  | 'UNKNOWN_FUNCTION'
+  | 'NO_OVERLOAD'
+  | 'TYPE_ERROR'
+  | 'NULLABLE_RECEIVER'
+  | 'INVALID_LAMBDA'
+  | 'BLOCKED_PROPERTY'
+  | 'EXPECTED_TYPE'
+  | 'INVALID_ARGUMENT'
 
-export function suggest(input: string, known: string[], maxDistance = 2): string | undefined {
-  if (input.length > MAX_SUGGEST_LENGTH) return undefined
-  let best: string | undefined
-  let bestDistance = maxDistance + 1
+/** Static checking rejected the expression; `diagnostics` lists every finding. */
+export class BonsaiCheckError extends BonsaiError {
+  readonly diagnostics: readonly Diagnostic[]
 
-  for (const candidate of known) {
-    const distance = levenshtein(input, candidate)
-    if (distance < bestDistance) {
-      bestDistance = distance
-      best = candidate
-    }
+  constructor(source: string, diagnostics: readonly Diagnostic[]) {
+    const first = diagnostics[0]
+    const more = diagnostics.length > 1 ? ` (and ${diagnostics.length - 1} more)` : ''
+    super('CHECK', `${first?.message ?? 'Check failed'}${more}`, {
+      source,
+      span: first === undefined ? undefined : { start: first.start, end: first.end },
+    })
+    this.diagnostics = diagnostics
   }
-
-  return best
 }
 
-function levenshtein(a: string, b: string): number {
-  const m = a.length
-  const n = b.length
-  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0))
-
-  for (let i = 0; i <= m; i++) dp[i][0] = i
-  for (let j = 0; j <= n; j++) dp[0][j] = j
-
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1
-      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost)
-    }
-  }
-
-  return dp[m][n]
+export function isBonsaiError(value: unknown): value is BonsaiError {
+  return value instanceof BonsaiError
 }

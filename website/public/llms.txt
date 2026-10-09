@@ -1,68 +1,60 @@
 # Bonsai
 
-> A safe, fast expression language for rules, filters, and templates with pipe operators, optional chaining, and a modular plugin system.
+> A small, safe, typed expression language for JavaScript: rules, filters, formulas, and templates written by people other than your developers. JavaScript-like syntax, static checking against declared data types, bounded evaluation, zero dependencies.
 
-Bonsai lets you safely evaluate expression strings in JavaScript. It's designed for data transformations, business rules, template logic, and user-facing formula editors - without the security risks of running arbitrary code.
+- Package: `bonsai-js` (ESM, TypeScript types included). Entry points: `bonsai-js` and `bonsai-js/service`.
+- Runtimes: Node.js 22+, current Bun, modern ESM browsers. No eval, no generated code.
 
-- Package: `bonsai-js`
-- ESM-only, TypeScript-first, zero runtime dependencies
-- Fast compiled evaluation with cache support and benchmark regression gates
+## Example
 
-## Install
+```ts
+import { bonsai, fn, t } from 'bonsai-js'
 
-```
-bun add bonsai-js
-npm install bonsai-js
-```
+const env = bonsai({
+  variables: {
+    user: t.object({ age: t.number(), plan: t.enum('free', 'pro') }),
+    orders: t.list(t.object({ total: t.number(), paid: t.boolean(), created: t.timestamp() })),
+  },
+})
 
-## Quick Example
+env.check('user.agee > 18') // { ok: false, diagnostics: [{ code: 'UNKNOWN_PROPERTY', ... did you mean "age"? }] }
 
-```js
-import { bonsai } from 'bonsai-js'
-import { strings, arrays, math } from 'bonsai-js/stdlib'
-
-const expr = bonsai()
-expr.use(strings)
-expr.use(arrays)
-expr.use(math)
-
-// Simple evaluation
-expr.evaluateSync('2 + 3 * 4') // 14
-
-// With context variables
-expr.evaluateSync('price * quantity', { price: 9.99, quantity: 3 }) // 29.97
-
-// Pipe operator - read as "then"
-expr.evaluateSync('name |> trim |> upper', { name: '  dan  ' }) // "DAN"
-
-// Lambda predicates for filtering
-expr.evaluateSync('users |> filter(.age >= 18) |> map(.name)', {
-  users: [{ name: 'Alice', age: 25 }, { name: 'Bob', age: 15 }]
-}) // ["Alice"]
-
-// Optional chaining + nullish coalescing
-expr.evaluateSync('user?.profile?.avatar ?? "default.png"', { user: null }) // "default.png"
-
-// Template literals
-expr.evaluateSync('`Hello ${name}!`', { name: 'world' }) // "Hello world!"
+const rule = env.compile(
+  'user.plan == "pro" && orders.filter(.paid && now() - .created < days(30)).map(.total).sum() > 100',
+  { expect: t.boolean() },
+)
+rule.evaluateSync(context) // a boolean
 ```
 
-## Key Features
+## Language essentials
 
-- **Pipe operator** (`|>`): Chain transforms left-to-right for readable data pipelines
-- **Optional chaining** (`?.`): Safely access nested properties without null errors
-- **Nullish coalescing** (`??`): Provide fallback values for null/undefined
-- **Lambda predicates**: `.age >= 18` shorthand for `item => item.age >= 18`
-- **Template literals**: Backtick strings with `${expression}` interpolation
-- **Safe sandbox**: Blocks prototype access, enforces depth/array/string/step limits and an optional timeout, own-property-only context lookup, null-prototype object literals, receiver-aware method validation, sync Promise guards
-- **Plugin system**: Extend with custom transforms, pure functions, and context-aware functions
-- **End-to-end typed context**: `bonsai<AppContext>()` propagates the context type through evaluation, compilation, and context-aware function registration
-- **Standard library**: Modular stdlib for strings, arrays, math, types, dates
+- One absent value, `null`: missing properties, missing variables, and host `undefined` all read as `null`. Reading a property of `null` gives `null`.
+- `==` compares by value (lists and maps deeply), never coerces: `1 == "1"` is false; `"a" + 1` is an error (use a template).
+- `&&`, `||`, `!`, `?:` take booleans (`null` counts as false); anything else is an error. Use `??` for defaults.
+- `<`, `>`, ... with a `null` side are `false`. Division by zero and non-finite results are errors.
+- Every function is also a method: `sum(xs)` == `xs.sum()`. Names resolve only to built-ins and declared host functions.
+- Lambdas: `xs.filter(.price > 10)`, `xs.map((x, i) => ...)`. `.` binds to the nearest enclosing argument whose parameter is a function.
+- `let x = e; body`, `try(expr, fallback)`, `has(a.b)`, templates `` `Hi ${name}` ``, comments `//` and `/* */`.
+- Timestamps and durations: `now() - t > days(30)`, `startOfDay(t, "Europe/Berlin")`, `formatDate(t, "yyyy-MM-dd")`.
+- There is no pipe operator: `|>` is reserved and is a syntax error. Write `x.f(a)`.
+
+## API essentials
+
+- `bonsai({ variables, strict, functions, libraries, limits, cacheSize, clock, validateContext })` returns an immutable environment. Declaring `variables` makes it strict (undeclared names are errors) unless `strict: false`.
+- `env.check(src)` returns `{ ok, type, diagnostics }` and never throws. `env.compile(src, { expect })` returns a program with `evaluate`, `evaluateSync`, `type`, `references`, `warnings`.
+- `env.evaluateSync(src, ctx)` and `await env.evaluate(src, ctx)` compile through a cache. Options: `{ timeout, maxSteps, signal }`.
+- Host functions: `fn({ params: [t.string()], returns: t.boolean(), run, async?, context?, required?, rest? })`.
+- Types: `t.string() number() boolean() null() timestamp() duration() literal() enum() list() object() record() optional() union() opaque() any()`; `Infer<typeof T>`.
+- Errors: `BonsaiSyntaxError`, `BonsaiCheckError` (`.diagnostics`), `BonsaiLimitError`, `BonsaiRuntimeError`; each has a stable `code`. Host functions that throw give `HOST_ERROR`; results that break the declared type give `HOST_CONTRACT`, which `try()` does not catch.
+- Editor features: `createLanguageService(env)` from `bonsai-js/service` with `complete`, `hover`, `diagnostics`.
 
 ## Documentation
 
-- Full docs: [docs page](https://danfry1.github.io/bonsai-js/docs.html)
-- Full docs for LLMs: [llms-full.txt](https://danfry1.github.io/bonsai-js/llms-full.txt)
+- Guide: https://danfry1.github.io/bonsai-js/guide/
+- Language: https://danfry1.github.io/bonsai-js/language/
+- Built-in functions: https://danfry1.github.io/bonsai-js/functions/
+- API: https://danfry1.github.io/bonsai-js/api/environment
+- Full text for LLMs: https://danfry1.github.io/bonsai-js/llms-full.txt
 
 ## Links
 

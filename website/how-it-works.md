@@ -1,5 +1,5 @@
 ---
-title: How It Works — Bonsai
+title: How It Works
 layout: page
 aside: false
 sidebar: false

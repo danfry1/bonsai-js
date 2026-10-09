@@ -6,14 +6,13 @@
   "reporters": ["html", "clear-text", "progress"],
   "htmlReporter": { "fileName": "reports/mutation/index.html" },
   "clearTextReporter": { "maxTestsToLog": 3 },
-  "_comment": "Mutation testing measures whether the suite actually kills injected faults, not just whether lines run. Scoped to the correctness and security core; the lexer, parser, async evaluator, stdlib, and autocomplete are deliberately deferred to follow-up expansions. The aggregate score across this scope is ~87.7%; `break` is held a couple of points below that and should be ratcheted up (never down) like the coverage floor in vitest.config.ts. Remaining survivors are equivalent mutants (access-guard kind arguments, switch-label swaps and case fall-through, performance fast-paths the slow path already covers) or defensive branches the type system and parser make unreachable.",
+  "_comment": "Mutation testing measures whether the suite kills injected faults in the runtime, compiler, built-in functions, and checker, not just whether those lines run.",
   "mutate": [
-    "src/execution-context.ts",
-    "src/eval-ops.ts",
-    "src/safe-methods.ts",
-    "src/coerce.ts",
-    "src/compiler.ts",
-    "src/evaluator.ts"
+    "src/runtime/values.ts",
+    "src/runtime/state.ts",
+    "src/compile/compiler.ts",
+    "src/functions/builtins.ts",
+    "src/check/checker.ts"
   ],
-  "thresholds": { "high": 95, "low": 85, "break": 85 }
+  "thresholds": { "high": 95, "low": 87, "break": 87 }
 }

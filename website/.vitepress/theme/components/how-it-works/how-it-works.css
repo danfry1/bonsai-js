@@ -697,7 +697,10 @@
 }
 
 .hiw-opt-message {
-  text-align: center;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-top: 12px;
   font-size: 0.85rem;
   color: #7ee787;
   min-height: 22px;
