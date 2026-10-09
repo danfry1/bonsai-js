@@ -13,7 +13,7 @@
  * the type the field really has.
  */
 import type { AbortSignalLike } from '../environment.js'
-import { BonsaiError, type Span } from '../errors.js'
+import { BonsaiError, BonsaiLimitError, type Span } from '../errors.js'
 import type { PartialOptions, PartialResult } from '../partial.js'
 import { Duration, isMap } from '../runtime/values.js'
 import { declaredVariables } from '../declared.js'
@@ -65,6 +65,11 @@ interface CommonOptions {
   readonly timeout?: number | undefined
   /** Cancels that partial evaluation, as for partial(). */
   readonly signal?: AbortSignalLike | undefined
+  /**
+   * Call sync host functions whose inputs are all known before translating,
+   * as for partial(). Default false: a host function call does not translate.
+   */
+  readonly callHostFunctions?: boolean | undefined
 }
 
 export interface SQLOptions extends CommonOptions {
@@ -309,6 +314,65 @@ interface Declared {
   readonly type: ColumnType
 }
 
+/** Charges translation work (one step by default) against the translation's budget. */
+type Charge = (steps?: number) => void
+
+/** The step budget when `maxSteps` is not given: the default evaluation limit. */
+const DEFAULT_MAX_STEPS = 1_000_000
+/** Steps between two checks of the clock and the abort signal. */
+const CLOCK_SAMPLE = 1024
+
+/**
+ * The budget translation work outside partial evaluation is charged against:
+ * the same `maxSteps`, and the same deadline and signal, which run from the
+ * start of the translation.
+ */
+function budget(options: CommonOptions, source: string): Charge {
+  const { maxSteps, timeout, signal } = options
+  // Invalid values are rejected by partial(), which runs before most of the work.
+  const max = typeof maxSteps === 'number' && maxSteps >= 0 ? maxSteps : DEFAULT_MAX_STEPS
+  const deadline = typeof timeout === 'number' && timeout > 0 ? performance.now() + timeout : 0
+  let steps = 0
+  let nextSample = 0
+  return (n = 1) => {
+    steps += n
+    if (steps < nextSample) return
+    if (max > 0 && steps > max) {
+      throw new BonsaiLimitError('STEP_LIMIT', `Translation exceeded the step limit of ${max}`, {
+        source,
+      })
+    }
+    if (deadline !== 0 && performance.now() > deadline)
+      throw new BonsaiLimitError('TIMEOUT', 'Translation timed out', { source })
+    let aborted: boolean
+    let cause: unknown
+    try {
+      aborted = signal?.aborted === true
+      if (aborted) cause = signal?.reason
+    } catch (error) {
+      aborted = true
+      cause = error
+    }
+    if (aborted) throw new BonsaiLimitError('ABORTED', 'Translation was aborted', { source, cause })
+    nextSample = max > 0 ? Math.min(steps + CLOCK_SAMPLE, max + 1) : steps + CLOCK_SAMPLE
+  }
+}
+
+/** Characters of known text a translation reads or sends per step. */
+const TEXT_PER_STEP = 32
+/** Steps charged for known text a translation reads or sends. */
+const textCost = (text: string): number => 1 + Math.floor(text.length / TEXT_PER_STEP)
+
+/** What `make` derives from known text, computed (and charged) once per text. */
+function once<T>(cache: Map<string, T>, text: string, make: () => T, charge: Charge): T {
+  charge()
+  if (cache.has(text)) return cache.get(text) as T
+  charge(textCost(text))
+  const made = make()
+  cache.set(text, made)
+  return made
+}
+
 /** Options both translators read; the budget options are passed to partial(), which validates them. */
 const COMMON_OPTION_KEYS: readonly string[] = [
   'row',
@@ -317,6 +381,7 @@ const COMMON_OPTION_KEYS: readonly string[] = [
   'maxSteps',
   'timeout',
   'signal',
+  'callHostFunctions',
 ]
 const SQL_OPTION_KEYS: readonly string[] = [
   ...COMMON_OPTION_KEYS,
@@ -437,75 +502,283 @@ function checkDeclaredTypes(
   }
 }
 
-/** The path a static member chain reads from a variable (`limits.max`, `cfg["label"]`), if any. */
-function staticPath(node: Node): { readonly root: string; readonly path: string[] } | undefined {
-  const path: string[] = []
+/** One key of a static member chain, with the node that reads it. */
+interface Step {
+  readonly key: string
+  readonly node: Node
+}
+
+/** A static member chain from a variable: `limits.max`, `cfg["a.b"]`, or `l.max` after `let l = limits`. */
+interface Chain {
+  readonly root: string
+  readonly steps: readonly Step[]
+}
+
+/** What each `let` name stands for: the chain it aliases, or undefined (shadowing). */
+type Scope = ReadonlyMap<string, Chain | undefined>
+
+const NO_SCOPE: Scope = new Map()
+const NO_FLOW: ReadonlySet<string> = new Set()
+
+function chainOf(node: Node, scope: Scope): Chain | undefined {
+  const steps: Step[] = []
   let current = node
   while (current.type === 'Member' || current.type === 'Index') {
-    if (current.type === 'Member') path.unshift(current.name)
+    if (current.type === 'Member') steps.unshift({ key: current.name, node: current })
     else if (current.index.type === 'Literal' && typeof current.index.value === 'string')
-      path.unshift(current.index.value)
+      steps.unshift({ key: current.index.value, node: current })
     else return undefined
     current = current.object
   }
-  return current.type === 'Variable' && path.length > 0 ? { root: current.name, path } : undefined
+  if (current.type === 'Variable') return { root: current.name, steps }
+  if (current.type !== 'Local') return undefined
+  const alias = scope.get(current.name)
+  return alias === undefined ? undefined : { root: alias.root, steps: [...alias.steps, ...steps] }
+}
+
+/** An unambiguous key for the first `length` keys of a chain (a key may itself contain "."). */
+const pathKey = (chain: Chain, length: number): string =>
+  JSON.stringify([chain.root, ...chain.steps.slice(0, length).map((step) => step.key)])
+
+/** A chain's dotted name, for messages. */
+const pathName = (chain: Chain, length: number): string =>
+  [chain.root, ...chain.steps.slice(0, length).map((step) => step.key)].join('.')
+
+/** The non-null member of `T | null`, or the type itself. */
+function withoutNull(type: Type): Type {
+  if (type.kind !== 'union') return type
+  const members = type.types.filter((member) => member.kind !== 'null')
+  return members.length === 1 ? members[0] : type
 }
 
 /**
- * Refuses a predicate that reads a path missing from a known object. With the
- * row as the only unknown variable, partial evaluation reads such a path as
+ * Refuses a predicate that reads data the known values do not give. With the
+ * row as the only unknown variable, partial evaluation reads a missing path as
  * null and can decide the condition silently; a missing field is far more
- * often an incomplete `known` than a meant null. A path the predicate guards
- * itself (`has(p)`, `p ?? x`, `p == null`, `p != null`) is allowed.
+ * often an incomplete `known` than a meant null. Each read is checked on its
+ * own: a read the predicate guards itself (`has(p)`, `p ?? x`, `p == null`,
+ * `p != null`, or a read reached only after `has(p) &&`) is allowed, and a let
+ * name is followed to the path it stands for. In a typed environment, a known
+ * object read whole (spread, keys(), ==, passed on) must also have every field
+ * its declared type lists.
  */
 function checkKnownPaths(
   ast: Node,
-  row: string,
-  known: Readonly<Record<string, unknown>>,
-  hostRead: <T>(read: () => T, what: string) => T,
-  fail: (message: string, at?: Span) => never,
+  {
+    row,
+    known,
+    declared,
+    hostRead,
+    fail,
+    charge,
+  }: {
+    readonly row: string
+    readonly known: Readonly<Record<string, unknown>>
+    /** The variable types the program's environment declares, if any. */
+    readonly declared: Readonly<Record<string, Type>> | undefined
+    readonly hostRead: <T>(read: () => T, what: string) => T
+    readonly fail: (message: string, at?: Span) => never
+    readonly charge: Charge
+  },
 ): void {
-  const reads: { readonly root: string; readonly path: string[]; readonly node: Node }[] = []
-  const guarded = new Set<string>()
+  /** Reads where a missing path is null on purpose. */
+  const guardedUses = new Set<Node>()
   const guard = (node: Node): void => {
-    const found = staticPath(node)
-    if (found === undefined) return
-    for (let i = 1; i <= found.path.length; i++)
-      guarded.add([found.root, ...found.path.slice(0, i)].join('.'))
-  }
-  const visit = (node: Node): void => {
-    if (node.type === 'Has') guard(node.target)
-    else if (node.type === 'Binary' && node.operator === '??') guard(node.left)
-    else if (node.type === 'Binary' && (node.operator === '==' || node.operator === '!=')) {
-      if (node.right.type === 'Literal' && node.right.value === null) guard(node.left)
-      if (node.left.type === 'Literal' && node.left.value === null) guard(node.right)
+    let current = node
+    while (current.type === 'Member' || current.type === 'Index') {
+      guardedUses.add(current)
+      current = current.object
     }
-    const found = staticPath(node)
-    if (found !== undefined && found.root !== row) reads.push({ ...found, node })
-    forEachChild(node, visit)
   }
-  visit(ast)
-  for (const { root, path, node } of reads) {
-    let value: unknown = hostRead(() => known[root], 'the known values')
-    for (const [i, segment] of path.entries()) {
+  const read = <T>(get: () => T): T => hostRead(get, 'the known values')
+  const isPresent = (map: Record<string, unknown>, key: string): boolean =>
+    read(() => Object.hasOwn(map, key) && map[key] !== undefined)
+
+  const union = (a: ReadonlySet<string>, b: ReadonlySet<string>): ReadonlySet<string> => {
+    if (a.size === 0) return b
+    if (b.size === 0) return a
+    charge(a.size + b.size)
+    return new Set([...a, ...b])
+  }
+  // A node is always seen in the same scope, so what it proves is worked out once:
+  // a long chain of `||` would otherwise be walked again for every operand.
+  const provenWhen = { true: new WeakMap<Node, ReadonlySet<string>>(), false: new WeakMap() }
+  /** The paths a condition proves present when it is `when`. */
+  const proven = (node: Node, scope: Scope, when: boolean): ReadonlySet<string> => {
+    const memo = provenWhen[`${when}`]
+    const done = memo.get(node)
+    if (done !== undefined) return done
+    charge()
+    let out = NO_FLOW
+    if (node.type === 'Unary' && node.operator === '!') out = proven(node.operand, scope, !when)
+    else if (node.type === 'Binary' && node.operator === (when ? '&&' : '||'))
+      out = union(proven(node.left, scope, when), proven(node.right, scope, when))
+    else {
+      let target: Node | undefined
+      if (when && node.type === 'Has') target = node.target
+      else if (node.type === 'Binary' && node.operator === (when ? '!=' : '==')) {
+        if (node.right.type === 'Literal' && node.right.value === null) target = node.left
+        else if (node.left.type === 'Literal' && node.left.value === null) target = node.right
+      }
+      const chain = target === undefined ? undefined : chainOf(target, scope)
+      if (chain !== undefined) {
+        charge(chain.steps.length)
+        out = new Set(chain.steps.map((_, i) => pathKey(chain, i + 1)))
+      }
+    }
+    memo.set(node, out)
+    return out
+  }
+  const extend = (
+    flow: ReadonlySet<string>,
+    node: Node,
+    scope: Scope,
+    when: boolean,
+  ): ReadonlySet<string> => union(flow, proven(node, scope, when))
+
+  /**
+   * The known value a chain reads, or undefined where a key is missing or the
+   * value is not an object. `missing` is called with the length read so far.
+   */
+  const resolve = (chain: Chain, missing?: (length: number) => void): unknown => {
+    let value: unknown = read(() => known[chain.root])
+    for (const [i, step] of chain.steps.entries()) {
+      charge()
       const current = value
       // Only an object is read by key; null, lists, and other values are left to evaluation.
-      if (!hostRead(() => isMap(current), 'the known values')) break
+      if (!read(() => isMap(current))) return undefined
       const map = current as Record<string, unknown>
-      const name = [root, ...path.slice(0, i + 1)].join('.')
-      const present = hostRead(
-        () => Object.hasOwn(map, segment) && map[segment] !== undefined,
-        'the known values',
-      )
-      if (!present) {
-        if (guarded.has(name)) break
+      if (!isPresent(map, step.key)) {
+        missing?.(i + 1)
+        return undefined
+      }
+      value = read(() => map[step.key])
+    }
+    return value
+  }
+
+  /** Checks a known value read whole against its declared type: every declared field is there. */
+  const checkWhole = (value: unknown, type: Type, name: string, node: Node): void => {
+    charge()
+    const expected = withoutNull(type)
+    if (expected.kind === 'list') {
+      if (!read(() => Array.isArray(value))) return
+      const list = value as unknown[]
+      const length = read(() => list.length)
+      for (let i = 0; i < length; i++) {
+        const item = read(() => list[i])
+        checkWhole(item, expected.element, `${name}[${i}]`, node)
+      }
+      return
+    }
+    if (expected.kind !== 'map' || !read(() => isMap(value))) return
+    const map = value as Record<string, unknown>
+    for (const [key, field] of Object.entries(expected.fields)) {
+      if (!isPresent(map, key)) {
         fail(
-          `${name} is missing from the known values: pass it (null when it has no value), or guard it with has() or ??`,
+          `${name}.${key} is missing from the known values: ${name} is read whole, so pass every field its type declares (null when it has no value)`,
           node,
         )
       }
-      value = hostRead(() => map[segment], 'the known values')
+      const item = read(() => map[key])
+      checkWhole(item, field, `${name}.${key}`, node)
     }
+  }
+
+  const reads: {
+    readonly chain: Chain
+    readonly node: Node
+    readonly flow: ReadonlySet<string>
+  }[] = []
+  const wholes: { readonly chain: Chain; readonly node: Node }[] = []
+
+  /** `whole`: the value is used as it is, not only to read a member of it or test it for null. */
+  const visit = (node: Node, scope: Scope, flow: ReadonlySet<string>, whole: boolean): void => {
+    charge()
+    const chain = chainOf(node, scope)
+    if (chain !== undefined && chain.root !== row) {
+      if (chain.steps.length > 0) reads.push({ chain, node, flow })
+      if (whole && declared?.[chain.root] !== undefined) wholes.push({ chain, node })
+    }
+    switch (node.type) {
+      case 'Member':
+        visit(node.object, scope, flow, false)
+        return
+      case 'Index':
+        visit(node.object, scope, flow, false)
+        visit(node.index, scope, flow, true)
+        return
+      case 'Has':
+        guard(node.target)
+        visit(node.target, scope, flow, false)
+        return
+      case 'Let': {
+        // A let name that stands for a path is followed at each use instead.
+        const alias = chainOf(node.value, scope)
+        visit(node.value, scope, flow, alias === undefined)
+        visit(node.body, new Map(scope).set(node.name, alias), flow, true)
+        return
+      }
+      case 'Lambda': {
+        const inner = new Map(scope)
+        for (const param of node.params) inner.set(param, undefined)
+        visit(node.body, inner, flow, true)
+        return
+      }
+      case 'Conditional':
+        visit(node.test, scope, flow, true)
+        visit(node.then, scope, extend(flow, node.test, scope, true), true)
+        visit(node.otherwise, scope, extend(flow, node.test, scope, false), true)
+        return
+      case 'Binary': {
+        const { operator, left, right } = node
+        if (operator === '&&' || operator === '||') {
+          visit(left, scope, flow, true)
+          visit(right, scope, extend(flow, left, scope, operator === '&&'), true)
+          return
+        }
+        if (operator === '??') guard(left)
+        const nullCheck = operator === '==' || operator === '!='
+        const leftNull = nullCheck && left.type === 'Literal' && left.value === null
+        const rightNull = nullCheck && right.type === 'Literal' && right.value === null
+        if (rightNull) guard(left)
+        if (leftNull) guard(right)
+        visit(left, scope, flow, !rightNull)
+        visit(right, scope, flow, !leftNull)
+        return
+      }
+      case 'Call':
+      case 'It':
+      case 'List':
+      case 'Literal':
+      case 'Local':
+      case 'Map':
+      case 'Template':
+      case 'Try':
+      case 'Unary':
+      case 'Variable':
+      default:
+        forEachChild(node, (child) => {
+          visit(child, scope, flow, true)
+        })
+    }
+  }
+  visit(ast, NO_SCOPE, NO_FLOW, true)
+  for (const { chain, node, flow } of reads) {
+    resolve(chain, (length) => {
+      if (guardedUses.has(node) || flow.has(pathKey(chain, length))) return
+      fail(
+        `${pathName(chain, length)} is missing from the known values: pass it (null when it has no value), or guard it with has() or ??`,
+        node,
+      )
+    })
+  }
+  for (const { chain, node } of wholes) {
+    const keys = chain.steps.map((step) => step.key)
+    const type = typeAt(declared?.[chain.root] as Type, keys)
+    if (type === undefined) continue
+    const value = resolve(chain)
+    if (value !== undefined) checkWhole(value, type, pathName(chain, keys.length), node)
   }
 }
 
@@ -515,6 +788,7 @@ function lower(
   options: CommonOptions,
   columns: ReadonlyMap<string, Declared>,
   target: Target,
+  charge: Charge,
 ): Pred {
   const source = program.source
   const fail = (message: string, at?: Span): never => {
@@ -544,15 +818,28 @@ function lower(
   // A misspelled row (or a missing known value) would otherwise read as null.
   for (const name of program.references.variables) {
     if (name !== options.row && !isKnown(name)) {
+      if (hostRead(() => Object.hasOwn(knownData, name), 'the known values'))
+        fail(`${name} is undefined in the known values: pass null when it has no value`)
+      // Known names first: a name close to both is more likely a misspelled known value.
       const names = hostRead(() => Object.keys(knownData), 'the known values')
       fail(
-        `${name} is neither the row (${options.row}) nor a known value${hint(name, [options.row, ...names])}`,
+        `${name} is neither the row (${options.row}) nor a known value${hint(name, [...names, options.row])}`,
       )
     }
   }
-  checkKnownPaths(program.ast, options.row, knownData, hostRead, fail)
+  checkKnownPaths(program.ast, {
+    row: options.row,
+    known: knownData,
+    declared: declaredVariables(program),
+    hostRead,
+    fail,
+    charge,
+  })
   const result = program.partial(knownData as never, {
     unknown: [options.row],
+    ...(options.callHostFunctions === undefined
+      ? {}
+      : { callHostFunctions: options.callHostFunctions }),
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps }),
     ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
@@ -650,18 +937,27 @@ function lower(
   // binding; a known variable still in the residual is one whose read failed.
   const knownValue = (name: string): unknown =>
     Object.hasOwn(bindings, name) ? bindings[name] : undefined
+  /** Checks a constant, charging for the text it holds. */
+  const charged = (constant: Primitive, at: Node): Primitive => {
+    charge(typeof constant === 'string' ? textCost(constant) : 1)
+    return exact(constant, at)
+  }
+  // Each binding is read and checked once, however often the predicate uses it.
+  const constants = new Map<string, Primitive | undefined>()
   const constOf = (node: Node): Primitive | undefined => {
-    if (node.type === 'Literal') return exact(node.value, node)
-    if (node.type === 'Variable') {
-      const bound = knownValue(node.name)
-      if (isPrimitive(bound)) return exact(bound, node)
-    }
-    return undefined
+    if (node.type === 'Literal') return charged(node.value, node)
+    if (node.type !== 'Variable') return undefined
+    charge()
+    if (constants.has(node.name)) return constants.get(node.name)
+    const bound = knownValue(node.name)
+    const constant = isPrimitive(bound) ? charged(bound, node) : undefined
+    constants.set(node.name, constant)
+    return constant
   }
 
-  const describeName = (node: Node): string => (node.type === 'Variable' ? node.name : 'value')
-
+  const lists = new Map<string, readonly Primitive[] | undefined>()
   const listOf = (node: Node): readonly Primitive[] | undefined => {
+    charge()
     if (node.type === 'List') {
       const out: Primitive[] = []
       for (const item of node.items) {
@@ -671,18 +967,46 @@ function lower(
       }
       return out
     }
-    const items = node.type === 'Variable' ? knownValue(node.name) : undefined
-    if (!hostRead(() => Array.isArray(items), `the known list ${describeName(node)}`))
-      return undefined
+    if (node.type !== 'Variable') return undefined
+    if (lists.has(node.name)) return lists.get(node.name)
+    const list = knownList(node.name, knownValue(node.name), node)
+    lists.set(node.name, list)
+    return list
+  }
+  const knownList = (name: string, items: unknown, at: Node): Primitive[] | undefined => {
+    const what = `the known list ${name}`
+    if (!hostRead(() => Array.isArray(items), what)) return undefined
     const list = items as unknown[]
     const out: Primitive[] = []
     // Read by index, as Bonsai reads a list: never through the list's own iterator.
     // A hole, or undefined, reads as null.
-    const length = hostRead(() => list.length, `the known list ${describeName(node)}`)
+    const length = hostRead(() => list.length, what)
     for (let i = 0; i < length; i++) {
-      const item: unknown = hostRead(() => list[i], `the known list ${describeName(node)}`) ?? null
+      const item: unknown = hostRead(() => list[i], what) ?? null
       if (!isPrimitive(item)) return undefined
-      out.push(exact(item, node))
+      out.push(charged(item, at))
+    }
+    return out
+  }
+
+  /** The entries of a list that `keep` accepts, computed once per list and `kind`. */
+  const filtered = new WeakMap<readonly Primitive[], Map<string, readonly Primitive[]>>()
+  const entries = (
+    list: readonly Primitive[],
+    kind: string,
+    keep: (entry: Primitive) => boolean,
+  ): readonly Primitive[] => {
+    charge()
+    let byKind = filtered.get(list)
+    if (byKind === undefined) {
+      byKind = new Map()
+      filtered.set(list, byKind)
+    }
+    let out = byKind.get(kind)
+    if (out === undefined) {
+      charge(list.length)
+      out = list.filter(keep)
+      byKind.set(kind, out)
     }
     return out
   }
@@ -766,12 +1090,16 @@ function lower(
       fail(`${target.name} queries compare a field with a known value`, at)
   }
 
+  const patterns = new Map<string, string | undefined>()
+  const checkPattern = (text: string): string | undefined =>
+    once(patterns, text, () => target.checkPattern(text), charge)
+
   const textArgument = (args: readonly (Node | SpreadNode)[], at: Node): string => {
     const arg = args[1]
     const text = arg === undefined || arg.type === 'Spread' ? undefined : constOf(arg)
     if (typeof text !== 'string' || args.length !== 2)
       return fail('Expected a known string argument', at)
-    const problem = target.checkPattern(text)
+    const problem = checkPattern(text)
     return problem === undefined ? text : fail(problem, at)
   }
 
@@ -807,6 +1135,18 @@ function lower(
       // `?.` gives null on a null receiver, which a condition reads as false.
       nullFails: !node.optional,
     }
+  }
+
+  /**
+   * The part of an untranslated call to name: the call that computes a text
+   * function's receiver (`title.toLowerCase()` in `title.toLowerCase().includes(x)`),
+   * since the text function itself translates on a text field.
+   */
+  const blamed = (node: CallNode): Node => {
+    const receiver = node.args[0]
+    const isTextFunction =
+      node.name === 'startsWith' || node.name === 'endsWith' || node.name === 'includes'
+    return isTextFunction && receiver?.type === 'Call' ? receiver : node
   }
 
   /**
@@ -1004,7 +1344,7 @@ function lower(
         return fail('Only boolean columns can be used as conditions', node)
       }
       case 'Call':
-        return textCall(node) ?? untranslatable(node)
+        return textCall(node) ?? untranslatable(blamed(node))
       case 'Conditional':
       case 'Has':
       case 'Index':
@@ -1129,8 +1469,13 @@ function lower(
         const onField: Pred = {
           kind: 'in',
           value: column,
-          list: known.filter((entry) => constantKind(entry) === column.type),
+          list: entries(
+            known,
+            `only ${column.type}`,
+            (entry) => constantKind(entry) === column.type,
+          ),
         }
+        charge(known.length)
         return known.some((entry) => sameValue(entry, fallback.fallback))
           ? { kind: 'or', items: [{ kind: 'null', value: column }, onField] }
           : onField
@@ -1140,8 +1485,8 @@ function lower(
     const list = listOf(containerNode)
     if (list !== undefined) {
       const kind = kindOf(item)
-      const matching = list.filter((entry) => {
-        const entryKind = kindOf({ kind: 'const', value: entry })
+      const matching = entries(list, `${kind} or null`, (entry) => {
+        const entryKind = constantKind(entry)
         return entryKind === kind || entryKind === 'null'
       })
       return { kind: 'in', value: item, list: matching }
@@ -1158,7 +1503,7 @@ function lower(
       item.kind === 'const' &&
       typeof item.value === 'string'
     ) {
-      const problem = target.checkPattern(item.value)
+      const problem = checkPattern(item.value)
       if (problem !== undefined) return fail(problem, at)
       return {
         kind: 'text',
@@ -1273,10 +1618,16 @@ const tooLarge = (source: string): BonsaiTranslationError =>
 /** SQL text length, and MongoDB filter nodes, above which a translation is rejected. */
 const MAX_SQL_LENGTH = 1_000_000
 const MAX_MONGO_NODES = 100_000
+/** Characters of text counted as one MongoDB filter node: the node limit then bounds a filter near 16 MB. */
+const MONGO_TEXT_PER_NODE = 160
 /** MongoDB rejects longer patterns; this leaves room for the anchors. */
 const MAX_MONGO_PATTERN_BYTES = 32_000
 /** Most parameters a statement can bind. */
 const MAX_PARAMS = { postgres: 65_535, sqlite: 32_766 } as const
+/** Most entries all of a query's Postgres array parameters hold together. */
+const MAX_LIST_ENTRIES = 1_000_000
+/** Most characters of text a SQL query's parameters hold together. */
+const MAX_PARAM_TEXT = 16_000_000
 /** The last year Postgres reads from an ISO timestamp (years with more digits use `+YYYYYY`). */
 const MAX_PG_YEAR = 9999
 /** Postgres truncates longer identifiers, which could name a different column. */
@@ -1357,10 +1708,17 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     },
     checkPattern: () => undefined,
   }
+  const charge = budget(options, program.source)
   const declaredColumns = declare(options, options.columns, 'columns', target)
   checkDeclaredTypes(program, options.row, declaredColumns, 'columns')
-  const predicate = lower(program, options, declaredColumns, target)
+  const predicate = lower(program, options, declaredColumns, target, charge)
   const params: unknown[] = []
+  const tooManyParams = (): BonsaiTranslationError =>
+    new BonsaiTranslationError(
+      `The translated query needs more than ${MAX_PARAMS[dialect]} parameters`,
+      program.source,
+      { start: 0, end: program.source.length },
+    )
 
   const quote = (name: string): string =>
     pg ? `"${name.replaceAll('"', '""')}"` : `\`${name.replaceAll('`', '``')}\``
@@ -1370,10 +1728,65 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     if (typeof value === 'boolean' && !pg) return value ? 1 : 0
     return value
   }
-  // Numbered placeholders, so a repeated sub-expression reuses its parameter.
+  // Numbered placeholders, so a value used again (with the same cast) reuses its
+  // parameter: known text or a known list is sent once however often it is used.
+  const numbered = new Map<string, Map<unknown, string>>()
+  let paramText = 0
   const placeholder = (encoded: unknown, cast: string): string => {
+    charge()
+    let byValue = numbered.get(cast)
+    if (byValue === undefined) {
+      byValue = new Map()
+      numbered.set(cast, byValue)
+    }
+    const reused = byValue.get(encoded)
+    if (reused !== undefined) return reused
+    if (typeof encoded === 'string') {
+      charge(textCost(encoded))
+      paramText += encoded.length
+      if (paramText > MAX_PARAM_TEXT) throw tooLarge(program.source)
+    }
+    if (offset + params.length >= MAX_PARAMS[dialect]) throw tooManyParams()
     params.push(encoded)
-    return pg ? `$${offset + params.length}::${cast}` : `?${offset + params.length}`
+    const sql = pg ? `$${offset + params.length}::${cast}` : `?${offset + params.length}`
+    byValue.set(encoded, sql)
+    return sql
+  }
+  /** A known list's non-null entries, and whether it holds null, worked out once per list. */
+  const lists = new WeakMap<readonly Primitive[], { entries: Primitive[]; hasNull: boolean }>()
+  const nonNullOf = (list: readonly Primitive[]): { entries: Primitive[]; hasNull: boolean } => {
+    charge()
+    let found = lists.get(list)
+    if (found === undefined) {
+      charge(list.length)
+      const entries = [...new Set(list.filter((entry) => entry !== null))]
+      found = { entries, hasNull: entries.length !== list.length }
+      lists.set(list, found)
+    }
+    return found
+  }
+  /** A Postgres array parameter for a known list, sent once per list and cast. */
+  const arrays = new WeakMap<readonly Primitive[], Map<string, string>>()
+  let arrayEntries = 0
+  const arrayParam = (list: readonly Primitive[], cast: string): string => {
+    let byCast = arrays.get(list)
+    if (byCast === undefined) {
+      byCast = new Map()
+      arrays.set(list, byCast)
+    }
+    let sql = byCast.get(cast)
+    if (sql === undefined) {
+      arrayEntries += list.length
+      // Checked before the array is built.
+      if (arrayEntries > MAX_LIST_ENTRIES) throw tooLarge(program.source)
+      charge(list.length)
+      sql = placeholder(
+        list.map((entry) => encode(entry as Exclude<Primitive, null>)),
+        cast,
+      )
+      byCast.set(cast, sql)
+    }
+    return sql
   }
   const param = (value: Exclude<Primitive, null>, type: ColumnType): string =>
     placeholder(encode(value), PG_CASTS[type])
@@ -1444,6 +1857,10 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     return { t: `(${ok} AND ${condition})`, f: `(${ok} AND ${negate(condition)})`, safe: false }
   }
 
+  const likePrefixes = new Map<string, string>()
+  const prefixEnds = new Map<string, string | undefined>()
+  const derived = <T>(cache: Map<string, T>, needle: string, make: () => T): T =>
+    once(cache, needle, make, charge)
   const textCondition = (
     op: 'startsWith' | 'endsWith' | 'includes',
     column: string,
@@ -1452,7 +1869,14 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     if (pg) {
       if (op === 'startsWith') {
         // A prefix LIKE, whose index range Postgres derives in the database's own encoding.
-        const like = placeholder(`${needle.replace(LIKE_SPECIAL, (ch) => `\\${ch}`)}%`, 'text')
+        const like = placeholder(
+          derived(
+            likePrefixes,
+            needle,
+            () => `${needle.replace(LIKE_SPECIAL, (ch) => `\\${ch}`)}%`,
+          ),
+          'text',
+        )
         return `(${text(column)} LIKE ${like} ESCAPE '\\')`
       }
       const pattern = placeholder(needle, 'text')
@@ -1463,7 +1887,7 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     const blob = bytes(pattern)
     if (op === 'includes') return `(instr(${bytes(column)}, ${blob}) > 0)`
     if (op === 'endsWith') return `(substr(${bytes(column)}, -length(${blob})) = ${blob})`
-    const end = prefixEnd(needle)
+    const end = derived(prefixEnds, needle, () => prefixEnd(needle))
     const range = `${column} >= ${pattern}${end === undefined ? '' : ` AND ${column} < ${placeholder(end, 'text')}`}`
     return `(${range} AND substr(${bytes(column)}, 1, length(${blob})) = ${blob})`
   }
@@ -1496,21 +1920,24 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
           return compare(`(${val(p.left)} ${p.op} ${val(p.right)})`, p.left, p.right)
         case 'in': {
           const kind = kindOf(p.value)
-          const nonNull = p.list.filter((entry) => entry !== null)
+          const { entries: nonNull, hasNull } = nonNullOf(p.list)
           const parts: string[] = []
           if (nonNull.length > 0) {
             const type = kind === 'null' ? 'text' : kind
             // One array parameter in Postgres, whatever the list's length. Not for booleans:
             // there are only two, and postgres.js cannot send a boolean array.
             if (pg && type !== 'boolean') {
-              const array = placeholder(nonNull.map(encode), `${PG_CASTS[type]}[]`)
+              const array = arrayParam(nonNull, `${PG_CASTS[type]}[]`)
               parts.push(`${typed(p.value)} = ANY(${array})`)
             } else {
-              const entries = [...new Set(nonNull)].map((entry) => param(entry, type))
+              // Each use writes every entry: checked before the text is built.
+              if (nonNull.length > MAX_PARAMS[dialect]) throw tooManyParams()
+              charge(nonNull.length)
+              const entries = nonNull.map((entry) => param(entry as Exclude<Primitive, null>, type))
               parts.push(`${typed(p.value)} IN (${entries.join(', ')})`)
             }
           }
-          if (nonNull.length !== p.list.length) parts.push(`${val(p.value)} IS NULL`)
+          if (hasNull) parts.push(`${val(p.value)} IS NULL`)
           return compare(parts.length === 0 ? FALSE : `(${parts.join(' OR ')})`, p.value)
         }
         case 'truthy': {
@@ -1563,15 +1990,7 @@ export function toSQL(program: Translatable, options: SQLOptions): SQLQuery {
     },
   }
 
-  const sql = algebra.guard(dual(predicate, algebra).t)
-  if (offset + params.length > MAX_PARAMS[dialect]) {
-    throw new BonsaiTranslationError(
-      `The translated query needs more than ${MAX_PARAMS[dialect]} parameters`,
-      program.source,
-      { start: 0, end: program.source.length },
-    )
-  }
-  return { sql, params }
+  return { sql: algebra.guard(dual(predicate, algebra).t), params }
 }
 
 // === MongoDB ===
@@ -1592,6 +2011,7 @@ function escapeRegex(text: string): string {
 export function toMongo(program: Translatable, options: MongoOptions): MongoQuery {
   checkProgram(program, 'toMongo')
   checkKeys(options, MONGO_OPTION_KEYS, 'toMongo')
+  const charge = budget(options, program.source)
   const target: Target = {
     name: 'MongoDB',
     arithmetic: false,
@@ -1618,7 +2038,7 @@ export function toMongo(program: Translatable, options: MongoOptions): MongoQuer
     target,
   )
   checkDeclaredTypes(program, options.row, declaredFields, 'fields')
-  const predicate = lower(program, options, declaredFields, target)
+  const predicate = lower(program, options, declaredFields, target, charge)
   type Filter = Record<string, unknown>
   // lower() only leaves field-versus-constant comparisons for MongoDB.
   const field = (value: Value): string => (value as { field: string }).field
@@ -1627,8 +2047,13 @@ export function toMongo(program: Translatable, options: MongoOptions): MongoQuer
   const constant = (value: Value): unknown => stored((value as { value: Primitive }).value)
 
   const sizes = new WeakMap<object, number>()
-  /** Filter nodes counted with repeats: what the driver serializes. */
+  /**
+   * Filter nodes counted with repeats: what the driver serializes. Long text
+   * counts as one node per MONGO_TEXT_PER_NODE characters, so a text repeated
+   * in many places is bounded too.
+   */
   const size = (item: unknown): number => {
+    if (typeof item === 'string') return 1 + Math.floor(item.length / MONGO_TEXT_PER_NODE)
     if (typeof item !== 'object' || item === null || item instanceof Date) return 1
     let total = sizes.get(item)
     if (total === undefined) {
@@ -1637,6 +2062,12 @@ export function toMongo(program: Translatable, options: MongoOptions): MongoQuer
       sizes.set(item, total)
     }
     return total
+  }
+  // Each pattern is escaped once per text function, however often it is used.
+  const regexes = {
+    startsWith: new Map<string, string>(),
+    endsWith: new Map<string, string>(),
+    includes: new Map<string, string>(),
   }
   const not = (item: Filter): Filter => ({ $nor: [item] })
   const safe = (t: Filter): Dual<Filter> => ({ t, f: not(t), safe: true })
@@ -1673,22 +2104,29 @@ export function toMongo(program: Translatable, options: MongoOptions): MongoQuer
           }
         }
         case 'in':
-          return safe(
-            p.list.length === 0
-              ? { $expr: false }
-              : { [field(p.value)]: { $in: p.list.map(stored) } },
-          )
+          if (p.list.length === 0) return safe({ $expr: false })
+          // Each use holds every entry: checked before the copy is made.
+          if (p.list.length > MAX_MONGO_NODES) throw tooLarge(program.source)
+          charge(p.list.length)
+          return safe({ [field(p.value)]: { $in: p.list.map(stored) } })
         case 'truthy':
           return safe({ [field(p.column)]: { $eq: true } })
         case 'text':
         case 'within':
         default: {
           const { op, text, nullFails } = p as Extract<Leaf, { kind: 'text' }>
-          const body = escapeRegex(text)
-          // `$` alone also matches before a final newline; the lookahead does not.
-          let pattern = body
-          if (op === 'startsWith') pattern = `^${body}`
-          else if (op === 'endsWith') pattern = `${body}$(?![\\s\\S])`
+          const pattern = once(
+            regexes[op],
+            text,
+            () => {
+              const body = escapeRegex(text)
+              // `$` alone also matches before a final newline; the lookahead does not.
+              if (op === 'startsWith') return `^${body}`
+              if (op === 'endsWith') return `${body}$(?![\\s\\S])`
+              return body
+            },
+            charge,
+          )
           const name = field((p as Extract<Leaf, { kind: 'text' }>).column)
           // Calling a text function on null fails, so null matches neither side.
           const t = { [name]: { $regex: pattern } }
