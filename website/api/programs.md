@@ -92,8 +92,9 @@ Both accept per-evaluation options:
 | `maxSteps` | Step budget, replacing the environment's `limits.maxSteps`. Exceeding it is a `STEP_LIMIT` error. |
 | `signal` | An `AbortSignal`. Aborting stops the evaluation with an `ABORTED` error, including while waiting on an async host function. |
 | `now` | A `Date`: the time `now()` returns in this evaluation, instead of the environment's `clock`. |
+| `validateContext` | `true` or `false`: whether to [validate the context](/api/environment#validating-the-context) in this evaluation, instead of the environment's `validateContext`. Pass `false` for a context you already validated upstream. |
 
-They are validated like `limits`: `maxSteps` must be a non-negative integer and `timeout` a non-negative number of milliseconds, fractions included (`0` turns either limit off), `signal` must be an `AbortSignal`, `now` must be a valid `Date`, and an unknown key or invalid value throws a `TypeError` or `RangeError` before anything runs. A negative, `NaN`, or infinite budget throws rather than meaning no limit. To run under a shared deadline, pass the remaining time unrounded (`deadline - performance.now()`): rounding it down would reach `0`, which is no limit, in the last millisecond, while a deadline already passed gives a negative value, which throws.
+They are validated like `limits`: `maxSteps` must be a non-negative integer and `timeout` a non-negative number of milliseconds, fractions included (`0` turns either limit off), `signal` must be an `AbortSignal`, `now` must be a valid `Date`, `validateContext` must be a boolean, and an unknown key or invalid value throws a `TypeError` or `RangeError` before anything runs. A negative, `NaN`, or infinite budget throws rather than meaning no limit. To run under a shared deadline, pass the remaining time unrounded (`deadline - performance.now()`): rounding it down would reach `0`, which is no limit, in the last millisecond, while a deadline already passed gives a negative value, which throws.
 
 <!-- continue -->
 ```ts

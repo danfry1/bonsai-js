@@ -107,7 +107,7 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-Pushing a `v*` tag triggers `.github/workflows/release.yml`.
+Pushing a `v*` tag triggers `.github/workflows/release.yml`. The [stability policy](website/guide/stability.md) covers the language specification and conformance tests as they are at the tag (`blob/vX.Y.Z/docs/language.md`), so tag the release commit itself.
 
 ### 2. CI stages the release (automatic)
 

@@ -91,6 +91,11 @@ export interface EvaluateOptions {
   readonly signal?: AbortSignalLike | undefined
   /** The time now() returns in this evaluation, instead of the environment's clock. */
   readonly now?: Date | undefined
+  /**
+   * Validates the context for this evaluation (true) or not (false), instead
+   * of the environment's `validateContext`; for a context already validated upstream.
+   */
+  readonly validateContext?: boolean | undefined
 }
 
 type InferParams<P extends readonly Type[]> = Extract<
@@ -952,7 +957,7 @@ class CheckSuccess extends CheckFailure {
   }
 }
 
-const EVALUATE_OPTION_KEYS = new Set(['timeout', 'maxSteps', 'signal', 'now'])
+const EVALUATE_OPTION_KEYS = new Set(['timeout', 'maxSteps', 'signal', 'now', 'validateContext'])
 
 interface EvaluationLimits {
   readonly maxSteps: number
@@ -960,6 +965,8 @@ interface EvaluationLimits {
   readonly signal: AbortSignal | undefined
   /** The time now() returns, when the caller fixed it. */
   readonly now: Date | undefined
+  /** Whether to validate the context, when the caller overrides the environment. */
+  readonly validateContext: boolean | undefined
 }
 
 /** Whether a value is a valid Date (an object that only inherits from Date.prototype is not). */
@@ -993,6 +1000,7 @@ function evaluationLimits(options: unknown, settings: Settings): EvaluationLimit
       timeout: settings.timeout,
       signal: undefined,
       now: undefined,
+      validateContext: undefined,
     }
   }
   // Options are the caller's own object; one whose getters or Proxy traps throw
@@ -1001,7 +1009,13 @@ function evaluationLimits(options: unknown, settings: Settings): EvaluationLimit
   try {
     assertKeys(options, EVALUATE_OPTION_KEYS, 'Evaluate option')
     const read = options as Record<string, unknown>
-    o = { maxSteps: read.maxSteps, timeout: read.timeout, signal: read.signal, now: read.now }
+    o = {
+      maxSteps: read.maxSteps,
+      timeout: read.timeout,
+      signal: read.signal,
+      now: read.now,
+      validateContext: read.validateContext,
+    }
   } catch (error) {
     if (error instanceof TypeError || error instanceof RangeError) throw error
     throw new TypeError(`Evaluate options could not be read: ${errorText(error)}`, { cause: error })
@@ -1014,12 +1028,15 @@ function evaluationLimits(options: unknown, settings: Settings): EvaluationLimit
     throw new TypeError('signal must be an AbortSignal')
   }
   if (o.now !== undefined && !isValidDate(o.now)) throw new TypeError('now must be a valid Date')
+  if (o.validateContext !== undefined && typeof o.validateContext !== 'boolean')
+    throw new TypeError('validateContext must be a boolean')
   return {
     maxSteps: numberOption('maxSteps', o.maxSteps, settings.runtimeLimits.maxSteps, 0),
     timeout: timeoutOption('timeout', o.timeout, settings.timeout),
     // A structurally checked AbortSignalLike; evaluation only reads the members checked above.
     signal: signal as AbortSignal | undefined,
     now: o.now,
+    validateContext: o.validateContext,
   }
 }
 
@@ -1535,7 +1552,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
           )
         }
       }
-      const validation = settings.validateContext ? settings.variables : undefined
+      const validation =
+        (limits.validateContext ?? settings.validateContext) ? settings.variables : undefined
       if (validation !== undefined) {
         const validationLimits = {
           maxDepth: settings.runtimeLimits.maxValueDepth,

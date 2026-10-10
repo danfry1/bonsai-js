@@ -120,6 +120,6 @@ describe('the llms.txt summaries', () => {
   it('names the current host function and evaluation options', () => {
     const text = read('website/public/llms.txt')
     expect(text).toMatch(/fn\(\{[^\n]*\bcall\?/u)
-    expect(text).toMatch(/\{ timeout, maxSteps, signal, now \}/u)
+    expect(text).toMatch(/\{ timeout, maxSteps, signal, now, validateContext \}/u)
   })
 })
