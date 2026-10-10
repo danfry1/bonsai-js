@@ -72,6 +72,8 @@ rule.explainSync({ user }, { exhaustive: true }).reasons().map((r) => r.text)
 
 Values in `trace` are the live values from your context, not copies. The trace is typed read-only but not frozen at run time (a trace can hold thousands of records, and freezing each would cost more than recording it), so treat it as read-only. The explanation's own `error` has the same JSON form as `JSON.stringify(error)` (see [Errors](/api/errors#json-form)); an error recorded on a trace node is the shorter `{ code, message }`, since its node already gives the span. To send an explanation to a browser or store it, use `JSON.stringify(explanation)` (or `explanation.toJSON()`): values become bounded, cycle-safe copies (at most 10,000 values in total, however often a value recurs), getters are never run, host collections such as typed arrays and `Map` are summarized by type, and a value that throws when read becomes `"[unreadable]"`.
 
+The JSON holds the whole value of every node it records: a variable records the whole object passed for it, so `subject.id == resource.owner` records every field of `subject`, including ones the rule never reads (tokens, personal data). For audit logs, pass only the fields a rule needs, or build the log from `reasons()`, which records the deciding conditions.
+
 ## Errors
 
 `explain()` never rejects for evaluation errors (and `explainSync()` never throws for them). It returns `{ ok: false, error }` and marks the node that failed, so you can show where a rule broke; a context that fails `validateContext` is returned the same way, as an `INVALID_CONTEXT` error. Invalid options and a context that is not an object are your own mistakes: `explain()` rejects and `explainSync()` throws, as `evaluate()` and `evaluateSync()` do:

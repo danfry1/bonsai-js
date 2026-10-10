@@ -275,6 +275,9 @@ export function describeMismatch(
     if (isTimestamp(actual)) return undefined
   } else if (type.kind === 'duration') {
     if (isValidDuration(actual)) return undefined
+  } else if (type.kind === 'number') {
+    // The language has no NaN or infinities, so a context holding one is not data it can read.
+    if (typeof actual === 'number' && Number.isFinite(actual)) return undefined
   } else if (type.kind !== 'list' && type.kind !== 'map' && matchesKind(actual, type)) {
     return undefined
   }
