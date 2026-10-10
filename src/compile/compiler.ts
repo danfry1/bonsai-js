@@ -81,13 +81,37 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
   )
 }
 
+/** Errors that have left an evaluation or a partial evaluation for its caller. */
+const escaped = new WeakSet<BonsaiError>()
+
+/**
+ * Marks an error leaving an evaluation for its caller. Seen again inside an
+ * evaluation, it came through host code (a getter that ran an evaluation of
+ * its own, say), so it is that host data's failure, not this evaluation's.
+ */
+export function escaping<E>(error: E): E {
+  if (error instanceof BonsaiError) escaped.add(error)
+  return error
+}
+
+/** Whether a Bonsai error already left some evaluation, so host code passed it on. */
+export function hasEscaped(error: BonsaiError): boolean {
+  return escaped.has(error)
+}
+
 /**
  * Host data (getters, Proxy traps, species or `then` hooks) can throw while
  * the engine reads it. Such failures surface as HOST_ERROR, never as a raw
- * JavaScript error.
+ * JavaScript error. Only the runtime and limit errors this evaluation raised
+ * pass through: a Bonsai error from another evaluation (or a parse or check
+ * error) that a getter threw is the host data's failure too.
  */
 function hostDataError(error: unknown, s: State): unknown {
-  if (error instanceof BonsaiError) return error
+  if (
+    (error instanceof BonsaiRuntimeError || error instanceof BonsaiLimitError) &&
+    !escaped.has(error)
+  )
+    return error
   // The engine's own recursion ran out of stack: a limit, never the host's failure.
   if (isStackOverflow(error)) return tooDeep(s.source)
   return s.error('HOST_ERROR', `Reading host data failed: ${errorText(error)}`, undefined, error)

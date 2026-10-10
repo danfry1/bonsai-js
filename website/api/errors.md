@@ -80,7 +80,7 @@ The error classes are for `instanceof` checks and reading fields. Their construc
 | | `BLOCKED_PROPERTY` | A map literal writes a computed key that is `__proto__`, `constructor`, or `prototype` (reading one is `null`). |
 | | `INVALID_ARGUMENT` | An argument has the right type but an invalid value (an unparsable timestamp, an unknown time zone, a non-integer count, a regular expression the engine does not support). |
 | | `ASYNC_IN_SYNC` | `evaluateSync()` (or `explainSync()`) on an expression that calls a host function declared `async: true`. |
-| | `HOST_ERROR` | A host function threw (anything, including a `BonsaiError` from a nested evaluation), or reading the context ran host code (a getter or Proxy) that threw. |
+| | `HOST_ERROR` | A host function threw (anything, including a `BonsaiError` from a nested evaluation), or reading the context ran host code (a getter or Proxy) that threw, a `BonsaiError` from an evaluation it ran included. |
 | | `HOST_CONTRACT` | Host code broke its contract: a host function returned a value that does not match `returns` (checked deeply) or a promise without `async: true`, or the `clock` returned something other than a valid `Date`. |
 | | `INVALID_CONTEXT` | With `validateContext`, the context does not match the declared variable types. |
 | `BonsaiTranslationError` | `UNTRANSLATABLE` | From `bonsai-js/query`: part of a filter has no exact SQL or MongoDB equivalent. See [Database Filters](./query). |

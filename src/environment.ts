@@ -1,5 +1,5 @@
 import { analyze, type Analysis, type CallPlan, type CheckEnv } from './check/checker.js'
-import { compileProgram, type CompiledProgram } from './compile/compiler.js'
+import { compileProgram, escaping, hasEscaped, type CompiledProgram } from './compile/compiler.js'
 import {
   BonsaiCheckError,
   BonsaiError,
@@ -1236,10 +1236,11 @@ function validatePaths(
 
 /**
  * Reading host data (a getter, a Proxy trap, a `then` hook) can throw. Such a
- * failure is a HOST_ERROR, never a raw JavaScript error.
+ * failure is a HOST_ERROR, never a raw JavaScript error, and so is a Bonsai
+ * error that already left another evaluation (a getter that evaluated).
  */
 function hostDataFailure(error: unknown, source: string): BonsaiError {
-  if (error instanceof BonsaiError) return error
+  if (error instanceof BonsaiError && !hasEscaped(error)) return error
   if (isStackOverflow(error)) return tooDeep(source)
   return new BonsaiRuntimeError('HOST_ERROR', `Reading host data failed: ${errorText(error)}`, {
     source,
@@ -1568,10 +1569,12 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
 
     function runSync(context: unknown, options: EvaluateOptions | undefined): R {
       if (analysis.async) {
-        throw new BonsaiRuntimeError(
-          'ASYNC_IN_SYNC',
-          'This expression calls an async function; use evaluate() instead of evaluateSync()',
-          { source },
+        throw escaping(
+          new BonsaiRuntimeError(
+            'ASYNC_IN_SYNC',
+            'This expression calls an async function; use evaluate() instead of evaluateSync()',
+            { source },
+          ),
         )
       }
       const code = syncProgram()
@@ -1593,7 +1596,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         state.checkTime()
         return result as R
       } catch (error) {
-        throw hostDataFailure(error, source)
+        throw escaping(hostDataFailure(error, source))
       } finally {
         state.release()
         if (reuse) pooledInUse = false
@@ -1606,7 +1609,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         try {
           return settle(result)
         } catch (error) {
-          throw hostDataFailure(error, source)
+          throw escaping(hostDataFailure(error, source))
         }
       }
       const code = asyncProgram()
@@ -1620,7 +1623,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         state.checkTime()
         return settle(result as R)
       } catch (error) {
-        throw hostDataFailure(error, source)
+        throw escaping(hostDataFailure(error, source))
       } finally {
         state.release()
       }
@@ -1670,7 +1673,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     }
 
     function failure(error: unknown): { ok: false; error: BonsaiError } {
-      return { ok: false, error: hostDataFailure(error, source) }
+      return { ok: false, error: escaping(hostDataFailure(error, source)) }
     }
 
     // A residual's nodes keep the original's offsets (or none, for known
@@ -1851,7 +1854,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
             }
           } catch (error) {
             // Validation only reads the known data, so any other failure is the host's.
-            if (!(error instanceof BonsaiError)) throw hostDataFailure(error, source)
+            if (!(error instanceof BonsaiError) || hasEscaped(error))
+              throw hostDataFailure(error, source)
             if (error instanceof BonsaiRuntimeError) return { status: 'error', error }
             throw error
           }
@@ -1970,7 +1974,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
             checked(result.value, state)
           } catch (error) {
             // Checking reads the value, which can be host data.
-            if (!(error instanceof BonsaiError)) throw hostDataFailure(error, source)
+            if (!(error instanceof BonsaiError) || hasEscaped(error))
+              throw hostDataFailure(error, source)
             if (error instanceof BonsaiRuntimeError) return { status: 'error', error }
             throw error
           }
@@ -2006,8 +2011,16 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     const program: Program<Ctx, R> = Object.freeze({
       explain: (...args: ExplainArgs<Ctx>) => explainAsync(args[0], args[1]),
       explainSync: (...args: ExplainArgs<Ctx>) => explainSync(args[0], args[1]),
-      partial: (known: object, options?: PartialOptions) =>
-        Object.freeze(partial(known as Record<string, unknown>, options)),
+      partial: (known: object, options?: PartialOptions) => {
+        let result: PartialResult<Ctx, R>
+        try {
+          result = partial(known as Record<string, unknown>, options)
+        } catch (error) {
+          throw escaping(error)
+        }
+        if (result.status === 'error') escaping(result.error)
+        return Object.freeze(result)
+      },
       source,
       ast: deepFreeze(analysis.root),
       type: deepFreeze(analysis.type),

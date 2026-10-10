@@ -8,6 +8,7 @@ import {
   type MemberNode,
   type Node,
 } from './syntax/ast.js'
+import { BLOCKED_NAMES } from './syntax/lexer.js'
 import { parse, type ParseLimits } from './syntax/parser.js'
 import { print } from './syntax/printer.js'
 import { MAX_TRACE_TEXT, capTraceText } from './runtime/trace.js'
@@ -967,10 +968,12 @@ export function partiallyEvaluate<R>(
     const whole = new Set(options.unknown)
     engine.readKnown(() => {
       // Own keys, non-enumerable ones included: the language reads those too.
+      // A blocked name is never a variable, so a context need not hold it.
       const names = Object.getOwnPropertyNames(known)
       engine.charge(names.length)
       for (const name of names)
-        if (!whole.has(name) && known[name] !== undefined) knownRoots.push(name)
+        if (!whole.has(name) && !BLOCKED_NAMES.has(name) && known[name] !== undefined)
+          knownRoots.push(name)
     })
   }
   // `x.length` reads a list's or a string's length when x is one, so the data
