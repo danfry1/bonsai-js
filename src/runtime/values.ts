@@ -946,12 +946,19 @@ export function negate(a: unknown, s: State, at: Span): unknown {
 // === Text ===
 
 const MAX_SHOWN = 40
+const HIGH_SURROGATE_FIRST = 0xd800
+const HIGH_SURROGATE_LAST = 0xdbff
 /** Steps for rendering a timestamp or duration as text (about 120 ns, measured, with isoText). */
 const TIME_TEXT_COST = 3
 
 /** Input text quoted in an error message, shortened so messages stay small. */
 export function shown(text: string): string {
-  return JSON.stringify(text.length > MAX_SHOWN ? `${text.slice(0, MAX_SHOWN)}...` : text)
+  if (text.length <= MAX_SHOWN) return JSON.stringify(text)
+  // Never end on the first half of a surrogate pair.
+  const unit = text.charCodeAt(MAX_SHOWN - 1)
+  const end =
+    unit >= HIGH_SURROGATE_FIRST && unit <= HIGH_SURROGATE_LAST ? MAX_SHOWN - 1 : MAX_SHOWN
+  return JSON.stringify(`${text.slice(0, end)}...`)
 }
 
 /** Template rendering of one interpolated value. */

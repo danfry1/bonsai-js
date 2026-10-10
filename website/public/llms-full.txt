@@ -256,7 +256,7 @@ Every built-in is callable as `f(x, ...)` or `x.f(...)`. `?` marks an optional p
 - clamp(number, number, number): number: Limits a number to a range.
 - toFixed(number, number): string: Formats a number with a fixed number of decimals.
 - formatNumber(number, number?, string?): string: Formats a number with grouping, e.g. 1,234.5, with optional decimals and locale (default "en-US"; an unsupported locale is an error).
-- formatCurrency(number, string, string?): string: Formats an amount in a currency (ISO 4217 code such as "EUR"), with an optional locale (default "en-US"; an unsupported locale is an error).
+- formatCurrency(number, string, string?): string: Formats an amount in a currency (ISO 4217 code such as "EUR"; a code without a known symbol prints as the code), with an optional locale (default "en-US"; an unsupported locale is an error).
 - min(T[]): T | null; min(number, ...number): number: The smallest value (nulls are skipped); null for an empty list.
 - max(T[]): T | null; max(number, ...number): number: The largest value (nulls are skipped); null for an empty list.
 - sum((number | null)[]): number: The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is.
@@ -274,7 +274,7 @@ Every built-in is callable as `f(x, ...)` or `x.f(...)`. `?` marks an optional p
 ### Time
 
 - now(): timestamp: The current time, fixed for one evaluation.
-- timestamp(string): timestamp; timestamp(number): timestamp; timestamp(timestamp): timestamp: Parses ISO-8601 text or epoch milliseconds into a timestamp.
+- timestamp(string): timestamp; timestamp(number): timestamp; timestamp(timestamp): timestamp: Parses ISO-8601 text (years 0000-9999, or six digits with a sign such as +012345, as a timestamp renders) or epoch milliseconds (a fraction is dropped toward zero, as Date does) into a timestamp.
 - duration(string): duration; duration(duration): duration: Parses ISO-8601 duration text in weeks, days, hours, minutes, and seconds (e.g. "PT1H30M", "-P2DT0.5S"), the text a duration renders as.
 - weeks(number): duration: A duration of n weeks.
 - days(number): duration: A duration of n days (24 hours each).
@@ -300,7 +300,7 @@ Every built-in is callable as `f(x, ...)` or `x.f(...)`. `?` marks an optional p
 - addDays(timestamp, number, string?): timestamp: Adds calendar days (keeps the wall-clock time across DST), in a time zone.
 - addMonths(timestamp, number, string?): timestamp: Adds calendar months, clamping the day to the month length.
 - addYears(timestamp, number, string?): timestamp: Adds calendar years (Feb 29 becomes Feb 28).
-- formatDate(timestamp, string, string?): string: Formats a timestamp in a time zone (default UTC). Tokens: yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS; quote literal text.
+- formatDate(timestamp, string, string?): string: Formats a timestamp in a time zone (default UTC). Tokens: yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS; quote literal text ('at'), and write '' for a quote ('it''s').
 - abs(duration): duration: Absolute value.
 - sum((duration | null)[]): duration: The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is.
 

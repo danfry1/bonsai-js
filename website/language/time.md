@@ -8,7 +8,7 @@ The examples on this page run with the clock fixed at `2026-01-15T10:30:00Z`.
 
 ## Timestamps
 
-A `Date` in the context is a timestamp. Expressions create them with `now()` and `timestamp()`, which parses ISO-8601 text or epoch milliseconds. Text without an offset is read as UTC.
+A `Date` in the context is a timestamp. Expressions create them with `now()` and `timestamp()`, which parses ISO-8601 text or epoch milliseconds. Text without an offset is read as UTC. Years are four digits, or six with a sign for years outside 0000-9999 (`"+012345-01-01"`, `"-001200-06-15"`), the form a timestamp renders in, so any timestamp's text reads back. Epoch milliseconds drop a fraction toward zero, as `Date` does (`timestamp(1.9)` is 1 ms after the epoch).
 
 ```bonsai
 now() // => 2026-01-15T10:30:00.000Z

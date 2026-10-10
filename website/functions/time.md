@@ -9,7 +9,7 @@ Every function can be called as `f(x, ...)` or as a method, `x.f(...)`. In the s
 | Function | Description |
 | --- | --- |
 | [`now`](#now) | The current time, fixed for one evaluation. |
-| [`timestamp`](#timestamp) | Parses ISO-8601 text or epoch milliseconds into a timestamp. |
+| [`timestamp`](#timestamp) | Parses ISO-8601 text (years 0000-9999, or six digits with a sign such as +012345, as a timestamp renders) or epoch milliseconds (a fraction is dropped toward zero, as Date does) into a timestamp. |
 | [`duration`](#duration) | Parses ISO-8601 duration text in weeks, days, hours, minutes, and seconds (e.g. "PT1H30M", "-P2DT0.5S"), the text a duration renders as. |
 | [`weeks`](#weeks) | A duration of n weeks. |
 | [`days`](#days) | A duration of n days (24 hours each). |
@@ -35,7 +35,7 @@ Every function can be called as `f(x, ...)` or as a method, `x.f(...)`. In the s
 | [`addDays`](#adddays) | Adds calendar days (keeps the wall-clock time across DST), in a time zone. |
 | [`addMonths`](#addmonths) | Adds calendar months, clamping the day to the month length. |
 | [`addYears`](#addyears) | Adds calendar years (Feb 29 becomes Feb 28). |
-| [`formatDate`](#formatdate) | Formats a timestamp in a time zone (default UTC). Tokens: yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS; quote literal text. |
+| [`formatDate`](#formatdate) | Formats a timestamp in a time zone (default UTC). Tokens: yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS; quote literal text ('at'), and write '' for a quote ('it''s'). |
 | [`abs`](#abs) | Absolute value. |
 | [`sum`](#sum) | The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is. |
 
@@ -52,7 +52,7 @@ now() // => 2026-01-15T10:30:00.000Z
 
 ## timestamp
 
-Parses ISO-8601 text or epoch milliseconds into a timestamp.
+Parses ISO-8601 text (years 0000-9999, or six digits with a sign such as +012345, as a timestamp renders) or epoch milliseconds (a fraction is dropped toward zero, as Date does) into a timestamp.
 
 - `timestamp(string): timestamp`
 - `timestamp(number): timestamp`
@@ -353,7 +353,7 @@ addYears(timestamp("2024-02-29T00:00:00Z"), 1) // => 2025-02-28T00:00:00.000Z
 
 ## formatDate
 
-Formats a timestamp in a time zone (default UTC). Tokens: yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS; quote literal text.
+Formats a timestamp in a time zone (default UTC). Tokens: yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS; quote literal text ('at'), and write '' for a quote ('it''s').
 
 - `formatDate(timestamp, string, string?): string`
 

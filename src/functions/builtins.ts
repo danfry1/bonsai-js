@@ -66,6 +66,10 @@ import {
 const DECIMAL_TEXT = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/u
 const MAX_ROUND_DIGITS = 15
 const MAX_FIXED_DIGITS = 100
+/** 2^53: from here on every double is a whole number. */
+const MAX_EXACT_INTEGER = Number.MAX_SAFE_INTEGER + 1
+/** Where Number#toFixed switches to exponential notation. */
+const FIXED_NOTATION_LIMIT = 1e21
 const MONTHS_PER_YEAR = 12
 
 const any = t.any()
@@ -178,6 +182,8 @@ function durationTotal(
       )
     }
     total += d.ms
+    // Checked at each step, as a + b + c is: past 2^53 the total stops being exact.
+    if (!Number.isSafeInteger(total)) durationOf(total, site.state, site.span)
     count++
   }
   return { total, count }
@@ -317,9 +323,15 @@ const MAX_LOCALE_LENGTH = 64
 /** An ISO 4217 currency code. */
 const CURRENCY_CODE = /^[A-Za-z]{3}$/u
 
-/** Intl formats -0 as "-0"; nothing else in the language shows it, so it formats as 0. */
-function plusZero(n: number): number {
-  return n === 0 ? 0 : n
+/**
+ * Why a currency code is not one formatCurrency can use. Any three letters
+ * are accepted: Intl prints a code it has no symbol for as the code itself,
+ * and the list of codes it knows differs between runtimes.
+ */
+function currencyProblem(code: string): string | undefined {
+  return CURRENCY_CODE.test(code)
+    ? undefined
+    : `Currency codes are three letters (ISO 4217), not ${shown(code)}`
 }
 
 /** What checking found for each literal locale and currency (bounded like the format cache). */
@@ -341,7 +353,7 @@ function formatProblem(locale: unknown, currency: unknown): string | undefined {
   if (tag !== undefined && tag.length > MAX_LOCALE_LENGTH) {
     problem = `Locale tags are at most ${MAX_LOCALE_LENGTH} characters long`
   } else if (code !== undefined && !CURRENCY_CODE.test(code)) {
-    problem = `Currency codes are three letters (ISO 4217), not ${shown(code)}`
+    problem = currencyProblem(code)
   } else {
     try {
       const options: Intl.NumberFormatOptions =
@@ -360,6 +372,9 @@ function formatProblem(locale: unknown, currency: unknown): string | undefined {
   return problem
 }
 
+/** `signDisplay: 'negative'` (ES2023, Node 20+); the ES2022 lib types do not list it yet. */
+const NEGATIVE_ONLY = 'negative' as Intl.NumberFormatOptions['signDisplay']
+
 function numberFormat(
   locale: string,
   options: Intl.NumberFormatOptions,
@@ -372,13 +387,8 @@ function numberFormat(
       site.span,
     )
   }
-  if (options.currency !== undefined && !CURRENCY_CODE.test(options.currency)) {
-    throw site.state.error(
-      'INVALID_ARGUMENT',
-      `Currency codes are three letters (ISO 4217), not ${shown(options.currency)}`,
-      site.span,
-    )
-  }
+  const problem = options.currency === undefined ? undefined : currencyProblem(options.currency)
+  if (problem !== undefined) throw site.state.error('INVALID_ARGUMENT', problem, site.span)
   const key = `${locale}\u0000${JSON.stringify(options)}`
   const format = site.state.resource(`n${key}`, NUMBER_FORMAT_COST, () => {
     let created = numberFormats.get(key)
@@ -386,7 +396,9 @@ function numberFormat(
     let supported: string[]
     try {
       supported = Intl.NumberFormat.supportedLocalesOf(locale)
-      created = new Intl.NumberFormat(locale, options)
+      // A sign only for a negative amount that does not show as zero: nothing
+      // else in the language shows -0, so neither does "-$0.00".
+      created = new Intl.NumberFormat(locale, { ...options, signDisplay: NEGATIVE_ONLY })
     } catch (error) {
       throw site.state.error(
         'INVALID_ARGUMENT',
@@ -467,6 +479,9 @@ function roundTo(value: number, digits: number, site: CallSite): number {
     )
   }
   if (value === 0 || !Number.isFinite(value)) return finite(value, site)
+  // At 2^53 and beyond every double is a whole number, so there is nothing to
+  // round to at zero or more digits (and shifting could overflow).
+  if (digits >= 0 && Math.abs(value) >= MAX_EXACT_INTEGER) return value
   // Shift the decimal exponent textually so 1.005 rounds to 1.01, then round
   // half away from zero and shift back.
   const shift = (n: number, by: number): number => {
@@ -1026,6 +1041,10 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
       // Round half away from zero first, so toFixed(1.005, 2) agrees with round(1.005, 2).
       finite(n as number, site)
       const value = digits <= MAX_ROUND_DIGITS ? roundTo(n as number, digits, site) : (n as number)
+      // JavaScript writes 1e21 and beyond in exponent form; such a number is
+      // whole, so write its exact digits instead.
+      if (Math.abs(value) >= FIXED_NOTATION_LIMIT)
+        return `${BigInt(value).toString()}${digits > 0 ? `.${'0'.repeat(digits)}` : ''}`
       return value.toFixed(digits)
     }),
   ]),
@@ -1056,7 +1075,7 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
               ? (n as number)
               : roundTo(n as number, digits, site)
           return numberFormat(typeof locale === 'string' ? locale : 'en-US', options, site).format(
-            plusZero(value),
+            value,
           )
         },
         { required: 1, literals: ([, , locale]) => formatProblem(locale, undefined) },
@@ -1065,7 +1084,7 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
   ),
   define(
     'formatCurrency',
-    'Formats an amount in a currency (ISO 4217 code such as "EUR"), with an optional locale (default "en-US"; an unsupported locale is an error).',
+    'Formats an amount in a currency (ISO 4217 code such as "EUR"; a code without a known symbol prints as the code), with an optional locale (default "en-US"; an unsupported locale is an error).',
     [
       overload(
         [num, str, t.optional(str)],
@@ -1075,7 +1094,7 @@ const NUMBER_FUNCTIONS: FunctionDef[] = [
             typeof locale === 'string' ? locale : 'en-US',
             { style: 'currency', currency: currency as string },
             site,
-          ).format(plusZero(finite(n as number, site))),
+          ).format(finite(n as number, site)),
         { required: 2, literals: ([, currency, locale]) => formatProblem(locale, currency) },
       ),
     ],
@@ -1538,17 +1557,21 @@ const TIME_FUNCTIONS: FunctionDef[] = [
   define('now', 'The current time, fixed for one evaluation.', [
     overload([], ts, (_, site) => site.state.now()),
   ]),
-  define('timestamp', 'Parses ISO-8601 text or epoch milliseconds into a timestamp.', [
-    overload([str], ts, ([s], site) => {
-      site.state.charge(PARSE_COST)
-      return parseTimestamp(s as string, site)
-    }),
-    overload([num], ts, ([n], site) => checked(n as number, site)),
-    overload([ts], ts, ([d], site) => {
-      timeOf(d as Date, site.state, site.span)
-      return d
-    }),
-  ]),
+  define(
+    'timestamp',
+    'Parses ISO-8601 text (years 0000-9999, or six digits with a sign such as +012345, as a timestamp renders) or epoch milliseconds (a fraction is dropped toward zero, as Date does) into a timestamp.',
+    [
+      overload([str], ts, ([s], site) => {
+        site.state.charge(PARSE_COST)
+        return parseTimestamp(s as string, site)
+      }),
+      overload([num], ts, ([n], site) => checked(n as number, site)),
+      overload([ts], ts, ([d], site) => {
+        timeOf(d as Date, site.state, site.span)
+        return d
+      }),
+    ],
+  ),
   define(
     'duration',
     'Parses ISO-8601 duration text in weeks, days, hours, minutes, and seconds (e.g. "PT1H30M", "-P2DT0.5S"), the text a duration renders as.',
@@ -1629,7 +1652,7 @@ const TIME_FUNCTIONS: FunctionDef[] = [
   ]),
   define(
     'formatDate',
-    'Formats a timestamp in a time zone (default UTC). Tokens: yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS; quote literal text.',
+    "Formats a timestamp in a time zone (default UTC). Tokens: yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS; quote literal text ('at'), and write '' for a quote ('it''s').",
     [
       overload(
         [ts, str, optZone],

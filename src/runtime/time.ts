@@ -29,6 +29,7 @@ const MAX_HOUR = 23
 const MAX_MINUTE = 59
 const MAX_SECOND = 59
 const SUNDAY = 7
+const THURSDAY = 4
 
 type CalendarFields = Pick<WallClock, 'year' | 'month' | 'day'> &
   Partial<Pick<WallClock, 'hour' | 'minute' | 'second' | 'millisecond'>>
@@ -378,14 +379,11 @@ export function addDays(
   if (!Number.isInteger(days))
     throw site.state.error('INVALID_ARGUMENT', 'Days must be an integer', site.span)
   const clock = wallClock(date, zone, site)
-  const shifted = new Date(utc({ year: clock.year, month: clock.month, day: clock.day + days }))
+  // By arithmetic: near the ends of the range the local date may lie outside
+  // what a Date can hold, though the instant it names does not.
+  const shifted = utcClock(utc({ year: clock.year, month: clock.month, day: clock.day + days }))
   return fromWallClock(
-    {
-      ...clock,
-      year: shifted.getUTCFullYear(),
-      month: shifted.getUTCMonth() + 1,
-      day: shifted.getUTCDate(),
-    },
+    { ...clock, year: shifted.year, month: shifted.month, day: shifted.day },
     zone,
     site,
     zoneOffset(date, zone, site),
@@ -402,19 +400,22 @@ function zoneOffset(
 
 /** ISO weekday: Monday = 1 ... Sunday = 7. */
 export function isoWeekday(clock: WallClock): number {
-  const weekday = new Date(
-    utc({ year: clock.year, month: clock.month, day: clock.day }),
-  ).getUTCDay()
-  return weekday === 0 ? SUNDAY : weekday
+  // From the day number, so a local date just outside the Date range still has
+  // a weekday. 1970-01-01 was a Thursday (ISO 4).
+  const days = daysFromCivil(clock.year, clock.month) + clock.day - 1
+  return ((((days + THURSDAY - 1) % SUNDAY) + SUNDAY) % SUNDAY) + 1
 }
 
+// Years are four digits, or six with a sign (the extended years Date#toISOString
+// and templates write outside 0000-9999), so every timestamp's text reads back.
 const ISO_PATTERN =
-  /^(?<y>\d{4})-(?<mo>\d{2})-(?<d>\d{2})(?:[T ](?<h>\d{2}):(?<mi>\d{2})(?::(?<sec>\d{2})(?:\.(?<frac>\d{1,9}))?)?(?<zone>Z|[+-]\d{2}:?\d{2})?)?$/u
+  /^(?<y>\d{4}|[+-]\d{6})-(?<mo>\d{2})-(?<d>\d{2})(?:[T ](?<h>\d{2}):(?<mi>\d{2})(?::(?<sec>\d{2})(?:\.(?<frac>\d{1,9}))?)?(?<zone>Z|[+-]\d{2}:?\d{2})?)?$/u
 
 /** Strict ISO-8601 parsing. Date-only and zone-less times are read as UTC. */
 export function parseTimestamp(text: string, site: CallSite): Date {
   const groups = ISO_PATTERN.exec(text.trim())?.groups
-  if (groups === undefined) {
+  // ISO 8601 has no year "-000000" (year 0 is "+000000" or "0000").
+  if (groups === undefined || groups.y === '-000000') {
     throw site.state.error(
       'INVALID_ARGUMENT',
       `Cannot parse ${shown(text)} as an ISO-8601 timestamp`,
@@ -486,11 +487,16 @@ const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satur
 // "YYYY" or "DD" fails loudly instead of being printed literally.
 /** Rendering one format token costs about as much as a few ordinary steps. */
 const TOKEN_COST = 4
-const TOKENS = /'[^']*'|yyyy|yy|MMMM|MMM|MM|M|dd|d|EEEE|EEE|HH|H|hh|h|mm|m|ss|s|SSS|a|[A-Za-z]/gu
+// Quoting follows LDML: text in single quotes is literal, '' is a quote inside
+// or outside them, and a quote left open is an error.
+const TOKENS =
+  /'(?:[^']|'')*'|'|yyyy|yy|MMMM|MMM|MM|M|dd|d|EEEE|EEE|HH|H|hh|h|mm|m|ss|s|SSS|a|[A-Za-z]/gu
+const UNTERMINATED_QUOTE = `A quote in the date format is not closed; write '' for a literal quote`
 
-/** An error message for a pattern with unknown letters, or undefined. */
+/** An error message for a pattern with unknown letters or an open quote, or undefined. */
 export function checkDatePattern(pattern: string): string | undefined {
   for (const token of pattern.match(TOKENS) ?? []) {
+    if (token === "'") return UNTERMINATED_QUOTE
     if (token.length === 1 && !'MdHhmsa'.includes(token)) {
       return `Unknown date format letter "${token}"; quote literal text, e.g. "'at' HH:mm"`
     }
@@ -559,7 +565,9 @@ export function formatTimestamp(
       case 'SSS':
         return pad(clock.millisecond, 3)
       default:
-        if (token.startsWith("'")) return token === "''" ? "'" : token.slice(1, -1)
+        if (token === "'") throw site.state.error('INVALID_ARGUMENT', UNTERMINATED_QUOTE, site.span)
+        if (token.startsWith("'"))
+          return token === "''" ? "'" : token.slice(1, -1).replaceAll("''", "'")
         throw site.state.error(
           'INVALID_ARGUMENT',
           `Unknown date format letter "${token}"; quote literal text, e.g. "'at' HH:mm"`,

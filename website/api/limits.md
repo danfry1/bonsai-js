@@ -66,7 +66,7 @@ Parse limits (`maxSourceLength`, `maxDepth`, `maxNodes`) are enforced before any
 
 `maxDepth` and `maxValueDepth` are capped (a larger value is a `RangeError`) at about half the depth at which the smallest JavaScript call stack measured (Node 22) runs out, so every stage stays inside the stack. If the stack still runs out (a host with a smaller stack, or deep host data), the error is a `BonsaiLimitError` with code `TOO_DEEP`, never a raw `RangeError`.
 
-Evaluation limits are enforced while an expression runs. Sizes are checked before a string or list is allocated, so an expression cannot allocate a large value and fail afterwards.
+Evaluation limits are enforced while an expression runs. Sizes are checked before a string or list is allocated, so an expression cannot allocate a large value and fail afterwards. The one exception is case conversion: `toUpperCase` and `toLowerCase` can lengthen text (`"ß"` becomes `"SS"`, `"ﬃ"` becomes `"FFI"`), so their result, at most three times the length of a string that was itself within the limit, is checked as soon as it is made.
 
 ## What limits do not cover
 

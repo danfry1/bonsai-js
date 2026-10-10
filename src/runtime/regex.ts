@@ -186,6 +186,9 @@ const HIGH_SURROGATE = 0xd800
 const LOW_SURROGATE = 0xdc00
 /** Code points per high surrogate. */
 const SURROGATE_BLOCK = 0x400
+const LOW_SURROGATE_END = LOW_SURROGATE + SURROGATE_BLOCK
+const isHigh = (unit: number): boolean => unit >= HIGH_SURROGATE && unit < LOW_SURROGATE
+const isLow = (unit: number): boolean => unit >= LOW_SURROGATE && unit < LOW_SURROGATE_END
 const MAX_CODE_POINT = 0x10ffff
 const CH_FORM_FEED = 12
 const CH_VERTICAL_TAB = 11
@@ -277,6 +280,10 @@ export function compileRegex(source: string): Program {
         else if (pattern[i] === '?') {
           if (/^\?[a-z]+\)/u.test(pattern.slice(i)))
             fail('Flags such as (?i) are only supported at the start of the pattern')
+          if (/^\?[a-z]*-?[a-z]*:/u.test(pattern.slice(i)))
+            fail(
+              'Flag groups such as (?i:...) are not supported; put (?i) at the start of the pattern',
+            )
           fail('Lookaround and named groups are not supported')
         }
         if (++depth > MAX_GROUP_DEPTH) fail(`Groups nest deeper than ${MAX_GROUP_DEPTH}`)
@@ -702,7 +709,11 @@ export function searchRegex(program: Program, text: string, charge: (n: number) 
       // With no thread under way and every match beginning with `prefix`, the
       // next match can only start where `prefix` next occurs: jump there.
       if (currentCount === 0 && prefix !== undefined && !anchored && at > 0) {
-        const index = text.indexOf(prefix, at)
+        let index = text.indexOf(prefix, at)
+        // A prefix that begins with a lone low surrogate can be found inside a
+        // pair, where matching (by code points) never starts: look further on.
+        while (index > 0 && isLow(text.charCodeAt(index)) && isHigh(text.charCodeAt(index - 1)))
+          index = text.indexOf(prefix, index + 1)
         charge(searchCost((index < 0 ? text.length : index + prefix.length) - at, prefix.length))
         if (index < 0) return false
         if (index > at) {

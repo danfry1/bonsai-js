@@ -17,7 +17,7 @@ Every function can be called as `f(x, ...)` or as a method, `x.f(...)`. In the s
 | [`clamp`](#clamp) | Limits a number to a range. |
 | [`toFixed`](#tofixed) | Formats a number with a fixed number of decimals. |
 | [`formatNumber`](#formatnumber) | Formats a number with grouping, e.g. 1,234.5, with optional decimals and locale (default "en-US"; an unsupported locale is an error). |
-| [`formatCurrency`](#formatcurrency) | Formats an amount in a currency (ISO 4217 code such as "EUR"), with an optional locale (default "en-US"; an unsupported locale is an error). |
+| [`formatCurrency`](#formatcurrency) | Formats an amount in a currency (ISO 4217 code such as "EUR"; a code without a known symbol prints as the code), with an optional locale (default "en-US"; an unsupported locale is an error). |
 | [`min`](#min) | The smallest value (nulls are skipped); null for an empty list. |
 | [`max`](#max) | The largest value (nulls are skipped); null for an empty list. |
 | [`sum`](#sum) | The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is. |
@@ -132,7 +132,7 @@ formatNumber(1234.5, 2, "de-DE") // => "1.234,50"
 
 ## formatCurrency
 
-Formats an amount in a currency (ISO 4217 code such as "EUR"), with an optional locale (default "en-US"; an unsupported locale is an error).
+Formats an amount in a currency (ISO 4217 code such as "EUR"; a code without a known symbol prints as the code), with an optional locale (default "en-US"; an unsupported locale is an error).
 
 - `formatCurrency(number, string, string?): string`
 
