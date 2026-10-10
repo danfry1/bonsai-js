@@ -1,6 +1,6 @@
 import { acceptsArgument, analyze, signatureText, type Analysis } from '../check/checker.js'
 import { internalsOf, type Environment } from '../environment.js'
-import { BonsaiError, locate, type Diagnostic } from '../errors.js'
+import { BonsaiError, BonsaiSyntaxError, locate, type Diagnostic } from '../errors.js'
 import { assertType, type FunctionDef } from '../functions/define.js'
 import { forEachChild, type Node } from '../syntax/ast.js'
 import { parse } from '../syntax/parser.js'
@@ -129,6 +129,61 @@ export function createLanguageService(
     }
   }
 
+  /**
+   * How far `source` parses: Infinity when it parses whole, the offset of the
+   * first token it cannot take (its length when it only ends too soon), or -1
+   * past a limit. A ` ]` after it, which nothing can continue with, turns
+   * "the expression ended" into an error past the end.
+   */
+  function parsesTo(source: string): number {
+    for (const text of [source, `${source} ]`]) {
+      try {
+        parse(text, parseLimits)
+        if (text === source) return Number.POSITIVE_INFINITY
+      } catch (error) {
+        if (!(error instanceof BonsaiError)) throw error
+        if (!(error instanceof BonsaiSyntaxError) || error.span === undefined) return -1
+        if (text !== source) return Math.min(error.span.start, source.length)
+      }
+    }
+    return -1
+  }
+
+  /**
+   * An ending for nested open constructs no single ending covers, such as
+   * `let v = try(o1.`: at each closer, innermost first, and after the last,
+   * the fillers the parser gets through (a few at most), within a fixed
+   * number of parses.
+   */
+  function builtEnding(text: string, closers: string): string | undefined {
+    let built = text
+    let parses = 0
+    for (let gap = 0; gap <= closers.length; gap++) {
+      const rest = closers.slice(gap)
+      for (let round = 0; round < MAX_FILLERS; round++) {
+        if (parses++ > MAX_ENDING_PARSES) return undefined
+        const reached = parsesTo(built + rest)
+        // A mistake before the probe is one no ending can mend.
+        if (reached < text.length) return undefined
+        if (reached === Number.POSITIVE_INFINITY) return built + rest
+        // The parser got past this closer: what is missing is further out.
+        if (reached > built.length) break
+        let filler: string | undefined
+        for (const f of FILLERS) {
+          parses++
+          if (parsesTo(built + f + rest) >= built.length + f.length) {
+            filler = f
+            break
+          }
+        }
+        if (filler === undefined) return undefined
+        built += filler
+      }
+      if (gap < closers.length) built += closers[gap]
+    }
+    return undefined
+  }
+
   function complete(source: string, offset: number): CompletionResult {
     const cursor = clampOffset(source, offset)
     let from = cursor
@@ -177,6 +232,10 @@ export function createLanguageService(
     for (const suffix of probeSuffixes(scan.closers)) {
       analysis = tryAnalyze(probeText + suffix, PROBE)
       if (analysis !== undefined) break
+    }
+    if (analysis === undefined) {
+      const ended = builtEnding(probeText, scan.closers)
+      if (ended !== undefined) analysis = tryAnalyze(ended, PROBE)
     }
     if (analysis === undefined) return empty
 
@@ -515,6 +574,13 @@ function commentSpans(text: string): { start: number; end: number }[] {
 
 /** Open constructs a filler is tried inside of, innermost first. */
 const PROBE_SPLITS = 4
+
+/** What a nested ending may add at one closer: a missing branch, argument, value, or body. */
+const FILLERS = [' : null', ', null', ': null', '; null', ' 0']
+/** Fillers one closer may take, as in try(b ? x : null, null). */
+const MAX_FILLERS = 3
+/** Parses one nested ending may cost, so completion stays bounded. */
+const MAX_ENDING_PARSES = 32
 
 /**
  * Endings that make a prefix ending in the probe parse, cheapest first: the

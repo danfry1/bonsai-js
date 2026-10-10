@@ -73,6 +73,25 @@ const significantDigits = (text: string): string =>
     .replace(/^[+-]?0*/u, '')
     .replace(/0+$/u, '')
 
+/** A double's exact value has at most 309 integer digits; longer text never names one. */
+const MAX_EXACT_DIGITS = 400
+const TEN = 10n
+
+/** Whether a decimal exponent literal names exactly the integer it parses to. */
+function exactlyWritten(text: string, value: number): boolean {
+  if (!Number.isInteger(value)) return false
+  const [mantissa = '', exponent = '0'] = text.replaceAll('_', '').split(/[eE]/u)
+  const [whole = '', fraction = ''] = mantissa.split('.')
+  const digits = `${whole}${fraction}`.replace(/^0+/u, '') || '0'
+  const shift = Number(exponent) - fraction.length
+  if (digits.length > MAX_EXACT_DIGITS || Math.abs(shift) > MAX_EXACT_DIGITS) return false
+  const written = BigInt(digits)
+  const exact = BigInt(Math.abs(value))
+  return shift >= 0
+    ? written * TEN ** BigInt(shift) === exact
+    : written === exact * TEN ** BigInt(-shift)
+}
+
 /** Whether a parsed number literal was written with an exponent. */
 export const writtenWithExponent = (node: Node): boolean => exponentLiterals.has(node)
 
@@ -568,11 +587,13 @@ function parseTree(source: string, limits: ParseLimits): Node {
           end: token.end,
         })
         // 1e308, not 0xE (whose E is a digit), and only when the number keeps
-        // every digit written: 9007199254740993e0 reads as ...992.
+        // every digit written: 9007199254740993e0 reads as ...992, while
+        // 1.180591620717411303424e21 is exactly 2^70.
         if (
           /[eE]/u.test(token.value) &&
           !/^0[xXoObB]/u.test(token.value) &&
-          significantDigits(token.value) === significantDigits(String(token.number))
+          (significantDigits(token.value) === significantDigits(String(token.number)) ||
+            exactlyWritten(token.value, token.number as number))
         )
           exponentLiterals.add(literal)
         return literal
