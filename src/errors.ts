@@ -77,6 +77,8 @@ function codeFrame(
   let to = from + (newline === -1 ? Math.min(window.length, FRAME_WIDTH) : newline)
   const cutRight = newline === -1 && window.length > FRAME_WIDTH ? '...' : ''
   if (cutRight !== '' && LOW_SURROGATE.test(source[to] ?? '')) to--
+  // A CRLF line ends at its \n; the \r before it is not shown.
+  if (newline !== -1 && to > from && source[to - 1] === '\r') to--
   const cutLeft = from > lineStart ? '...' : ''
   const text = `${cutLeft}${source.slice(from, to)}${cutRight}`
   // The caret lines up by characters, not UTF-16 units, and a tab stays a tab.

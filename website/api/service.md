@@ -66,7 +66,7 @@ What is offered depends on the cursor:
 | After `.` or `?.` | the fields of the receiver's type, `length` for strings and lists, and the functions whose first parameter accepts the receiver (as methods) |
 | Inside a string or comment, or after a digit | nothing |
 
-Items are filtered by what has been typed so far (prefix matches first, then substring matches) and ordered by kind: locals, properties, variables, methods, functions, keywords. New kinds may be added in a minor release, so handle unknown ones. The service completes incomplete expressions by guessing the missing closing brackets and the missing rest of an enclosing `?:`, `let`, `try(x, fallback)`, or computed key `[k]: v`, so it works in the middle of typing. A field's detail is the type that reading it there has, as `check()` and hover report it: `nullable.` details `string | null`, and inside `x.c != null ? x.` the field `c` details `string`.
+Items are filtered by what has been typed so far (prefix matches first, then substring matches) and ordered by kind: locals, properties, variables, methods, functions, keywords. New kinds may be added in a minor release, so handle unknown ones. The service completes incomplete expressions by guessing the missing closing brackets and the missing rest of each enclosing `?:`, `let`, `try(x, fallback)`, or computed key `[k]: v`, nested ones included (`let v = try(b ? user.`), so it works in the middle of typing. When the text before the cursor has a mistake of its own, it offers nothing. A field's detail is the type that reading it there has, as `check()` and hover report it: `nullable.` details `string | null`, and inside `x.c != null ? x.` the field `c` details `string`.
 
 ```ts
 import { bonsai, t } from 'bonsai-js'

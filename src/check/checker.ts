@@ -447,6 +447,18 @@ function mapOf(type: Type): MapType | undefined {
 
 const ORDERING: ReadonlySet<string> = new Set(['<', '<=', '>', '>='])
 
+/** The text of a constant key: "a" or `a` (a template without substitutions). */
+function constantText(node: Node): string | undefined {
+  if (node.type === 'Literal') return typeof node.value === 'string' ? node.value : undefined
+  if (node.type !== 'Template') return undefined
+  let text = ''
+  for (const part of node.parts) {
+    if (typeof part !== 'string') return undefined
+    text += part
+  }
+  return text
+}
+
 /** The map a union of maps reads as: fields every member has, the rest optional. */
 function mergeMaps(type: Type & { kind: 'union' }): MapType | undefined {
   const members = unionMembers(type)
@@ -502,12 +514,28 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
   const asyncNodes = new Set<Node>()
   // Ordering comparisons whose false (from a null side) becomes a verdict, not a skip.
   const verdicts = new WeakSet<Node>()
+  // The verdict passes through the parts whose value becomes the outer value.
   const nullFalseMatters = (node: Node): void => {
+    if (node.type === 'Conditional') {
+      nullFalseMatters(node.then)
+      nullFalseMatters(node.otherwise)
+    } else if (node.type === 'Let') nullFalseMatters(node.body)
+    else if (node.type === 'Try') {
+      nullFalseMatters(node.body)
+      nullFalseMatters(node.fallback)
+    }
     if (node.type !== 'Binary') return
     if (node.operator === '&&' || node.operator === '||') {
       nullFalseMatters(node.left)
       nullFalseMatters(node.right)
     } else if (ORDERING.has(node.operator)) verdicts.add(node)
+    else if (node.operator === '==' || node.operator === '!=') {
+      // x == true and x != false keep x's own value.
+      const keeps = (n: Node): boolean =>
+        n.type === 'Literal' && n.value === (node.operator === '==')
+      if (keeps(node.right)) nullFalseMatters(node.left)
+      else if (keeps(node.left)) nullFalseMatters(node.right)
+    }
   }
   const variables = new Set<string>()
   const functions = new Set<string>()
@@ -735,7 +763,9 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
             report('TYPE_ERROR', `Cannot render ${typeText(partType)} in a template`, part)
           }
         }
-        return STRING
+        // `a` with nothing substituted is the constant "a".
+        const text = constantText(node)
+        return text === undefined ? STRING : freshLiteral(text)
       case 'Variable': {
         if (node.name === options.probe) {
           probeScope = { locals: scope.locals, it: scope.it }
@@ -889,10 +919,13 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
                 }
               } else {
                 for (const [key, field] of Object.entries(mapped.fields)) {
-                  // An optional field may be absent and leave an earlier value in place.
+                  // An optional field of a declared object may be absent and leave
+                  // an earlier value in place; a literal's keys are always there.
                   const earlier = Object.hasOwn(fields, key) ? fields[key] : unlisted
                   fields[key] =
-                    earlier !== undefined && mayBeNull(field) ? unionOf([earlier, field]) : field
+                    earlier !== undefined && !spreadExact && mayBeNull(field)
+                      ? unionOf([earlier, field])
+                      : field
                 }
               }
               if (mapped.rest !== undefined)
@@ -919,13 +952,14 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
               : (fieldOf(expectedMap, entry.key) ?? expectedMap.rest)
           const valueType = fit(check(entry.value, scope, expectedField), expectedField)
           markAsync(node, entry.value)
+          const constant = typeof entry.key === 'string' ? entry.key : constantText(entry.key)
           if (typeof entry.key === 'string') fields[entry.key] = valueType
-          else if (entry.key.type === 'Literal' && typeof entry.key.value === 'string') {
-            // ["a"]: a constant key is a static one. A blocked one fails at run time.
+          else if (constant !== undefined) {
+            // ["a"] or [`a`]: a constant key is a static one. A blocked one fails at run time.
             check(entry.key, scope)
-            if (BLOCKED_NAMES.has(entry.key.value)) {
-              report('BLOCKED_PROPERTY', `"${entry.key.value}" cannot be used as a key`, entry.key)
-            } else fields[entry.key.value] = valueType
+            if (BLOCKED_NAMES.has(constant)) {
+              report('BLOCKED_PROPERTY', `"${constant}" cannot be used as a key`, entry.key)
+            } else fields[constant] = valueType
           } else {
             const keyType = check(entry.key, scope)
             markAsync(node, entry.key)
@@ -935,7 +969,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
                 `A map key must be a string, not ${typeText(keyType)}`,
                 entry.key,
               )
-            }
+            } else reportBlockedKey(keyType, entry.key)
             // A computed key may overwrite any earlier field.
             const keys = Object.keys(fields)
             chargeTypeWork(keys.length)
@@ -966,6 +1000,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         if (target.type === 'Member') {
           const objectType = check(target.object, scope)
           markAsync(node, target.object)
+          if (target.name === options.probe) probeMembers = readsOf(target, objectType, scope)
           types.set(target, memberType(objectType, target.name, target, true))
         } else check(target, scope)
         markAsync(node, node.target)
@@ -980,6 +1015,18 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       }
     }
     throw new Error('unreachable')
+  }
+
+  /** A key whose every possible value is a blocked name fails whenever it runs. */
+  function reportBlockedKey(keyType: Type, at: Node): void {
+    const members = keyType.kind === 'union' ? keyType.types : [keyType]
+    const blocked = members.every(
+      (m) => m.kind === 'literal' && typeof m.value === 'string' && BLOCKED_NAMES.has(m.value),
+    )
+    if (blocked && members.length > 0) {
+      const names = members.map((m) => (m.kind === 'literal' ? `"${String(m.value)}"` : ''))
+      report('BLOCKED_PROPERTY', `${names.join(' or ')} cannot be used as a key`, at)
+    }
   }
 
   function expectLogic(actual: Type, at: Node, what: string): void {
@@ -1372,6 +1419,12 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     }
     const mark = diagnostics.length
     const result = checkCallNow(node, scope, expected)
+    // groupBy makes its keys map keys, so a key that is always blocked fails.
+    if (node.name === 'groupBy' && env.lookup(node.name)?.host !== true) {
+      const lambda = node.args.find((arg) => arg.type === 'Lambda')
+      const keyType = lambda?.type === 'Lambda' ? types.get(lambda.body) : undefined
+      if (lambda?.type === 'Lambda' && keyType !== undefined) reportBlockedKey(keyType, lambda.body)
+    }
     callMemo.set(node, { expected, inputs, type: result, diagnostics: diagnostics.slice(mark) })
     return result
   }
