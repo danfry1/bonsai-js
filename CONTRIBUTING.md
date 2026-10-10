@@ -29,6 +29,7 @@ Requires [Bun](https://bun.sh/) and Node.js 24+.
 | `bun run bench:gate` | Run the absolute-floor performance gate |
 | `bun run bench:compare [ref]` | Compare throughput against a base ref (default `origin/main`) and fail on a relative drop |
 | `bun run fuzz` | Run the continuous parser/runtime/checker fuzz harness |
+| `bun run cross-fuzz [--seconds N] [--seed S]` | Check that every view of a generated expression agrees: check, evaluate, explain, print, partial, SQL (SQLite and PGlite), MongoDB (mingo), and the language service (also runs in CI) |
 | `bun run check:package` | Build and smoke-test the packed npm artifact |
 | `bun run check:release` | Run the complete offline release gate |
 
