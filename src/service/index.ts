@@ -595,15 +595,19 @@ const PROBE_SPLITS = 4
 const FILLERS = [' : null', ', null', ': null', '; null', ' 0']
 /** Fillers one closer may take, as in try(b ? x : null, null). */
 const MAX_FILLERS = 3
-/** Parses one completion may cost in all (fixed endings, nested ending search, and its analysis). */
-const MAX_COMPLETION_PARSES = 40
+/**
+ * Parses one completion may cost in all (fixed endings, nested ending search,
+ * and its analysis): enough for every ending a short source needs.
+ */
+const MAX_COMPLETION_PARSES = 100
 /**
  * Characters one completion may parse in all, so a long source gets fewer
  * tries (each costs a parse of the whole source), but never fewer than
  * {@link MIN_COMPLETION_PARSES}.
  */
-const MAX_COMPLETION_CHARS = 400_000
-const MIN_COMPLETION_PARSES = 4
+const MAX_COMPLETION_CHARS = 1_200_000
+/** Enough for the fixed endings a single open construct needs, plus the analysis. */
+const MIN_COMPLETION_PARSES = 12
 
 /**
  * Endings that make a prefix ending in the probe parse, cheapest first: the

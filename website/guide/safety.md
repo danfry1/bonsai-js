@@ -40,7 +40,7 @@ user.toString // => null
 - **Host functions are your code.** Validate their inputs if they reach sensitive systems and give them their own timeouts. A synchronous host function that is already running cannot be interrupted.
 - **Getters and Proxies run when read.** Pass plain data when the context contains anything sensitive or expensive to compute.
 - **Only put in the context what expressions may see.** Every own property of the context is readable, enumerable or not. Build a dedicated context object rather than passing a whole database row or request.
-- **Explanations record what they read.** The JSON form of an [explanation](/api/explain) holds the whole value of each variable a rule reads, including fields the rule never uses. Before storing explanations as audit logs, pass only the fields a rule needs, or log `reasons()` instead.
+- **Explanations record what they read.** The JSON form of an [explanation](/api/explain) holds the whole value of each variable a rule reads, including fields the rule never uses. Before storing explanations as audit logs, pass only the fields a rule needs, or log `JSON.stringify(explanation.reasons())` instead, which is bounded and cycle-safe like the explanation's own JSON.
 - **Set a timeout when expressions call slow host functions.** The step budget bounds the work Bonsai does deterministically, but not wall-clock time spent inside your host functions, and each host call costs a fixed number of steps (32 unless the function declares its own `cost`), however long it runs.
 - **Bonsai is not a process boundary.** If your host functions or context data are themselves untrusted, evaluate in a worker or a separate process.
 

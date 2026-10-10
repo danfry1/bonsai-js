@@ -37,10 +37,10 @@ describe('completion parses within a fixed budget', () => {
   )
   const tail = 'try(let v = b ? let v = (try(1, try({[{[{k: {[b ? o1.'
 
-  it('costs at most 40 parses however the source nests', () => {
+  it('costs at most 100 parses however the source nests', () => {
     parses.count = 0
     service.complete(tail, tail.length)
-    expect(parses.count).toBeLessThanOrEqual(40)
+    expect(parses.count).toBeLessThanOrEqual(100)
   })
 
   it('costs a few parses of a long source', () => {
@@ -48,7 +48,7 @@ describe('completion parses within a fixed budget', () => {
     const source = pad + tail
     parses.count = 0
     service.complete(source, source.length)
-    expect(parses.count).toBeLessThanOrEqual(5)
+    expect(parses.count).toBeLessThanOrEqual(12)
   })
 
   it('still completes nested endings in a short source', () => {
