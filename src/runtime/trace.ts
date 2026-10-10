@@ -43,7 +43,10 @@ export interface TraceRecord extends Trace {
   omittedIterations?: number
 }
 
+/** A lambda run while it is being recorded; published as the read-only {@link Iteration}. */
 interface IterationRecord extends Iteration {
+  result?: unknown
+  error?: { readonly code: ErrorCode; readonly message: string }
   readonly trace: TraceRecord
 }
 
@@ -107,20 +110,21 @@ export function capTraceText(text: string): string {
 }
 export const DEFAULT_MAX_TRACE_NODES = 10_000
 
-/**
- * Every recorded trace inherits a non-enumerable `toJSON`, so
- * `JSON.stringify(trace)` writes the bounded {@link TraceJSON} form instead of
- * the live values; the trace's own keys are unchanged.
- */
-const TRACE_PROTOTYPE: object = Object.defineProperty({}, 'toJSON', {
-  value(this: Trace): TraceJSON {
-    return snapshotTrace(this)
-  },
-})
-
 /** Records traces during one explained evaluation. */
 export class Tracer {
   readonly root: TraceRecord
+  /**
+   * The keys of each map listed by any snapshot of this explanation, so a map
+   * recurring in the trace is listed once, however the traces are serialized
+   * (whole, as reasons(), or picked out one by one).
+   */
+  readonly listings: Listings = new WeakMap()
+  /**
+   * Each recorded trace and iteration has this as a non-enumerable own
+   * `toJSON`, so `JSON.stringify` writes the bounded {@link TraceJSON} form
+   * instead of the live values; the record's keys and prototype are unchanged.
+   */
+  private readonly toJSON: { value: (this: Trace | Iteration) => TraceJSON | IterationJSON }
   /** Set when the node cap stopped recording; the result is still exact. */
   truncated = false
   private readonly stack: TraceRecord[] = []
@@ -152,6 +156,14 @@ export class Tracer {
     this.maxIterations = maxIterations
     this.maxNodes = maxNodes
     this.exhaustive = exhaustive
+    const listings = this.listings
+    this.toJSON = {
+      value(this: Trace | Iteration): TraceJSON | IterationJSON {
+        const budget = { left: SNAPSHOT_ENTRIES, keys: listings }
+        // A lambda run holds its body's trace; a trace has a kind.
+        return 'kind' in this ? snapshotTrace(this, budget) : snapshotIteration(this, budget)
+      },
+    }
     let next = 0
     const number = (node: Node): void => {
       this.ids.set(node, next++)
@@ -163,8 +175,7 @@ export class Tracer {
   }
 
   private create(node: Node): TraceRecord {
-    const trace = Object.create(TRACE_PROTOTYPE) as TraceRecord
-    Object.assign(trace, {
+    const trace: TraceRecord = {
       id: this.ids.get(node) ?? -1,
       kind: node.type,
       start: node.start,
@@ -177,7 +188,8 @@ export class Tracer {
       evaluated: true,
       children: [],
       ...(node.type === 'Binary' || node.type === 'Unary' ? { operator: node.operator } : {}),
-    })
+    }
+    Object.defineProperty(trace, 'toJSON', this.toJSON)
     this.nodes.set(trace, node)
     return trace
   }
@@ -236,7 +248,11 @@ export class Tracer {
     const trace = this.create(lambda)
     this.recorded++
     call.iterations.push(
-      accumulator === undefined ? { index, item, trace } : { index, item, accumulator, trace },
+      Object.defineProperty(
+        accumulator === undefined ? { index, item, trace } : { index, item, accumulator, trace },
+        'toJSON',
+        this.toJSON,
+      ),
     )
     this.stack.push(trace)
     return trace
@@ -281,17 +297,15 @@ export class Tracer {
       }
       for (const child of trace.children) visit(child)
       if (trace.iterations !== undefined) {
-        trace.iterations = trace.iterations.map((iteration) => {
+        // Filled in place, so each record keeps its bounded toJSON.
+        for (const iteration of trace.iterations) {
           visit(iteration.trace)
           const body = iteration.trace.children[0]
-          if (body === undefined) return iteration
+          if (body === undefined) continue
           iteration.trace.value = body.value
-          if (body.error !== undefined) {
-            iteration.trace.error = body.error
-            return { ...iteration, error: body.error }
-          }
-          return { ...iteration, result: body.value }
-        })
+          if (body.error === undefined) iteration.result = body.value
+          else iteration.trace.error = iteration.error = body.error
+        }
       }
     }
     visit(this.root)
@@ -312,7 +326,7 @@ export function errorInfo(error: unknown): { code: ErrorCode; message: string } 
  * any error). With `exhaustive`, a false `&&` lists every false condition, not
  * just the first.
  */
-export function reasonsOf(root: Trace): Trace[] {
+export function reasonsOf(root: Trace, listings: Listings = new WeakMap()): Trace[] {
   const out: Trace[] = []
   const visit = (trace: Trace): void => {
     if (!trace.evaluated) return
@@ -341,7 +355,7 @@ export function reasonsOf(root: Trace): Trace[] {
   // Serialized together under one budget, so logging the reasons stays bounded.
   return Object.defineProperty(out, 'toJSON', {
     value: (): TraceJSON[] => {
-      const budget: SnapshotBudget = { left: SNAPSHOT_ENTRIES }
+      const budget: SnapshotBudget = { left: SNAPSHOT_ENTRIES, keys: listings }
       return out.map((trace) => snapshotTrace(trace, budget))
     },
   })
@@ -361,32 +375,55 @@ const SNAPSHOT_TEXT = 1000
  */
 export const SNAPSHOT_ENTRIES = 10_000
 
-export interface SnapshotBudget {
-  left: number
-  /**
-   * The keys of each map listed so far (null when listing failed), so a map
-   * recurring in the trace is listed once per snapshot, not once per node.
-   */
-  keys?: Map<object, readonly string[] | null>
+/** The first keys of a map a snapshot shows, and how many more it has. */
+interface Listing {
+  readonly keys: readonly string[]
+  readonly more: number
 }
 
+/** Each map's listing (null when listing failed), shared by one explanation's snapshots. */
+export type Listings = WeakMap<object, Listing | null>
+
+export interface SnapshotBudget {
+  left: number
+  /** The maps listed so far, so a map recurring in the trace is listed once. */
+  keys?: Listings
+}
+
+/** Keys looked at for enumerability, at most, while listing one map. */
+const LISTING_SCAN = SNAPSHOT_ITEMS * 4
+
 /**
- * The own enumerable keys of a map, listed once per budget. Listing is
- * charged one entry per {@link SNAPSHOT_ITEMS} keys, so many large maps run
- * the budget down instead of each being listed in full.
+ * The first {@link SNAPSHOT_ITEMS} own enumerable keys of a map, listed once
+ * per explanation. Listing asks the host for its keys once and is charged one
+ * entry per {@link SNAPSHOT_ITEMS} keys it returns, enumerable or not, so a map
+ * (or a Proxy) with many keys runs the budget down; only the keys shown are
+ * checked one by one.
  */
-function keysOf(value: object, budget: SnapshotBudget): readonly string[] | null {
-  budget.keys ??= new Map()
-  const known = budget.keys.get(value)
+function keysOf(value: object, budget: SnapshotBudget): Listing | null {
+  const listings = (budget.keys ??= new WeakMap())
+  const known = listings.get(value)
   if (known !== undefined) return known
-  let keys: readonly string[] | null = null
+  let listing: Listing | null = null
   try {
-    keys = Object.keys(value)
-    budget.left -= Math.floor(keys.length / SNAPSHOT_ITEMS)
+    const own = Reflect.ownKeys(value)
+    budget.left -= Math.floor(own.length / SNAPSHOT_ITEMS)
+    const keys: string[] = []
+    let i = 0
+    for (; i < own.length && i < LISTING_SCAN && keys.length < SNAPSHOT_ITEMS; i++) {
+      const key = own[i]
+      if (
+        typeof key === 'string' &&
+        Object.getOwnPropertyDescriptor(value, key)?.enumerable === true
+      )
+        keys.push(key)
+    }
+    // The keys not looked at (symbol keys included, which plain data does not have).
+    listing = { keys, more: own.length - i }
   } finally {
-    budget.keys.set(value, keys)
+    listings.set(value, listing)
   }
-  return keys
+  return listing
 }
 
 /**
@@ -440,18 +477,18 @@ export function snapshot(
         if (length > SNAPSHOT_ITEMS) items.push(`... ${length - SNAPSHOT_ITEMS} more`)
         return items
       }
-      const keys = keysOf(value, budget)
-      if (keys === null) return '[unreadable]'
+      const listing = keysOf(value, budget)
+      if (listing === null) return '[unreadable]'
       const out: Record<string, unknown> = {}
       // Defined, not assigned, so a key named __proto__ stays a key.
-      for (const key of keys.slice(0, SNAPSHOT_ITEMS))
+      for (const key of listing.keys)
         Object.defineProperty(out, key, {
           value: snapshot(ownData(value, key), budget, depth + 1, seen),
           enumerable: true,
           writable: true,
           configurable: true,
         })
-      if (keys.length > SNAPSHOT_ITEMS) out['...'] = `${keys.length - SNAPSHOT_ITEMS} more keys`
+      if (listing.more > 0) out['...'] = `${listing.more} more keys`
       return out
     } finally {
       seen.delete(value)
@@ -504,22 +541,25 @@ export function snapshotTrace(
     children: trace.children.map((child) => snapshotTrace(child, budget)),
     ...(trace.iterations === undefined
       ? {}
-      : {
-          iterations: trace.iterations.map((iteration) => ({
-            index: iteration.index,
-            item: snapshot(iteration.item, budget),
-            ...(iteration.accumulator === undefined
-              ? {}
-              : { accumulator: snapshot(iteration.accumulator, budget) }),
-            ...(iteration.error === undefined
-              ? { result: snapshot(iteration.result, budget) }
-              : { error: iteration.error }),
-            trace: snapshotTrace(iteration.trace, budget),
-          })),
-        }),
+      : { iterations: trace.iterations.map((iteration) => snapshotIteration(iteration, budget)) }),
     ...(trace.omittedIterations === undefined
       ? {}
       : { omittedIterations: trace.omittedIterations }),
+  }
+}
+
+/** One lambda run with every value replaced by its snapshot. */
+function snapshotIteration(iteration: Iteration, budget: SnapshotBudget): IterationJSON {
+  return {
+    index: iteration.index,
+    item: snapshot(iteration.item, budget),
+    ...(iteration.accumulator === undefined
+      ? {}
+      : { accumulator: snapshot(iteration.accumulator, budget) }),
+    ...(iteration.error === undefined
+      ? { result: snapshot(iteration.result, budget) }
+      : { error: iteration.error }),
+    trace: snapshotTrace(iteration.trace, budget),
   }
 }
 
@@ -536,7 +576,7 @@ const PREVIEW_ENTRIES = 200
  * a value recurring at many nodes costs one preview.
  */
 interface RenderBudget extends SnapshotBudget {
-  keys: Map<object, readonly string[] | null>
+  keys: Listings
   readonly previews: Map<object, string>
 }
 
@@ -581,10 +621,14 @@ function shownUnder(parent: Trace): (trace: Trace) => boolean {
 }
 
 /** Renders a trace as an indented tree. */
-export function renderTrace(root: Trace, truncated = false): string {
+export function renderTrace(
+  root: Trace,
+  truncated = false,
+  listings: Listings = new WeakMap(),
+): string {
   const lines: string[] = []
   // One budget for the whole rendering, however often a value recurs.
-  const render: RenderBudget = { left: SNAPSHOT_ENTRIES, keys: new Map(), previews: new Map() }
+  const render: RenderBudget = { left: SNAPSHOT_ENTRIES, keys: listings, previews: new Map() }
   const visit = (trace: Trace, lead: string, rest: string): void => {
     lines.push(`${lead}${oneLine(trace.text)}  → ${outcome(trace, render)}`)
     const children = trace.children.filter(shownUnder(trace))

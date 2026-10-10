@@ -165,15 +165,17 @@ describe('residuals of nested implicit lambdas', () => {
 })
 
 describe('host data failures during partial evaluation', () => {
+  // A known read that always happens fails as evaluation does: a decided HOST_ERROR.
+  const decidedCode = (result: { status: string; error?: { code: string } }): unknown =>
+    result.status === 'error' ? result.error?.code : result.status
+
   it('reports a throwing getter in the known data as HOST_ERROR', () => {
     const user = {
       get plan(): string {
         throw new Error('getter')
       },
     }
-    expect(() => bonsai().compile('user.plan == "pro"').partial({ user })).toThrow(
-      expect.objectContaining({ code: 'HOST_ERROR' }),
-    )
+    expect(decidedCode(bonsai().compile('user.plan == "pro"').partial({ user }))).toBe('HOST_ERROR')
   })
 
   it('reports a Proxy trap that throws while checking a listed path as HOST_ERROR', () => {
@@ -185,15 +187,20 @@ describe('host data failures during partial evaluation', () => {
         },
       },
     )
-    expect(() =>
-      bonsai()
-        .compile('cart.coupon == "VIP"')
-        .partial({ cart }, { unknown: ['cart.items.x'] }),
-    ).toThrow(expect.objectContaining({ code: 'HOST_ERROR' }))
+    expect(
+      decidedCode(
+        bonsai()
+          .compile('cart.coupon == "VIP"')
+          .partial({ cart }, { unknown: ['cart.items.x'] }),
+      ),
+    ).toBe('HOST_ERROR')
   })
 
   it('reports a throwing getter found by context validation as HOST_ERROR', () => {
-    const env = bonsai({ variables: { user: t.object({ plan: t.string() }) } })
+    const env = bonsai({
+      variables: { user: t.object({ plan: t.string() }) },
+      validateContext: true,
+    })
     const user = {
       get plan(): string {
         throw new Error('getter')

@@ -9,7 +9,7 @@ import {
   type FunctionDef,
   type Overload,
 } from '../functions/define.js'
-import { isOwn, raised } from '../runtime/attribution.js'
+import { forHost, isOwn, raised } from '../runtime/attribution.js'
 import type { State } from '../runtime/state.js'
 import { errorInfo, type Tracer } from '../runtime/trace.js'
 import {
@@ -889,7 +889,7 @@ function compileTree(
                   span,
                 )
           // Nothing waits on that promise: tell the host function to stop its work.
-          controller?.abort(error)
+          controller?.abort(forHost(error))
           throw error
         }
         return result
@@ -1100,7 +1100,7 @@ function raceLimits(
     // A limit ended the wait: reject, and tell the host function to stop.
     const fail = (error: Error): void => {
       reject(error)
-      controller?.abort(error)
+      controller?.abort(forHost(error))
     }
     // An abort event (or a signal that fails) ends the wait even if the signal
     // does not read as aborted afterwards.

@@ -90,6 +90,15 @@ const foreign: Record<string, () => BonsaiError> = {
   builtLimit: () => new BonsaiLimitError('STEP_LIMIT', 'built by the host'),
 }
 
+/**
+ * A partial result's decided error, thrown as evaluation throws it: a known
+ * read that always happens fails as a decided error, not a thrown one.
+ */
+function decided<T extends { readonly status: string }>(result: T): T {
+  if (result.status === 'error' && 'error' in result) throw result.error
+  return result
+}
+
 const variables = { lazy: t.number(), x: t.number() }
 const plain = bonsai({ variables })
 const validated = bonsai({ variables, validateContext: true })
@@ -101,8 +110,8 @@ describe('a Bonsai error from host data is the host data failing', () => {
         evaluateSync: (ctx) => plain.evaluateSync('lazy + 1', ctx),
         'validated evaluateSync': (ctx) => validated.evaluateSync('lazy + 1', ctx),
         explainSync: (ctx) => plain.explainSync('lazy + 1', ctx),
-        partial: (ctx) => plain.compile('lazy + x').partial(ctx),
-        'validated partial': (ctx) => validated.compile('lazy + x').partial(ctx),
+        partial: (ctx) => decided(plain.compile('lazy + x').partial(ctx)),
+        'validated partial': (ctx) => decided(validated.compile('lazy + x').partial(ctx)),
       }
       for (const [entry, run] of Object.entries(entries)) {
         let thrown: BonsaiError | undefined
@@ -217,7 +226,7 @@ describe('host data that throws a Bonsai error, at random', () => {
     (env, source, ctx) => caught(() => env.explainSync(source, ctx)),
     (env, source, ctx) => caughtAsync(() => env.explain(source, ctx)),
     (env, source, ctx) => caught(() => env.explainSync(source, ctx, { exhaustive: true })),
-    (env, source, ctx) => caught(() => env.compile(source).partial(ctx)),
+    (env, source, ctx) => caught(() => decided(env.compile(source).partial(ctx))),
     (env, source, ctx) => {
       const result = env.compile(source).partial({ x: 1 }, { unknown: ['lazy'] })
       if (result.status !== 'residual') throw new Error('expected a residual')

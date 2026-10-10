@@ -33,7 +33,7 @@ describe('rendering an explanation is bounded by the trace', () => {
   const refs = 400
   const source = `[${Array.from({ length: refs }, () => 'w').join(', ')}].length > 0`
 
-  it('lists a recurring map once per rendering, however many nodes show it', () => {
+  it('lists a recurring map once per explanation, however many nodes show it', () => {
     const w = wideMap(5000)
     const explanation = bonsai().explainSync(source, { w: w.value })
     expect(explanation.ok).toBe(true)
@@ -42,8 +42,9 @@ describe('rendering an explanation is bounded by the trace', () => {
     expect(w.listings() - before).toBe(1)
     // Every node still shows the map's preview.
     expect(text.split('"k0":0').length - 1).toBeGreaterThanOrEqual(refs)
+    // Serializing the same explanation again reuses that listing.
     const json = JSON.stringify(explanation)
-    expect(w.listings() - before).toBe(2)
+    expect(w.listings() - before).toBe(1)
     expect(json.length).toBeLessThan(2_000_000)
   })
 
