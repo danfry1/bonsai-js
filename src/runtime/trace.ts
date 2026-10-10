@@ -1,4 +1,4 @@
-import { BonsaiError, type ErrorCode } from '../errors.js'
+import { BonsaiError, type BonsaiErrorJSON, type ErrorCode } from '../errors.js'
 import { forEachChild, type BinaryOperator, type Node, type UnaryOperator } from '../syntax/ast.js'
 import { durationText, isMap, isValidDuration } from './values.js'
 
@@ -59,6 +59,26 @@ export interface Iteration {
   readonly error?: { readonly code: ErrorCode; readonly message: string }
   /** The lambda body's trace for this item. */
   readonly trace: Trace
+}
+
+/** A {@link Trace} as JSON: values are bounded, JSON-safe copies. */
+export interface TraceJSON extends Omit<Trace, 'children' | 'iterations'> {
+  readonly children: readonly TraceJSON[]
+  readonly iterations?: readonly IterationJSON[]
+}
+
+/** An {@link Iteration} as JSON, inside a {@link TraceJSON}. */
+export interface IterationJSON extends Omit<Iteration, 'trace'> {
+  readonly trace: TraceJSON
+}
+
+/** The JSON form of an explanation (`explanation.toJSON()`, used by `JSON.stringify`). */
+export type ExplanationJSON = (
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly error: BonsaiErrorJSON }
+) & {
+  readonly truncated: boolean
+  readonly trace: TraceJSON
 }
 
 export const DEFAULT_MAX_ITERATIONS = 20
@@ -419,7 +439,7 @@ function ownData(object: object, key: string): unknown {
 export function snapshotTrace(
   trace: Trace,
   budget: SnapshotBudget = { left: SNAPSHOT_ENTRIES },
-): unknown {
+): TraceJSON {
   return {
     id: trace.id,
     kind: trace.kind,

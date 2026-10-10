@@ -46,6 +46,7 @@ import {
   renderTrace,
   snapshot,
   snapshotTrace,
+  type ExplanationJSON,
   type Trace,
 } from './runtime/trace.js'
 import { forEachChild, type CallNode, type Node } from './syntax/ast.js'
@@ -454,7 +455,7 @@ export type Explanation<R = unknown> = (
    * A JSON-safe snapshot: values are bounded copies (cycles, bigints, dates,
    * and durations handled) and getters are never run. `JSON.stringify` uses it.
    */
-  toJSON: () => unknown
+  toJSON: () => ExplanationJSON
 }
 
 export interface CompileOptions<E extends Type = Type> {
@@ -506,30 +507,40 @@ export interface Environment<Ctx = any> {
   /**
    * Compiles (cached) and partially evaluates; see Program.partial. Throws for
    * syntax, check, and limit errors, and a TypeError or RangeError for invalid options.
+   * `R` is an unchecked type assertion, as for evaluate().
    */
   partial: <R = unknown>(
     source: string,
     known: PartialData<Ctx> & object,
     options?: PartialOptions,
   ) => PartialResult<R, Ctx>
-  /** Compiles (cached) and evaluates asynchronously. */
+  /**
+   * Compiles (cached) and evaluates asynchronously. `R` is an unchecked type
+   * assertion on the result, like a cast; for a checked result type, use
+   * `compile(source, { expect })` and evaluate the program.
+   */
   evaluate: <R = unknown>(source: string, ...args: Args<Ctx>) => Promise<R>
-  /** Compiles (cached) and evaluates synchronously. */
+  /**
+   * Compiles (cached) and evaluates synchronously. `R` is an unchecked type
+   * assertion, as for evaluate().
+   */
   evaluateSync: <R = unknown>(source: string, ...args: Args<Ctx>) => R
   /**
    * Compiles (cached) and explains; see Program.explain. Rejects for syntax and
    * check errors and parse limits, and with a TypeError or RangeError for invalid options.
+   * `R` is an unchecked type assertion, as for evaluate().
    */
   explain: <R = unknown>(source: string, ...args: ExplainArgs<Ctx>) => Promise<Explanation<R>>
   /**
    * Compiles (cached) and explains synchronously. Throws for syntax and check
    * errors and parse limits, and a TypeError or RangeError for invalid options.
+   * `R` is an unchecked type assertion, as for evaluate().
    */
   explainSync: <R = unknown>(source: string, ...args: ExplainArgs<Ctx>) => Explanation<R>
   /** Looks up a function (host or built-in). */
   describeFunction: (name: string) => FunctionInfo | undefined
   /** Every callable function, host functions first. */
-  listFunctions: () => FunctionInfo[]
+  listFunctions: () => readonly FunctionInfo[]
   /**
    * A new environment with more variables, functions, or libraries. A
    * variable or function declared again replaces the earlier one.
@@ -1560,17 +1571,13 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         truncated,
         reasons: () => reasonsOf(trace),
         toString: () => renderTrace(trace, truncated),
-        toJSON: () => {
+        toJSON: (): ExplanationJSON => {
           // One budget for the whole snapshot, however often a value recurs in the trace.
           const budget = { left: SNAPSHOT_ENTRIES }
-          return {
-            ok: outcome.ok,
-            ...(outcome.ok
-              ? { value: snapshot(outcome.value, budget) }
-              : { error: outcome.error.toJSON() }),
-            truncated,
-            trace: snapshotTrace(trace, budget),
-          }
+          const result = outcome.ok
+            ? { ok: true as const, value: snapshot(outcome.value, budget) }
+            : { ok: false as const, error: outcome.error.toJSON() }
+          return { ...result, truncated, trace: snapshotTrace(trace, budget) }
         },
       })
     }

@@ -61,6 +61,7 @@ export default defineConfig({
           { text: 'Performance', link: '/guide/performance' },
           { text: 'Editor Support', link: '/guide/editor-support' },
           { text: 'Migrating from 0.x', link: '/guide/migrating' },
+          { text: 'Stability Policy', link: '/guide/stability' },
         ],
       },
       {

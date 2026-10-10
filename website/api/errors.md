@@ -39,7 +39,7 @@ try {
 
 ## JSON form
 
-`JSON.stringify(error)` gives the same shape wherever an error is serialized: thrown, in an explanation's JSON, or in a partial result. It holds `name`, `code`, `message`, and, when known, `span` and `position`; a limit error adds `limit`, and a check error adds `diagnostics`. The source text and the `cause` are left out (the cause can be any value your host code threw), so store the source alongside the error if you need it. The `BonsaiErrorJSON` type describes the shape.
+`JSON.stringify(error)` gives the same shape wherever an error is serialized: thrown, in an explanation's JSON, or in a partial result. It holds `name` (the class name, such as `BonsaiRuntimeError`; each class sets it as a literal, so a minified bundle keeps it), `code`, `message`, and, when known, `span` and `position`; a limit error adds `limit`, and a check error adds `diagnostics`. The source text and the `cause` are left out (the cause can be any value your host code threw), so store the source alongside the error if you need it. The `BonsaiErrorJSON` type describes the shape.
 
 <!-- continue -->
 ```ts
@@ -62,7 +62,7 @@ The error classes are for `instanceof` checks and reading fields. Their construc
 | `BonsaiSyntaxError` | `SYNTAX` | The text is not valid Bonsai. |
 | `BonsaiCheckError` | `CHECK` | Static checking failed; see `.diagnostics`. |
 | `BonsaiLimitError` | `SOURCE_TOO_LONG` | The source exceeds `maxSourceLength`. |
-| | `TOO_DEEP` | The syntax nests deeper than `maxDepth`. |
+| | `TOO_DEEP` | The syntax nests deeper than `maxDepth`, or the expression or a value nests too deeply for the call stack. |
 | | `TOO_MANY_NODES` | The syntax tree exceeds `maxNodes`. |
 | | `TOO_COMPLEX` | Checking the expression would take too long (its types grow too large), even within the parse limits. |
 | | `STEP_LIMIT` | Evaluation exceeded the step budget. |
@@ -87,7 +87,7 @@ The error classes are for `instanceof` checks and reading fields. Their construc
 
 `try(expr, fallback)` in an expression catches `BonsaiRuntimeError`s except `HOST_CONTRACT`, which is a bug in host code rather than a condition an expression should recover from. It never catches syntax, check, or limit errors.
 
-A `BonsaiLimitError` also names the option that bounds it in `limit`, so you can tell which one to raise: `'maxSourceLength'`, `'maxDepth'`, `'maxNodes'`, `'maxSteps'`, `'maxStringLength'`, `'maxListLength'`, `'maxValueDepth'`, `'maxPatternLength'`, `'timeout'`, or `'signal'` (for `ABORTED`). It is `undefined` for a fixed internal bound: `TOO_COMPLEX`, and `TOO_DEEP` from template nesting. The `LimitName` type lists the values; like codes, values may be added in a minor release.
+A `BonsaiLimitError` also names the option that bounds it in `limit`, so you can tell which one to raise: `'maxSourceLength'`, `'maxDepth'`, `'maxNodes'`, `'maxSteps'`, `'maxStringLength'`, `'maxListLength'`, `'maxValueDepth'`, `'maxPatternLength'`, `'timeout'`, or `'signal'` (for `ABORTED`). It is `undefined` when no option raises the bound: `TOO_COMPLEX`, `TOO_DEEP` from template nesting, and `TOO_DEEP` from a call stack overflow (raising `maxDepth` cannot help there; make the expression or the data shallower). The `LimitName` type lists the values; like codes, values may be added in a minor release.
 
 <!-- continue -->
 ```ts

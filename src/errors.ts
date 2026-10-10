@@ -98,7 +98,7 @@ const LOW_SURROGATE = /^[\uDC00-\uDFFF]$/u
  * the error if you store it.
  */
 export interface BonsaiErrorJSON {
-  readonly name: string
+  readonly name: BonsaiErrorName
   readonly code: ErrorCode
   readonly message: string
   readonly span?: Span
@@ -122,15 +122,29 @@ export interface ErrorInit {
   readonly cause?: unknown
 }
 
+/**
+ * The `name` of every Bonsai error class. Each class sets its name as a
+ * literal, so a minified bundle keeps it.
+ */
+export type BonsaiErrorName =
+  | 'BonsaiError'
+  | 'BonsaiSyntaxError'
+  | 'BonsaiLimitError'
+  | 'BonsaiRuntimeError'
+  | 'BonsaiCheckError'
+  | 'BonsaiTranslationError'
+
 /** Base class of every error Bonsai throws. */
 export class BonsaiError extends Error {
+  declare name: BonsaiErrorName
   readonly code: ErrorCode
   readonly source: string | undefined
   readonly span: Span | undefined
 
+  /** @internal Bonsai errors are thrown by the library; constructing them is not public API. */
   constructor(code: ErrorCode, message: string, init: ErrorInit = {}) {
     super(message, init.cause === undefined ? undefined : { cause: init.cause })
-    this.name = new.target.name
+    this.name = 'BonsaiError'
     this.code = code
     this.source = init.source
     this.span = init.span
@@ -164,8 +178,10 @@ export class BonsaiError extends Error {
 
 /** The expression text is not valid Bonsai syntax. */
 export class BonsaiSyntaxError extends BonsaiError {
+  /** @internal */
   constructor(message: string, init: ErrorInit = {}) {
     super('SYNTAX', message, init)
+    this.name = 'BonsaiSyntaxError'
   }
 }
 
@@ -206,12 +222,14 @@ export class BonsaiLimitError extends BonsaiError {
    */
   readonly limit: LimitName | undefined
 
+  /** @internal */
   constructor(
     code: ErrorCode,
     message: string,
     init: ErrorInit & { readonly limit?: LimitName | null } = {},
   ) {
     super(code, message, init)
+    this.name = 'BonsaiLimitError'
     // `null` marks a bound that is not configurable even though the code usually is.
     this.limit = init.limit === null ? undefined : (init.limit ?? LIMIT_OF[code])
   }
@@ -222,7 +240,13 @@ export class BonsaiLimitError extends BonsaiError {
 }
 
 /** Evaluation failed: a type mismatch, invalid argument, or host failure. */
-export class BonsaiRuntimeError extends BonsaiError {}
+export class BonsaiRuntimeError extends BonsaiError {
+  /** @internal */
+  constructor(code: ErrorCode, message: string, init: ErrorInit = {}) {
+    super(code, message, init)
+    this.name = 'BonsaiRuntimeError'
+  }
+}
 
 /** One static-checking finding. */
 export interface Diagnostic {
@@ -347,6 +371,7 @@ export type DiagnosticCode =
 export class BonsaiCheckError extends BonsaiError {
   readonly diagnostics: readonly Diagnostic[]
 
+  /** @internal */
   constructor(source: string, diagnostics: readonly Diagnostic[] | readonly Finding[]) {
     const first = diagnostics[0]
     const more = diagnostics.length > 1 ? ` (and ${diagnostics.length - 1} more)` : ''
@@ -354,6 +379,7 @@ export class BonsaiCheckError extends BonsaiError {
       source,
       span: first === undefined ? undefined : { start: first.start, end: first.end },
     })
+    this.name = 'BonsaiCheckError'
     this.diagnostics = locate(source, diagnostics)
   }
 
@@ -367,7 +393,8 @@ export class BonsaiCheckError extends BonsaiError {
  * the package (where `instanceof` fails).
  */
 export function isBonsaiError(value: unknown): value is BonsaiError {
-  if (value instanceof BonsaiError) return true
+  // The brand alone, not instanceof, so importing only this function does not
+  // bundle the error classes and their code-frame formatting.
   if (typeof value !== 'object' || value === null) return false
   try {
     return (value as Record<symbol, unknown>)[BRAND] === true

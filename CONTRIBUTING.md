@@ -154,6 +154,6 @@ docs/language.md        # The language reference
 
 ## Stability Policy
 
-See [docs/stability-policy.md](./docs/stability-policy.md) for what is public
+See [the stability policy](./website/guide/stability.md) for what is public
 API and what may change in minor releases. Any change to the language must
 update [docs/language.md](./docs/language.md) and `tests/conformance.test.ts`.

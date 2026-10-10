@@ -72,7 +72,7 @@ describe('parse() without an environment', () => {
       expect.objectContaining({ code: 'TOO_DEEP', limit: 'maxDepth' }),
     )
     expect(() => parse('1 +')).toThrow(expect.objectContaining({ code: 'SYNTAX' }))
-    expect(() => parse('1', { maxSteps: 1 } as never)).toThrow(TypeError)
+    expect(() => parse('1', { maxDept: 1 } as never)).toThrow(TypeError)
     expect(() => parse('1', { maxNodes: 0 })).toThrow(RangeError)
     expect(() => parse(1 as never)).toThrow(TypeError)
   })
