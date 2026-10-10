@@ -115,16 +115,14 @@ describe('partial residuals of call: true host functions', () => {
     },
   })
 
-  it('see the known part of a variable under the part the caller passes', () => {
+  it('read the full context the caller passes', () => {
     const program = env.compile('age() + (user.plan == "pro" ? 100 : 0)')
     const result = program.partial({ user: { age: 30 } })
     expect(result.status).toBe('residual')
     if (result.status !== 'residual') return
     expect(result.readsContext).toBe(true)
-    expect(result.evaluateSync({ user: { plan: 'pro' } })).toBe(130)
+    expect(result.evaluateSync({ user: { age: 30, plan: 'pro' } })).toBe(130)
     expect(program.evaluateSync({ user: { age: 30, plan: 'pro' } })).toBe(130)
-    // The caller's values win.
-    expect(result.evaluateSync({ user: { plan: 'pro', age: 1 } })).toBe(101)
   })
 
   it('report readsContext false when no call: true function remains', () => {
@@ -132,22 +130,22 @@ describe('partial residuals of call: true host functions', () => {
     expect(result.status === 'residual' && result.readsContext).toBe(false)
   })
 
-  it('charge the overlay of a large context against the step budget', () => {
+  it('do not walk a large context', () => {
     const result = env.compile('age() + n').partial({ user: { age: 1 } })
     expect(result.status).toBe('residual')
     if (result.status !== 'residual') return
-    const context: Record<string, number> = { n: 1 }
+    const context: Record<string, unknown> = { n: 1, user: { age: 1 } }
     for (let i = 0; i < 100_000; i++) context[`k${i}`] = i
-    expect(() => result.evaluateSync(context, { maxSteps: 100 })).toThrow(
-      expect.objectContaining({ code: 'STEP_LIMIT' }),
-    )
-    expect(result.evaluateSync(context)).toBe(2)
+    expect(result.evaluateSync(context, { maxSteps: 100 })).toBe(2)
   })
 
   it('keep a __proto__ key of the caller as a key', () => {
     const result = env.compile('age() + n').partial({ user: { age: 1 } })
     if (result.status !== 'residual') throw new Error('expected a residual')
-    const context = JSON.parse('{"n": 1, "__proto__": {"x": 1}}') as Record<string, unknown>
+    const context = JSON.parse('{"n": 1, "user": {"age": 1}, "__proto__": {"x": 1}}') as Record<
+      string,
+      unknown
+    >
     expect(result.evaluateSync(context)).toBe(2)
   })
 })

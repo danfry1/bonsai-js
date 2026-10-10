@@ -121,14 +121,20 @@ describe('call: true host functions in a residual', () => {
     },
   })
 
-  it('see the known data overlaid with the context given to the residual', () => {
+  it('see the full context given to the residual, which must hold the known data', () => {
     const program = env.compile('hasRole("admin") && order.total > 100')
     const result = program.partial({ roles: ['admin'] })
     if (result.status !== 'residual') throw new Error('expected a residual')
-    expect(result.evaluateSync({ order: { total: 150 } })).toBe(true)
-    expect(result.explainSync({ order: { total: 150 } })).toMatchObject({ ok: true, value: true })
-    // The caller's keys win over known ones.
+    expect(result.readsContext).toBe(true)
+    const full = { roles: ['admin'], order: { total: 150 } }
+    expect(result.evaluateSync(full)).toBe(true)
+    expect(result.explainSync(full)).toMatchObject({ ok: true, value: true })
+    // The function reads the context as given.
     expect(result.evaluateSync({ roles: [], order: { total: 150 } })).toBe(false)
+    // A context without the known data would be answered wrongly, so it is an error.
+    expect(() => result.evaluateSync({ order: { total: 150 } })).toThrow(
+      expect.objectContaining({ code: 'INVALID_CONTEXT' }),
+    )
   })
 })
 

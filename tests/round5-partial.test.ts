@@ -45,10 +45,10 @@ function heapAfterGc(): number {
   return process.memoryUsage().heapUsed
 }
 
-describe('the known data call: true residuals see', () => {
+describe('call: true residuals see the context they are given', () => {
   const env = bonsai({ functions: { cv } })
 
-  it('leaves out the paths listed as unknown', () => {
+  it('read paths listed as unknown from the given context only', () => {
     const program = env.compile('cv("user.score") ?? "absent"')
     const known = { user: { name: 'x', score: 'STALE' } }
     const data = { user: { name: 'x' } }
@@ -56,64 +56,49 @@ describe('the known data call: true residuals see', () => {
     const listed = program.partial(known, { unknown: ['user.score'] })
     expect(listed.status).toBe('residual')
     if (listed.status === 'residual') expect(listed.evaluateSync(data)).toBe('absent')
+    // A variable listed whole is not required.
     const whole = program.partial(known, { unknown: ['user'] })
     if (whole.status === 'residual') {
       expect(whole.evaluateSync(data)).toBe('absent')
       expect(whole.evaluateSync({})).toBe('absent')
     }
-    // The expression's own read and the host function agree.
     const both = env.compile('[user.score ?? "absent", cv("user.score") ?? "absent"]')
     const residual = both.partial(known, { unknown: ['user.score'] })
     if (residual.status === 'residual')
       expect(residual.evaluateSync(data)).toEqual(['absent', 'absent'])
   })
 
-  it('keeps a path listed as unknown out only where it is listed', () => {
+  it('require every variable known to partial()', () => {
     const shared = { x: 'kept', y: 1 }
-    const program = env.compile('[cv("a.x"), cv("b.x"), n]')
-    const result = program.partial({ a: shared, b: shared }, { unknown: ['a.x', 'n'] })
+    const result = env.compile('[cv("a.x"), cv("b.x"), n]').partial(
+      { a: shared, b: shared },
+      {
+        unknown: ['a.x', 'n'],
+      },
+    )
     expect(result.status).toBe('residual')
-    if (result.status === 'residual')
-      expect(result.evaluateSync({ a: { x: 'new' }, n: 1 })).toEqual(['new', 'kept', 1])
+    if (result.status !== 'residual') return
+    expect(outcome(() => result.evaluateSync({ a: { x: 'new' }, n: 1 }))).toEqual({
+      code: 'INVALID_CONTEXT',
+    })
+    expect(result.evaluateSync({ a: { x: 'new' }, b: shared, n: 1 })).toEqual(['new', 'kept', 1])
   })
 
-  it('merges a pair the same way however deep it is first reached', () => {
-    const deep = bonsai({ functions: { cv }, limits: { maxValueDepth: 4 } })
-    const shallowKnown = { k: { m: 1 } }
-    const shallowGiven = { k: { n: 2 } }
-    const program = deep.compile('cv("u.z.k.m") ?? n')
-    const result = program.partial({ u: { a: { b: { c: shallowKnown } }, z: shallowKnown } })
-    expect(result.status).toBe('residual')
-    if (result.status === 'residual') {
-      const given = { u: { a: { b: { c: shallowGiven } }, z: shallowGiven }, n: 0 }
-      expect(result.evaluateSync(given)).toBe(1)
-    }
-  })
-
-  it('never cuts known data short at maxValueDepth', () => {
+  it('see deep and cyclic data as it is', () => {
     const nest = (leaf: object, levels: number): object => {
       let value = leaf
       for (let i = 0; i < levels; i++) value = { d: value }
       return value
     }
-    const levels = 70
-    const program = env.compile(`cv("u${'.d'.repeat(levels)}.k.m") ?? n`)
-    const result = program.partial({ u: nest({ k: { m: 1 } }, levels) })
-    expect(result.status).toBe('residual')
+    const deep = env.compile(`cv("u${'.d'.repeat(70)}.k.m") ?? n`)
+    const result = deep.partial({ u: nest({ k: { m: 1 } }, 70) })
     if (result.status === 'residual')
-      expect(result.evaluateSync({ u: nest({ k: { n: 2 } }, levels), n: 0 })).toBe(1)
-  })
-
-  it('gives a cycle back into a pair the merged copy', () => {
-    const knownCycle: Record<string, unknown> = { x: 1 }
-    knownCycle.self = knownCycle
-    const givenCycle: Record<string, unknown> = { y: 2 }
-    givenCycle.self = givenCycle
-    const program = env.compile('[cv("u.self.x"), cv("u.self.self.y"), n]')
-    const result = program.partial({ u: knownCycle })
-    expect(result.status).toBe('residual')
-    if (result.status === 'residual')
-      expect(result.evaluateSync({ u: givenCycle, n: 0 })).toEqual([1, 2, 0])
+      expect(result.evaluateSync({ u: nest({ k: { m: 1 } }, 70), n: 0 })).toBe(1)
+    const cycle: Record<string, unknown> = { x: 1 }
+    cycle.self = cycle
+    const cyclic = env.compile('[cv("u.self.x"), n]').partial({ u: cycle })
+    if (cyclic.status === 'residual')
+      expect(cyclic.evaluateSync({ u: cycle, n: 0 })).toEqual([1, 0])
   })
 })
 
@@ -143,48 +128,38 @@ describe('a residual validates the context it runs on', () => {
     expect(result.explainSync({ user: { id: 'abc' } }).ok).toBe(true)
   })
 
-  it('still rejects a context whose values do not match their types', () => {
+  it('rejects a value it reads that does not match its type', () => {
     if (result.status !== 'residual') return
     // Data from outside, which the types cannot vouch for.
     const wrongId: unknown = { user: { id: 1 } }
-    const wrongTier: unknown = { user: { id: 'a' }, org: { tier: 1 } }
     expect(outcome(() => result.evaluateSync(wrongId as never))).toEqual({
       code: 'INVALID_CONTEXT',
     })
     expect(outcome(() => result.evaluateSync({}))).toEqual({ code: 'INVALID_CONTEXT' })
-    // A given value replaces the known one, and is validated.
-    expect(outcome(() => result.evaluateSync(wrongTier as never))).toEqual({
-      code: 'INVALID_CONTEXT',
-    })
   })
 })
 
-describe('a residual keeps the known data as partial() read it', () => {
-  it('does not see later changes to the known objects', () => {
+describe('a residual shares its bindings with the known data', () => {
+  it('binds the values partial() read, not copies', () => {
     const env = bonsai()
-    const org = { minAge: 18, blocked: ['XX'] }
-    const program = env.compile('user.age >= org.minAge && user.country not in org.blocked')
-    const result = program.partial({ org })
+    class Sku {
+      readonly code: string
+      constructor(code: string) {
+        this.code = code
+      }
+    }
+    const blocked = [new Sku('XX')]
+    const program = env.compile('user.age >= 18 && user.country not in org.blocked')
+    const result = program.partial({ org: { blocked } })
     expect(result.status).toBe('residual')
     if (result.status !== 'residual') return
-    org.minAge = 21
-    org.blocked.length = 0
-    expect(result.evaluateSync({ user: { age: 19, country: 'XX' } })).toBe(false)
-    expect(result.evaluateSync({ user: { age: 19, country: 'YY' } })).toBe(true)
     const bound = Object.values(result.bindings)
-    expect(bound).toEqual([['XX']])
-    expect(Object.isFrozen(bound[0])).toBe(true)
+    expect(bound[0]).toBe(blocked)
+    expect(Object.isFrozen(blocked)).toBe(false)
+    expect(Object.isFrozen(result.bindings)).toBe(true)
   })
 
-  it('copies the known data call: true functions see', () => {
-    const env = bonsai({ functions: { cv } })
-    const known = { cfg: { mode: 'a' } }
-    const result = env.compile('cv("cfg.mode") + n').partial(known)
-    known.cfg.mode = 'b'
-    if (result.status === 'residual') expect(result.evaluateSync({ n: '!' })).toBe('a!')
-  })
-
-  it('keeps data it cannot copy, failing where evaluation reads it', () => {
+  it('keeps data that throws when read, failing where evaluation reads it', () => {
     const env = bonsai()
     const throwing = {
       get x(): number {
@@ -297,7 +272,7 @@ describe('call: true residuals differential property', () => {
       ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, deepCopy(v)]))
       : value
 
-  it('agrees with evaluation of the full context, given all of it or only what is unknown', () => {
+  it('agrees with evaluation of the full context, and rejects one missing known data', () => {
     fc.assert(
       fc.property(scenario, (s) => {
         const shared = { ...s.shared }
@@ -332,14 +307,20 @@ describe('call: true residuals differential property', () => {
           ? program.partial(known, { unknown: [...listed, 'n'] })
           : program.partial(known)
         if (result.status !== 'residual') return result.status === 'value' && false
-        // The whole context, and only the unknown part of it.
+        // The whole context; and only the unknown part of it, which lacks the
+        // known data a call: true function would read.
         const minimal: Record<string, unknown> = { n: s.n }
         for (const path of listed) {
           const value = at(full, path)
           if (value !== null) setAt(minimal, path, value)
         }
         expect(result.evaluateSync(full)).toEqual(expected)
-        expect(result.evaluateSync(minimal)).toEqual(expected)
+        const lacking = Object.keys(known).some(
+          (name) => !listed.includes(name) && !Object.hasOwn(minimal, name),
+        )
+        if (lacking)
+          expect(outcome(() => result.evaluateSync(minimal))).toEqual({ code: 'INVALID_CONTEXT' })
+        else expect(result.evaluateSync(minimal)).toEqual(expected)
         return true
       }),
       { numRuns: 1500, seed: 5 },

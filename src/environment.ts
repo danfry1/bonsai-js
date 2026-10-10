@@ -20,7 +20,6 @@ import {
   type ValidationBudget,
 } from './functions/define.js'
 import {
-  definePut,
   partiallyEvaluate,
   residualTexts,
   RESIDUAL_CHARS_PER_STEP,
@@ -36,7 +35,7 @@ import {
   type RuntimeLimits,
 } from './runtime/state.js'
 import { recordDeclared } from './declared.js'
-import { errorText, isMap } from './runtime/values.js'
+import { errorText, isMap, keyListCost } from './runtime/values.js'
 import {
   DEFAULT_MAX_ITERATIONS,
   DEFAULT_MAX_TRACE_NODES,
@@ -50,7 +49,7 @@ import {
   type Trace,
 } from './runtime/trace.js'
 import { forEachChild, type CallNode, type Node } from './syntax/ast.js'
-import { isName } from './syntax/lexer.js'
+import { BLOCKED_NAMES, isName } from './syntax/lexer.js'
 import { DEFAULT_PARSE_LIMITS, MAX_DEPTH_LIMIT, parse, type ParseLimits } from './syntax/parser.js'
 import {
   formatType,
@@ -410,7 +409,7 @@ export interface Program<Ctx = any, R = unknown> {
    * syntax tree) that needs only the unknown data. Evaluating the residual with
    * the full data gives the same result as evaluating this program.
    */
-  partial: (known: PartialData<Ctx> & object, options?: PartialOptions) => PartialResult<R, Ctx>
+  partial: (known: PartialData<Ctx> & object, options?: PartialOptions) => PartialResult<Ctx, R>
 }
 
 export interface ExplainOptions extends EvaluateOptions {
@@ -513,7 +512,7 @@ export interface Environment<Ctx = any> {
     source: string,
     known: PartialData<Ctx> & object,
     options?: PartialOptions,
-  ) => PartialResult<R, Ctx>
+  ) => PartialResult<Ctx, R>
   /**
    * Compiles (cached) and evaluates asynchronously. `R` is an unchecked type
    * assertion on the result, like a cast; for a checked result type, use
@@ -587,89 +586,6 @@ const DEFAULT_CACHE_SIZE = 256
 
 /** Subtrees compiled for partial evaluation, in nodes, kept per program: this times its own. */
 const SUBTREE_CACHE_FACTOR = 2
-
-/** A plain data object, which an overlay may copy without losing a prototype. */
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null) return false
-  const proto: unknown = Object.getPrototypeOf(value)
-  return proto === Object.prototype || proto === null
-}
-
-/**
- * One pair of objects an overlay merges: a known object, the given object at
- * its place, and their merged copy, with the keys it adds or replaces.
- */
-type OverlayPair = readonly [
-  mine: Readonly<Record<string, unknown>>,
-  theirs: Record<string, unknown>,
-  out: Record<string, unknown>,
-  /** Known values the given object lacks, and merged copies of plain objects both hold. */
-  put: [string, unknown][],
-]
-
-/**
- * The known data of a partial evaluation overlaid at every depth with the
- * context a residual is given (the given values win): `given` itself when it
- * already has every known value, otherwise a frozen copy with the rest added.
- * Plain objects on both sides are merged; anything else given replaces the
- * known value whole. Each pair of objects is merged once, wherever it is
- * reached, and a reference back into a pair (a cycle) gets that pair's merged
- * copy, so the result is the same at every depth. The work runs in a loop, so
- * deep data costs no call stack and is never cut short, and every own key
- * looked at or copied costs a step (charging checks the deadline), so the
- * overlay is bounded like evaluation.
- */
-function overlayKnown(
-  known: Readonly<Record<string, unknown>>,
-  given: Record<string, unknown>,
-  state: State,
-): Record<string, unknown> {
-  const pairs = new Map<object, Map<object, OverlayPair>>()
-  const all: OverlayPair[] = []
-  let adds = false
-  const pairOf = (
-    mine: Readonly<Record<string, unknown>>,
-    theirs: Record<string, unknown>,
-  ): OverlayPair => {
-    let byGiven = pairs.get(mine)
-    if (byGiven === undefined) pairs.set(mine, (byGiven = new Map()))
-    let pair = byGiven.get(theirs)
-    if (pair === undefined) {
-      state.charge(1)
-      // Each copy exists before any is filled, so a cycle refers to the copy.
-      pair = [mine, theirs, {}, []]
-      byGiven.set(theirs, pair)
-      all.push(pair)
-    }
-    return pair
-  }
-  const root = pairOf(known, given)
-  // Every pair reached, and what each adds (the loop also visits pairs found during it).
-  for (const [mine, theirs, , put] of all) {
-    const names = Object.keys(mine)
-    state.charge(names.length)
-    for (const name of names) {
-      const value = mine[name]
-      if (value === undefined) continue
-      const other = Object.hasOwn(theirs, name) ? theirs[name] : undefined
-      if (other === undefined) {
-        put.push([name, value])
-        adds = true
-      } else if (isPlainObject(value) && isPlainObject(other)) {
-        put.push([name, pairOf(value, other)[2]])
-      }
-    }
-  }
-  if (!adds) return given
-  for (const [, theirs, out, put] of all) {
-    const own = Object.keys(theirs)
-    state.charge(own.length + put.length)
-    for (const name of own) definePut(out, name, theirs[name])
-    for (const [name, value] of put) definePut(out, name, value)
-    Object.freeze(out)
-  }
-  return root[2]
-}
 
 interface Settings {
   readonly variables: Readonly<Record<string, Type>> | undefined
@@ -1123,13 +1039,14 @@ function deepFreeze<T>(root: T): T {
   return root
 }
 
-function validateContext(
-  ctx: Record<string, unknown>,
-  variables: Readonly<Record<string, Type>>,
-  source: string,
-  limits: { maxDepth: number; maxSteps: number; timeout: number },
-): void {
-  const budget: ValidationBudget = {
+interface ValidationLimits {
+  readonly maxDepth: number
+  readonly maxSteps: number
+  readonly timeout: number
+}
+
+function validationBudget(source: string, limits: ValidationLimits): ValidationBudget {
+  return {
     maxDepth: limits.maxDepth,
     remaining: limits.maxSteps > 0 ? limits.maxSteps : Number.POSITIVE_INFINITY,
     deadline: limits.timeout > 0 ? performance.now() + limits.timeout : 0,
@@ -1148,12 +1065,159 @@ function validateContext(
       })
     },
   }
+}
+
+function invalidContext(problem: string | undefined, source: string): void {
+  if (problem !== undefined)
+    throw new BonsaiRuntimeError('INVALID_CONTEXT', `Invalid context: ${problem}`, { source })
+}
+
+function validateContext(
+  ctx: Record<string, unknown>,
+  variables: Readonly<Record<string, Type>>,
+  source: string,
+  limits: ValidationLimits,
+): void {
+  const budget = validationBudget(source, limits)
   for (const [name, type] of Object.entries(variables)) {
     const value = Object.hasOwn(ctx, name) ? ctx[name] : undefined
-    const problem = describeMismatch(value, type, name, budget)
-    if (problem !== undefined) {
-      throw new BonsaiRuntimeError('INVALID_CONTEXT', `Invalid context: ${problem}`, { source })
+    invalidContext(describeMismatch(value, type, name, budget), source)
+  }
+}
+
+/** Paths listed as unknown, as a tree of segments: `whole` marks a listed path. */
+interface UnknownTree {
+  whole: boolean
+  readonly next: Map<string, UnknownTree>
+}
+
+function unknownTree(paths: readonly string[]): UnknownTree {
+  const root: UnknownTree = { whole: false, next: new Map() }
+  for (const path of paths) {
+    let node = root
+    for (const segment of path.split('.')) {
+      let child = node.next.get(segment)
+      if (child === undefined) node.next.set(segment, (child = { whole: false, next: new Map() }))
+      node = child
     }
+    node.whole = true
+  }
+  return root
+}
+
+/**
+ * Why `value` does not conform to `type`, leaving out the parts of it under
+ * listed unknown paths (`skip`): those are incomplete by design. Everything
+ * else is checked as evaluation checks a context.
+ */
+function describeKnown(
+  value: unknown,
+  type: Type,
+  path: string,
+  skip: UnknownTree | undefined,
+  budget: ValidationBudget,
+): string | undefined {
+  if (skip === undefined) return describeMismatch(value, type, path, budget)
+  if (skip.whole) return undefined
+  if (type.kind === 'union') {
+    let first: string | undefined
+    for (const member of type.types) {
+      const problem = describeKnown(value, member, path, skip, budget)
+      if (problem === undefined) return undefined
+      first ??= problem
+    }
+    return first
+  }
+  const actual = value === undefined ? null : value
+  if (type.kind !== 'map' || !isMap(actual)) return describeMismatch(value, type, path, budget)
+  if (--budget.remaining < 0) budget.onExhausted('steps')
+  for (const [key, fieldType] of Object.entries(type.fields)) {
+    const field = Object.hasOwn(actual, key) ? actual[key] : null
+    const problem = describeKnown(field, fieldType, `${path}.${key}`, skip.next.get(key), budget)
+    if (problem !== undefined) return problem
+  }
+  if (type.rest === undefined) return undefined
+  const keys = Object.keys(actual)
+  budget.remaining -= keyListCost(keys.length)
+  if (budget.remaining < 0) budget.onExhausted('steps')
+  for (const key of keys) {
+    // As evaluation's validation: keys the language never reads, or that hold undefined, are not data.
+    if (Object.hasOwn(type.fields, key) || BLOCKED_NAMES.has(key) || actual[key] === undefined)
+      continue
+    const problem = describeKnown(
+      actual[key],
+      type.rest,
+      `${path}.${key}`,
+      skip.next.get(key),
+      budget,
+    )
+    if (problem !== undefined) return problem
+  }
+  return undefined
+}
+
+/**
+ * The declared type of a field read from a value of `type`, when one is known:
+ * a map's field, or its other keys' type (a record, whose keys may be absent,
+ * so the field may be null), and for a union every member's. Undefined past a
+ * type that is not a map (or is `any`).
+ */
+function fieldTypeOf(type: Type, name: string): Type | undefined {
+  if (type.kind === 'map') {
+    if (Object.hasOwn(type.fields, name)) return type.fields[name]
+    return type.rest === undefined ? undefined : { kind: 'union', types: [type.rest, NULL_TYPE] }
+  }
+  if (type.kind !== 'union') return undefined
+  const found: Type[] = []
+  for (const member of type.types) {
+    if (member.kind === 'null') continue
+    const field = fieldTypeOf(member, name)
+    // A member the read cannot be typed through leaves the field untyped.
+    if (field === undefined) return undefined
+    found.push(field)
+  }
+  if (found.length === 0) return undefined
+  return found.length === 1 ? found[0] : { kind: 'union', types: found }
+}
+
+const NULL_TYPE: Type = Object.freeze({ kind: 'null' })
+
+/**
+ * Validates the values a residual reads: each path in `dependsOn` against the
+ * type declared there. An absent value reads as null, which an optional field
+ * or one under an optional ancestor accepts; a path is checked down to the
+ * last segment a declared map type names.
+ */
+function validatePaths(
+  ctx: Record<string, unknown>,
+  variables: Readonly<Record<string, Type>>,
+  paths: readonly string[],
+  source: string,
+  limits: ValidationLimits,
+): void {
+  const budget = validationBudget(source, limits)
+  for (const path of paths) {
+    const segments = path.split('.')
+    const name = segments[0]
+    if (!Object.hasOwn(variables, name)) continue
+    let type = variables[name]
+    let value: unknown = Object.hasOwn(ctx, name) ? ctx[name] : undefined
+    let checkedPath = name
+    let underOptional = false
+    for (let i = 1; i < segments.length; i++) {
+      const field = fieldTypeOf(type, segments[i])
+      if (field === undefined) break
+      if (isNullable(type)) underOptional = true
+      if (--budget.remaining < 0) budget.onExhausted('steps')
+      value =
+        value !== null && value !== undefined && isMap(value) && Object.hasOwn(value, segments[i])
+          ? value[segments[i]]
+          : undefined
+      type = field
+      checkedPath = `${checkedPath}.${segments[i]}`
+    }
+    if (underOptional && (value === undefined || value === null)) continue
+    invalidContext(describeMismatch(value, type, checkedPath, budget), source)
   }
 }
 
@@ -1377,14 +1441,12 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
   interface ResidualOf {
     /** Its printed source: the text of its explanations. */
     readonly source: string
-    /**
-     * A frozen copy of the known data (without the paths listed as unknown),
-     * when the residual's context is validated or read by `call: true` host
-     * functions: the residual runs on it overlaid with the caller's context.
-     */
-    readonly known: Readonly<Record<string, unknown>> | undefined
-    /** Whether `call: true` host functions read the overlaid context. */
+    /** Whether `call: true` host functions read the context it is given. */
     readonly readsContext: boolean
+    /** The variables known to partial(), which a context read whole must hold. */
+    readonly knownRoots: readonly string[]
+    /** The context paths it reads: all a context it does not read whole needs. */
+    readonly dependsOn: readonly string[]
   }
 
   /** How a partial-evaluation residual runs and explains, with the caller's context. */
@@ -1453,29 +1515,33 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       limits: EvaluationLimits,
       locals: number,
     ): void {
-      const known = residualOf?.known
-      if (known === undefined) validate(ctx, limits)
       state.reset(ctx, source, locals, limits.maxSteps, limits.timeout, limits.signal)
       if (limits.now !== undefined) state.nowValue = limits.now
-      if (known === undefined) return
-      // A residual runs on the known data its partial evaluation had (kept
-      // when its context is validated or read by call: true functions),
-      // overlaid at every depth with the context it is given: that context
-      // itself (prototype included) when it already has everything the known
-      // data gives, otherwise a copy with the rest. That is the context
-      // validated, and the one its call: true functions read.
-      const overlaid = overlayKnown(known, ctx, state)
-      validate(overlaid, limits)
-      if (residualOf?.readsContext === true && overlaid !== ctx) state.hostCtx = overlaid
-    }
-
-    function validate(context: Record<string, unknown>, limits: EvaluationLimits): void {
-      if (settings.validateContext && settings.variables !== undefined) {
-        validateContext(context, settings.variables, source, {
+      const residual = residualOf
+      if (residual !== undefined && residual.readsContext) {
+        // call: true functions read the whole context, which must then hold
+        // the variables partial() knew, as the program's context would.
+        const roots = residual.knownRoots
+        state.charge(roots.length)
+        const missing = roots.find((name) => !Object.hasOwn(ctx, name) || ctx[name] === undefined)
+        if (missing !== undefined) {
+          throw new BonsaiRuntimeError(
+            'INVALID_CONTEXT',
+            `Invalid context: ${missing} is missing; this residual calls a call: true host function, so pass the full context, as for the program`,
+            { source },
+          )
+        }
+      }
+      const validation = settings.validateContext ? settings.variables : undefined
+      if (validation !== undefined) {
+        const validationLimits = {
           maxDepth: settings.runtimeLimits.maxValueDepth,
           maxSteps: limits.maxSteps,
           timeout: limits.timeout,
-        })
+        }
+        if (residual === undefined || residual.readsContext)
+          validateContext(ctx, validation, source, validationLimits)
+        else validatePaths(ctx, validation, residual.dependsOn, source, validationLimits)
       }
     }
 
@@ -1729,13 +1795,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     // a few times the program's own nodes, and starts over when full.
     let subtrees = new Map<Node, Map<string, CompiledProgram>>()
     let subtreeNodes = 0
-    // The variables evaluation validates, which a residual keeps known values of.
-    const validated =
-      settings.validateContext && settings.variables !== undefined
-        ? new Set(Object.keys(settings.variables))
-        : undefined
 
-    function partial(known: Record<string, unknown>, rawOptions: unknown): PartialResult<R, Ctx> {
+    function partial(known: Record<string, unknown>, rawOptions: unknown): PartialResult<Ctx, R> {
       const options = partialOptions(rawOptions)
       // One budget for the whole partial evaluation, validated as evaluation's is.
       const limits = evaluationLimits(
@@ -1750,24 +1811,23 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       )
       state.reset(context, source, 0, limits.maxSteps, limits.timeout, limits.signal)
       try {
-        // Known variables are validated as evaluation validates them; a variable
-        // with an unknown path inside it is incomplete by design, so it is not.
+        // Known variables are validated as evaluation validates them, all but
+        // the parts under listed unknown paths (incomplete by design): all the
+        // data a residual has folded in is checked here, once.
         if (settings.validateContext && settings.variables !== undefined) {
           const variables = settings.variables
-          const unknownPaths = options.unknown ?? []
+          const skip = unknownTree(options.unknown ?? [])
           try {
-            const knownVariables = Object.fromEntries(
-              Object.entries(variables).filter(
-                ([name]) =>
-                  Object.hasOwn(context, name) &&
-                  !unknownPaths.some((path) => path === name || path.startsWith(`${name}.`)),
-              ),
-            )
-            validateContext(context, knownVariables, source, {
+            const budget = validationBudget(source, {
               maxDepth: settings.runtimeLimits.maxValueDepth,
               maxSteps: limits.maxSteps,
               timeout: limits.timeout,
             })
+            for (const [name, type] of Object.entries(variables)) {
+              if (!Object.hasOwn(context, name)) continue
+              const problem = describeKnown(context[name], type, name, skip.next.get(name), budget)
+              invalidContext(problem, source)
+            }
           } catch (error) {
             // Validation only reads the known data, so any other failure is the host's.
             if (!(error instanceof BonsaiError)) throw hostDataFailure(error, source)
@@ -1798,7 +1858,6 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
                 throw hostDataFailure(error, source)
               }
             },
-            validated,
             evaluate: (node, locals, size, total) => {
               const key = locals.map(([name]) => name).join('\u0000')
               let code = subtrees.get(node)?.get(key)
@@ -1825,7 +1884,14 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
                 throw hostDataFailure(error, source)
               }
             },
-            compileResidual: (residual, bindings, residualSource, kept, readsContext) => {
+            compileResidual: (
+              residual,
+              bindings,
+              residualSource,
+              readsContext,
+              knownRoots,
+              dependsOn,
+            ) => {
               // The original expression passed the checker; inlining known
               // values can make a failing branch statically visible, and that
               // failure must happen at run time, as it would have, so findings
@@ -1846,11 +1912,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
                   runner = made
                 },
                 new Map(Object.entries(bindings)),
-                {
-                  source: residualSource,
-                  known: kept,
-                  readsContext,
-                },
+                { source: residualSource, readsContext, knownRoots, dependsOn },
               )
               return runner as ResidualRunner
             },
@@ -1870,7 +1932,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
           }
         }
         // The residual accepts any object at run time; its parameter is typed by this program's context.
-        return result as PartialResult<R, Ctx>
+        return result as PartialResult<Ctx, R>
       } catch (error) {
         // Host data is read through readKnown, evaluate, and the checks above,
         // which report its failures as HOST_ERROR; anything else is a failure
@@ -2013,7 +2075,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     compile: <E extends Type = AnyType>(source: string, options?: CompileOptions<E>) =>
       cachedCompile<Infer<E>>(source, compileExpect(options)),
     partial: <R>(source: string, known: PartialData<Ctx> & object, options?: PartialOptions) =>
-      cached(source).partial(known, options) as PartialResult<R, Ctx>,
+      cached(source).partial(known, options) as PartialResult<Ctx, R>,
     evaluate<R>(source: string, ...args: Args<Ctx>): Promise<R> {
       try {
         return cached(source).evaluate(...args) as Promise<R>
