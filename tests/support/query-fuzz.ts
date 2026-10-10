@@ -48,6 +48,9 @@ export const known = {
   word: 'apple pie',
   words: ['a', 'apple', 'É', null],
   since: new Date('2026-01-01T00:00:00.000Z'),
+  // Repeated entries, which must not read as null.
+  dupStrs: ['a', 'b', 'b'],
+  dupNums: [1, 1, 2.5],
 }
 
 const STRINGS = [
@@ -231,6 +234,50 @@ const atom: fc.Arbitrary<string> = fc.oneof(
   fc
     .tuple(textCol, strConst, fc.constantFrom('startsWith', 'endsWith', 'includes'), strConst)
     .map(([c, d, f, k]) => `(${c} ?? ${d}).${f}(${k})`),
+  // A text call on a column with a known default is never null: compared with null or a
+  // boolean, or followed by ??.
+  fc
+    .tuple(
+      textCol,
+      fc.constantFrom('"zz"', '""', 'word', '(words.first() ?? "")'),
+      fc.constantFrom('.', '?.'),
+      fc.constantFrom('startsWith', 'endsWith', 'includes'),
+      strConst,
+      fc.constantFrom(
+        '?? true',
+        '?? false',
+        '== null',
+        '!= null',
+        '== false',
+        '!= false',
+        '== true',
+      ),
+    )
+    .map(([c, d, dot, f, k, tail]) => `((${c} ?? ${d})${dot}${f}(${k}) ${tail})`),
+  // Known lists with repeated entries.
+  fc
+    .tuple(
+      fc.oneof(
+        fc.tuple(textCol, fc.constantFrom('["a", "a"]', 'dupStrs', '["b", "a", "b"]')),
+        fc.tuple(numCol, fc.constantFrom('[1, 1]', 'dupNums', '[2.5, 1, 2.5]')),
+      ),
+      fc.constantFrom('in', 'not in'),
+    )
+    .map(([[c, l], op]) => `${c} ${op} ${l}`),
+  // Comparisons whose sides are both known once a default is applied.
+  fc
+    .tuple(
+      fc.constantFrom('(2 ?? order.total)', '(limit ?? order.total)', '([2].first() ?? order.qty)'),
+      fc.constantFrom('<', '<=', '>', '>=', '==', '!='),
+      fc.constantFrom('1', '2', 'limit', 'nothing'),
+    )
+    .map(([a, op, b]) => `${a} ${op} ${b}`),
+  fc.constantFrom(
+    '([2].first() ?? order.total) != null',
+    '([2].first() ?? order.total) == null',
+    '(2 ?? order.total) in [1, 2]',
+    '(limit ?? order.total) not in dupNums',
+  ),
   fc.constantFrom('(order.active ?? false)', '(order.active ?? true)', '(order.active ?? flag)'),
   // Relative dates: a timestamp shifted by a duration, or a distance between timestamps.
   fc
