@@ -265,19 +265,27 @@ const PARSE_COST = 16
  */
 const regexCache = new Map<string, RegexProgram>()
 let regexCacheSize = 0
-function compiledPattern(pattern: string, site: CallSite): RegexProgram {
+/** Why a pattern does not compile, remembered so a repeated bad pattern is parsed once. */
+const badPatterns = new Map<string, string>()
+
+/** The compiled pattern, from the cache when it is there; throws RegexSyntaxError. */
+function cachedRegex(pattern: string): RegexProgram {
   const cached = regexCache.get(pattern)
   if (cached !== undefined) {
     regexCache.delete(pattern)
     regexCache.set(pattern, cached)
     return cached
   }
+  const bad = badPatterns.get(pattern)
+  if (bad !== undefined) throw new RegexSyntaxError(bad)
   let program: RegexProgram
   try {
     program = compileRegex(pattern)
   } catch (error) {
-    if (error instanceof RegexSyntaxError)
-      throw site.state.error('INVALID_ARGUMENT', error.message, site.span)
+    if (error instanceof RegexSyntaxError) {
+      if (badPatterns.size >= MAX_CACHED) badPatterns.clear()
+      badPatterns.set(pattern, error.message)
+    }
     throw error
   }
   if (program.size > REGEX_CACHE_BUDGET) return program
@@ -289,6 +297,16 @@ function compiledPattern(pattern: string, site: CallSite): RegexProgram {
   regexCache.set(pattern, program)
   regexCacheSize += program.size
   return program
+}
+
+function compiledPattern(pattern: string, site: CallSite): RegexProgram {
+  try {
+    return cachedRegex(pattern)
+  } catch (error) {
+    if (error instanceof RegexSyntaxError)
+      throw site.state.error('INVALID_ARGUMENT', error.message, site.span)
+    throw error
+  }
 }
 
 function regexFor(pattern: string, site: CallSite): RegexProgram {
@@ -962,7 +980,7 @@ const STRING_FUNCTIONS: FunctionDef[] = [
           literals: ([, pattern]) => {
             if (typeof pattern !== 'string') return undefined
             try {
-              compileRegex(pattern)
+              cachedRegex(pattern)
               return undefined
             } catch (error) {
               return error instanceof Error ? error.message : String(error)

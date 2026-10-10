@@ -107,6 +107,17 @@ export function capTraceText(text: string): string {
 }
 export const DEFAULT_MAX_TRACE_NODES = 10_000
 
+/**
+ * Every recorded trace inherits a non-enumerable `toJSON`, so
+ * `JSON.stringify(trace)` writes the bounded {@link TraceJSON} form instead of
+ * the live values; the trace's own keys are unchanged.
+ */
+const TRACE_PROTOTYPE: object = Object.defineProperty({}, 'toJSON', {
+  value(this: Trace): TraceJSON {
+    return snapshotTrace(this)
+  },
+})
+
 /** Records traces during one explained evaluation. */
 export class Tracer {
   readonly root: TraceRecord
@@ -152,7 +163,8 @@ export class Tracer {
   }
 
   private create(node: Node): TraceRecord {
-    const base = {
+    const trace = Object.create(TRACE_PROTOTYPE) as TraceRecord
+    Object.assign(trace, {
       id: this.ids.get(node) ?? -1,
       kind: node.type,
       start: node.start,
@@ -164,9 +176,8 @@ export class Tracer {
       ),
       evaluated: true,
       children: [],
-    }
-    const trace: TraceRecord =
-      node.type === 'Binary' || node.type === 'Unary' ? { ...base, operator: node.operator } : base
+      ...(node.type === 'Binary' || node.type === 'Unary' ? { operator: node.operator } : {}),
+    })
     this.nodes.set(trace, node)
     return trace
   }
@@ -327,7 +338,13 @@ export function reasonsOf(root: Trace): Trace[] {
     out.push(trace)
   }
   visit(root)
-  return out
+  // Serialized together under one budget, so logging the reasons stays bounded.
+  return Object.defineProperty(out, 'toJSON', {
+    value: (): TraceJSON[] => {
+      const budget: SnapshotBudget = { left: SNAPSHOT_ENTRIES }
+      return out.map((trace) => snapshotTrace(trace, budget))
+    },
+  })
 }
 
 // === snapshots (safe to serialize) ===
@@ -346,6 +363,30 @@ export const SNAPSHOT_ENTRIES = 10_000
 
 export interface SnapshotBudget {
   left: number
+  /**
+   * The keys of each map listed so far (null when listing failed), so a map
+   * recurring in the trace is listed once per snapshot, not once per node.
+   */
+  keys?: Map<object, readonly string[] | null>
+}
+
+/**
+ * The own enumerable keys of a map, listed once per budget. Listing is
+ * charged one entry per {@link SNAPSHOT_ITEMS} keys, so many large maps run
+ * the budget down instead of each being listed in full.
+ */
+function keysOf(value: object, budget: SnapshotBudget): readonly string[] | null {
+  budget.keys ??= new Map()
+  const known = budget.keys.get(value)
+  if (known !== undefined) return known
+  let keys: readonly string[] | null = null
+  try {
+    keys = Object.keys(value)
+    budget.left -= Math.floor(keys.length / SNAPSHOT_ITEMS)
+  } finally {
+    budget.keys.set(value, keys)
+  }
+  return keys
 }
 
 /**
@@ -399,10 +440,17 @@ export function snapshot(
         if (length > SNAPSHOT_ITEMS) items.push(`... ${length - SNAPSHOT_ITEMS} more`)
         return items
       }
+      const keys = keysOf(value, budget)
+      if (keys === null) return '[unreadable]'
       const out: Record<string, unknown> = {}
-      const keys = Object.keys(value)
+      // Defined, not assigned, so a key named __proto__ stays a key.
       for (const key of keys.slice(0, SNAPSHOT_ITEMS))
-        out[key] = snapshot(ownData(value, key), budget, depth + 1, seen)
+        Object.defineProperty(out, key, {
+          value: snapshot(ownData(value, key), budget, depth + 1, seen),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        })
       if (keys.length > SNAPSHOT_ITEMS) out['...'] = `${keys.length - SNAPSHOT_ITEMS} more keys`
       return out
     } finally {
@@ -482,18 +530,36 @@ const PREVIEW_DEPTH = 2
 /** Values one preview may describe. */
 const PREVIEW_ENTRIES = 200
 
-/** A short, readable rendering of a value. Never runs getters. */
-function preview(value: unknown): string {
-  const text =
-    JSON.stringify(snapshot(value, { left: PREVIEW_ENTRIES }, SNAPSHOT_DEPTH - PREVIEW_DEPTH)) ??
-    'null'
-  return cut(text, MAX_PREVIEW * 2)
+/**
+ * One rendering's shared state: a value budget for the whole render, the keys
+ * of the maps listed so far, and the preview of each object already shown, so
+ * a value recurring at many nodes costs one preview.
+ */
+interface RenderBudget extends SnapshotBudget {
+  keys: Map<object, readonly string[] | null>
+  readonly previews: Map<object, string>
 }
 
-function outcome(trace: Trace): string {
+/** A short, readable rendering of a value. Never runs getters. */
+function preview(value: unknown, render: RenderBudget): string {
+  const shared = typeof value === 'object' && value !== null
+  const known = shared ? render.previews.get(value) : undefined
+  if (known !== undefined) return known
+  const budget: SnapshotBudget = { left: Math.min(PREVIEW_ENTRIES, render.left), keys: render.keys }
+  const before = budget.left
+  const text = cut(
+    JSON.stringify(snapshot(value, budget, SNAPSHOT_DEPTH - PREVIEW_DEPTH)) ?? 'null',
+    MAX_PREVIEW * 2,
+  )
+  render.left -= before - budget.left
+  if (shared) render.previews.set(value, text)
+  return text
+}
+
+function outcome(trace: Trace, render: RenderBudget): string {
   if (!trace.evaluated) return '(not evaluated)'
   if (trace.error !== undefined) return `error ${trace.error.code}: ${trace.error.message}`
-  return `${preview(trace.value)}${trace.extra === true ? '  (checked for the explanation)' : ''}`
+  return `${preview(trace.value, render)}${trace.extra === true ? '  (checked for the explanation)' : ''}`
 }
 
 /**
@@ -517,8 +583,10 @@ function shownUnder(parent: Trace): (trace: Trace) => boolean {
 /** Renders a trace as an indented tree. */
 export function renderTrace(root: Trace, truncated = false): string {
   const lines: string[] = []
+  // One budget for the whole rendering, however often a value recurs.
+  const render: RenderBudget = { left: SNAPSHOT_ENTRIES, keys: new Map(), previews: new Map() }
   const visit = (trace: Trace, lead: string, rest: string): void => {
-    lines.push(`${lead}${oneLine(trace.text)}  → ${outcome(trace)}`)
+    lines.push(`${lead}${oneLine(trace.text)}  → ${outcome(trace, render)}`)
     const children = trace.children.filter(shownUnder(trace))
     const iterations = trace.iterations ?? []
     const total =
@@ -537,12 +605,14 @@ export function renderTrace(root: Trace, truncated = false): string {
       const [iterationLead, iterationRest] = next()
       const result =
         iteration.error === undefined
-          ? preview(iteration.result)
+          ? preview(iteration.result, render)
           : `error ${iteration.error.code}: ${iteration.error.message}`
       const accumulator =
-        iteration.accumulator === undefined ? '' : ` (acc ${preview(iteration.accumulator)})`
+        iteration.accumulator === undefined
+          ? ''
+          : ` (acc ${preview(iteration.accumulator, render)})`
       lines.push(
-        `${iterationLead}item ${iteration.index} ${preview(iteration.item)}${accumulator}  → ${result}`,
+        `${iterationLead}item ${iteration.index} ${preview(iteration.item, render)}${accumulator}  → ${result}`,
       )
       const body = iteration.trace.children[0]
       if (body !== undefined) {
