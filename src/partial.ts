@@ -360,6 +360,8 @@ export interface PartialEngine {
   readonly charge: (steps?: number) => void
   /** Checks the shared deadline and signal now. */
   readonly checkTime: () => void
+  /** Throws the LIST_LIMIT evaluation raises for a list literal of `length` items at `at`, if over. */
+  readonly listLimit: (length: number, at: Node) => void
   /** The longest residual source allowed: the environment's maxSourceLength. */
   readonly maxSourceLength: number
   /**
@@ -417,12 +419,37 @@ export interface PartialEngine {
 // === the partial evaluator ===
 
 /**
+ * An error a subtree raises only if evaluation reaches it: an evaluation
+ * error, or a limit on the size of a value it builds. Budget limits (steps,
+ * time, cancellation) bound partial evaluation's own work, so they end it.
+ */
+type Failure = BonsaiRuntimeError | BonsaiLimitError
+
+const VALUE_LIMITS: ReadonlySet<string> = new Set([
+  'STRING_LIMIT',
+  'LIST_LIMIT',
+  'VALUE_DEPTH_LIMIT',
+  'PATTERN_LIMIT',
+])
+
+function failureOf(error: unknown): Failure | undefined {
+  if (error instanceof BonsaiRuntimeError) return error
+  if (error instanceof BonsaiLimitError && VALUE_LIMITS.has(error.code)) return error
+  return undefined
+}
+
+/** Whether `try()` lets the failure through: limits and host contract violations. */
+function uncatchable(failure: Failure): boolean {
+  return failure instanceof BonsaiLimitError || failure.code === 'HOST_CONTRACT'
+}
+
+/**
  * A known value, or a residual node. `fails` marks a residual that always
  * raises that error when evaluation reaches it, whatever the unknowns are.
  */
 type Outcome =
   | { readonly known: true; readonly value: unknown }
-  | { readonly known: false; readonly node: Node; readonly fails?: BonsaiRuntimeError }
+  | { readonly known: false; readonly node: Node; readonly fails?: Failure }
 
 const at = { start: 0, end: 0 }
 /**
@@ -432,7 +459,7 @@ const at = { start: 0, end: 0 }
  */
 const MAX_INLINE_STRING = 16
 /** Steps charged per character of residual printed or compiled. */
-export const RESIDUAL_CHARS_PER_STEP = 16
+const RESIDUAL_CHARS_PER_STEP = 16
 const BOOLEAN_OPERATORS = new Set(['==', '!=', '<', '<=', '>', '>=', 'in', 'not in', '&&', '||'])
 
 function literalFor(value: unknown): Node | undefined {
@@ -685,7 +712,7 @@ export function partiallyEvaluate<R>(
   /** A known value as syntax: an inline literal, or a reference to a binding. */
   const asNode = (outcome: Outcome): Node =>
     outcome.known ? (literalFor(outcome.value) ?? bind(outcome.value)) : outcome.node
-  const residual = (node: Node, fails?: BonsaiRuntimeError): Outcome =>
+  const residual = (node: Node, fails?: Failure): Outcome =>
     fails === undefined ? { known: false, node } : { known: false, node, fails }
 
   const peval = (node: Node, env: Env): Outcome => {
@@ -694,10 +721,11 @@ export function partiallyEvaluate<R>(
       try {
         return { known: true, value: evaluateClosed(node, env) }
       } catch (error) {
-        // Evaluation errors happen only if evaluation reaches this point, so
-        // the expression stays; limit errors end the whole partial evaluation.
-        if (error instanceof BonsaiRuntimeError)
-          return { known: false, node: withKnownLocals(node, env), fails: error }
+        // Evaluation errors and value-size limits happen only if evaluation
+        // reaches this point, so the expression stays; budget limits end the
+        // whole partial evaluation.
+        const failure = failureOf(error)
+        if (failure !== undefined) return residual(withKnownLocals(node, env), failure)
         throw error
       }
     }
@@ -733,9 +761,9 @@ export function partiallyEvaluate<R>(
       case 'Try': {
         const body = peval(node.body, env)
         // try() recovers from evaluation errors: a body that always fails with one is the
-        // fallback. A host contract violation is never recovered, so it propagates.
+        // fallback. A limit or host contract violation is never recovered, so it propagates.
         if (!body.known && body.fails !== undefined) {
-          return body.fails.code === 'HOST_CONTRACT' ? body : peval(node.fallback, env)
+          return uncatchable(body.fails) ? body : peval(node.fallback, env)
         }
         if (body.known) return body
         return residual({ ...node, body: body.node, fallback: asNode(peval(node.fallback, env)) })
@@ -870,11 +898,26 @@ export function partiallyEvaluate<R>(
     /** For x?.f(...) with a receiver that may be null: the arguments may not run. */
     onlyFirstMayFail = false,
   ): Outcome => {
+    // A list literal without spreads is checked against maxListLength before its
+    // items run (unless an item awaits a host function), so that limit comes first.
+    if (
+      node.type === 'List' &&
+      !node.items.some((item) => item.type === 'Spread') &&
+      (locate(node).info.flags & ASYNC_HOST) === 0
+    ) {
+      try {
+        engine.listLimit(node.items.length, node)
+      } catch (error) {
+        const failure = failureOf(error)
+        if (failure !== undefined) return residual(withKnownLocals(node, env), failure)
+        throw error
+      }
+    }
     let first = true
     // Children evaluate in order; if one always fails and every child before it
     // is known, the node always fails with that error.
     let prefixKnown = true
-    let fails: BonsaiRuntimeError | undefined
+    let fails: Failure | undefined
     // A node whose children all turned out known (`(2 ?? row.total) >= 1`,
     // where `??` skips the read) is folded below.
     const values: (readonly [string, unknown])[] = []
@@ -916,7 +959,8 @@ export function partiallyEvaluate<R>(
       try {
         return { known: true, value: engine.evaluateFolded(local, node, values) }
       } catch (error) {
-        if (error instanceof BonsaiRuntimeError) return residual(rebuilt, error)
+        const failure = failureOf(error)
+        if (failure !== undefined) return residual(rebuilt, failure)
         throw error
       }
     }
@@ -938,7 +982,11 @@ export function partiallyEvaluate<R>(
     throw error
   }
   if (outcome.known) return { status: 'value', value: outcome.value as R }
-  if (outcome.fails !== undefined) return { status: 'error', error: outcome.fails }
+  if (outcome.fails !== undefined) {
+    // A limit reached whatever the unknowns are is thrown, as evaluation throws it.
+    if (outcome.fails instanceof BonsaiLimitError) throw outcome.fails
+    return { status: 'error', error: outcome.fails }
+  }
 
   // An expression that is known except for an error it always raises.
   const residualPaths = indexTree(outcome.node, engine.hostKind, engine.charge).paths

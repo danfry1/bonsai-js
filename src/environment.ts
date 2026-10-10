@@ -23,7 +23,6 @@ import {
 import {
   partiallyEvaluate,
   residualTexts,
-  RESIDUAL_CHARS_PER_STEP,
   type PartialData,
   type PartialOptions,
   type PartialResult,
@@ -1725,20 +1724,6 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       )
     }
 
-    /** Explaining a residual reads its printed source: charged like printing it. */
-    function chargeResidualText(state: State): void {
-      if (residualOf === undefined) return
-      state.charge(1 + Math.ceil(residualOf.source.length / RESIDUAL_CHARS_PER_STEP))
-      try {
-        residualTextMap(residualOf.source)
-      } catch (error) {
-        // Re-reading the residual's own text is this explanation's work, not host data.
-        if (error instanceof BonsaiError) throw raised(error)
-        throw error
-      }
-      state.checkTime()
-    }
-
     function explainSync(context: unknown, options: ExplainOptions | undefined): Explanation<R> {
       const explain = explainSettings(options)
       if (analysis.async) {
@@ -1762,12 +1747,11 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       const limits = evaluationLimits(explain.evaluate, settings)
       const ctx = contextOf(context)
       const state = new State(settings.runtimeLimits, settings.clock)
-      // Made after prepare, so a residual's text (read when its tracer is
-      // made) is within the evaluation's deadline.
+      // A residual's text is mapped once per residual, work its partial()
+      // already charged, so explaining costs the steps evaluating does.
       let tracer: Tracer | undefined
       try {
         prepare(state, ctx, limits, code.localCount)
-        chargeResidualText(state)
         tracer = tracerFor(explain)
         state.tracer = tracer
         const value = code.run(state) as R
@@ -1797,7 +1781,6 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       let tracer: Tracer | undefined
       try {
         prepare(state, ctx, limits, code.localCount)
-        chargeResidualText(state)
         tracer = tracerFor(explain)
         state.tracer = tracer
         const value = settle((await code.run(state)) as R)
@@ -1903,6 +1886,9 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
             },
             checkTime: () => {
               state.checkTime()
+            },
+            listLimit: (length, at) => {
+              state.listLimit(length, at)
             },
             maxSourceLength: settings.parseLimits.maxSourceLength,
             readKnown: (read) => {
