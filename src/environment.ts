@@ -1157,36 +1157,48 @@ function describeKnown(
 }
 
 /**
- * The declared type of a field read from a value of `type`, when one is known:
- * a map's field, or its other keys' type (a record, whose keys may be absent,
- * so the field may be null), and for a union every member's. Undefined past a
- * type that is not a map (or is `any`).
+ * Why the value read along `segments` (from index `at`) does not conform, or
+ * undefined. Each step is judged by its own declared type: an absent or null
+ * value is fine only where that type is nullable; a declared field is followed
+ * (a missing required one fails); an undeclared key of an object (objects are
+ * open) or an absent record entry ends the check; past a type that is not a
+ * map, and at the end of the path, the value is checked whole, as a context is.
+ * Fields the path does not name are not checked.
  */
-function fieldTypeOf(type: Type, name: string): Type | undefined {
-  if (type.kind === 'map') {
-    if (Object.hasOwn(type.fields, name)) return type.fields[name]
-    return type.rest === undefined ? undefined : { kind: 'union', types: [type.rest, NULL_TYPE] }
+function describeAlong(
+  value: unknown,
+  type: Type,
+  segments: readonly string[],
+  at: number,
+  path: string,
+  budget: ValidationBudget,
+): string | undefined {
+  if (at === segments.length) return describeMismatch(value, type, path, budget)
+  if (--budget.remaining < 0) budget.onExhausted('steps')
+  if (type.kind === 'union') {
+    let first: string | undefined
+    for (const member of type.types) {
+      const problem = describeAlong(value, member, segments, at, path, budget)
+      if (problem === undefined) return undefined
+      first ??= problem
+    }
+    return first
   }
-  if (type.kind !== 'union') return undefined
-  const found: Type[] = []
-  for (const member of type.types) {
-    if (member.kind === 'null') continue
-    const field = fieldTypeOf(member, name)
-    // A member the read cannot be typed through leaves the field untyped.
-    if (field === undefined) return undefined
-    found.push(field)
-  }
-  if (found.length === 0) return undefined
-  return found.length === 1 ? found[0] : { kind: 'union', types: found }
+  const actual = value === undefined ? null : value
+  if (type.kind !== 'map' || !isMap(actual)) return describeMismatch(value, type, path, budget)
+  const key = segments[at]
+  const field = Object.hasOwn(actual, key) ? actual[key] : undefined
+  if (Object.hasOwn(type.fields, key))
+    return describeAlong(field, type.fields[key], segments, at + 1, `${path}.${key}`, budget)
+  if (type.rest === undefined || field === undefined) return undefined
+  return describeAlong(field, type.rest, segments, at + 1, `${path}.${key}`, budget)
 }
 
-const NULL_TYPE: Type = Object.freeze({ kind: 'null' })
-
 /**
- * Validates the values a residual reads: each path in `dependsOn` against the
- * type declared there. An absent value reads as null, which an optional field
- * or one under an optional ancestor accepts; a path is checked down to the
- * last segment a declared map type names.
+ * Validates the values a residual reads: each path in `dependsOn`, step by
+ * step against the types declared along it (see describeAlong), so a context
+ * holding exactly those paths passes and invalid data on them fails as it
+ * would for the program.
  */
 function validatePaths(
   ctx: Record<string, unknown>,
@@ -1200,24 +1212,8 @@ function validatePaths(
     const segments = path.split('.')
     const name = segments[0]
     if (!Object.hasOwn(variables, name)) continue
-    let type = variables[name]
-    let value: unknown = Object.hasOwn(ctx, name) ? ctx[name] : undefined
-    let checkedPath = name
-    let underOptional = false
-    for (let i = 1; i < segments.length; i++) {
-      const field = fieldTypeOf(type, segments[i])
-      if (field === undefined) break
-      if (isNullable(type)) underOptional = true
-      if (--budget.remaining < 0) budget.onExhausted('steps')
-      value =
-        value !== null && value !== undefined && isMap(value) && Object.hasOwn(value, segments[i])
-          ? value[segments[i]]
-          : undefined
-      type = field
-      checkedPath = `${checkedPath}.${segments[i]}`
-    }
-    if (underOptional && (value === undefined || value === null)) continue
-    invalidContext(describeMismatch(value, type, checkedPath, budget), source)
+    const value = Object.hasOwn(ctx, name) ? ctx[name] : undefined
+    invalidContext(describeAlong(value, variables[name], segments, 1, name, budget), source)
   }
 }
 
@@ -1523,7 +1519,14 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         // the variables partial() knew, as the program's context would.
         const roots = residual.knownRoots
         state.charge(roots.length)
-        const missing = roots.find((name) => !Object.hasOwn(ctx, name) || ctx[name] === undefined)
+        // In a strict environment, a known key that is not a declared variable is
+        // not part of any context the program accepts, so it is not required.
+        const declared = settings.strict ? settings.variables : undefined
+        const missing = roots.find(
+          (name) =>
+            (declared === undefined || Object.hasOwn(declared, name)) &&
+            (!Object.hasOwn(ctx, name) || ctx[name] === undefined),
+        )
         if (missing !== undefined) {
           throw new BonsaiRuntimeError(
             'INVALID_CONTEXT',

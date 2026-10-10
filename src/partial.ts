@@ -908,7 +908,8 @@ export function partiallyEvaluate<R>(
   if (readsContext) {
     const whole = new Set(options.unknown)
     engine.readKnown(() => {
-      const names = Object.keys(known)
+      // Own keys, non-enumerable ones included: the language reads those too.
+      const names = Object.getOwnPropertyNames(known)
       engine.charge(names.length)
       for (const name of names)
         if (!whole.has(name) && known[name] !== undefined) knownRoots.push(name)
