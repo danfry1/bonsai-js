@@ -443,8 +443,14 @@ export function snapshot(
       const keys = keysOf(value, budget)
       if (keys === null) return '[unreadable]'
       const out: Record<string, unknown> = {}
+      // Defined, not assigned, so a key named __proto__ stays a key.
       for (const key of keys.slice(0, SNAPSHOT_ITEMS))
-        out[key] = snapshot(ownData(value, key), budget, depth + 1, seen)
+        Object.defineProperty(out, key, {
+          value: snapshot(ownData(value, key), budget, depth + 1, seen),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        })
       if (keys.length > SNAPSHOT_ITEMS) out['...'] = `${keys.length - SNAPSHOT_ITEMS} more keys`
       return out
     } finally {

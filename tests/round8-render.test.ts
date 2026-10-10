@@ -113,3 +113,11 @@ describe('completion keeps nested endings', () => {
     expect(labels(`${pad}try(o1.`)).toEqual(expect.arrayContaining(['a', 'name']))
   })
 })
+
+describe('explanation snapshots of host keys', () => {
+  it('keeps a key named __proto__ as a key', () => {
+    const user = JSON.parse('{"__proto__": {"admin": true}, "name": "a"}') as object
+    const json = JSON.stringify(bonsai().explainSync('user', { user }))
+    expect(json).toContain('"__proto__":{"admin":true}')
+  })
+})
