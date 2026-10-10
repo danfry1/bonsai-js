@@ -1353,7 +1353,11 @@ function lower(
     if (node.type === 'Call') {
       const call = textCall(node)
       if (call === undefined) return undefined
-      if (call.kind !== 'text' || call.nullFails) return { pred: call }
+      // On `(field ?? default)` the call runs on the default where the field is null, so it is
+      // never null itself.
+      const receiver = node.args[0]
+      const defaulted = receiver?.type === 'Binary' && receiver.operator === '??'
+      if (defaulted || call.kind !== 'text' || call.nullFails) return { pred: call }
       return { pred: call, whenNull: { kind: 'null', value: call.column } }
     }
     const column = columnOf(node)
@@ -1574,9 +1578,19 @@ function lower(
       )
     }
     if (kinds.includes('boolean')) return fail('Booleans cannot be ordered', node)
+    // Both sides known: the answer is known too, and there is no field to compare.
+    if (left.kind === 'const' && right.kind === 'const')
+      return {
+        kind: 'const',
+        value: !kinds.includes('null') && ordered(left.value, op, right.value),
+      }
     // Ordering with null is false, unless the other side fails first.
-    if (kinds.includes('null'))
-      return { kind: 'in', value: kinds[0] === 'null' ? right : left, list: [] }
+    if (kinds.includes('null')) {
+      const other = kinds[0] === 'null' ? right : left
+      return other.kind === 'const'
+        ? { kind: 'const', value: false }
+        : { kind: 'in', value: other, list: [] }
+    }
     pair(left, right, node)
     return left.kind === 'const'
       ? { kind: 'order', op: FLIP[op], left: right, right: left }
@@ -1635,6 +1649,9 @@ function lower(
   }
 
   const equality = (left: Value, right: Value, at: Node): Pred => {
+    // Both sides known: the answer is known too, and there is no field to compare.
+    if (left.kind === 'const' && right.kind === 'const')
+      return { kind: 'const', value: sameValue(left.value, right.value) }
     const [a, b] = left.kind === 'const' && right.kind !== 'const' ? [right, left] : [left, right]
     const ka = kindOf(a)
     const kb = kindOf(b)
@@ -1684,6 +1701,12 @@ function lower(
     const item = value(itemNode)
     const list = listOf(containerNode)
     if (list !== undefined) {
+      // A known item in a known list: the answer is known too.
+      if (item.kind === 'const') {
+        charge(list.length)
+        const { value: known } = item
+        return { kind: 'const', value: list.some((entry) => sameValue(entry, known)) }
+      }
       const kind = kindOf(item)
       const matching = entries(list, `${kind} or null`, (entry) => {
         const entryKind = constantKind(entry)
@@ -1963,8 +1986,9 @@ export function toSQL<Dialect extends SQLOptions['dialect']>(
     let found = lists.get(list)
     if (found === undefined) {
       charge(list.length)
-      const entries = [...new Set(list.filter((entry) => entry !== null))]
-      found = { entries, hasNull: entries.length !== list.length }
+      const present = list.filter((entry) => entry !== null)
+      // Null is checked before duplicates are dropped, so a repeated entry never reads as null.
+      found = { entries: [...new Set(present)], hasNull: present.length !== list.length }
       lists.set(list, found)
     }
     return found
@@ -2248,8 +2272,16 @@ export function toMongo(program: Translatable, options: MongoOptions): MongoQuer
   checkDeclaredTypes(program, options.row, declaredFields, 'fields')
   const predicate = lower(program, options, declaredFields, target, translation)
   type Filter = Record<string, unknown>
-  // lower() only leaves field-versus-constant comparisons for MongoDB.
-  const field = (value: Value): string => (value as { field: string }).field
+  // lower() only leaves field-versus-constant comparisons for MongoDB; anything else is refused
+  // rather than written as a filter on a missing field name.
+  const field = (value: Value): string => {
+    if (value.kind === 'column') return value.field
+    throw new BonsaiTranslationError(
+      'This expression has no exact MongoDB equivalent',
+      program.source,
+      { start: 0, end: program.source.length },
+    )
+  }
   // MongoDB stores a duration as its milliseconds.
   const stored = (item: Primitive): unknown => (item instanceof Duration ? item.ms : item)
   const constant = (value: Value): unknown => stored((value as { value: Primitive }).value)
