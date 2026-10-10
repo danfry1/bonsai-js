@@ -15,7 +15,7 @@ interface Program<Context, Result> {
   evaluateSync(context?: Context, options?: EvaluateOptions): Result
   explain(context?: Context, options?: ExplainOptions): Promise<Explanation<Result>>
   explainSync(context?: Context, options?: ExplainOptions): Explanation<Result>
-  partial(known: PartialData<Context>, options?: PartialOptions): PartialResult<Result, Context>
+  partial(known: PartialData<Context>, options?: PartialOptions): PartialResult<Context, Result>
 }
 ```
 

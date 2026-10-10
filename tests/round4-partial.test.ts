@@ -3,8 +3,6 @@ import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 import { BonsaiError, bonsai, fn, t, type PartialResult } from '../src/index.js'
 
-const ageFn = fn({ params: [], returns: t.number(), call: true, run: () => 1 })
-
 /** A value or the code of the error evaluation raised. */
 function outcome(run: () => unknown): unknown {
   try {
@@ -56,30 +54,10 @@ describe('an explicit unknown list says the objects above a listed path exist', 
   })
 })
 
-describe('the known-data overlay for call: true residuals', () => {
-  const env = bonsai({ functions: { age: ageFn } })
-
-  it('merges each pair of shared or cyclic objects once', () => {
-    const known: Record<string, unknown> = { x: 1 }
-    known.a = known
-    known.b = known
-    const residual = env.compile('age() + n').partial({ user: known })
-    expect(residual.status).toBe('residual')
-    if (residual.status !== 'residual') return
-    const given: Record<string, unknown> = {}
-    for (let i = 0; i < 2000; i++) given[`p${i}`] = i
-    given.a = given
-    given.b = given
-    const started = performance.now()
-    // On a context like this, walking every path copied the 2,002 keys 2^depth
-    // times: STEP_LIMIT after over a second and 400 MB of copies.
-    expect(residual.evaluateSync({ n: 1, user: given })).toBe(2)
-    expect(performance.now() - started).toBeLessThan(500)
-  })
-
-  it('merges a shared object reached by two paths into one copy', () => {
+describe('call: true residuals read the context they are given', () => {
+  it('pass the caller its own object, however it is shaped', () => {
     let seen: unknown
-    const peek = bonsai({
+    const env = bonsai({
       functions: {
         age: fn({
           params: [],
@@ -92,31 +70,13 @@ describe('the known-data overlay for call: true residuals', () => {
         }),
       },
     })
-    const shared = { k: 1 }
-    const residual = peek.compile('age() + n').partial({ user: { a: shared, b: shared } })
+    const known: Record<string, unknown> = { x: 1 }
+    known.a = known
+    const residual = env.compile('age() + n').partial({ user: known })
     if (residual.status !== 'residual') throw new Error('expected a residual')
-    const given = { a: { g: 2 }, b: { g: 3 } }
-    residual.evaluateSync({ n: 1, user: given })
-    const user = (seen as { user: Record<string, Record<string, number>> }).user
-    expect(user.a).toEqual({ g: 2, k: 1 })
-    expect(user.b).toEqual({ g: 3, k: 1 })
-  })
-
-  it('charges every key it copies', () => {
-    const residual = env.compile('age() + n').partial({ user: { x: 1 } })
-    if (residual.status !== 'residual') throw new Error('expected a residual')
-    const user: Record<string, number> = {}
-    for (let i = 0; i < 500; i++) user[`p${i}`] = i
-    // At 8 keys a step, copying 500 keys cost about 63 steps.
-    expect(outcome(() => residual.evaluateSync({ n: 1, user }, { maxSteps: 100 }))).toEqual({
-      code: 'STEP_LIMIT',
-    })
-    expect(residual.evaluateSync({ n: 1, user }, { maxSteps: 2000 })).toBe(2)
-  })
-
-  it('reads only the own keys of the given context', () => {
-    const residual = env.compile('age() + n').partial({ user: { x: 1 } })
-    if (residual.status !== 'residual') throw new Error('expected a residual')
+    const user: Record<string, unknown> = {}
+    for (let i = 0; i < 2000; i++) user[`p${i}`] = i
+    user.a = user
     let walked = 0
     const proto = new Proxy(
       {},
@@ -127,9 +87,9 @@ describe('the known-data overlay for call: true residuals', () => {
         },
       },
     )
-    const given = Object.create(proto) as Record<string, unknown>
-    given.n = 1
-    expect(residual.evaluateSync(given)).toBe(2)
+    const given = Object.assign(Object.create(proto) as Record<string, unknown>, { n: 1, user })
+    expect(residual.evaluateSync(given, { maxSteps: 100 })).toBe(2)
+    expect(seen).toBe(given)
     expect(walked).toBe(0)
   })
 })

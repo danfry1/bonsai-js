@@ -382,7 +382,7 @@ describe('partial on the hardened engine', () => {
 })
 
 describe('partial residuals evaluate as the program does', () => {
-  const residualOf = <R>(result: PartialResult<R>) => {
+  const residualOf = <Ctx, R>(result: PartialResult<Ctx, R>) => {
     if (result.status !== 'residual') throw new Error(`expected a residual, got ${result.status}`)
     return result
   }

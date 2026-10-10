@@ -1,5 +1,5 @@
 import type { Analysis } from './check/checker.js'
-import { BonsaiError, BonsaiLimitError, BonsaiRuntimeError } from './errors.js'
+import { BonsaiLimitError, BonsaiRuntimeError, type BonsaiError } from './errors.js'
 import {
   forEachChild,
   mapChildren as mapEachChild,
@@ -11,7 +11,7 @@ import {
 import { parse, type ParseLimits } from './syntax/parser.js'
 import { print } from './syntax/printer.js'
 import { MAX_TRACE_TEXT, capTraceText } from './runtime/trace.js'
-import { dateTime, isMap, isTimestamp, type Duration } from './runtime/values.js'
+import { isMap, type Duration } from './runtime/values.js'
 import type { Type } from './types.js'
 import type {
   AbortSignalLike,
@@ -215,15 +215,14 @@ interface PathTrie {
  * is a value the expression reads, and a path under it that the expression
  * reads is tested in its own right. The paths are kept as a tree of segments,
  * so building it and each test walk the segments once: no prefix strings are
- * built, and checking costs nothing like paths x unknowns. The tree is
- * returned too: copies of the known data leave out what it marks `under`.
+ * built, and checking costs nothing like paths x unknowns.
  */
 function unknownIndex(
   unknown: Iterable<string>,
   missing: Iterable<string>,
   charge: (steps: number) => void,
   segmentsOf: (path: string) => readonly string[],
-): [(path: string) => boolean, PathTrie] {
+): (path: string) => boolean {
   const root: PathTrie = { under: false, next: new Map() }
   const add = (path: string): PathTrie => {
     charge(1 + Math.floor(path.length / PATH_CHARS_PER_STEP))
@@ -248,7 +247,7 @@ function unknownIndex(
     // The path is a missing one, or one lies under it.
     return true
   }
-  return [touches, root]
+  return touches
 }
 
 // === public types ===
@@ -267,13 +266,15 @@ export type PartialData<T> = T extends
     ? { [K in keyof T]?: PartialData<T[K]> | undefined }
     : T
 
-export type PartialResult<R = unknown, Ctx = object> =
+// oxlint-disable-next-line typescript/no-explicit-any -- the erased context type, as Program's
+export type PartialResult<Ctx = any, R = unknown> =
   | { readonly status: 'value'; readonly value: R }
   /** Evaluation fails whatever the unknown data turns out to be. */
   | { readonly status: 'error'; readonly error: BonsaiError }
-  | ResidualResult<R, Ctx>
+  | ResidualResult<Ctx, R>
 
-export interface ResidualResult<R = unknown, Ctx = object> {
+// oxlint-disable-next-line typescript/no-explicit-any -- the erased context type, as Program's
+export interface ResidualResult<Ctx = any, R = unknown> {
   readonly status: 'residual'
   /**
    * The simplified expression that still needs the unknown data. Known values
@@ -284,8 +285,9 @@ export interface ResidualResult<R = unknown, Ctx = object> {
   /** The residual as source, for display and storage alongside `bindings`. */
   readonly source: string
   /**
-   * Known values the residual refers to by name: frozen copies taken during
-   * partial(), so later changes to the known objects do not reach the residual.
+   * Known values the residual refers to by name: the values partial() read,
+   * shared with `known` (not copied). Do not change the known data afterwards;
+   * run partial() again when it changes.
    */
   readonly bindings: Readonly<Record<string, unknown>>
   /** Context paths the residual still reads (besides `bindings`). */
@@ -294,10 +296,10 @@ export interface ResidualResult<R = unknown, Ctx = object> {
   readonly hostFunctions: readonly string[]
   /**
    * Whether the residual calls a `call: true` host function. Such a function
-   * reads the whole context, not only the paths in `dependsOn`: a copy of the
-   * known data given to partial() (without the paths listed in `unknown`)
-   * overlaid (deeply, your values winning) with the context the residual is
-   * evaluated with.
+   * reads `call.context`, which is exactly the context the residual is
+   * evaluated with, so pass the full context (known values included), as for
+   * the program: a variable known to partial() missing from it is an
+   * INVALID_CONTEXT error.
    */
   readonly readsContext: boolean
   /** Whether the residual calls an async host function (evaluateSync rejects it). */
@@ -305,13 +307,14 @@ export interface ResidualResult<R = unknown, Ctx = object> {
   /** The program's statically inferred result type, which the residual's result also has. */
   readonly type: Type
   /**
-   * Evaluates the residual with the (full) context, taking the same options as
-   * Program.evaluateSync; bindings are supplied for you.
+   * Evaluates the residual, taking the same options as Program.evaluateSync;
+   * bindings are supplied for you. The context needs the paths in `dependsOn`,
+   * or the full context when `readsContext` is true.
    */
   readonly evaluateSync: (context?: PartialData<Ctx>, options?: EvaluateOptions) => R
   readonly evaluate: (context?: PartialData<Ctx>, options?: EvaluateOptions) => Promise<R>
   /**
-   * Explains the residual with the (full) context, like Program.explain;
+   * Explains the residual with the same context as evaluateSync, like Program.explain;
    * bindings are supplied for you. Each trace node's text is the residual's
    * own (printed) text; its offsets refer to the original expression, and are
    * 0 for values filled in from the known data.
@@ -364,12 +367,6 @@ export interface PartialEngine {
    */
   readonly readKnown: <T>(read: () => T) => T
   /**
-   * The variables evaluation validates against their declared types, when the
-   * environment validates contexts: a residual validates the context it runs
-   * on, so it keeps the known values of these.
-   */
-  readonly validated: ReadonlySet<string> | undefined
-  /**
    * Evaluates a subtree of `size` nodes (of a program of `total`) against the
    * known context with the given free locals, sharing one step budget and
    * deadline across the whole partial evaluation. Throws BonsaiRuntimeError
@@ -383,19 +380,20 @@ export interface PartialEngine {
   ) => unknown
   /**
    * Compiles a residual for later evaluation, with `bindings` as fixed values
-   * of the variables they name; everything else is read from the caller's
-   * context. `source` is the residual printed; `known` is a frozen copy of the
-   * known data, without the paths listed as unknown, kept when the residual
-   * calls `call: true` host functions (`readsContext`: they see it under the
-   * caller's context) or validates its context (then of the validated
-   * variables only).
+   * of the variables they name (shared with the known data, not copied);
+   * everything else is read from the caller's context, which `call: true` host
+   * functions also see as it is. `source` is the residual printed. When
+   * `readsContext`, the caller's context must hold every variable in
+   * `knownRoots` (the ones known to partial()) and is validated whole;
+   * otherwise only the paths in `dependsOn` are validated.
    */
   readonly compileResidual: (
     residual: Node,
     bindings: Readonly<Record<string, unknown>>,
     source: string,
-    known: Readonly<Record<string, unknown>> | undefined,
     readsContext: boolean,
+    knownRoots: readonly string[],
+    dependsOn: readonly string[],
   ) => {
     readonly async: boolean
     runSync: (ctx: unknown, options: unknown) => unknown
@@ -447,7 +445,7 @@ export function partiallyEvaluate<R>(
   engine: PartialEngine,
   known: Record<string, unknown>,
   options: PartialOptions,
-): PartialResult<R> {
+): PartialResult<object, R> {
   const root = engine.analysis.root
   // The tree's dependencies are the same on every call: found once per program,
   // and charged on each call as if found again, so budgets behave the same.
@@ -523,7 +521,7 @@ export function partiallyEvaluate<R>(
   // a known object leaves out, and any known object read whole (its keys, a
   // spread, ==, a let alias), since the caller may not have given all of it.
   const missing = options.unknown === undefined ? missingPaths(rootPaths.keys()) : NO_NAMES
-  const [touchesUnknown, unknownTree] = unknownIndex(unknown, missing, engine.charge, segmentsOf)
+  const touchesUnknown = unknownIndex(unknown, missing, engine.charge, segmentsOf)
 
   const bindings: Record<string, unknown> = {}
   // Binding names must not shadow a variable the expression reads or a name it
@@ -896,31 +894,24 @@ export function partiallyEvaluate<R>(
       `The residual is ${source.length} characters long, more than maxSourceLength (${engine.maxSourceLength})`,
     )
   }
-  // A call: true host function reads the whole context, which includes the
-  // known data: the residual's calls see it under the context they are given.
+  // A call: true host function reads the whole context the residual is given,
+  // which therefore has to hold the known data too.
   const hostFunctions = Object.freeze(hostCalls(outcome.node, engine.hostKind))
   const readsContext = hostFunctions.some((name) => engine.hostKind(name)?.call === true)
-  // The residual keeps the known data as partial() read it: the bindings (and
-  // the known data it keeps) are copies, so later changes to the caller's
-  // objects never reach it. The bindings are compiled in as constants, so
-  // evaluating reads the caller's context as it is: no per-call copy.
-  const copy = snapshotter(engine.charge)
-  const frozenBindings = engine.readKnown(() => {
-    const out: Record<string, unknown> = {}
-    for (const [name, value] of Object.entries(bindings)) out[name] = copy(value)
-    return Object.freeze(out)
-  })
-  // Kept for call: true functions (all of it) or for validating the context a
-  // residual runs on (the validated variables), without the paths the caller
-  // listed as unknown: those come from the caller's context alone.
-  let residualKnown: Readonly<Record<string, unknown>> | undefined
-  const keep = readsContext ? undefined : engine.validated
-  if (readsContext || keep !== undefined) {
-    residualKnown = engine.readKnown(() => {
-      const kept = {}
-      for (const name of Object.keys(known))
-        if (keep?.has(name) !== false) definePut(kept, name, known[name])
-      return copy(kept, unknownTree) as Record<string, unknown>
+  // The bindings are the values partial() read, shared with `known` (copying
+  // host data would change it: class instances, holes, prototypes). They are
+  // compiled in as constants, so evaluating reads the caller's context as it is.
+  const frozenBindings = Object.freeze(bindings)
+  // The variables known to partial() (not listed whole as unknown), which the
+  // context of a residual whose call: true functions read it must hold.
+  const knownRoots: string[] = []
+  if (readsContext) {
+    const whole = new Set(options.unknown)
+    engine.readKnown(() => {
+      const names = Object.keys(known)
+      engine.charge(names.length)
+      for (const name of names)
+        if (!whole.has(name) && known[name] !== undefined) knownRoots.push(name)
     })
   }
   // `x.length` reads a list's or a string's length when x is one, so the data
@@ -931,22 +922,24 @@ export function partiallyEvaluate<R>(
     const cut = segments.indexOf('length', 1)
     dependsOn.add(cut === -1 ? path : segments.slice(0, cut).join('.'))
   }
+  const sortedDependsOn = Object.freeze([...dependsOn].sort())
   const compiled = engine.compileResidual(
     outcome.node,
     frozenBindings,
     source,
-    residualKnown,
     readsContext,
+    knownRoots,
+    sortedDependsOn,
   )
   engine.checkTime()
-  type Residual = ResidualResult<R>
+  type Residual = ResidualResult<object, R>
   // The runners take (context, options) and always return a promise when async.
   return Object.freeze({
     status: 'residual',
     residual: outcome.node,
     source,
     bindings: frozenBindings,
-    dependsOn: Object.freeze([...dependsOn].sort()),
+    dependsOn: sortedDependsOn,
     hostFunctions,
     readsContext,
     async: compiled.async,
@@ -1003,83 +996,6 @@ export function residualTexts(
   }
   walk(root, parsed)
   return texts
-}
-
-// === copies of known data ===
-
-/** Sets an own enumerable key; defined, not assigned, so a key named __proto__ stays a key. */
-export function definePut(out: object, name: string, value: unknown, enumerable = true): void {
-  Object.defineProperty(out, name, { value, enumerable, writable: true, configurable: true })
-}
-
-/**
- * Copies known data as the language reads it, so a residual keeps it as
- * partial() saw it: lists and maps (plain objects and class instances, read
- * through their own keys) are copied, a timestamp becomes a new Date, and
- * durations and opaque host values (a Map, a RegExp, a function) are kept as
- * they are, since the language never reads into them. Shared and cyclic
- * values stay shared, except along the paths of `leave` (a tree of unknown
- * paths), where each map is copied on its own and a key marked `under` is
- * left out (another path to the same map keeps it). It runs on an explicit
- * stack, so deep data costs no call stack, and every entry copied costs a
- * step. Reads run getters and Proxy traps, so the caller runs it as a read of
- * host data. `freeze()` freezes every copy once all are made.
- */
-function snapshotter(
-  charge: (steps: number) => void,
-): (value: unknown, leave?: PathTrie) => unknown {
-  const copies = new Map<object, unknown>()
-  const pending: [object, object, PathTrie | undefined][] = []
-  const shallow = (value: unknown, leave?: PathTrie): unknown => {
-    if (typeof value !== 'object' || value === null) return value
-    let out = leave === undefined ? copies.get(value) : undefined
-    if (out !== undefined) return out
-    out = value
-    if (Array.isArray(value)) out = []
-    else if (value instanceof Date) out = isTimestamp(value) ? new Date(dateTime(value)) : value
-    else if (isMap(value)) out = {}
-    if (leave === undefined) copies.set(value, out)
-    if (out !== value && !(out instanceof Date)) pending.push([value, out as object, leave])
-    return out
-  }
-  return (value, leave) => {
-    try {
-      const out = shallow(value, leave)
-      for (let job = pending.pop(); job !== undefined; job = pending.pop()) {
-        const [from, to, tree] = job
-        if (Array.isArray(from)) {
-          charge(1 + from.length)
-          // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
-          for (let i = 0; i < from.length; i++) (to as unknown[]).push(shallow(from[i]))
-        } else {
-          const names = Object.getOwnPropertyNames(from)
-          charge(1 + names.length)
-          for (const name of names) {
-            const under = tree?.next.get(name)
-            // A getter is read as evaluation reads it.
-            if (under?.under !== true)
-              definePut(
-                to,
-                name,
-                shallow((from as Record<string, unknown>)[name], under),
-                Object.prototype.propertyIsEnumerable.call(from, name),
-              )
-          }
-        }
-        // Filled: nothing changes it again.
-        Object.freeze(to)
-      }
-      return out
-    } catch (error) {
-      if (error instanceof BonsaiError) throw error
-      // Data that throws when read (a getter, a Proxy trap) cannot be copied;
-      // it is kept as it is, and fails where evaluation reads it. Copies left
-      // half made are never handed out again.
-      pending.length = 0
-      copies.clear()
-      return value
-    }
-  }
 }
 
 // === tree helpers ===
