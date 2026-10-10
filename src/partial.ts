@@ -379,6 +379,16 @@ export interface PartialEngine {
     total: number,
   ) => unknown
   /**
+   * Evaluates `node`, a copy of the program's node `origin` whose children are
+   * all locals with the given values, running a call with the overload the
+   * program chose for `origin`. Not cached: such a node is built once.
+   */
+  readonly evaluateFolded: (
+    node: Node,
+    origin: Node,
+    locals: readonly (readonly [string, unknown])[],
+  ) => unknown
+  /**
    * Compiles a residual for later evaluation, with `bindings` as fixed values
    * of the variables they name (shared with the known data, not copied);
    * everything else is read from the caller's context, which `call: true` host
@@ -825,6 +835,33 @@ export function partiallyEvaluate<R>(
     return residual({ ...node, left: left.node, right: asNode(right) })
   }
 
+  /** Whether a node is decided by its children's values alone: no context read, host call, or clock. */
+  const foldsWhenKnown = (node: Node): boolean => {
+    switch (node.type) {
+      case 'Binary':
+      case 'Unary':
+      case 'Member':
+      case 'Index':
+      case 'List':
+      case 'Map':
+      case 'Template':
+        return true
+      case 'Call':
+        return engine.hostKind(node.name) === undefined && node.name !== 'now'
+      case 'Literal':
+      case 'Variable':
+      case 'Local':
+      case 'It':
+      case 'Has':
+      case 'Lambda':
+      case 'Let':
+      case 'Try':
+      case 'Conditional':
+      default:
+        return false
+    }
+  }
+
   const rebuild = (
     node: Node,
     env: Env,
@@ -837,8 +874,13 @@ export function partiallyEvaluate<R>(
     // is known, the node always fails with that error.
     let prefixKnown = true
     let fails: BonsaiRuntimeError | undefined
+    // A node whose children all turned out known (`(2 ?? row.total) >= 1`,
+    // where `??` skips the read) is folded below.
+    const values: (readonly [string, unknown])[] = []
+    let foldable = foldsWhenKnown(node)
     const rebuilt = mapChildren(node, (child, lambda) => {
       if (lambda !== undefined) {
+        foldable = false
         const inner = new Map(env)
         for (const param of lambda.params) inner.delete(param)
         const body = asNode(peval(lambda.body, inner))
@@ -858,9 +900,25 @@ export function partiallyEvaluate<R>(
           fails = outcome.fails
         }
         prefixKnown = false
-      }
+        foldable = false
+      } else if (foldable) values.push([`#${values.length}`, outcome.value])
       return asNode(outcome)
     })
+    if (foldable && values.length > 0) {
+      // The node with each child read from a local: it reads no context.
+      let slot = 0
+      const local = mapChildren(node, (child) => {
+        const name = `#${slot++}`
+        return { type: 'Local', name, start: child.start, end: child.end }
+      })
+      engine.charge(1 + values.length)
+      try {
+        return { known: true, value: engine.evaluateFolded(local, node, values) }
+      } catch (error) {
+        if (error instanceof BonsaiRuntimeError) return residual(rebuilt, error)
+        throw error
+      }
+    }
     return residual(rebuilt, node.type === 'Conditional' ? undefined : fails)
   }
 

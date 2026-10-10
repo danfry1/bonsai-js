@@ -1769,7 +1769,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     const callKey = (call: CallNode): string => `${call.start}:${call.end}:${call.name}`
 
     function originalPlans(
-      residual: Node,
+      compiled: Node,
       checkedCalls: ReadonlyMap<CallNode, CallPlan>,
     ): ReadonlyMap<CallNode, CallPlan> {
       if (callsBySpan === undefined) {
@@ -1789,7 +1789,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         }
         forEachChild(node, visit)
       }
-      visit(residual)
+      visit(compiled)
       return plans
     }
 
@@ -1887,6 +1887,27 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
                 throw hostDataFailure(error, source)
               }
             },
+            evaluateFolded: (node, origin, locals) => {
+              const plan = origin.type === 'Call' ? analysis.calls.get(origin) : undefined
+              const code = compileProgram(
+                {
+                  ...analysis,
+                  root: node,
+                  calls: plan === undefined ? new Map() : new Map([[node as CallNode, plan]]),
+                },
+                'sync',
+                { locals: locals.map(([name]) => name) },
+              )
+              state.ensureLocals(code.localCount)
+              locals.forEach(([, value], slot) => {
+                state.locals[slot] = value
+              })
+              try {
+                return code.run(state)
+              } catch (error) {
+                throw hostDataFailure(error, source)
+              }
+            },
             compileResidual: (
               residual,
               bindings,
@@ -1909,7 +1930,9 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
               let runner: ResidualRunner | undefined
               makeProgram(
                 source,
-                { ...reanalyzed, calls: originalPlans(residual, reanalyzed.calls) },
+                // The plans go on the calls of the tree that is compiled: the
+                // analysis root, where implicit lambdas are explicit nodes.
+                { ...reanalyzed, calls: originalPlans(reanalyzed.root, reanalyzed.calls) },
                 expect,
                 (made) => {
                   runner = made
