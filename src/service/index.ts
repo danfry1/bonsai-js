@@ -135,8 +135,10 @@ export function createLanguageService(
    * past a limit. A ` ]` after it, which nothing can continue with, turns
    * "the expression ended" into an error past the end.
    */
-  function parsesTo(source: string): number {
+  function parsesTo(source: string, budget: { left: number }): number {
     for (const text of [source, `${source} ]`]) {
+      // Out of parses: no answer, which ends the search.
+      if (budget.left-- <= 0) return -1
       try {
         parse(text, parseLimits)
         if (text === source) return Number.POSITIVE_INFINITY
@@ -152,17 +154,19 @@ export function createLanguageService(
   /**
    * An ending for nested open constructs no single ending covers, such as
    * `let v = try(o1.`: at each closer, innermost first, and after the last,
-   * the fillers the parser gets through (a few at most), within a fixed
-   * number of parses.
+   * the fillers the parser gets through (a few at most), within the parses
+   * `budget` has left.
    */
-  function builtEnding(text: string, closers: string): string | undefined {
+  function builtEnding(
+    text: string,
+    closers: string,
+    budget: { left: number },
+  ): string | undefined {
     let built = text
-    let parses = 0
     for (let gap = 0; gap <= closers.length; gap++) {
       const rest = closers.slice(gap)
       for (let round = 0; round < MAX_FILLERS; round++) {
-        if (parses++ > MAX_ENDING_PARSES) return undefined
-        const reached = parsesTo(built + rest)
+        const reached = parsesTo(built + rest, budget)
         // A mistake before the probe is one no ending can mend.
         if (reached < text.length) return undefined
         if (reached === Number.POSITIVE_INFINITY) return built + rest
@@ -170,8 +174,8 @@ export function createLanguageService(
         if (reached > built.length) break
         let filler: string | undefined
         for (const f of FILLERS) {
-          parses++
-          if (parsesTo(built + f + rest) >= built.length + f.length) {
+          if (budget.left <= 0) return undefined
+          if (parsesTo(built + f + rest, budget) >= built.length + f.length) {
             filler = f
             break
           }
@@ -228,13 +232,25 @@ export function createLanguageService(
     const afterDot = before.endsWith('?.') || (before.endsWith('.') && !before.endsWith('...'))
     const probeText = afterDot ? `${before}${PROBE}` : `${prefix}${PROBE}`
 
+    // Every parse below counts against one budget, so a completion costs at
+    // most a fixed number of parses however the source nests, and at most a
+    // few parses' worth of text when the source is long.
+    const budget = {
+      left: Math.min(
+        MAX_COMPLETION_PARSES,
+        Math.max(MIN_COMPLETION_PARSES, Math.floor(MAX_COMPLETION_CHARS / probeText.length)),
+      ),
+    }
     let analysis: Analysis | undefined
     for (const suffix of probeSuffixes(scan.closers)) {
+      if (budget.left-- <= 0) break
       analysis = tryAnalyze(probeText + suffix, PROBE)
       if (analysis !== undefined) break
     }
-    if (analysis === undefined) {
-      const ended = builtEnding(probeText, scan.closers)
+    // The last parse is kept for analyzing the ending found.
+    budget.left--
+    if (analysis === undefined && budget.left > 0) {
+      const ended = builtEnding(probeText, scan.closers, budget)
       if (ended !== undefined) analysis = tryAnalyze(ended, PROBE)
     }
     if (analysis === undefined) return empty
@@ -579,8 +595,15 @@ const PROBE_SPLITS = 4
 const FILLERS = [' : null', ', null', ': null', '; null', ' 0']
 /** Fillers one closer may take, as in try(b ? x : null, null). */
 const MAX_FILLERS = 3
-/** Parses one nested ending may cost, so completion stays bounded. */
-const MAX_ENDING_PARSES = 32
+/** Parses one completion may cost in all (fixed endings, nested ending search, and its analysis). */
+const MAX_COMPLETION_PARSES = 40
+/**
+ * Characters one completion may parse in all, so a long source gets fewer
+ * tries (each costs a parse of the whole source), but never fewer than
+ * {@link MIN_COMPLETION_PARSES}.
+ */
+const MAX_COMPLETION_CHARS = 400_000
+const MIN_COMPLETION_PARSES = 4
 
 /**
  * Endings that make a prefix ending in the probe parse, cheapest first: the
