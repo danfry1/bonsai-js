@@ -122,7 +122,7 @@ Evaluation options: `timeout` (ms), `maxSteps`, `signal` (AbortSignal), `now` (D
 
 ### Partial evaluation
 
-`program.partial(known, options?)` evaluates what `known` decides. Options: `unknown` (variables or dotted paths; default: variables missing from `known`), `callHostFunctions` (default false), `now` (the time `now()` returns; otherwise `now()` stays in the residual), `maxSteps`, `timeout`, `signal` (one budget for the whole partial evaluation). Returns `{ status: 'value', value }`, `{ status: 'error', error }` (fails whatever the unknown data is), or `{ status: 'residual', residual, source, bindings, dependsOn, hostFunctions, evaluate(ctx, options?), evaluateSync(ctx, options?), explain(ctx, options?), explainSync(ctx, options?) }`. The residual is exact: evaluating it with the full context gives the same value or error as the original. Known values that are not short primitives are referenced as `__knownN` bindings; `evaluate`/`evaluateSync` supply them. Known variables are validated when `validateContext` is on.
+`program.partial(known, options?)` (synchronous) evaluates what `known` decides. Options: `unknown` (variables or dotted paths; default: variables missing from `known`), `callHostFunctions` (default false), `now` (the time `now()` returns; otherwise `now()` stays in the residual), `maxSteps`, `timeout`, `signal` (one budget for the whole partial evaluation). Returns `{ status: 'value', value }`, `{ status: 'error', error }` (fails whatever the unknown data is), or `{ status: 'residual', residual, source, bindings, dependsOn, hostFunctions, evaluate(ctx, options?), evaluateSync(ctx, options?), explain(ctx, options?), explainSync(ctx, options?) }`. The residual is exact: evaluating it with the full context gives the same value or error as the original. Known values that are not short primitives are referenced as `__knownN` bindings; `evaluate`/`evaluateSync` supply them. Known variables are validated when `validateContext` is on.
 
 ### Query translation (bonsai-js/query)
 
@@ -130,7 +130,7 @@ Evaluation options: `timeout` (ms), `maxSteps`, `signal` (AbortSignal), `now` (D
 
 ### Syntax trees
 
-`env.parse(src)` returns a JSON syntax tree (`type`, `start`, `end` on every node); `print(tree, { calls?: 'method' | 'function' })` turns it back into source that evaluates the same way.
+`env.parse(src)` returns a JSON syntax tree (`type`, `start`, `end` on every node; a parenthesized node includes its parentheses); the standalone `parse(src, limits?)` does the same without an environment (only the parse limits apply; the other `limits` keys are ignored). `print(tree, { calls?: 'method' | 'function' })` turns a tree back into source that evaluates the same way. `forEachChild(node, visit)` visits a node's children in evaluation order, and `mapChildren(node, rewrite)` returns a copy with each child replaced by `rewrite(child)`.
 
 ### Host functions
 
@@ -156,10 +156,10 @@ Arguments are validated before `run`; results are checked deeply against `return
 
 ### Errors
 
-All errors from checking and evaluating extend `BonsaiError` with `code`, `source`, `span` (`{ start, end }`), `position` (1-based), `formatted` (message + code frame); diagnostics (`check().diagnostics`, `BonsaiCheckError.diagnostics`, `program.warnings`) carry `code`, `message`, `severity`, `start`, `end`, `span`, `position`, `formatted`, and `suggestion` (the name to use instead, for unknown names); `check()` also returns `ast` (the checked tree), `typeOf(node)`, and, when ok, `program` (compiled on first read); exceptions from host code (functions, getters, Proxies, including a `BonsaiError` a host function throws) are wrapped as `HOST_ERROR`. Invalid configuration throws `TypeError` or `RangeError` (a wrong type or unknown option key is a `TypeError`, a value out of range a `RangeError`) from `bonsai()`, `fn()`, `compile()`/`check()`, `evaluate*()` and `explain*()` (per-evaluation options, or a context that is not an object), `partial()`, `toSQL()`/`toMongo()`, and `print()` (trees the parser could not produce).
+All errors from checking and evaluating extend `BonsaiError` with `name` (the class name, kept when minified), `code`, `source`, `span` (`{ start, end }`), `position` (1-based), `formatted` (message + code frame); diagnostics (`check().diagnostics`, `BonsaiCheckError.diagnostics`, `program.warnings`) carry `code`, `message`, `severity`, `start`, `end`, `span`, `position`, `formatted`, and `suggestion` (the name to use instead, for unknown names); `check()` also returns `ast` (the checked tree), `typeOf(node)`, and, when ok, `program` (compiled on first read); exceptions from host code (functions, getters, Proxies, including a `BonsaiError` a host function throws) are wrapped as `HOST_ERROR`. `isBonsaiError(value)` recognizes a Bonsai error, also one from another copy of the package. Error constructors are not public API. Invalid configuration throws `TypeError` or `RangeError` (a wrong type or unknown option key is a `TypeError`, a value out of range a `RangeError`) from `bonsai()`, `fn()`, `compile()`/`check()`, `evaluate*()` and `explain*()` (per-evaluation options, or a context that is not an object), `partial()`, `toSQL()`/`toMongo()`, and `print()` (trees the parser could not produce).
 - `BonsaiSyntaxError`: `SYNTAX`
 - `BonsaiCheckError`: `CHECK` (`.diagnostics`)
-- `BonsaiLimitError`: `SOURCE_TOO_LONG`, `TOO_DEEP` (syntax), `TOO_MANY_NODES`, `TOO_COMPLEX`, `STEP_LIMIT`, `STRING_LIMIT`, `LIST_LIMIT`, `VALUE_DEPTH_LIMIT` (nested data), `PATTERN_LIMIT`, `TIMEOUT`, `ABORTED`; `.limit` names the option to raise (`maxSteps`, `timeout`, `signal`, ...; undefined for fixed bounds)
+- `BonsaiLimitError`: `SOURCE_TOO_LONG`, `TOO_DEEP` (syntax), `TOO_MANY_NODES`, `TOO_COMPLEX`, `STEP_LIMIT`, `STRING_LIMIT`, `LIST_LIMIT`, `VALUE_DEPTH_LIMIT` (nested data), `PATTERN_LIMIT`, `TIMEOUT`, `ABORTED`; `.limit` names the option to raise (`maxSteps`, `timeout`, `signal`, ...; undefined for fixed bounds and for a call stack overflow)
 - `BonsaiTranslationError` (from `bonsai-js/query`): `UNTRANSLATABLE`
 - `BonsaiRuntimeError`: `TYPE_ERROR`, `NO_OVERLOAD`, `NULL_RECEIVER`, `DIVISION_BY_ZERO`, `NON_FINITE`, `BLOCKED_PROPERTY`, `INVALID_ARGUMENT`, `ASYNC_IN_SYNC`, `HOST_ERROR`, `HOST_CONTRACT`, `INVALID_CONTEXT`
 
@@ -178,6 +178,10 @@ Expression text is untrusted; context data and host functions are trusted. Expre
 ## Migrating from 0.x
 
 `a |> f(b)` -> `a.f(b)`; `upper`/`lower` -> `toUpperCase`/`toLowerCase`; `flatten` -> `flat`; stdlib plugins -> built in; `addFunction` -> `functions: { name: fn({...}) }`; `addContextFunction` -> `fn({ call: true, run: (call, ...args) => ... })` reading `call.context`; `validate()` -> `check()`; `evaluateExpression` -> `bonsai().evaluateSync`; `allowedProperties` -> pass only the data expressions may read; `x == null` now includes missing values; `&&`/`||` are strict booleans (use `??` for defaults). Results that changed silently: `round` rounds halves away from zero and honors digits; `avg([])` is null; `unique` compares by value; templates render null as empty text and dates as ISO-8601; `toNumber` of invalid text is an error; division and remainder by zero are errors; `sort()` is numeric; `includes`/`indexOf`/`in` and `Date` equality compare by value; `replace` inserts its replacement literally; `substring` -> `slice` and `charAt` -> `at` differ for reversed or negative positions. Requires Node.js 22+. Full guide: https://danfry1.github.io/bonsai-js/guide/migrating
+
+## Stability
+
+Semantic Versioning covers the language (an expression that evaluates successfully keeps its result) and the exported API, including error codes and error JSON. A minor release may add syntax, functions, optional option fields, result fields, and union variants (avoid exhaustive switches without a default), change messages and step costs, and simplify residuals. Not public: error constructors, host functions not built with `fn()`, and implementing `Environment`, `Program`, `Explanation`, `Trace`, or `LanguageService` yourself. The result type parameter of `env.evaluate<R>()` and similar is an unchecked assertion; use `compile(src, { expect })` for a checked type. Full policy: https://danfry1.github.io/bonsai-js/guide/stability
 
 ## Built-in functions
 

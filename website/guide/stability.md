@@ -8,16 +8,26 @@ Bonsai follows Semantic Versioning for its three package entrypoints:
 
 ## What is covered
 
-- **The language.** Everything in [language.md](./language.md) and every case in
+- **The language.** Everything in the [language specification](https://github.com/danfry1/bonsai-js/blob/main/docs/language.md) and every case in
   `tests/conformance.test.ts`. Changing the result of an expression that
   evaluates successfully, or making it fail, requires a major release.
 - **The API.** Exported functions, classes, types, options, and error codes.
-  Error classes are covered for `instanceof` checks and reading their fields
-  (and their JSON form); their constructors are not public API, since Bonsai
-  creates its errors and the constructor parameters may change. `toSQL` and
-  `toMongo` take compiled programs: the `Translatable` type describes what they
-  read from one, and only a program from `env.compile` (or
-  `env.check(...).program`) satisfies it.
+  - Error classes are covered for `instanceof` checks and for reading their
+    fields, `name` included, and their JSON form. Their constructors are not
+    public API: Bonsai creates its errors, and the constructor parameters may
+    change.
+  - A host function is a value returned by `fn()` (or by a `withContext()`
+    builder). An object written by hand in the same shape is not supported,
+    even when the `HostFunction` type accepts it.
+  - `toSQL` and `toMongo` take compiled programs. The `Translatable` type
+    describes what they read from one, and only a program from `env.compile`
+    (or `env.check(...).program`) satisfies it.
+  - The result type parameter of `env.evaluate`, `evaluateSync`, `explain`,
+    `explainSync`, and `partial` (`env.evaluateSync<boolean>(...)`) is an
+    unchecked assertion, like a cast. For a checked result type, compile with
+    `expect`.
+  - `partial()` is synchronous and keeps its name. An asynchronous variant, if
+    one is added, gets a new name rather than changing this one.
 - **SQL and MongoDB translation.** A filter that translates selects exactly
   the records Bonsai accepts. The generated text and parameter numbering may
   change in a minor release (for example to use an index), and a filter that

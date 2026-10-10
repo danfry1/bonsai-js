@@ -307,6 +307,10 @@ All limits are on by default; `limits` changes the budget. `0` disables `maxStep
 
 The step budget is deterministic: the same expression over the same data uses the same steps on every machine, and at the default budget any expression finishes or fails within about 100 ms on Node (about 150 ms for the slowest shapes we have found). Host functions are trusted code: limits cannot interrupt a synchronous host function that is already running, and a getter or Proxy you put in the context runs when it is read. Set a `timeout` when expressions call slow host functions. See [SECURITY.md](./SECURITY.md) and [docs/threat-model.md](./docs/threat-model.md).
 
+## Stability
+
+Bonsai follows Semantic Versioning. The [stability policy](https://danfry1.github.io/bonsai-js/guide/stability) says what a minor release may change (new syntax, functions, fields, and union variants, messages, step costs) and what is not public API (error constructors, hand-built host functions).
+
 ## License
 
 MIT

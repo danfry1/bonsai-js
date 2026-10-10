@@ -48,7 +48,8 @@ export interface Column {
 /** Declared record fields, keyed by the path after the row variable (`status`, `address.city`). */
 export type Columns = Readonly<Record<string, ColumnType | Column>>
 
-interface CommonOptions {
+/** Options toSQL and toMongo share. */
+export interface QueryOptions {
   /** The variable that names the record being filtered, e.g. `order`. */
   readonly row: string
   /**
@@ -80,7 +81,7 @@ interface CommonOptions {
   readonly callHostFunctions?: boolean | undefined
 }
 
-export interface SQLOptions extends CommonOptions {
+export interface SQLOptions extends QueryOptions {
   readonly dialect: 'postgres' | 'sqlite'
   /** The queryable columns. Anything else is rejected. */
   readonly columns: Columns
@@ -89,7 +90,7 @@ export interface SQLOptions extends CommonOptions {
 }
 
 /** A value toSQL sends for a placeholder. */
-type SQLParam = string | number | boolean | (string | number)[]
+export type SQLParam = string | number | boolean | (string | number)[]
 
 export interface SQLQuery<Param = SQLParam> {
   /**
@@ -107,7 +108,7 @@ export interface SQLQuery<Param = SQLParam> {
   readonly params: Param[]
 }
 
-export interface MongoOptions extends CommonOptions {
+export interface MongoOptions extends QueryOptions {
   /** The queryable fields. Anything else is rejected. */
   readonly fields: Columns
 }
@@ -120,8 +121,10 @@ export interface MongoQuery {
 
 /** The predicate (or part of it) has no exact equivalent in the target database. */
 export class BonsaiTranslationError extends BonsaiError {
+  /** @internal */
   constructor(message: string, source: string, span?: Span) {
     super('UNTRANSLATABLE', message, { source, span })
+    this.name = 'BonsaiTranslationError'
   }
 }
 
@@ -360,7 +363,7 @@ interface Budget {
  * partial evaluation runs on what is left of them, and otherwise on the
  * environment's own limits.
  */
-function budget(options: CommonOptions, source: string): Budget {
+function budget(options: QueryOptions, source: string): Budget {
   const { maxSteps, timeout, signal } = options
   // Invalid values are passed on to partial(), which rejects them as it always does.
   const validSteps = typeof maxSteps === 'number' && Number.isInteger(maxSteps) && maxSteps >= 0
@@ -485,7 +488,7 @@ function checkKeys(options: unknown, allowed: readonly string[], translator: str
 
 /** Validates options that come from configuration; mistakes there are programming errors. */
 function declare(
-  options: CommonOptions,
+  options: QueryOptions,
   columns: unknown,
   what: string,
   target: Target,
@@ -949,7 +952,7 @@ function checkKnownPaths(
 /** Partially evaluates the program and lowers the residual to a predicate. */
 function lower(
   program: Translatable,
-  options: CommonOptions,
+  options: QueryOptions,
   columns: ReadonlyMap<string, Declared>,
   target: Target,
   translation: Budget,

@@ -3,6 +3,15 @@ import type { Node } from './syntax/ast.js'
 import { DEFAULT_PARSE_LIMITS, MAX_DEPTH_LIMIT, parse as parseTree } from './syntax/parser.js'
 
 const PARSE_LIMIT_KEYS = ['maxSourceLength', 'maxDepth', 'maxNodes'] as const
+/** The other keys of {@link Limits}: parsing does not use them, so a full `limits` object is accepted. */
+const OTHER_LIMIT_KEYS: readonly string[] = [
+  'maxSteps',
+  'maxStringLength',
+  'maxListLength',
+  'maxValueDepth',
+  'maxPatternLength',
+  'timeout',
+]
 
 /** The limits parse() takes: the parse limits of {@link Limits}. */
 export type ParseOptions = Pick<Limits, (typeof PARSE_LIMIT_KEYS)[number]>
@@ -12,13 +21,15 @@ export type ParseOptions = Pick<Limits, (typeof PARSE_LIMIT_KEYS)[number]>
  * that only read, edit, and print trees (a visual editor ships just the
  * parser). It is what `env.parse` does: no checking, and the same limits
  * (default `maxSourceLength` 100,000, `maxDepth` 128, `maxNodes` 20,000).
+ * The other keys of {@link Limits} are ignored, so an environment's `limits`
+ * object can be passed as it is; any other key is a TypeError.
  * Throws BonsaiSyntaxError or BonsaiLimitError.
  */
 export function parse(source: string, limits: ParseOptions = {}): Node {
   if (typeof source !== 'string') throw new TypeError('An expression must be a string')
   if (typeof limits !== 'object' || limits === null) throw new TypeError('Limits must be an object')
   for (const key of Object.keys(limits)) {
-    if (!(PARSE_LIMIT_KEYS as readonly string[]).includes(key))
+    if (!(PARSE_LIMIT_KEYS as readonly string[]).includes(key) && !OTHER_LIMIT_KEYS.includes(key))
       throw new TypeError(
         `Unknown parse limit "${key}" (expected one of: ${PARSE_LIMIT_KEYS.join(', ')})`,
       )

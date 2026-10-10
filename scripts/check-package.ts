@@ -99,7 +99,7 @@ try {
   const publicExports: Record<string, readonly string[]> = {
     'index.d.mts': [
       ...['AbortSignalLike', 'AnyType', 'BinaryNode', 'BinaryOperator', 'BonsaiCheckError'],
-      ...['BonsaiError', 'BonsaiErrorJSON'],
+      ...['BonsaiError', 'BonsaiErrorJSON', 'BonsaiErrorName'],
       ...['BonsaiLimitError', 'BonsaiRuntimeError', 'BonsaiSyntaxError', 'BooleanType'],
       ...['CallNode', 'CallStyle', 'CheckResult', 'CompileOptions', 'ConditionalNode'],
       ...['Diagnostic', 'DiagnosticCode', 'DiagnosticJSON', 'Duration', 'DurationType'],
@@ -107,12 +107,15 @@ try {
       ...[
         'ExplainOptions',
         'Explanation',
+        'ExplanationJSON',
         'Iteration',
+        'IterationJSON',
         'PartialData',
         'PartialOptions',
         'PartialResult',
         'ResidualResult',
         'Trace',
+        'TraceJSON',
       ],
       ...['FnSpec', 'FunctionInfo', 'FunctionType', 'HasNode', 'HostCall', 'HostFunction'],
       'IndexNode',
@@ -141,7 +144,8 @@ try {
     ],
     'query/index.d.mts': [
       ...['BonsaiTranslationError', 'Column', 'ColumnType', 'Columns', 'MongoOptions'],
-      ...['MongoQuery', 'SQLOptions', 'SQLQuery', 'Translatable', 'toMongo', 'toSQL'],
+      ...['MongoQuery', 'QueryOptions', 'SQLOptions', 'SQLParam', 'SQLQuery', 'Translatable'],
+      ...['toMongo', 'toSQL'],
     ],
   }
   for (const [file, expected] of Object.entries(publicExports)) {

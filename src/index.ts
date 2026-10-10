@@ -48,6 +48,7 @@ export {
 } from './errors.js'
 export type {
   BonsaiErrorJSON,
+  BonsaiErrorName,
   Diagnostic,
   DiagnosticJSON,
   DiagnosticCode,
@@ -84,5 +85,11 @@ export type {
 export { parse, type ParseOptions } from './parse.js'
 export { print } from './syntax/printer.js'
 export type { PartialData, PartialOptions, PartialResult, ResidualResult } from './partial.js'
-export type { Iteration, Trace } from './runtime/trace.js'
+export type {
+  ExplanationJSON,
+  Iteration,
+  IterationJSON,
+  Trace,
+  TraceJSON,
+} from './runtime/trace.js'
 export type { PrintOptions } from './syntax/printer.js'

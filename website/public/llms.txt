@@ -44,12 +44,12 @@ rule.evaluateSync(context) // a boolean
 - `env.check(src)` returns `{ ok, type, diagnostics }` and never throws. `env.compile(src, { expect })` returns a program with `evaluate`, `evaluateSync`, `type`, `references`, `warnings`.
 - `env.evaluateSync(src, ctx)` and `await env.evaluate(src, ctx)` compile through a cache. Options: `{ timeout, maxSteps, signal, now }` (`now` fixes the time `now()` returns for that evaluation).
 - `await program.explain(ctx)` / `program.explainSync(ctx)` evaluate and return `{ ok, value | error, trace, reasons(), toString(), toJSON() }`, a trace of every sub-expression's value.
-- `program.partial(known, { unknown?, callHostFunctions?, now? })` returns `{ status: 'value' }`, `{ status: 'error' }`, or `{ status: 'residual', source, bindings, dependsOn, evaluate, evaluateSync }`: a simplified expression over only the missing data.
-- `toSQL(program, { row, columns, dialect: 'postgres' | 'sqlite', known?, now?, paramOffset? })` -> `{ sql, params }` and `toMongo(program, { row, fields, known?, now? })` -> `{ filter, options }` from `bonsai-js/query` translate a filter to a query selecting exactly the records it accepts.
-- `env.parse(src)` gives a JSON syntax tree; `print(tree, { calls? })` turns it back into source.
+- `program.partial(known, { unknown?, callHostFunctions?, now?, maxSteps?, timeout?, signal? })` (sync) returns `{ status: 'value' }`, `{ status: 'error' }`, or `{ status: 'residual', source, bindings, dependsOn, evaluate, evaluateSync }`: a simplified expression over only the missing data.
+- `toSQL(program, { row, columns, dialect: 'postgres' | 'sqlite', known?, now?, paramOffset?, maxSteps?, timeout?, signal?, callHostFunctions? })` -> `{ sql, params }` and `toMongo(program, { row, fields, known?, now?, maxSteps?, timeout?, signal?, callHostFunctions? })` -> `{ filter, options }` from `bonsai-js/query` translate a filter to a query selecting exactly the records it accepts.
+- `env.parse(src)` gives a JSON syntax tree, as does the standalone `parse(src, limits?)` (no environment); `print(tree, { calls? })` turns it back into source. `forEachChild(node, visit)` walks a tree and `mapChildren(node, rewrite)` rebuilds one.
 - Host functions: `fn({ params: [t.string()], returns: t.boolean(), run, async?, call?, required?, rest?, cost?, description? })`. With `call: true`, `run` first receives `{ context, signal }`.
 - Types: `t.string() number() boolean() null() timestamp() duration() literal() enum() list() object() record() optional() union() opaque() any()`; `Infer<typeof T>`.
-- Errors: `BonsaiSyntaxError`, `BonsaiCheckError` (`.diagnostics`), `BonsaiLimitError`, `BonsaiRuntimeError`; each has a stable `code`. Host functions that throw give `HOST_ERROR`; results that break the declared type give `HOST_CONTRACT`, which `try()` does not catch.
+- Errors: `BonsaiSyntaxError`, `BonsaiCheckError` (`.diagnostics`), `BonsaiLimitError` (`.limit`), `BonsaiRuntimeError`; each has a stable `code`, and `isBonsaiError(e)` recognizes them across package copies. Host functions that throw give `HOST_ERROR`; results that break the declared type give `HOST_CONTRACT`, which `try()` does not catch.
 - Editor features: `createLanguageService(env)` from `bonsai-js/service` with `complete`, `hover`, `diagnostics`.
 
 ## Documentation
@@ -58,6 +58,7 @@ rule.evaluateSync(context) // a boolean
 - Language: https://danfry1.github.io/bonsai-js/language/
 - Built-in functions: https://danfry1.github.io/bonsai-js/functions/
 - API: https://danfry1.github.io/bonsai-js/api/environment
+- Stability policy: https://danfry1.github.io/bonsai-js/guide/stability
 - Full text for LLMs: https://danfry1.github.io/bonsai-js/llms-full.txt
 
 ## Links
