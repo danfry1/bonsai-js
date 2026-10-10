@@ -1,6 +1,6 @@
 import { BLOCKED_NAMES } from '../syntax/lexer.js'
 import { signatureText, type Analysis, type CallPlan } from '../check/checker.js'
-import { BonsaiError, BonsaiLimitError, BonsaiRuntimeError, type Span } from '../errors.js'
+import { BonsaiLimitError, BonsaiRuntimeError, type BonsaiError, type Span } from '../errors.js'
 import { guardDepth, isStackOverflow, tooDeep } from '../runtime/overflow.js'
 import {
   conforms,
@@ -9,6 +9,7 @@ import {
   type FunctionDef,
   type Overload,
 } from '../functions/define.js'
+import { isOwn, raised } from '../runtime/attribution.js'
 import type { State } from '../runtime/state.js'
 import { errorInfo, type Tracer } from '../runtime/trace.js'
 import {
@@ -81,39 +82,17 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
   )
 }
 
-/** Errors that have left an evaluation or a partial evaluation for its caller. */
-const escaped = new WeakSet<BonsaiError>()
-
-/**
- * Marks an error leaving an evaluation for its caller. Seen again inside an
- * evaluation, it came through host code (a getter that ran an evaluation of
- * its own, say), so it is that host data's failure, not this evaluation's.
- */
-export function escaping<E>(error: E): E {
-  if (error instanceof BonsaiError) escaped.add(error)
-  return error
-}
-
-/** Whether a Bonsai error already left some evaluation, so host code passed it on. */
-export function hasEscaped(error: BonsaiError): boolean {
-  return escaped.has(error)
-}
-
 /**
  * Host data (getters, Proxy traps, species or `then` hooks) can throw while
  * the engine reads it. Such failures surface as HOST_ERROR, never as a raw
- * JavaScript error. Only the runtime and limit errors this evaluation raised
- * pass through: a Bonsai error from another evaluation (or a parse or check
- * error) that a getter threw is the host data's failure too.
+ * JavaScript error. Only the errors this evaluation raised pass through: any
+ * other Bonsai error a getter threw (from another evaluation, from parsing,
+ * checking, or translating, or built by the host) is the host data's failure.
  */
 function hostDataError(error: unknown, s: State): unknown {
-  if (
-    (error instanceof BonsaiRuntimeError || error instanceof BonsaiLimitError) &&
-    !escaped.has(error)
-  )
-    return error
+  if (isOwn(error)) return error
   // The engine's own recursion ran out of stack: a limit, never the host's failure.
-  if (isStackOverflow(error)) return tooDeep(s.source)
+  if (isStackOverflow(error)) return raised(tooDeep(s.source))
   return s.error('HOST_ERROR', `Reading host data failed: ${errorText(error)}`, undefined, error)
 }
 
@@ -318,8 +297,9 @@ function compileTree(
             try {
               return b(s)
             } catch (error) {
-              if (recoverable(hostDataError(error, s))) return f(s)
-              throw hostDataError(error, s)
+              const failure = hostDataError(error, s)
+              if (recoverable(failure)) return f(s)
+              throw failure
             }
           })
         }
@@ -327,8 +307,9 @@ function compileTree(
           try {
             return await body.fn(s)
           } catch (error) {
-            if (recoverable(hostDataError(error, s))) return fallback.fn(s)
-            throw hostDataError(error, s)
+            const failure = hostDataError(error, s)
+            if (recoverable(failure)) return fallback.fn(s)
+            throw failure
           }
         })
       }
@@ -1128,10 +1109,12 @@ function raceLimits(
         try {
           s.checkTime()
           fail(
-            new BonsaiLimitError('ABORTED', 'Evaluation was aborted', {
-              source: s.source,
-              cause: s.signalError,
-            }),
+            raised(
+              new BonsaiLimitError('ABORTED', 'Evaluation was aborted', {
+                source: s.source,
+                cause: s.signalError,
+              }),
+            ),
           )
         } catch (error) {
           fail(error as Error)

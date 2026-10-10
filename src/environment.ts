@@ -1,5 +1,6 @@
 import { analyze, type Analysis, type CallPlan, type CheckEnv } from './check/checker.js'
-import { compileProgram, escaping, hasEscaped, type CompiledProgram } from './compile/compiler.js'
+import { compileProgram, type CompiledProgram } from './compile/compiler.js'
+import { escaping, isOwn, raised } from './runtime/attribution.js'
 import {
   BonsaiCheckError,
   BonsaiError,
@@ -1069,24 +1070,33 @@ function validationBudget(source: string, limits: ValidationLimits): ValidationB
     deadline: limits.timeout > 0 ? performance.now() + limits.timeout : 0,
     onExhausted: (reason) => {
       if (reason === 'depth') {
-        throw new BonsaiLimitError(
-          'VALUE_DEPTH_LIMIT',
-          `Context nests deeper than ${limits.maxDepth}`,
-          { source },
+        throw raised(
+          new BonsaiLimitError(
+            'VALUE_DEPTH_LIMIT',
+            `Context nests deeper than ${limits.maxDepth}`,
+            {
+              source,
+            },
+          ),
         )
       }
       if (reason === 'time')
-        throw new BonsaiLimitError('TIMEOUT', 'Context validation timed out', { source })
-      throw new BonsaiLimitError('STEP_LIMIT', 'Context validation exceeded the step limit', {
-        source,
-      })
+        throw raised(new BonsaiLimitError('TIMEOUT', 'Context validation timed out', { source }))
+      throw raised(
+        new BonsaiLimitError('STEP_LIMIT', 'Context validation exceeded the step limit', {
+          source,
+        }),
+      )
     },
   }
 }
 
 function invalidContext(problem: string | undefined, source: string): void {
-  if (problem !== undefined)
-    throw new BonsaiRuntimeError('INVALID_CONTEXT', `Invalid context: ${problem}`, { source })
+  if (problem !== undefined) {
+    throw raised(
+      new BonsaiRuntimeError('INVALID_CONTEXT', `Invalid context: ${problem}`, { source }),
+    )
+  }
 }
 
 function validateContext(
@@ -1236,16 +1246,20 @@ function validatePaths(
 
 /**
  * Reading host data (a getter, a Proxy trap, a `then` hook) can throw. Such a
- * failure is a HOST_ERROR, never a raw JavaScript error, and so is a Bonsai
- * error that already left another evaluation (a getter that evaluated).
+ * failure is a HOST_ERROR, never a raw JavaScript error. Only the errors this
+ * evaluation raised pass through: any other Bonsai error (from another
+ * evaluation, from parsing, checking, or translating, or built by the host)
+ * that host data threw is the host data's failure too.
  */
 function hostDataFailure(error: unknown, source: string): BonsaiError {
-  if (error instanceof BonsaiError && !hasEscaped(error)) return error
-  if (isStackOverflow(error)) return tooDeep(source)
-  return new BonsaiRuntimeError('HOST_ERROR', `Reading host data failed: ${errorText(error)}`, {
-    source,
-    cause: error,
-  })
+  if (isOwn(error)) return error
+  if (isStackOverflow(error)) return raised(tooDeep(source))
+  return raised(
+    new BonsaiRuntimeError('HOST_ERROR', `Reading host data failed: ${errorText(error)}`, {
+      source,
+      cause: error,
+    }),
+  )
 }
 
 const systemClock = (): Date => new Date()
@@ -1257,12 +1271,14 @@ function checkedClock(clock: () => Date): () => Date {
     try {
       value = clock()
     } catch (error) {
-      throw new BonsaiRuntimeError('HOST_ERROR', 'The clock failed', { cause: error })
+      throw raised(new BonsaiRuntimeError('HOST_ERROR', 'The clock failed', { cause: error }))
     }
     if (!(value instanceof Date) || Number.isNaN(Date.prototype.getTime.call(value))) {
-      throw new BonsaiRuntimeError(
-        'HOST_CONTRACT',
-        'The clock must return a valid Date (for example () => new Date())',
+      throw raised(
+        new BonsaiRuntimeError(
+          'HOST_CONTRACT',
+          'The clock must return a valid Date (for example () => new Date())',
+        ),
       )
     }
     return value
@@ -1496,10 +1512,12 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     const guard = expect !== undefined && analysis.checkResult ? expect : undefined
     const checked = (result: unknown, state: State): void => {
       if (guard !== undefined && !conforms(result, guard, state)) {
-        throw new BonsaiRuntimeError(
-          'TYPE_ERROR',
-          `The result does not match the expected type ${formatType(guard)}`,
-          { source },
+        throw raised(
+          new BonsaiRuntimeError(
+            'TYPE_ERROR',
+            `The result does not match the expected type ${formatType(guard)}`,
+            { source },
+          ),
         )
       }
     }
@@ -1546,10 +1564,12 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
             (!Object.hasOwn(ctx, name) || ctx[name] === undefined),
         )
         if (missing !== undefined) {
-          throw new BonsaiRuntimeError(
-            'INVALID_CONTEXT',
-            `Invalid context: ${missing} is missing; this residual calls a call: true host function, so pass the full context, as for the program`,
-            { source },
+          throw raised(
+            new BonsaiRuntimeError(
+              'INVALID_CONTEXT',
+              `Invalid context: ${missing} is missing; this residual calls a call: true host function, so pass the full context, as for the program`,
+              { source },
+            ),
           )
         }
       }
@@ -1637,10 +1657,12 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         (typeof result === 'object' || typeof result === 'function') &&
         typeof (result as { then?: unknown }).then === 'function'
       ) {
-        throw new BonsaiRuntimeError(
-          'TYPE_ERROR',
-          'evaluate() cannot return a promise-like value; use evaluateSync()',
-          { source },
+        throw raised(
+          new BonsaiRuntimeError(
+            'TYPE_ERROR',
+            'evaluate() cannot return a promise-like value; use evaluateSync()',
+            { source },
+          ),
         )
       }
       return result
@@ -1707,7 +1729,13 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     function chargeResidualText(state: State): void {
       if (residualOf === undefined) return
       state.charge(1 + Math.ceil(residualOf.source.length / RESIDUAL_CHARS_PER_STEP))
-      residualTextMap(residualOf.source)
+      try {
+        residualTextMap(residualOf.source)
+      } catch (error) {
+        // Re-reading the residual's own text is this explanation's work, not host data.
+        if (error instanceof BonsaiError) throw raised(error)
+        throw error
+      }
       state.checkTime()
     }
 
@@ -1717,10 +1745,12 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         return explanation(
           tracerFor(explain),
           failure(
-            new BonsaiRuntimeError(
-              'ASYNC_IN_SYNC',
-              'This expression calls an async function; use explain() instead of explainSync()',
-              { source },
+            raised(
+              new BonsaiRuntimeError(
+                'ASYNC_IN_SYNC',
+                'This expression calls an async function; use explain() instead of explainSync()',
+                { source },
+              ),
             ),
           ),
         )
@@ -1854,8 +1884,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
             }
           } catch (error) {
             // Validation only reads the known data, so any other failure is the host's.
-            if (!(error instanceof BonsaiError) || hasEscaped(error))
-              throw hostDataFailure(error, source)
+            if (!isOwn(error)) throw hostDataFailure(error, source)
             if (error instanceof BonsaiRuntimeError) return { status: 'error', error }
             throw error
           }
@@ -1974,8 +2003,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
             checked(result.value, state)
           } catch (error) {
             // Checking reads the value, which can be host data.
-            if (!(error instanceof BonsaiError) || hasEscaped(error))
-              throw hostDataFailure(error, source)
+            if (!isOwn(error)) throw hostDataFailure(error, source)
             if (error instanceof BonsaiRuntimeError) return { status: 'error', error }
             throw error
           }
