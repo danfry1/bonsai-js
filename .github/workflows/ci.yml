@@ -66,6 +66,12 @@ jobs:
       - name: Test
         run: bun run test:coverage
 
+      # Every view of one generated expression (check, evaluate, explain, print,
+      # partial, SQL, MongoDB, the language service) must agree. A short run per
+      # change; the seed comes from the clock, so CI keeps covering new cases.
+      - name: Cross-view fuzz
+        run: bun run cross-fuzz --seconds 30
+
       - name: Build
         run: bun run build
 
