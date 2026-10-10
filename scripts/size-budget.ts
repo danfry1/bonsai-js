@@ -18,6 +18,7 @@ interface SizeCase {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const entry = JSON.stringify(join(root, 'dist', 'index.mjs'))
+const serviceEntry = JSON.stringify(join(root, 'dist', 'service', 'index.mjs'))
 
 const cases: SizeCase[] = [
   {
@@ -27,8 +28,10 @@ const cases: SizeCase[] = [
     // positions and frames, residual explain and bounds, input validation);
     // 62.3 KB after the third review round (stack-overflow guard, duration(),
     // check-time warnings, partial evaluation that never decides from data it
-    // was not given).
-    maxGzipBytes: 64_000,
+    // was not given); 64.0 KB after the fourth and fifth (balanced spans,
+    // checker soundness for map literals, bounded overlays and partial
+    // evaluation memory, residual snapshots).
+    maxGzipBytes: 66_000,
   },
   {
     name: 't only',
@@ -45,6 +48,12 @@ const cases: SizeCase[] = [
     name: 'parse and print only',
     source: `import { parse, print } from ${entry}\nconsole.log(print(parse('a + b')))`,
     maxGzipBytes: 12_000,
+  },
+  {
+    // The editor entry on its own: the checker without the compiler or runtime.
+    name: 'language service only',
+    source: `import { createLanguageService } from ${serviceEntry}\nconsole.log(createLanguageService)`,
+    maxGzipBytes: 46_000,
   },
 ]
 
