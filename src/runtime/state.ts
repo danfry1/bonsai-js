@@ -1,4 +1,5 @@
 import type { Tracer } from './trace.js'
+import { raised } from './attribution.js'
 import { BonsaiLimitError, BonsaiRuntimeError, type ErrorCode, type Span } from '../errors.js'
 
 /** Runtime limits. Every limit is on by default; options only change the budget. */
@@ -214,12 +215,14 @@ export class State {
 
   /** A limit error at `at`. Unlike {@link error}, it is not charged: the evaluation is over. */
   limit(code: ErrorCode, message: string, at?: Span): BonsaiLimitError {
-    return new BonsaiLimitError(code, message, { source: this.source, span: spanOf(at) })
+    return raised(new BonsaiLimitError(code, message, { source: this.source, span: spanOf(at) }))
   }
 
   error(code: ErrorCode, message: string, at?: Span, cause?: unknown): BonsaiRuntimeError {
     this.charge(ERROR_COST)
-    return new BonsaiRuntimeError(code, message, { source: this.source, span: spanOf(at), cause })
+    return raised(
+      new BonsaiRuntimeError(code, message, { source: this.source, span: spanOf(at), cause }),
+    )
   }
 }
 
@@ -250,5 +253,7 @@ function abortError(state: State): BonsaiLimitError {
       cause = error
     }
   }
-  return new BonsaiLimitError('ABORTED', 'Evaluation was aborted', { source: state.source, cause })
+  return raised(
+    new BonsaiLimitError('ABORTED', 'Evaluation was aborted', { source: state.source, cause }),
+  )
 }
