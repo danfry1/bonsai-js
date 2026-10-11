@@ -2043,6 +2043,12 @@ async function throwingHostData(hc: HostDataCase): Promise<Failure | undefined> 
         tally('8 soft: partial reaches its step budget')
         continue
       }
+      if (codeOf(partial.error) === 'SOURCE_TOO_LONG') {
+        // Skipped by design. partial.md: "a residual longer than maxSourceLength is a
+        // SOURCE_TOO_LONG limit error".
+        tally('8 skipped: residual longer than maxSourceLength (documented)')
+        continue
+      }
       // partial() may fail as evaluation does, never where evaluation recovers.
       if (expected.ok || codeOf(expected.error) !== codeOf(partial.error)) {
         const readsContext = target.references.functions.some((f) => CONTEXT_FUNCTIONS.has(f))
