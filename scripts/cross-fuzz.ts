@@ -2723,12 +2723,7 @@ const MAX_REPORTS_PER_INVARIANT = 2
  * Invariants known to fail on main, each with the finding it waits on. They are
  * still run and reported, but do not fail the run; remove an entry with its fix.
  */
-const EXPECTED_FAILURES: Readonly<Record<string, string>> = {
-  // partial() collects the known roots a call: true residual needs by reading each
-  // root's value (src/partial.ts, knownRoots), so a throwing getter is HOST_ERROR
-  // even where evaluation never reads it or recovers inside try().
-  '8 partial reads a throwing known root for a call: true function': 'F9-1',
-}
+const EXPECTED_FAILURES: Readonly<Record<string, string>> = {}
 
 async function main(): Promise<void> {
   const R = random(SEED)
