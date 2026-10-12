@@ -1557,11 +1557,15 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         // In a strict environment, a known key that is not a declared variable is
         // not part of any context the program accepts, so it is not required.
         const declared = settings.strict ? settings.variables : undefined
-        const missing = roots.find(
-          (name) =>
-            (declared === undefined || Object.hasOwn(declared, name)) &&
-            (!Object.hasOwn(ctx, name) || ctx[name] === undefined),
-        )
+        // Decided from the property itself, never running a getter: an accessor is
+        // present, and so is a data property unless it holds undefined.
+        const missing = roots.find((name) => {
+          if (declared !== undefined && !Object.hasOwn(declared, name)) return false
+          const descriptor = Object.getOwnPropertyDescriptor(ctx, name)
+          return (
+            descriptor === undefined || ('value' in descriptor && descriptor.value === undefined)
+          )
+        })
         if (missing !== undefined) {
           throw raised(
             new BonsaiRuntimeError(
@@ -1676,15 +1680,17 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     ): Explanation<R> {
       const trace = tracer.finish()
       const truncated = tracer.truncated
+      // Every rendering of this explanation lists a map's keys once, however it is sliced.
+      const { listings } = tracer
       return Object.freeze({
         ...outcome,
         trace,
         truncated,
-        reasons: () => reasonsOf(trace),
-        toString: () => renderTrace(trace, truncated),
+        reasons: () => reasonsOf(trace, listings),
+        toString: () => renderTrace(trace, truncated, listings),
         toJSON: (): ExplanationJSON => {
           // One budget for the whole snapshot, however often a value recurs in the trace.
-          const budget = { left: SNAPSHOT_ENTRIES }
+          const budget = { left: SNAPSHOT_ENTRIES, keys: listings }
           const result = outcome.ok
             ? { ok: true as const, value: snapshot(outcome.value, budget) }
             : { ok: false as const, error: outcome.error.toJSON() }

@@ -265,8 +265,15 @@ const PARSE_COST = 16
  */
 const regexCache = new Map<string, RegexProgram>()
 let regexCacheSize = 0
-/** Why a pattern does not compile, remembered so a repeated bad pattern is parsed once. */
+/**
+ * Why a pattern does not compile, remembered so a repeated bad pattern is
+ * parsed once. Bounded by count and by total characters (pattern and message),
+ * as the compiled cache is by size.
+ */
 const badPatterns = new Map<string, string>()
+let badPatternChars = 0
+/** Characters of bad patterns and their messages kept at most. */
+const BAD_PATTERN_BUDGET = 100_000
 
 /** The compiled pattern, from the cache when it is there; throws RegexSyntaxError. */
 function cachedRegex(pattern: string): RegexProgram {
@@ -283,7 +290,12 @@ function cachedRegex(pattern: string): RegexProgram {
     program = compileRegex(pattern)
   } catch (error) {
     if (error instanceof RegexSyntaxError) {
-      if (badPatterns.size >= MAX_CACHED) badPatterns.clear()
+      // Starts over when full, so at most one pattern past the budget is kept.
+      const chars = pattern.length + error.message.length
+      if (badPatterns.size >= MAX_CACHED || (badPatternChars += chars) > BAD_PATTERN_BUDGET) {
+        badPatterns.clear()
+        badPatternChars = chars
+      }
       badPatterns.set(pattern, error.message)
     }
     throw error

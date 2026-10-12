@@ -29,6 +29,21 @@ export function escaping<E>(error: E): E {
   return error
 }
 
+/**
+ * The reason a host call's signal is aborted with: a copy of the evaluation's
+ * error, same class and fields, but not recorded as raised. Host code that
+ * throws it from inside another evaluation (a getter calling
+ * `signal.throwIfAborted()`, say) gives that evaluation a HOST_ERROR, and the
+ * original stays this evaluation's own.
+ */
+export function forHost<E>(error: E): E {
+  if (!(error instanceof BonsaiError)) return error
+  return Object.create(
+    Object.getPrototypeOf(error) as object,
+    Object.getOwnPropertyDescriptors(error),
+  ) as E
+}
+
 /** Whether `error`, caught while reading host data, is the reading evaluation's own. */
 export function isOwn(error: unknown): error is BonsaiError {
   return error instanceof BonsaiError && raisedHere.has(error) && !escaped.has(error)

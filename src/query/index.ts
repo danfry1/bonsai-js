@@ -122,8 +122,8 @@ export interface MongoQuery {
 /** The predicate (or part of it) has no exact equivalent in the target database. */
 export class BonsaiTranslationError extends BonsaiError {
   /** @internal */
-  constructor(message: string, source: string, span?: Span) {
-    super('UNTRANSLATABLE', message, { source, span })
+  constructor(message: string, source: string, span?: Span, cause?: unknown) {
+    super('UNTRANSLATABLE', message, { source, span, cause })
     this.name = 'BonsaiTranslationError'
   }
 }
@@ -967,12 +967,15 @@ function lower(
     )
   }
   const knownData = options.known ?? {}
-  /** Known data is host data: a Proxy or getter that throws is an untranslatable value. */
+  /**
+   * Known data is host data: a Proxy or getter that throws is an untranslatable
+   * value, with the host's error kept as the cause.
+   */
   const hostRead = <T>(read: () => T, what: string): T => {
     try {
       return read()
-    } catch {
-      return fail(`Reading ${what} failed`)
+    } catch (error) {
+      throw new BonsaiTranslationError(`Reading ${what} failed`, source, undefined, error)
     }
   }
   // A key holding undefined is absent, as it is everywhere else.

@@ -545,14 +545,36 @@ export function partiallyEvaluate<R>(
     return path
   }
 
-  const unknown = engine.readKnown(() =>
+  /**
+   * Reads known data to decide what is given, before anything is evaluated. A
+   * read that throws (a getter, a Proxy trap) gives `fallback`, which leaves the
+   * data to evaluation: that fails at the read, as the program does, only when
+   * it gets there, so a read behind `&&` or inside `try()` decides as it would.
+   */
+  function peek<T>(read: () => T, fallback: T): T {
+    try {
+      return read()
+    } catch {
+      return fallback
+    }
+  }
+
+  /** Whether `known` gives a variable, by its own property, without running a getter. */
+  const givenRoot = (name: string): boolean =>
+    peek(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(known, name)
+      return (
+        descriptor !== undefined && (!('value' in descriptor) || descriptor.value !== undefined)
+      )
+    }, true)
+
+  const unknown =
     options.unknown === undefined
       ? [...new Set([...rootPaths.keys()].map((path) => segmentsOf(path)[0]))].filter(
           // A known value of undefined is absent, as a host key holding undefined is.
-          (name) => !Object.hasOwn(known, name) || known[name] === undefined,
+          (name) => !givenRoot(name),
         )
-      : withAbsentParents(options.unknown),
-  )
+      : withAbsentParents(options.unknown)
   const callHost = options.callHostFunctions === true
   const nowKnown = options.now !== undefined
   // Without an explicit unknown list, anything not given is unknown: a property
@@ -604,7 +626,7 @@ export function partiallyEvaluate<R>(
   function missingAt(path: string): boolean {
     engine.charge(1 + Math.floor(path.length / PATH_CHARS_PER_STEP))
     const segments = segmentsOf(path)
-    return engine.readKnown(() => {
+    return peek(() => {
       let value: unknown = known[segments[0]]
       // A variable known does not give is unknown already.
       if (value === undefined) return false
@@ -616,7 +638,7 @@ export function partiallyEvaluate<R>(
         if (value === undefined) return true
       }
       return isMap(value)
-    })
+    }, false)
   }
 
   /**
@@ -632,14 +654,19 @@ export function partiallyEvaluate<R>(
       let value: Record<string, unknown> = known
       for (let i = 0; i < segments.length - 1; i++) {
         const segment = segments[i]
-        const next = Object.hasOwn(value, segment) ? value[segment] : undefined
+        const current = value
+        // A read that fails leaves the parent given; evaluation fails at it if it gets there.
+        const next = peek(
+          () => (Object.hasOwn(current, segment) ? current[segment] : undefined),
+          null,
+        )
         if (next === undefined) {
           out.push(segments.slice(0, i + 1).join('.'))
           break
         }
         // At null, a list, or another value, the known data decides.
-        if (next === null || !isMap(next)) break
-        value = next
+        if (next === null || !peek(() => isMap(next), false)) break
+        value = next as Record<string, unknown>
       }
     }
     return out
@@ -1019,9 +1046,10 @@ export function partiallyEvaluate<R>(
       // A blocked name is never a variable, so a context need not hold it.
       const names = Object.getOwnPropertyNames(known)
       engine.charge(names.length)
+      // Decided from the property itself, never running a getter: an accessor is
+      // given, and so is a data property unless it holds undefined.
       for (const name of names)
-        if (!whole.has(name) && !BLOCKED_NAMES.has(name) && known[name] !== undefined)
-          knownRoots.push(name)
+        if (!whole.has(name) && !BLOCKED_NAMES.has(name) && givenRoot(name)) knownRoots.push(name)
     })
   }
   // `x.length` reads a list's or a string's length when x is one, so the data
