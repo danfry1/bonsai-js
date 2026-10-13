@@ -1733,15 +1733,21 @@ const fromExplanation = (outcome: Outcome): Outcome => {
 type Residual = Extract<ReturnType<Program['partial']>, { readonly status: 'residual' }>
 type Runnable = Pick<Program, 'async' | 'evaluate' | 'evaluateSync'>
 
-/** Evaluates sync where it can, async where it must. */
-function runOn(
+/**
+ * Evaluates sync where it can, async where it must. A residual can be sync
+ * where its program is async (an async call folded away), and evaluate()
+ * refuses a promise-like result evaluateSync() returns, so such a result is
+ * taken as evaluate() gives it: the two sides compare alike.
+ */
+async function runOn(
   target: Runnable,
   data: unknown,
   options: Record<string, unknown>,
 ): Promise<Outcome> {
-  return target.async
-    ? attemptAsync(() => target.evaluate(data, options))
-    : Promise.resolve(attempt(() => target.evaluateSync(data, options)))
+  if (target.async) return attemptAsync(() => target.evaluate(data, options))
+  const outcome = attempt(() => target.evaluateSync(data, options))
+  if (!outcome.ok || !isPromiseLike(outcome.value)) return outcome
+  return attemptAsync(() => target.evaluate(data, options))
 }
 
 /** A copy of plain data (objects and lists), sharing everything else. */
@@ -2381,7 +2387,11 @@ async function checkViews(c: Case, tally: Tally): Promise<Failure | undefined> {
         type: formatType(rechecked.type),
       })
     }
-    const reevaluated = await attemptAsync(() => rechecked.program.evaluate(data, opts))
+    // Run as `ref` was: evaluate() refuses a promise-like result evaluateSync() returns.
+    const reprogram = rechecked.program
+    const reevaluated = reprogram.async
+      ? await attemptAsync(() => reprogram.evaluate(data, opts))
+      : attempt(() => reprogram.evaluateSync(data, opts))
     const timing = tinyTimeout && (isTimeout(ref) || isTimeout(reevaluated))
     if (!same(ref, reevaluated) && !timing) {
       if (stepish(ref) || stepish(reevaluated)) {

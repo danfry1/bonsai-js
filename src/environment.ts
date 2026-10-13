@@ -1820,9 +1820,11 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         prepare(state, ctx, limits, code.localCount)
         tracer = tracerFor(explain)
         state.tracer = tracer
-        const value = settle(((await code.run(state)) as Out).v as R)
+        const value = ((await code.run(state)) as Out).v as R
+        // In evaluate()'s order: the expected type, the deadline, then a promise-like value.
         checked(value, state)
         state.checkTime()
+        settle(value)
         return explanation(tracer, { ok: true, value })
       } catch (error) {
         return explanation(tracer ?? tracerFor(explain), failure(error))
