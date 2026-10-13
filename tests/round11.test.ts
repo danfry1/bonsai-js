@@ -193,11 +193,11 @@ describe('round 11: explain() rejects a thenable result as evaluate() does', () 
 describe('round 11: running out of call stack in host code', () => {
   const recurse = (n: number): number => recurse(n + 1) + 1
 
-  it('is TOO_DEEP from a host function, as from a getter, and try() does not recover', () => {
+  it('is a HOST_ERROR from a host function, and TOO_DEEP from a getter', () => {
     const env = bonsai({
       functions: { deep: fn({ params: [], returns: t.number(), run: () => recurse(0) }) },
     })
-    expect(codeOf(() => env.evaluateSync('try(deep(), 0)'))).toBe('TOO_DEEP')
+    expect(env.evaluateSync('try(deep(), 0)')).toBe(0)
     const ctx = {
       a: {
         get b(): number {
@@ -208,7 +208,7 @@ describe('round 11: running out of call stack in host code', () => {
     expect(codeOf(() => env.evaluateSync('try(a.b, 0)', ctx))).toBe('TOO_DEEP')
   })
 
-  it('is TOO_DEEP from an async host function', async () => {
+  it('is a HOST_ERROR from an async host function', async () => {
     const env = bonsai({
       functions: {
         deep: fn({
@@ -222,7 +222,7 @@ describe('round 11: running out of call stack in host code', () => {
         }),
       },
     })
-    await expect(env.evaluate('try(deep(), 0)')).rejects.toMatchObject({ code: 'TOO_DEEP' })
+    await expect(env.evaluate('try(deep(), 0)')).resolves.toBe(0)
   })
 
   it('still recovers other host function failures', () => {

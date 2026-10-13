@@ -5,6 +5,7 @@ import { guardDepth, isStackOverflow, tooDeep } from '../runtime/overflow.js'
 import {
   conforms,
   matchesKind,
+  Out,
   type CallSite,
   type FunctionDef,
   type Overload,
@@ -48,13 +49,23 @@ import {
 } from '../syntax/ast.js'
 import { formatType } from '../types.js'
 
-/** A compiled node: a closure over the per-run state. Async closures return promises. */
+/**
+ * A compiled node: a closure over the per-run state. Async closures resolve to
+ * an {@link Out}, so no value from the host is ever awaited.
+ */
 interface Code {
   readonly fn: (s: State) => unknown
   readonly async: boolean
 }
 
+/** A child run from an async closure: `(await boxed(code)(s)).v`, a sync child never awaited. */
+function boxed(code: Code): (s: State) => Out | Promise<Out> {
+  const fn = code.fn
+  return code.async ? (fn as (s: State) => Promise<Out>) : (s) => new Out(fn(s))
+}
+
 export interface CompiledProgram {
+  /** Runs the program; an async one resolves to an {@link Out}. */
   readonly run: (s: State) => unknown
   readonly async: boolean
   readonly localCount: number
@@ -91,8 +102,9 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
  */
 function hostDataError(error: unknown, s: State): unknown {
   if (isOwn(error)) return error
-  // The engine's own recursion ran out of stack: a limit, never the host's failure.
-  if (isStackOverflow(error)) return raised(tooDeep(s.source))
+  // Out of stack, in the engine's recursion or a getter it called (telling them
+  // apart would mean wrapping every read): a limit, which try() lets through.
+  if (isStackOverflow(error)) return raised(tooDeep(s.source, error))
   return s.error('HOST_ERROR', `Reading host data failed: ${errorText(error)}`, undefined, error)
 }
 
@@ -139,6 +151,12 @@ export interface CompileOptions {
    * Reading one returns its value without looking in the context.
    */
   readonly constants?: ReadonlyMap<string, unknown>
+  /**
+   * The recorded size and depth of constants an evaluation built (partial
+   * evaluation's folded lists and maps), so a residual nests them as the
+   * original expression would, not as host data.
+   */
+  readonly shapes?: WeakMap<object, number> | undefined
 }
 
 export function compileProgram(
@@ -159,7 +177,7 @@ function compileTree(
   const tracing = options.trace === true
 
   const sync = (fn: (s: State) => unknown): Code => ({ fn, async: false })
-  const asyncCode = (fn: (s: State) => Promise<unknown>): Code => ({ fn, async: true })
+  const asyncCode = (fn: (s: State) => Promise<Out>): Code => ({ fn, async: true })
 
   function compile(node: Node, scope: Scope): Code {
     const code = compileNode(node, scope)
@@ -187,11 +205,11 @@ function compileTree(
     return asyncCode(async (s) => {
       const tracer = s.tracer as Tracer
       const trace = tracer.enter(node)
-      if (trace === undefined) return fn(s)
+      if (trace === undefined) return fn(s) as Promise<Out>
       try {
-        const value = await fn(s)
-        trace.value = value
-        return value
+        const out = (await fn(s)) as Out
+        trace.value = out.v
+        return out
       } catch (error) {
         throw failed(trace, error, s)
       } finally {
@@ -210,7 +228,13 @@ function compileTree(
         const name = node.name
         if (options.constants?.has(name) === true) {
           const value = options.constants.get(name)
-          return sync(() => value)
+          const shape =
+            typeof value === 'object' && value !== null ? options.shapes?.get(value) : undefined
+          if (shape === undefined) return sync(() => value)
+          return sync((s) => {
+            ;(s.shapes ??= new WeakMap()).set(value as object, shape)
+            return value
+          })
         }
         return sync((s) => {
           const ctx = s.ctx
@@ -256,9 +280,8 @@ function compileTree(
           const [t, a, b] = [test.fn, then.fn, otherwise.fn]
           return sync((s) => (truth(t(s), s, at, 'A condition') ? a(s) : b(s)))
         }
-        return asyncCode(async (s) =>
-          truth(await test.fn(s), s, at, 'A condition') ? then.fn(s) : otherwise.fn(s),
-        )
+        const [t, a, b] = [boxed(test), boxed(then), boxed(otherwise)]
+        return asyncCode(async (s) => (truth((await t(s)).v, s, at, 'A condition') ? a(s) : b(s)))
       }
       case 'List':
         return compileList(node.items, scope, node)
@@ -287,9 +310,10 @@ function compileTree(
             return b(s)
           })
         }
+        const [v, b] = [boxed(value), boxed(body)]
         return asyncCode(async (s) => {
-          s.locals[slot] = await value.fn(s)
-          return body.fn(s)
+          s.locals[slot] = (await v(s)).v
+          return b(s)
         })
       }
       case 'Has': {
@@ -317,12 +341,13 @@ function compileTree(
             }
           })
         }
+        const [b, f] = [boxed(body), boxed(fallback)]
         return asyncCode(async (s) => {
           try {
-            return await body.fn(s)
+            return await b(s)
           } catch (error) {
             const failure = hostDataError(error, s)
-            if (recoverable(failure)) return fallback.fn(s)
+            if (recoverable(failure)) return f(s)
             throw failure
           }
         })
@@ -336,16 +361,17 @@ function compileTree(
   function strict1(a: Code, combine: (s: State, x: unknown) => unknown): Code {
     const fa = a.fn
     if (!a.async) return sync((s) => combine(s, fa(s)))
-    return asyncCode(async (s) => combine(s, await fa(s)))
+    return asyncCode(async (s) => new Out(combine(s, ((await fa(s)) as Out).v)))
   }
 
   function strict2(a: Code, b: Code, combine: (s: State, x: unknown, y: unknown) => unknown): Code {
     const fa = a.fn
     const fb = b.fn
     if (!a.async && !b.async) return sync((s) => combine(s, fa(s), fb(s)))
+    const [ba, bb] = [boxed(a), boxed(b)]
     return asyncCode(async (s) => {
-      const x = await fa(s)
-      return combine(s, x, await fb(s))
+      const x = (await ba(s)).v
+      return new Out(combine(s, x, (await bb(s)).v))
     })
   }
 
@@ -413,10 +439,11 @@ function compileTree(
         ),
       )
     }
+    const runs = parts.map((part) => (typeof part === 'string' ? part : boxed(part)))
     return asyncCode(async (s) => {
       const values: unknown[] = []
-      for (const part of parts) values.push(typeof part === 'string' ? part : await part.fn(s))
-      return build(s, values)
+      for (const run of runs) values.push(typeof run === 'string' ? run : (await run(s)).v)
+      return new Out(build(s, values))
     })
   }
 
@@ -428,6 +455,7 @@ function compileTree(
     const l = left.fn
     const r = right.fn
     const anyAsync = left.async || right.async
+    const [bl, br] = [boxed(left), boxed(right)]
 
     if (tracing && (op === '&&' || op === '||')) return compileExplainedLogic(node, left, right)
 
@@ -439,7 +467,10 @@ function compileTree(
           )
         return asyncCode(
           async (s) =>
-            truth(await l(s), s, node.left, '"&&"') && truth(await r(s), s, node.right, '"&&"'),
+            new Out(
+              truth((await bl(s)).v, s, node.left, '"&&"') &&
+                truth((await br(s)).v, s, node.right, '"&&"'),
+            ),
         )
       case '||':
         if (!anyAsync)
@@ -448,11 +479,17 @@ function compileTree(
           )
         return asyncCode(
           async (s) =>
-            truth(await l(s), s, node.left, '"||"') || truth(await r(s), s, node.right, '"||"'),
+            new Out(
+              truth((await bl(s)).v, s, node.left, '"||"') ||
+                truth((await br(s)).v, s, node.right, '"||"'),
+            ),
         )
       case '??':
         if (!anyAsync) return sync((s) => l(s) ?? r(s))
-        return asyncCode(async (s) => (await l(s)) ?? r(s))
+        return asyncCode(async (s) => {
+          const a = await bl(s)
+          return a.v === null || a.v === undefined ? br(s) : a
+        })
       case '!=':
       case '%':
       case '*':
@@ -474,14 +511,16 @@ function compileTree(
     if (!anyAsync) return sync(binaryOp(op, l, r, at))
     // Rare: the operands are awaited, then combined by the same closure.
     return asyncCode(async (s) => {
-      const a = await l(s)
-      const b = await r(s)
-      return binaryOp(
-        op,
-        () => a,
-        () => b,
-        at,
-      )(s)
+      const a = (await bl(s)).v
+      const b = (await br(s)).v
+      return new Out(
+        binaryOp(
+          op,
+          () => a,
+          () => b,
+          at,
+        )(s),
+      )
     })
   }
 
@@ -517,23 +556,24 @@ function compileTree(
         return truth(r(s), s, node.right, what)
       })
     }
+    const [bl, br] = [boxed(left), boxed(right)]
     return asyncCode(async (s) => {
-      const a = truth(await left.fn(s), s, node.left, what)
+      const a = truth((await bl(s)).v, s, node.left, what)
       if (a !== isAnd) {
         const tracer = s.tracer as Tracer
         if (tracer.exhaustive) {
           tracer.extraDepth++
           try {
-            await right.fn(s)
+            await br(s)
           } catch (error) {
             extraFailure(error, s)
           } finally {
             tracer.extraDepth--
           }
         }
-        return a
+        return new Out(a)
       }
-      return truth(await right.fn(s), s, node.right, what)
+      return new Out(truth((await br(s)).v, s, node.right, what))
     })
   }
 
@@ -594,10 +634,11 @@ function compileTree(
         ),
       )
     }
+    const runs = codes.map(boxed)
     return asyncCode(async (s) => {
       const values: unknown[] = []
-      for (const code of codes) values.push(await code.fn(s))
-      return build(s, values)
+      for (const run of runs) values.push((await run(s)).v)
+      return new Out(build(s, values))
     })
   }
 
@@ -675,16 +716,21 @@ function compileTree(
         return out
       })
     }
+    const runs = steps.map((step) => ({
+      key: step.kind === 'computed' ? boxed(step.key) : undefined,
+      value: boxed(step.value),
+    }))
     return asyncCode(async (s) => {
       const out = {}
       s.charge(1 + steps.length)
       let nested = large
-      for (const step of steps) {
-        const key = step.kind === 'computed' ? await step.key.fn(s) : undefined
-        if (assign(s, out, step, key, await step.value.fn(s))) nested = true
+      for (let i = 0; i < steps.length; i++) {
+        const { key, value } = runs[i]
+        const k = key === undefined ? undefined : (await key(s)).v
+        if (assign(s, out, steps[i], k, (await value(s)).v)) nested = true
       }
       if (nested) track(out, s, node)
-      return out
+      return new Out(out)
     })
   }
 
@@ -827,15 +873,21 @@ function compileTree(
         return invoke(s, collect(s, values), false)
       })
     }
+    // A lambda argument is the function built-ins call, never awaited.
+    const runs = argCodes.map((code, i) =>
+      kinds[i] === 'lambda' ? (s: State) => new Out(code.fn(s)) : boxed(code),
+    )
+    // Running async lambdas, a built-in resolves to an Out; so does an async host call.
+    const settles = (lambdaAsync && def.host !== true) || hostAsync
     return asyncCode(async (s) => {
-      const values = new Array<unknown>(argCodes.length)
-      for (let i = 0; i < argCodes.length; i++) {
-        values[i] = await argCodes[i].fn(s)
-        if (i === 0 && optional && (values[0] === null || values[0] === undefined)) return null
+      const values = new Array<unknown>(runs.length)
+      for (let i = 0; i < runs.length; i++) {
+        values[i] = (await runs[i](s)).v
+        if (i === 0 && optional && (values[0] === null || values[0] === undefined))
+          return new Out(null)
       }
       const result = invoke(s, collect(s, values), lambdaAsync)
-      // A built-in running async lambdas returns its own promise; only host promises are raced and checked.
-      return isThenable(result) && def.host === true ? awaitHost(s, result, node, def) : result
+      return settles ? (result as Out | Promise<Out>) : new Out(result)
     })
   }
 
@@ -861,7 +913,7 @@ function compileTree(
         if (asyncLambdas) {
           if (overload.runAsync === undefined)
             throw s.error('ASYNC_IN_SYNC', `${def.name}() cannot run an async lambda`, span)
-          return overload.runAsync(args, site).then((result) => checkProduced(s, result, span))
+          return overload.runAsync(args, site).then((out) => new Out(checkProduced(s, out.v, span)))
         }
         return checkProduced(s, overload.run(args, site), span)
       }
@@ -886,7 +938,9 @@ function compileTree(
         if (!allowAsync || def.async !== true) {
           // Swallow the rejection of the orphaned promise; the call already failed.
           try {
-            Promise.resolve(result).then(undefined, () => undefined)
+            // Only a native promise: calling a thenable's `then` would run host code.
+            if (result instanceof Promise)
+              void Promise.prototype.then.call(result, undefined, () => undefined)
           } catch {
             // A hostile thenable; nothing more to clean up.
           }
@@ -906,10 +960,12 @@ function compileTree(
           controller?.abort(forHost(error))
           throw error
         }
-        return result
+        return awaitHost(s, result as PromiseLike<unknown>, node, def)
       }
       s.checkTime()
-      return checkHostResult(s, def, overload, result, span)
+      const checked = checkHostResult(s, def, overload, result, span)
+      // An async call's closure expects an Out (see compileCall).
+      return allowAsync && def.async === true ? new Out(checked) : checked
     }
 
     // Static types describe declared data, but the context is not validated
@@ -935,7 +991,7 @@ function compileTree(
   const fn = root.fn
   const run = root.async
     ? (s: State): unknown =>
-        (fn(s) as Promise<unknown>).catch((error: unknown) => {
+        (fn(s) as Promise<Out>).catch((error: unknown) => {
           throw hostDataError(error, s)
         })
     : (s: State): unknown => {
@@ -1024,12 +1080,10 @@ function noOverload(
 /**
  * Whatever a host function throws is a HOST_ERROR with the original as its
  * cause, even a Bonsai error (say, a limit hit by an evaluation the host ran
- * itself): it failed in host code, not in this expression. Running out of call
- * stack is TOO_DEEP, as it is in host data: the stack is shared, so it is not
- * the host's failure alone, and try() does not recover from it.
+ * itself) or a stack overflow: it failed in host code, not in this expression,
+ * and the depth limits leave host code most of the stack.
  */
 function hostError(s: State, name: string, error: unknown, span: Span): BonsaiError {
-  if (isStackOverflow(error)) return raised(tooDeep(s.source))
   return s.error('HOST_ERROR', `${name}() failed: ${errorText(error)}`, span, error)
 }
 
@@ -1067,15 +1121,19 @@ async function awaitHost(
   promise: PromiseLike<unknown>,
   node: CallNode,
   def: FunctionDef,
-): Promise<unknown> {
+): Promise<Out> {
   const controller = callControllers.get(promise)
   // A rejection from the host is a HOST_ERROR; the limit errors racing it are not.
-  const settled = Promise.resolve(promise).then(undefined, (error: unknown) => {
-    throw hostError(s, node.name, error, node)
-  })
-  const result = await raceLimits(s, settled, controller)
+  // The value is boxed, so a thenable it holds is never adopted in turn.
+  const settled = Promise.resolve(promise).then(
+    (value) => new Out(value),
+    (error: unknown) => {
+      throw hostError(s, node.name, error, node)
+    },
+  )
+  const result = ((await raceLimits(s, settled, controller)) as Out).v
   s.checkTime()
-  return checkHostResult(s, def, def.overloads[0], result, node)
+  return new Out(checkHostResult(s, def, def.overloads[0], result, node))
 }
 
 /** The longest delay a timer accepts (2^31 - 1 ms); a longer one fires at once. */

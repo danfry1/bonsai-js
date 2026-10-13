@@ -574,6 +574,21 @@ export function snapshotTrace(
   return json
 }
 
+/**
+ * Freezes a snapshot (engine-built JSON, bounded like it) all the way down, so
+ * a caller trimming one serialization cannot change the next.
+ */
+export function freezeAll<T>(json: T): T {
+  const stack: unknown[] = [json]
+  while (stack.length > 0) {
+    const value = stack.pop()
+    if (value === null || typeof value !== 'object' || Object.isFrozen(value)) continue
+    Object.freeze(value)
+    for (const key of Object.keys(value)) stack.push((value as Record<string, unknown>)[key])
+  }
+  return json
+}
+
 /** One lambda run with every value replaced by its snapshot. */
 function snapshotIteration(
   iteration: Iteration,
