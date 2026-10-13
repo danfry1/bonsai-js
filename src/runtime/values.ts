@@ -668,7 +668,8 @@ export function equals(a: unknown, b: unknown, s: State, depth = 0, at?: Span): 
     return (a === null || a === undefined) && (b === null || b === undefined)
   }
   if (typeof a !== 'object' || typeof b !== 'object') return false
-  if (depth > s.limits.maxValueDepth) {
+  // Counted as building counts (see track): the outermost container is level 1.
+  if (depth + 1 > s.limits.maxValueDepth) {
     throw s.limit(
       'VALUE_DEPTH_LIMIT',
       `Values nest deeper than ${s.limits.maxValueDepth} (is the data cyclic?)`,

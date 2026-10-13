@@ -377,6 +377,17 @@ export function forTranslation(program: object): boolean {
   return is
 }
 
+/**
+ * Residual nodes that fail whenever evaluation reaches them (a list literal
+ * over maxListLength, say). Translation must not read such a node as data.
+ */
+const failing = new WeakMap<Node, Error>()
+
+/** The error a residual node raises whenever it is reached, if it always fails. */
+export function failureAt(node: Node): Error | undefined {
+  return failing.get(node)
+}
+
 /** How the partial evaluator reaches the engine. */
 export interface PartialEngine {
   readonly analysis: Analysis
@@ -766,8 +777,11 @@ export function partiallyEvaluate<R>(
   /** A known value as syntax: an inline literal, or a reference to a binding. */
   const asNode = (outcome: Outcome): Node =>
     outcome.known ? (literalFor(outcome.value) ?? bind(outcome.value)) : outcome.node
-  const residual = (node: Node, fails?: Failure): Outcome =>
-    fails === undefined ? { known: false, node } : { known: false, node, fails }
+  const residual = (node: Node, fails?: Failure): Outcome => {
+    if (fails === undefined) return { known: false, node }
+    failing.set(node, fails)
+    return { known: false, node, fails }
+  }
 
   const peval = (node: Node, env: Env): Outcome => {
     engine.charge()

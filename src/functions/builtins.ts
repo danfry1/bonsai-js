@@ -548,6 +548,8 @@ function sortKeyed(
   }
   const n = items.length
   const s = site.state
+  // The sorted list is as long as the input: checked before anything is allocated.
+  s.listLimit(n, site.span)
   s.charge(n === 0 ? 1 : Math.ceil(n * Math.log2(n + 1)))
   // Every key is checked, not only those a comparison happens to reach (a
   // list with one key makes no comparison at all).
@@ -654,7 +656,8 @@ function canonicalKey(value: unknown, site: CallSite, depth: number, seen: Ident
     default:
       break
   }
-  if (depth > s.limits.maxValueDepth) {
+  // Counted as building counts (see track): the outermost container is level 1.
+  if (depth + 1 > s.limits.maxValueDepth) {
     throw s.limit(
       'VALUE_DEPTH_LIMIT',
       `Values nest deeper than ${s.limits.maxValueDepth} (is the data cyclic?)`,
@@ -715,10 +718,11 @@ function uniqueOf(items: readonly unknown[], site: CallSite): unknown[] {
   // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
   for (let i = 0; i < items.length; i++) {
     const value = items[i] ?? null
-    const key = canonicalKey(value, site, 0, identities)
+    // An item is one level inside the list, as building counts it.
+    const key = canonicalKey(value, site, 1, identities)
     if (seen.has(key)) continue
     seen.add(key)
-    out.push(value)
+    push(out, value, site)
   }
   return made(out, site)
 }
@@ -912,6 +916,7 @@ const STRING_FUNCTIONS: FunctionDef[] = [
           b === undefined || b === null ? undefined : integer(b, 'End', site),
         )
         site.state.charge(to - from)
+        site.state.listLimit(to - from, site.span)
         return made(copyOf(items, from, to), site)
       },
       { required: 2 },
@@ -1239,13 +1244,13 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     (items, fn, site) => {
       const out: unknown[] = []
       for (let i = 0; i < items.length; i++)
-        if (truthy(fn(items[i], i), site)) out.push(items[i] ?? null)
+        if (truthy(fn(items[i], i), site)) push(out, items[i], site)
       return made(out, site)
     },
     async (items, fn, site) => {
       const out: unknown[] = []
       for (let i = 0; i < items.length; i++)
-        if (truthy(ran(await fn(items[i], i)), site)) out.push(items[i] ?? null)
+        if (truthy(ran(await fn(items[i], i)), site)) push(out, items[i], site)
       return new Out(made(out, site))
     },
   ),
@@ -1363,13 +1368,13 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     (items, fn, site) => {
       const out: Record<string, unknown[]> = {}
       for (let i = 0; i < items.length; i++)
-        bucket(out, groupKey(fn(items[i], i), site)).push(items[i] ?? null)
+        push(bucket(out, groupKey(fn(items[i], i), site)), items[i], site)
       return madeGroups(out, site)
     },
     async (items, fn, site) => {
       const out: Record<string, unknown[]> = {}
       for (let i = 0; i < items.length; i++)
-        bucket(out, groupKey(ran(await fn(items[i], i)), site)).push(items[i] ?? null)
+        push(bucket(out, groupKey(ran(await fn(items[i], i)), site)), items[i], site)
       return new Out(madeGroups(out, site))
     },
     { lambda: fnType([T, num], t.union(str, num, bool)) },

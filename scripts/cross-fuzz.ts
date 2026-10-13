@@ -1249,7 +1249,11 @@ class Generator {
       }
       case 5: {
         const item = R.pick([N, S, opt(S), TS, B])
-        return `(${g(item)} ${R.pick(['in', 'not in'])} ${g(t.list(item))})`
+        // A literal list, now and then longer than a small maxListLength allows.
+        const list = R.chance(0.3)
+          ? `[${Array.from({ length: R.int(1, 5) }, () => g(item)).join(', ')}]`
+          : g(t.list(item))
+        return `(${g(item)} ${R.pick(['in', 'not in'])} ${list})`
       }
       case 6:
         return `(${g(S)} ${R.pick(['in', 'not in'])} ${g(S)})`
@@ -1363,7 +1367,8 @@ class Generator {
     switch (R.int(0, 16)) {
       case 0:
       case 1: {
-        const items = Array.from({ length: R.int(0, 3) }, () => g(element))
+        // Now and then longer than a small maxListLength allows.
+        const items = Array.from({ length: R.int(0, R.chance(0.2) ? 6 : 3) }, () => g(element))
         if (R.chance(0.3)) items.push(`...${g(opt(t.list(element)))}`)
         return `[${items.join(', ')}]`
       }
@@ -1826,6 +1831,8 @@ interface ResidualCase {
   readonly program: Program
   readonly result: Residual
   readonly known: Readonly<Record<string, unknown>>
+  /** The explicit `unknown` list partial() was given, if any. */
+  readonly listed: readonly string[] | undefined
   /** partial() was given `now`, so now() may be decided in the residual. */
   readonly partialNow: boolean
   readonly at: Readonly<Record<string, unknown>>
@@ -1921,6 +1928,16 @@ async function residualInvariants(rc: ResidualCase): Promise<Failure | undefined
   const path = R.pick(dependsOn).split('.')
   const segments = R.chance(0.5) ? path : [...path, R.pick(['a', 'k1', 'name', 'zip', 'x'])]
   if (knownPath(known, segments)) return undefined
+  // With an explicit unknown list, a path neither known nor listed was taken as
+  // absent (null) by partial(), so breaking it contradicts what was given.
+  const joined = segments.join('.')
+  const listed = rc.listed?.some(
+    (p) => joined === p || joined.startsWith(`${p}.`) || p.startsWith(`${joined}.`),
+  )
+  if (listed === false) {
+    tally('X7 skipped: path taken as absent under an explicit unknown list')
+    return undefined
+  }
   const broken = copyData(c.data) as Record<string, unknown>
   let parent: Record<string, unknown> = broken
   for (const segment of segments.slice(0, -1)) {
@@ -2610,6 +2627,7 @@ async function checkViews(c: Case, tally: Tally): Promise<Failure | undefined> {
       program,
       result,
       known,
+      listed: partialOptions.unknown as string[] | undefined,
       partialNow: partialOptions.now !== undefined,
       at,
       tally,
@@ -2637,13 +2655,17 @@ async function checkViews(c: Case, tally: Tally): Promise<Failure | undefined> {
   const rows = Array.from({ length: R.int(3, 8) }, (_, i) => genRow(R, i + 1))
   const want: number[] = []
   const failing: number[] = []
+  // Translation validates as the environment does: it has no per-call validateContext.
+  const { validateContext: _perCall, ...rowOpts } = opts as Record<string, unknown>
   for (const row of rows) {
     const accepted = program.async
-      ? await attemptAsync(() => program.evaluate({ ...known, row }, opts))
-      : attempt(() => program.evaluateSync({ ...known, row }, opts))
-    // A limit has no SQL equivalent: rows that reach one say nothing.
-    if (isLimit(accepted)) {
-      tally('5 query skipped: a row reached a limit')
+      ? await attemptAsync(() => program.evaluate({ ...known, row }, rowOpts))
+      : attempt(() => program.evaluateSync({ ...known, row }, rowOpts))
+    // A budget (steps, time) has no SQL equivalent: rows that reach one say
+    // nothing. A size limit is a failure like any other: such a row is selected
+    // by neither the filter nor its negation.
+    if (stepish(accepted)) {
+      tally('5 query skipped: a row reached its step or time budget')
       return undefined
     }
     if (accepted.ok && accepted.value === true) want.push(row.id)
@@ -2681,6 +2703,26 @@ async function checkViews(c: Case, tally: Tally): Promise<Failure | undefined> {
           failing,
           neither,
         })
+    }
+  }
+  // X8. A list literal over maxListLength fails on every record, so neither the
+  // filter nor its negation may select one (evaluation never reaches the database).
+  const maxList = c.cfg.limits.maxListLength
+  if (maxList !== undefined) {
+    tally('X8 an over-long list literal selects nothing')
+    const items = Array.from({ length: maxList + 1 }, (_, i) => String(i))
+    for (const filter of [
+      `row.total in [${items.join(', ')}]`,
+      `!(row.total in [${items.join(', ')}])`,
+    ]) {
+      const query = attempt(() =>
+        toSQL(env.compile(filter), { ...queryOptions, columns: COLUMNS, dialect: 'sqlite' }),
+      )
+      if (!query.ok) continue
+      const { sql, params } = query.value as ReturnType<typeof toSQL>
+      const got = idsOf(sqlite.query(`select id from t where ${sql} order by id`).all(...params))
+      if (got.length > 0)
+        return fail('X8 an over-long list literal selects rows', { filter, sql, got })
     }
   }
   for (const dialect of ['sqlite', 'postgres'] as const) {

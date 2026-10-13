@@ -36,7 +36,7 @@ env.evaluateSync('(200).discount(0.25)') // => 150
 
 ## What Bonsai guarantees around your function
 
-- **Checked calls.** The checker rejects calls whose arguments do not match `params` (`NO_OVERLOAD`) before anything runs. At run time, arguments are validated before `run` is called, so `run` only ever receives values of the declared types.
+- **Checked calls.** The checker rejects calls whose arguments do not match `params` (`NO_OVERLOAD`) before anything runs. At run time, arguments are checked against the declared kinds before `run` is called. Values the expression builds are always well formed; values read from a context that is not validated reach `run` as the host gave them, so a `t.number()` argument can be `NaN` or `Infinity`, and a list can hold `undefined` or holes. With `validateContext: true` such data is rejected before evaluation (`INVALID_CONTEXT`), and `run` only receives values of the declared types.
 - **Checked results.** A result that does not match `returns` (checked deeply, through lists and maps) is a `HOST_CONTRACT` error, so a bug in your function cannot leak an unexpected value into the expression. So is a promise returned by a function not declared `async`. `try(...)` never catches `HOST_CONTRACT`: it signals a bug in host code, not a condition the expression should hide.
 - **Wrapped failures.** An exception thrown by `run` becomes a `BonsaiRuntimeError` with code `HOST_ERROR` and the original error as its `cause`, whatever was thrown, including a `BonsaiError` (for example a limit error from an evaluation `run` performs itself). Expressions can recover from it with `try(...)`.
 - **A fixed cost per call.** Each call is charged `cost` steps (default 32) against the step budget, however long `run` takes. The budget therefore bounds how many calls one evaluation can make, not the time your function spends.
@@ -187,7 +187,7 @@ await slow.evaluate('lookup("a")', {}, { timeout: 50 }) // throws: TIMEOUT
 
 Calls run one at a time, left to right, in async mode too: an expression cannot start several host calls concurrently. If a function reaches a network or database, prefetch the data into the context or batch inside your function.
 
-A function that is not declared `async` must not return a promise; doing so is a `HOST_CONTRACT` error. An `async` function's result is awaited by JavaScript, so returning a thenable from the context (an ORM query object, say) runs its `then`; return a plain value, or wrap the object (`{ value }`).
+A function that is not declared `async` must not return a promise; doing so is a `HOST_CONTRACT` error. Any value with a callable `then` counts, so passing a thenable map from the context straight back is one too. An `async` function's result is awaited by JavaScript, so returning a thenable from the context (an ORM query object, say) runs its `then`; return a plain value, or wrap the object (`{ value }`).
 
 ## Replacing built-ins
 
