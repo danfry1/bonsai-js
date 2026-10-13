@@ -53,7 +53,7 @@ Short primitives (numbers, booleans, `null`, strings up to 16 characters) are wr
 
 | Option | Default | Effect |
 |---|---|---|
-| `unknown` | variables and fields missing from `known`, and objects read whole | Variables or dotted paths (`order`, `user.riskScore`) to treat as unknown; unknown wins over a value you passed |
+| `unknown` | variables and fields missing from `known`, and objects read whole | Variables or dotted paths (`order`, `user.riskScore`) to treat as unknown; unknown wins over a value you passed. A path starts with a variable name, and each later segment is a field name as `user.riskScore` or `user["risk score"]` reads it; an empty segment or a name the language blocks (`__proto__`, `constructor`, `prototype`) is a `TypeError` |
 | `callHostFunctions` | `false` | Call host functions whose inputs are known (only synchronous ones); otherwise they stay in the residual |
 | `now` | none | The time `now()` returns; otherwise `now()` stays in the residual (the environment's `clock` is not used, so a stored residual reads the time when it is evaluated) |
 | `maxSteps` | the environment's | Step budget for the whole partial evaluation (`0` for none) |

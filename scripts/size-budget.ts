@@ -30,8 +30,11 @@ const cases: SizeCase[] = [
     // check-time warnings, partial evaluation that never decides from data it
     // was not given); 64.0 KB after the fourth and fifth (balanced spans,
     // checker soundness for map literals, bounded overlays and partial
-    // evaluation memory, residual snapshots).
-    maxGzipBytes: 66_000,
+    // evaluation memory, residual snapshots); 66.0 KB after rounds six to nine
+    // (error ownership per evaluation, bounded explanation rendering); 68.0 KB
+    // for round ten (hostile thrown values, deterministic rendering, checked
+    // unknown paths).
+    maxGzipBytes: 68_000,
   },
   {
     name: 't only',

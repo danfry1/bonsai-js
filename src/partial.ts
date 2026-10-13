@@ -352,6 +352,13 @@ export interface PartialOptions {
   readonly signal?: AbortSignalLike | undefined
 }
 
+/**
+ * A partial() option toSQL and toMongo pass, out of reach of other callers:
+ * they translate the residual tree and never evaluate its printed source, so
+ * maxSourceLength does not bound it.
+ */
+export const TRANSLATING: unique symbol = Symbol('translating')
+
 /** How the partial evaluator reaches the engine. */
 export interface PartialEngine {
   readonly analysis: Analysis
@@ -1022,7 +1029,10 @@ export function partiallyEvaluate<R>(
   const source = print(outcome.node)
   engine.charge(1 + Math.ceil(source.length / RESIDUAL_CHARS_PER_STEP))
   engine.checkTime()
-  if (source.length > engine.maxSourceLength) {
+  if (
+    source.length > engine.maxSourceLength &&
+    (options as { [TRANSLATING]?: true })[TRANSLATING] !== true
+  ) {
     throw new BonsaiLimitError(
       'SOURCE_TOO_LONG',
       `The residual is ${source.length} characters long, more than maxSourceLength (${engine.maxSourceLength})`,

@@ -74,15 +74,19 @@ const IDENT_CHAR = /[A-Za-z0-9_$]/u
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/u
 
 /**
- * A UTF-16 offset inside `source`: one past the end, or a non-numeric offset,
- * means the end. A negative or fractional offset is a caller bug: RangeError.
+ * A UTF-16 offset inside `source`: past the end, or NaN, means the end. A
+ * negative or fractional offset is a caller bug (RangeError), and so is a
+ * source or an offset of the wrong type (TypeError).
  */
 function clampOffset(source: string, offset: number): number {
-  if (!Number.isFinite(offset)) return source.length
-  if (offset < 0 || !Number.isInteger(offset)) {
+  if (typeof source !== 'string') throw new TypeError('An expression must be a string')
+  if (typeof offset !== 'number') {
+    throw new TypeError(`An offset must be a number, not ${typeof offset}`)
+  }
+  if (offset < 0 || (Number.isFinite(offset) && !Number.isInteger(offset))) {
     throw new RangeError(`An offset must be a whole number of at least 0, not ${offset}`)
   }
-  return Math.min(offset, source.length)
+  return Number.isNaN(offset) ? source.length : Math.min(offset, source.length)
 }
 
 export interface LanguageServiceOptions {
@@ -452,8 +456,8 @@ export function createLanguageService(
   }
 
   function hover(source: string, rawOffset: number): HoverResult | undefined {
-    if (!Number.isFinite(rawOffset)) return undefined
     const offset = clampOffset(source, rawOffset)
+    if (!Number.isFinite(rawOffset)) return undefined
     const analysis = tryAnalyze(source)
     if (analysis === undefined) return undefined
     let best: Node | undefined
