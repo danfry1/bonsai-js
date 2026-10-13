@@ -29,7 +29,7 @@ env.evaluateSync('xs.map(. * 2)', { xs: Array.from({ length: 20_000 }, (_, i) =>
 
 <!-- continue -->
 ```ts
-env.evaluateSync('xs.filter(. > 5).length', { xs: Array.from({ length: 60_000 }, (_, i) => i) }) // throws: STEP_LIMIT
+env.evaluateSync('xs.count(. > 5)', { xs: Array.from({ length: 60_000 }, (_, i) => i) }) // throws: STEP_LIMIT
 env.evaluateSync('"x".padStart(200000)') // throws: STRING_LIMIT
 env.evaluateSync('1'.padEnd(3000, ' + 1')) // throws: SOURCE_TOO_LONG
 ```

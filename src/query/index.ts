@@ -14,7 +14,7 @@
  */
 import type { AbortSignalLike } from '../environment.js'
 import { BonsaiError, BonsaiLimitError, type Span } from '../errors.js'
-import { translating, type PartialOptions, type PartialResult } from '../partial.js'
+import { failureAt, translating, type PartialOptions, type PartialResult } from '../partial.js'
 import { Duration, isMap, isValidDuration } from '../runtime/values.js'
 import { declaredVariables } from '../declared.js'
 import { closest, didYouMean } from '../suggest.js'
@@ -1123,6 +1123,16 @@ function lower(
     charge(typeof constant === 'string' ? textCost(constant) : 1)
     return exact(constant, at)
   }
+  /**
+   * A part that fails whenever evaluation reaches it (a list literal over
+   * maxListLength, say) after a read of the record, which could fail first:
+   * the database would select rows Bonsai rejects, so it is not translated.
+   */
+  const reachable = (node: Node): Node => {
+    const failure = failureAt(node)
+    if (failure !== undefined) fail(`This part always fails: ${failure.message}`, node)
+    return node
+  }
   // Each binding is read and checked once, however often the predicate uses it.
   const constants = new Map<string, Primitive | undefined>()
   const constOf = (node: Node): Primitive | undefined => {
@@ -1140,6 +1150,7 @@ function lower(
   const lists = new Map<string, readonly Primitive[] | undefined>()
   const listOf = (node: Node): readonly Primitive[] | undefined => {
     charge()
+    reachable(node)
     if (node.type === 'List') {
       const out: Primitive[] = []
       for (const item of node.items) {
@@ -1235,7 +1246,7 @@ function lower(
   }
 
   const value = (node: Node): Value => {
-    const column = columnOf(node)
+    const column = columnOf(reachable(node))
     if (column !== undefined) return column
     const constant = constOf(node)
     if (constant !== undefined) return { kind: 'const', value: constant }
@@ -1480,6 +1491,7 @@ function lower(
   }
 
   const pred = (node: Node): Pred => {
+    reachable(node)
     switch (node.type) {
       case 'Literal':
         if (typeof node.value === 'boolean' || node.value === null)
