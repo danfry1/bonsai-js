@@ -1,4 +1,4 @@
-import { BonsaiError } from '../errors.js'
+import type { BonsaiError } from '../errors.js'
 
 /**
  * Which errors an evaluation may report as its own. Host data (a getter, a
@@ -25,7 +25,7 @@ export function raised<E extends BonsaiError>(error: E): E {
  * its own, say), so it is that host data's failure, not this evaluation's.
  */
 export function escaping<E>(error: E): E {
-  if (error instanceof BonsaiError) escaped.add(error)
+  if (raisedHere.has(error as BonsaiError)) escaped.add(error as BonsaiError)
   return error
 }
 
@@ -37,14 +37,17 @@ export function escaping<E>(error: E): E {
  * original stays this evaluation's own.
  */
 export function forHost<E>(error: E): E {
-  if (!(error instanceof BonsaiError)) return error
+  if (!raisedHere.has(error as BonsaiError)) return error
   return Object.create(
     Object.getPrototypeOf(error) as object,
     Object.getOwnPropertyDescriptors(error),
   ) as E
 }
 
-/** Whether `error`, caught while reading host data, is the reading evaluation's own. */
+/**
+ * Whether `error`, caught while reading host data, is the reading evaluation's
+ * own. Decided by identity alone: a thrown Proxy can trap `instanceof`.
+ */
 export function isOwn(error: unknown): error is BonsaiError {
-  return error instanceof BonsaiError && raisedHere.has(error) && !escaped.has(error)
+  return raisedHere.has(error as BonsaiError) && !escaped.has(error as BonsaiError)
 }

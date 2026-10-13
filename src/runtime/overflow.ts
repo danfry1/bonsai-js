@@ -7,10 +7,15 @@ import { BonsaiLimitError } from '../errors.js'
  * backstop for an engine with a smaller stack than the ones measured.
  */
 export function isStackOverflow(error: unknown): boolean {
-  if (error instanceof RangeError) return /call stack|stack size/iu.test(error.message)
-  return (
-    error instanceof Error && error.name === 'InternalError' && /recursion/iu.test(error.message)
-  )
+  try {
+    if (error instanceof RangeError) return /call stack|stack size/iu.test(error.message)
+    return (
+      error instanceof Error && error.name === 'InternalError' && /recursion/iu.test(error.message)
+    )
+  } catch {
+    // A thrown Proxy or a throwing `name` getter: host data, not the engine's stack.
+    return false
+  }
 }
 
 /**

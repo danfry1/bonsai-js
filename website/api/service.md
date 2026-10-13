@@ -22,7 +22,7 @@ interface LanguageService {
 }
 ```
 
-Offsets are UTF-16 code unit offsets into `source`, the same unit as JavaScript string indices and `Diagnostic.start`/`end`. An offset past the end (or `NaN`) means the end; a negative or fractional offset throws a `RangeError`. A bare `Environment` accepts an environment of any context type.
+Offsets are UTF-16 code unit offsets into `source`, the same unit as JavaScript string indices and `Diagnostic.start`/`end`. An offset past the end (or `NaN`) means the end; a negative or fractional offset throws a `RangeError`, and a source that is not a string or an offset that is not a number throws a `TypeError`. A bare `Environment` accepts an environment of any context type.
 
 With `expect`, diagnostics include `EXPECTED_TYPE` when an expression cannot have that type, as `env.check(source, { expect })` reports it. A filter editor passes `t.boolean()`, so `account.mrr` is flagged while it is typed:
 
@@ -110,7 +110,7 @@ service.hover('items.map(', 3) // => undefined
 
 ## diagnostics(source)
 
-Returns every syntax and check diagnostic for `source`, exactly as `env.check(source).diagnostics` (or `env.check(source, { expect })` for a service created with `expect`), and never throws.
+Returns every syntax and check diagnostic for `source`, exactly as `env.check(source).diagnostics` (or `env.check(source, { expect })` for a service created with `expect`), and never throws for a string source (any other source is a `TypeError`).
 
 <!-- continue -->
 ```ts

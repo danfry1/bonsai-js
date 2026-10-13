@@ -379,6 +379,8 @@ export const SNAPSHOT_ENTRIES = 10_000
 interface Listing {
   readonly keys: readonly string[]
   readonly more: number
+  /** Budget entries each rendering is charged for the listing. */
+  readonly cost: number
 }
 
 /** Each map's listing (null when listing failed), shared by one explanation's snapshots. */
@@ -388,6 +390,8 @@ export interface SnapshotBudget {
   left: number
   /** The maps listed so far, so a map recurring in the trace is listed once. */
   keys?: Listings
+  /** The maps this rendering has paid for, so every rendering pays the same. */
+  charged?: WeakSet<object>
 }
 
 /** Keys looked at for enumerability, at most, while listing one map. */
@@ -395,33 +399,39 @@ const LISTING_SCAN = SNAPSHOT_ITEMS * 4
 
 /**
  * The first {@link SNAPSHOT_ITEMS} own enumerable keys of a map, listed once
- * per explanation. Listing asks the host for its keys once and is charged one
- * entry per {@link SNAPSHOT_ITEMS} keys it returns, enumerable or not, so a map
- * (or a Proxy) with many keys runs the budget down; only the keys shown are
- * checked one by one.
+ * per explanation. Listing asks the host for its keys once. Each rendering is
+ * charged one entry per {@link SNAPSHOT_ITEMS} keys it returned, enumerable or
+ * not, whether or not an earlier rendering listed the map, so a map (or a
+ * Proxy) with many keys runs the budget down the same way every time; only the
+ * keys shown are checked one by one.
  */
 function keysOf(value: object, budget: SnapshotBudget): Listing | null {
   const listings = (budget.keys ??= new WeakMap())
-  const known = listings.get(value)
-  if (known !== undefined) return known
-  let listing: Listing | null = null
-  try {
-    const own = Reflect.ownKeys(value)
-    budget.left -= Math.floor(own.length / SNAPSHOT_ITEMS)
-    const keys: string[] = []
-    let i = 0
-    for (; i < own.length && i < LISTING_SCAN && keys.length < SNAPSHOT_ITEMS; i++) {
-      const key = own[i]
-      if (
-        typeof key === 'string' &&
-        Object.getOwnPropertyDescriptor(value, key)?.enumerable === true
-      )
-        keys.push(key)
+  let listing = listings.get(value)
+  if (listing === undefined) {
+    listing = null
+    try {
+      const own = Reflect.ownKeys(value)
+      const keys: string[] = []
+      let i = 0
+      for (; i < own.length && i < LISTING_SCAN && keys.length < SNAPSHOT_ITEMS; i++) {
+        const key = own[i]
+        if (
+          typeof key === 'string' &&
+          Object.getOwnPropertyDescriptor(value, key)?.enumerable === true
+        )
+          keys.push(key)
+      }
+      // The keys not looked at (symbol keys included, which plain data does not have).
+      listing = { keys, more: own.length - i, cost: Math.floor(own.length / SNAPSHOT_ITEMS) }
+    } finally {
+      listings.set(value, listing)
     }
-    // The keys not looked at (symbol keys included, which plain data does not have).
-    listing = { keys, more: own.length - i }
-  } finally {
-    listings.set(value, listing)
+  }
+  const charged = (budget.charged ??= new WeakSet())
+  if (listing !== null && !charged.has(value)) {
+    charged.add(value)
+    budget.left -= listing.cost
   }
   return listing
 }
@@ -585,7 +595,11 @@ function preview(value: unknown, render: RenderBudget): string {
   const shared = typeof value === 'object' && value !== null
   const known = shared ? render.previews.get(value) : undefined
   if (known !== undefined) return known
-  const budget: SnapshotBudget = { left: Math.min(PREVIEW_ENTRIES, render.left), keys: render.keys }
+  const budget: SnapshotBudget = {
+    left: Math.min(PREVIEW_ENTRIES, render.left),
+    keys: render.keys,
+    charged: (render.charged ??= new WeakSet()),
+  }
   const before = budget.left
   const text = cut(
     JSON.stringify(snapshot(value, budget, SNAPSHOT_DEPTH - PREVIEW_DEPTH)) ?? 'null',

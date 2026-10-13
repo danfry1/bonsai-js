@@ -1376,7 +1376,12 @@ const PARTIAL_OPTION_KEYS: ReadonlySet<string> = new Set([
   'timeout',
   'signal',
 ])
-const PATH = /^[^.]+(?:\.[^.]+)*$/u
+/** A variable name, then field names as reads spell them: none empty or blocked. */
+const isPath = (path: unknown): boolean => {
+  if (typeof path !== 'string') return false
+  const [name, ...fields] = path.split('.')
+  return isName(name) && fields.every((field) => field !== '' && !BLOCKED_NAMES.has(field))
+}
 
 /** Reads partial() options once, with the same TypeError rules as the other options. */
 function partialOptions(options: unknown): PartialOptions {
@@ -1398,10 +1403,7 @@ function partialOptions(options: unknown): PartialOptions {
     }
   }
   const unknown = copy.unknown
-  if (
-    unknown !== undefined &&
-    (!Array.isArray(unknown) || !unknown.every((p) => typeof p === 'string' && PATH.test(p)))
-  )
+  if (unknown !== undefined && (!Array.isArray(unknown) || !unknown.every(isPath)))
     throw new TypeError('Partial option "unknown" must be a list of variable names or dotted paths')
   if (copy.callHostFunctions !== undefined && typeof copy.callHostFunctions !== 'boolean')
     throw new TypeError('Partial option "callHostFunctions" must be a boolean')
