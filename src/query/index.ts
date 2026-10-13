@@ -245,6 +245,8 @@ const COMPARISONS = new Set(['==', '!=', '<', '<=', '>', '>=', 'in', 'not in', '
 
 /** The largest distance from the epoch a Date can hold, in milliseconds. */
 const MAX_TIME = 8.64e15
+/** The largest duration, in milliseconds (as evaluation bounds it). */
+const MAX_DURATION = Number.MAX_SAFE_INTEGER
 
 /** A host Date's time, read through the prototype so an overridden getTime never runs. */
 function msOf(date: Date): number {
@@ -1306,7 +1308,7 @@ function lower(
 
   const textArgument = (args: readonly (Node | SpreadNode)[], at: Node): string => {
     const arg = args[1]
-    const text = arg === undefined || arg.type === 'Spread' ? undefined : constOf(arg)
+    const text = arg === undefined || arg.type === 'Spread' ? undefined : constOf(reachable(arg))
     if (typeof text !== 'string' || args.length !== 2)
       return fail('Expected a known string argument', at)
     const problem = checkPattern(text)
@@ -1479,12 +1481,20 @@ function lower(
       return fail('The comparison reaches past the range of dates', node)
     const bound = exact(new Date(boundMs), node) as Date
     const columnOp = shift.sign === 1 ? relation : FLIP[relation]
-    // Shifting a timestamp past the Date range is an error, so those rows fail.
+    // Shifting a timestamp past the Date range is an error, and so is a distance
+    // past the duration range, so those rows fail. At most one side binds.
     let limit: { op: '<=' | '>='; ms: number } | undefined
     if (shift.kind === 'timestamp' && shift.offset > 0)
       limit = { op: '<=', ms: MAX_TIME - shift.offset }
     if (shift.kind === 'timestamp' && shift.offset < 0)
       limit = { op: '>=', ms: -MAX_TIME - shift.offset }
+    if (shift.kind === 'duration') {
+      // |sign * column + offset| <= MAX_DURATION, solved for the column.
+      const low = shift.sign === 1 ? -MAX_DURATION - shift.offset : shift.offset - MAX_DURATION
+      const high = shift.sign === 1 ? MAX_DURATION - shift.offset : shift.offset + MAX_DURATION
+      if (low > -MAX_TIME) limit = { op: '>=', ms: low }
+      if (high < MAX_TIME) limit = { op: '<=', ms: high }
+    }
     if (limit !== undefined && Math.abs(limit.ms) > MAX_TIME)
       return fail('The shift reaches past the range of dates', node)
     return { kind: 'shifted', column: shift.column, op: columnOp, bound, limit }
