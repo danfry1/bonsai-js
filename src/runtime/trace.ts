@@ -1,4 +1,4 @@
-import { BonsaiError, type BonsaiErrorJSON, type ErrorCode } from '../errors.js'
+import type { BonsaiErrorJSON, ErrorCode } from '../errors.js'
 import { forEachChild, type BinaryOperator, type Node, type UnaryOperator } from '../syntax/ast.js'
 import { durationText, isMap, isValidDuration } from './values.js'
 
@@ -125,6 +125,12 @@ export class Tracer {
    * instead of the live values; the record's keys and prototype are unchanged.
    */
   private readonly toJSON: { value: (this: Trace | Iteration) => TraceJSON | IterationJSON }
+  /**
+   * Each trace and lambda run's part of the explanation's JSON form, taken the
+   * first time any of them is serialized, so a trace serializes as it appears
+   * in `JSON.stringify(explanation)`.
+   */
+  parts: (() => Parts) | undefined
   /** Set when the node cap stopped recording; the result is still exact. */
   truncated = false
   private readonly stack: TraceRecord[] = []
@@ -157,8 +163,13 @@ export class Tracer {
     this.maxNodes = maxNodes
     this.exhaustive = exhaustive
     const listings = this.listings
+    const partOf = (record: object): TraceJSON | IterationJSON | undefined =>
+      this.parts?.().get(record)
     this.toJSON = {
       value(this: Trace | Iteration): TraceJSON | IterationJSON {
+        // Its part of the explanation's JSON, so any list of traces stays within it.
+        const part = partOf(this)
+        if (part !== undefined) return part
         const budget = { left: SNAPSHOT_ENTRIES, keys: listings }
         // A lambda run holds its body's trace; a trace has a kind.
         return 'kind' in this ? snapshotTrace(this, budget) : snapshotIteration(this, budget)
@@ -313,11 +324,6 @@ export class Tracer {
   }
 }
 
-export function errorInfo(error: unknown): { code: ErrorCode; message: string } {
-  if (error instanceof BonsaiError) return { code: error.code, message: error.message }
-  return { code: 'HOST_ERROR', message: error instanceof Error ? error.message : String(error) }
-}
-
 // === reasons ===
 
 /**
@@ -385,6 +391,9 @@ interface Listing {
 
 /** Each map's listing (null when listing failed), shared by one explanation's snapshots. */
 export type Listings = WeakMap<object, Listing | null>
+
+/** The JSON form of each trace and lambda run, by record. */
+export type Parts = WeakMap<object, TraceJSON | IterationJSON>
 
 export interface SnapshotBudget {
   left: number
@@ -534,8 +543,9 @@ function ownData(object: object, key: string): unknown {
 export function snapshotTrace(
   trace: Trace,
   budget: SnapshotBudget = { left: SNAPSHOT_ENTRIES },
+  parts?: Parts,
 ): TraceJSON {
-  return {
+  const json: TraceJSON = {
     id: trace.id,
     kind: trace.kind,
     ...(trace.operator === undefined ? {} : { operator: trace.operator }),
@@ -548,19 +558,29 @@ export function snapshotTrace(
       ? { value: snapshot(trace.value, budget) }
       : {}),
     ...(trace.error === undefined ? {} : { error: trace.error }),
-    children: trace.children.map((child) => snapshotTrace(child, budget)),
+    children: trace.children.map((child) => snapshotTrace(child, budget, parts)),
     ...(trace.iterations === undefined
       ? {}
-      : { iterations: trace.iterations.map((iteration) => snapshotIteration(iteration, budget)) }),
+      : {
+          iterations: trace.iterations.map((iteration) =>
+            snapshotIteration(iteration, budget, parts),
+          ),
+        }),
     ...(trace.omittedIterations === undefined
       ? {}
       : { omittedIterations: trace.omittedIterations }),
   }
+  parts?.set(trace, json)
+  return json
 }
 
 /** One lambda run with every value replaced by its snapshot. */
-function snapshotIteration(iteration: Iteration, budget: SnapshotBudget): IterationJSON {
-  return {
+function snapshotIteration(
+  iteration: Iteration,
+  budget: SnapshotBudget,
+  parts?: Parts,
+): IterationJSON {
+  const json: IterationJSON = {
     index: iteration.index,
     item: snapshot(iteration.item, budget),
     ...(iteration.accumulator === undefined
@@ -569,8 +589,10 @@ function snapshotIteration(iteration: Iteration, budget: SnapshotBudget): Iterat
     ...(iteration.error === undefined
       ? { result: snapshot(iteration.result, budget) }
       : { error: iteration.error }),
-    trace: snapshotTrace(iteration.trace, budget),
+    trace: snapshotTrace(iteration.trace, budget, parts),
   }
+  parts?.set(iteration, json)
+  return json
 }
 
 // === rendering ===

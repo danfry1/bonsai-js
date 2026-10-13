@@ -14,7 +14,7 @@
  */
 import type { AbortSignalLike } from '../environment.js'
 import { BonsaiError, BonsaiLimitError, type Span } from '../errors.js'
-import { TRANSLATING, type PartialOptions, type PartialResult } from '../partial.js'
+import { translating, type PartialOptions, type PartialResult } from '../partial.js'
 import { Duration, isMap, isValidDuration } from '../runtime/values.js'
 import { declaredVariables } from '../declared.js'
 import { closest, didYouMean } from '../suggest.js'
@@ -1008,7 +1008,6 @@ function lower(
   })
   const result = translation.partial((limits) => {
     const partialOptions = {
-      [TRANSLATING]: true,
       unknown: [options.row],
       ...(options.callHostFunctions === undefined
         ? {}
@@ -1017,7 +1016,7 @@ function lower(
       ...(limits as Pick<PartialOptions, 'maxSteps' | 'timeout'>),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     }
-    return program.partial(knownData as never, partialOptions)
+    return translating(program, () => program.partial(knownData as never, partialOptions))
   })
   if (result.status === 'error') throw result.error
   if (result.status === 'value') {
