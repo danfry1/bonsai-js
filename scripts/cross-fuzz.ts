@@ -511,6 +511,13 @@ function isPromiseLike(value: unknown): boolean {
   return value === THENABLE
 }
 
+/** Whether `a` and `b` differ only as evaluateSync() and evaluate() do on a promise-like result. */
+function refusal(a: Outcome, b: Outcome): boolean {
+  const one = (x: Outcome, y: Outcome): boolean =>
+    x.ok && isPromiseLike(x.value) && !y.ok && codeOf(y.error) === 'TYPE_ERROR'
+  return one(a, b) || one(b, a)
+}
+
 /** A value of the wrong type for `type`, to exercise context validation. */
 function corruptValue(R: Random, type: Type): unknown {
   const base = strip(type)
@@ -1883,8 +1890,13 @@ async function residualInvariants(rc: ResidualCase): Promise<Failure | undefined
   tally('X4 dependsOn covers every read')
   const recorded = recordReads(c.data)
   const proxied = await runOn(result, recorded.proxied, plain)
-  if (!same(residualBase, proxied))
-    return fail('X4 residual differs on recorded data', { got: show(proxied) })
+  if (!same(residualBase, proxied)) {
+    // Soft: each recorded read is a fresh Proxy, so `x == x` loses the identity
+    // fast path (values.ts isEqual) and pays for a full comparison; a step budget
+    // can then run out on recorded data alone.
+    if (isLimit(proxied)) tally('X4 soft: recorded data reaches a limit (fresh proxies per read)')
+    else return fail('X4 residual differs on recorded data', { got: show(proxied) })
+  }
   for (const path of recorded.leaves)
     if (!covers(path)) return fail('X4 residual reads outside dependsOn', { dependsOn, read: path })
   for (const path of recorded.touched)
@@ -2036,7 +2048,7 @@ async function throwingHostData(hc: HostDataCase): Promise<Failure | undefined> 
       tally('8 timing divergence under a tiny timeout (skipped)')
       return undefined
     }
-    if (!same(ref, outcome))
+    if (!same(ref, outcome) && !refusal(ref, outcome))
       return fail(`8 ${view} differs from evaluate`, { evaluate: show(ref), got: show(outcome) })
   }
 
@@ -2320,9 +2332,11 @@ async function checkViews(c: Case, tally: Tally): Promise<Failure | undefined> {
   // 7b. The flat environment evaluates the same.
   if (cfg.flat) {
     tally('7 extend matches flat (evaluate)')
-    const flatOutcome = await attemptAsync(() =>
-      (cfg.flat as Environment).compile(source).evaluate(data, opts),
-    )
+    // Run as `ref` was: evaluate() refuses a promise-like result evaluateSync() returns.
+    const flat = cfg.flat
+    const flatOutcome = program.async
+      ? await attemptAsync(() => flat.compile(source).evaluate(data, opts))
+      : attempt(() => flat.compile(source).evaluateSync(data, opts))
     if (!same(ref, flatOutcome) && !(tinyTimeout && (isTimeout(ref) || isTimeout(flatOutcome))))
       return fail('extend() evaluates differently from flat', {
         ref: show(ref),
@@ -2429,9 +2443,10 @@ async function checkViews(c: Case, tally: Tally): Promise<Failure | undefined> {
     !ref.ok &&
     ['INVALID_CONTEXT', 'VALUE_DEPTH_LIMIT'].includes(codeOf(ref.error))
   ) {
-    const unvalidated = await attemptAsync(() =>
-      program.evaluate(data, { ...opts, validateContext: false }),
-    )
+    const unvalidatedOpts = { ...opts, validateContext: false }
+    const unvalidated = program.async
+      ? await attemptAsync(() => program.evaluate(data, unvalidatedOpts))
+      : attempt(() => program.evaluateSync(data, unvalidatedOpts))
     validationFailed = !same(ref, unvalidated)
   }
   for (const mode of ['default', 'list', 'complete'] as const) {
@@ -2520,7 +2535,9 @@ async function checkViews(c: Case, tally: Tally): Promise<Failure | undefined> {
       }
       continue
     }
-    const onFull = result.async
+    // Run as `ref` was: a residual can be sync where its program is async.
+    const asRef = result.async || program.async
+    const onFull = asRef
       ? await attemptAsync(() => result.evaluate(data, opts))
       : attempt(() => result.evaluateSync(data, opts))
     if (!same(ref, onFull)) {
@@ -2538,7 +2555,7 @@ async function checkViews(c: Case, tally: Tally): Promise<Failure | undefined> {
     if (!result.async) {
       const onFullAsync = await attemptAsync(() => result.evaluate(data, opts))
       const timing = tinyTimeout && (isTimeout(onFull) || isTimeout(onFullAsync))
-      if (!same(onFull, onFullAsync) && !timing)
+      if (!same(onFull, onFullAsync) && !timing && !refusal(onFull, onFullAsync))
         return fail('residual evaluate differs from evaluateSync', {
           ...at,
           residual: result.source,
@@ -2546,7 +2563,7 @@ async function checkViews(c: Case, tally: Tally): Promise<Failure | undefined> {
     }
     if (!result.readsContext) {
       const pruned = pruneTo(result.dependsOn, data)
-      const onDependsOn = result.async
+      const onDependsOn = asRef
         ? await attemptAsync(() => result.evaluate(pruned, opts))
         : attempt(() => result.evaluateSync(pruned, opts))
       if (!same(ref, onDependsOn) && !(tinyTimeout && isTimeout(onDependsOn))) {
