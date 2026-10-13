@@ -1600,6 +1600,84 @@ await postgres.exec(
   'create table t (id int, name text, city text, total float8, qty float8, active boolean, placed timestamptz, wait bigint)',
 )
 
+/**
+ * X9: `now() - row.placed` (or the reverse) compared with a duration, with `now`
+ * and the record at the ends of the Date range, around where the distance
+ * leaves the duration range (±(2^53 - 1) ms). Each of the filter and its
+ * negation selects the record, in SQLite, exactly when it evaluates to true.
+ */
+async function extremeDistance(
+  R: Random,
+  env: Environment,
+  known: Record<string, unknown>,
+  base: Row,
+  options: Record<string, unknown>,
+  tally: Tally,
+): Promise<Failure | undefined> {
+  const maxDuration = Number.MAX_SAFE_INTEGER
+  const now = new Date(R.pick([8.64e15, -8.64e15, 4e14, -4e14, 1e15]))
+  const ms = now.getTime()
+  const candidates = [
+    -8.64e15,
+    8.64e15,
+    ms - maxDuration,
+    ms - maxDuration - 1,
+    ms + maxDuration,
+    ms + maxDuration + 1,
+    ms - 1_209_600_000,
+  ].filter((at) => Math.abs(at) <= 8.64e15)
+  const placed = new Date(R.pick(candidates))
+  const op = R.pick(['<', '<=', '>', '>='])
+  const comparison = R.pick([
+    `now() - row.placed ${op} days(14)`,
+    `row.placed - now() ${op} days(1)`,
+    `days(14) ${op} now() - row.placed`,
+  ])
+  const row = { ...base, placed }
+  for (const source of [
+    `row.placed != null && ${comparison}`,
+    `!(row.placed != null && ${comparison})`,
+  ]) {
+    const compiled = attempt(() => env.compile(source))
+    if (!compiled.ok) return undefined
+    const program = compiled.value as Program
+    const evaluated = program.async
+      ? await attemptAsync(() => program.evaluate({ ...known, row }, { ...options, now }))
+      : attempt(() => program.evaluateSync({ ...known, row }, { ...options, now }))
+    if (stepish(evaluated)) return undefined
+    const query = attempt(() =>
+      toSQL(program, {
+        row: 'row',
+        known,
+        now,
+        columns: COLUMNS,
+        dialect: 'sqlite',
+        paramOffset: 1,
+      }),
+    )
+    if (!query.ok) return undefined
+    tally('X9 a distance past the duration range at the ends of the Date range')
+    const { sql, params } = query.value as ReturnType<typeof toSQL>
+    const selected =
+      sqlite
+        .query(`select 1 from (select ? as placed) where ${sql}`)
+        .all(placed.getTime(), ...params).length > 0
+    const want = evaluated.ok && evaluated.value === true
+    if (selected !== want)
+      return {
+        invariant: 'X9 a distance at the ends of the Date range selects otherwise',
+        detail: {
+          source,
+          now: now.toISOString(),
+          placed: placed.getTime(),
+          sql,
+          evaluated: show(evaluated),
+        },
+      }
+  }
+  return undefined
+}
+
 async function loadRows(rows: readonly Row[]): Promise<void> {
   sqlite.exec('delete from t')
   const insert = sqlite.query('insert into t values (?, ?, ?, ?, ?, ?, ?, ?)')
@@ -2724,6 +2802,13 @@ async function checkViews(c: Case, tally: Tally): Promise<Failure | undefined> {
       if (got.length > 0)
         return fail('X8 an over-long list literal selects rows', { filter, sql, got })
     }
+  }
+  // X9. A distance between timestamps past the duration range fails in Bonsai, so
+  // at the ends of the Date range (SQLite only: Postgres stores years 1 to 9999)
+  // the record is selected by the filter or its negation exactly as it evaluates.
+  if (R.chance(0.3)) {
+    const failure = await extremeDistance(R, env, known, rows[0], rowOpts, tally)
+    if (failure) return fail(failure.invariant, { ...at, ...failure.detail })
   }
   for (const dialect of ['sqlite', 'postgres'] as const) {
     if (dialect === 'postgres' && !wellFormed) continue
