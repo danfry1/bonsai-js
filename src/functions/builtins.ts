@@ -1350,8 +1350,8 @@ const LIST_FUNCTIONS: FunctionDef[] = [
       return sortKeyed(items, keys, direction, site)
     },
     async (items, fn, site, [direction]) => {
-      const keys: unknown[] = []
-      for (let i = 0; i < items.length; i++) keys.push(ran(await fn(items[i], i)))
+      const keys = newList(items.length, site)
+      for (let i = 0; i < items.length; i++) keys[i] = ran(await fn(items[i], i))
       return new Out(sortKeyed(items, keys, direction, site))
     },
     { lambda: fnType([T, num], K), extraParams: [t.enum('asc', 'desc')], ordered: ['K'] },

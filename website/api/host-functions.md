@@ -187,7 +187,7 @@ await slow.evaluate('lookup("a")', {}, { timeout: 50 }) // throws: TIMEOUT
 
 Calls run one at a time, left to right, in async mode too: an expression cannot start several host calls concurrently. If a function reaches a network or database, prefetch the data into the context or batch inside your function.
 
-A function that is not declared `async` must not return a promise; doing so is a `HOST_CONTRACT` error.
+A function that is not declared `async` must not return a promise; doing so is a `HOST_CONTRACT` error. An `async` function's result is awaited by JavaScript, so returning a thenable from the context (an ORM query object, say) runs its `then`; return a plain value, or wrap the object (`{ value }`).
 
 ## Replacing built-ins
 

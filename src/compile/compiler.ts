@@ -635,7 +635,10 @@ function compileTree(
       )
     }
     const runs = codes.map(boxed)
+    // Without spreads the length is known up front, checked before any item runs as above.
+    const n = spreads.includes(true) ? -1 : runs.length
     return asyncCode(async (s) => {
+      if (n >= 0) s.listLimit(n, at)
       const values: unknown[] = []
       for (const run of runs) values.push((await run(s)).v)
       return new Out(build(s, values))

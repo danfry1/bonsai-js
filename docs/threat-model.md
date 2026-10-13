@@ -107,7 +107,9 @@ wherever the language walks it (equality, `unique`, `in`).
 - A promise from an undeclared function is an error.
 - A thenable in the context (a plain object with a `then` method) is an
   ordinary map. It is never awaited, and `evaluate()` refuses to return one
-  as the result.
+  as the result. The exception is a value an `async` host function resolves
+  to: JavaScript awaits it, so a host function must not hand a context
+  thenable back as its result (wrap it, as in `{ value }`, if it must).
 - A host function whose result does not match its declaration (checked
   deeply) or that returns a promise without `async: true` fails with
   `HOST_CONTRACT`, which `try()` cannot catch.
