@@ -52,6 +52,8 @@ max(1, ...prices, 20) // => 20
 
 A spread argument cannot be used with a function that takes a lambda.
 
+How many arguments a spread supplies is known only when the call runs, but its types are checked up front: every parameter the spread may fill must accept the list's element type. A mixed list such as `pad(...["a", 2])`, whose element type is `string | number`, is a `NO_OVERLOAD` check error even though `pad("a", 2)` would run. Pass such arguments one by one.
+
 ## `null` arguments
 
 A `null` argument selects an overload whose parameter accepts `null`. If none does and the `null` is the first argument (the receiver), the call is a `NULL_RECEIVER` error in either call form, or `null` when the call uses `?.`. A `null` in any later position is a `NO_OVERLOAD` error, and `?.` does not change that: it only skips a call on a `null` receiver.

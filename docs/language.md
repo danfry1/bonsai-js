@@ -18,14 +18,17 @@ put in the context (see §10).
 - Reserved words: `true false null let in not`. After `.` any identifier or
   reserved word is a property name (`obj.in`).
 - Numbers: `42`, `3.14`, `1e-3`, `1_000`, `0xff`, `0xde_ad`, `0b101`, `0o17`. A
-  number starts with a digit (`.5` is not a number). `_` only between digits,
-  in any base.
+  number starts with a digit (`.5` is not a number) and does not end in `.`
+  (`1.e3` reads a property `e3` of `1`, a check error; write `1e3` or `1.0e3`).
+  `_` only between digits, in any base.
 
 ```bonsai
 0xde_ad // => 57005
 1_000 // => 1000
 ```
 - Strings: `"..."` or `'...'`; escapes `\n \t \r \0 \\ \' \" \` \$ \xHH \uHHHH \u{H...}`.
+  `\u{...}` takes a code point up to `10FFFF`, with any number of leading zeros,
+  as in JavaScript.
 - Templates: `` `text ${expr} text` ``.
 - `|>` is reserved for a future release and is currently a syntax error.
 
@@ -260,7 +263,11 @@ users.map(u => .age) // error: INVALID_LAMBDA
 Lambdas are only valid as arguments for function parameters. A spread argument
 cannot be used in a call to a function that takes a function parameter. How
 many arguments a spread supplies is known only at run time: a call that ends up
-with too few or too many fails with `NO_OVERLOAD` when it runs.
+with too few or too many fails with `NO_OVERLOAD` when it runs. Its types are
+checked up front: every parameter the spread may fill must accept the list's
+element type, so a mixed list such as `pad(...["a", 2])` (element type
+`string | number`) is a `NO_OVERLOAD` check error even though `pad("a", 2)`
+would run.
 
 Higher-order functions invoke lambdas sequentially, in list order, and stop as
 soon as the result is known (`some`, `every`, `find`, ...).

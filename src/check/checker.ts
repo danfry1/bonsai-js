@@ -1093,9 +1093,14 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       return NUMBER
     }
     const fn = env.lookup(name)
+    // `1.e3` reads "e3" of 1: a number does not end in ".", so say how to write the exponent.
+    const exponent =
+      objectType.kind === 'literal' &&
+      typeof objectType.value === 'number' &&
+      /^[eE]\d+$/u.test(name)
     report(
       'TYPE_ERROR',
-      `Cannot read property "${name}" of ${typeText(objectType)}${fn === undefined ? '' : `; did you mean to call ${name}()?`}`,
+      `Cannot read property "${name}" of ${typeText(objectType)}${fn === undefined ? '' : `; did you mean to call ${name}()?`}${exponent ? `; for an exponent write ${String(objectType.value)}${name} or ${String(objectType.value)}.0${name}` : ''}`,
       at,
     )
     return ANY
