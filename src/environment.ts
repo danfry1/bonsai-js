@@ -21,6 +21,7 @@ import {
   type ValidationBudget,
 } from './functions/define.js'
 import {
+  forTranslation,
   partiallyEvaluate,
   residualTexts,
   type PartialData,
@@ -46,6 +47,7 @@ import {
   snapshot,
   snapshotTrace,
   type ExplanationJSON,
+  type Parts,
   type Trace,
 } from './runtime/trace.js'
 import { forEachChild, type CallNode, type Node } from './syntax/ast.js'
@@ -1684,20 +1686,26 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       const truncated = tracer.truncated
       // Every rendering of this explanation lists a map's keys once, however it is sliced.
       const { listings } = tracer
+      // Taken once, the first time any part is serialized: one budget for the
+      // whole snapshot, however often a value recurs or the traces are sliced.
+      let json: ExplanationJSON | undefined
+      const parts: Parts = new WeakMap()
+      const toJSON = (): ExplanationJSON => {
+        if (json !== undefined) return json
+        const budget = { left: SNAPSHOT_ENTRIES, keys: listings }
+        const result = outcome.ok
+          ? { ok: true as const, value: snapshot(outcome.value, budget) }
+          : { ok: false as const, error: outcome.error.toJSON() }
+        return (json = { ...result, truncated, trace: snapshotTrace(trace, budget, parts) })
+      }
+      tracer.parts = () => (toJSON(), parts)
       return Object.freeze({
         ...outcome,
         trace,
         truncated,
         reasons: () => reasonsOf(trace, listings),
         toString: () => renderTrace(trace, truncated, listings),
-        toJSON: (): ExplanationJSON => {
-          // One budget for the whole snapshot, however often a value recurs in the trace.
-          const budget = { left: SNAPSHOT_ENTRIES, keys: listings }
-          const result = outcome.ok
-            ? { ok: true as const, value: snapshot(outcome.value, budget) }
-            : { ok: false as const, error: outcome.error.toJSON() }
-          return { ...result, truncated, trace: snapshotTrace(trace, budget) }
-        },
+        toJSON,
       })
     }
 
@@ -1732,7 +1740,12 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       )
     }
 
-    function explainSync(context: unknown, options: ExplainOptions | undefined): Explanation<R> {
+    /** With `promised`, a thenable result fails as evaluate() fails it (see settle). */
+    function explainSync(
+      context: unknown,
+      options: ExplainOptions | undefined,
+      promised = false,
+    ): Explanation<R> {
       const explain = explainSettings(options)
       if (analysis.async) {
         return explanation(
@@ -1765,6 +1778,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         const value = code.run(state) as R
         checked(value, state)
         state.checkTime()
+        if (promised) settle(value)
         return explanation(tracer, { ok: true, value })
       } catch (error) {
         return explanation(tracer ?? tracerFor(explain), failure(error))
@@ -1777,7 +1791,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       context: unknown,
       options: ExplainOptions | undefined,
     ): Promise<Explanation<R>> {
-      if (!analysis.async) return explainSync(context, options)
+      if (!analysis.async) return explainSync(context, options, true)
       const explain = explainSettings(options)
       const code = (traceAsync ??= compileProgram(analysis, 'async', {
         ...compileOptions,
@@ -1841,7 +1855,11 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     let subtrees = new Map<Node, Map<string, CompiledProgram>>()
     let subtreeNodes = 0
 
-    function partial(known: Record<string, unknown>, rawOptions: unknown): PartialResult<Ctx, R> {
+    function partial(
+      known: Record<string, unknown>,
+      rawOptions: unknown,
+      translation = false,
+    ): PartialResult<Ctx, R> {
       const options = partialOptions(rawOptions)
       // One budget for the whole partial evaluation, validated as evaluation's is.
       const limits = evaluationLimits(
@@ -1898,7 +1916,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
             listLimit: (length, at) => {
               state.listLimit(length, at)
             },
-            maxSourceLength: settings.parseLimits.maxSourceLength,
+            // Translation reads the residual tree, never its printed source.
+            maxSourceLength: translation ? Infinity : settings.parseLimits.maxSourceLength,
             readKnown: (read) => {
               try {
                 return read()
@@ -2034,9 +2053,10 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       explain: (...args: ExplainArgs<Ctx>) => explainAsync(args[0], args[1]),
       explainSync: (...args: ExplainArgs<Ctx>) => explainSync(args[0], args[1]),
       partial: (known: object, options?: PartialOptions) => {
+        const translation = forTranslation(program)
         let result: PartialResult<Ctx, R>
         try {
-          result = partial(known as Record<string, unknown>, options)
+          result = partial(known as Record<string, unknown>, options, translation)
         } catch (error) {
           throw escaping(error)
         }

@@ -352,12 +352,30 @@ export interface PartialOptions {
   readonly signal?: AbortSignalLike | undefined
 }
 
+/** The program whose partial() toSQL or toMongo is calling; see {@link translating}. */
+let translatingProgram: object | undefined
+
 /**
- * A partial() option toSQL and toMongo pass, out of reach of other callers:
- * they translate the residual tree and never evaluate its printed source, so
- * maxSourceLength does not bound it.
+ * Runs `run`, which calls `program.partial()` for toSQL or toMongo. They
+ * translate the residual tree and never evaluate its printed source, so that
+ * one call is not bound by maxSourceLength. Nothing in the options carries
+ * this, so no other caller can ask for it.
  */
-export const TRANSLATING: unique symbol = Symbol('translating')
+export function translating<T>(program: object, run: () => T): T {
+  translatingProgram = program
+  try {
+    return run()
+  } finally {
+    translatingProgram = undefined
+  }
+}
+
+/** Whether this partial() of `program` is translation's; asked once, first thing. */
+export function forTranslation(program: object): boolean {
+  const is = translatingProgram === program
+  translatingProgram = undefined
+  return is
+}
 
 /** How the partial evaluator reaches the engine. */
 export interface PartialEngine {
@@ -1029,10 +1047,7 @@ export function partiallyEvaluate<R>(
   const source = print(outcome.node)
   engine.charge(1 + Math.ceil(source.length / RESIDUAL_CHARS_PER_STEP))
   engine.checkTime()
-  if (
-    source.length > engine.maxSourceLength &&
-    (options as { [TRANSLATING]?: true })[TRANSLATING] !== true
-  ) {
+  if (source.length > engine.maxSourceLength) {
     throw new BonsaiLimitError(
       'SOURCE_TOO_LONG',
       `The residual is ${source.length} characters long, more than maxSourceLength (${engine.maxSourceLength})`,

@@ -457,7 +457,6 @@ export function createLanguageService(
 
   function hover(source: string, rawOffset: number): HoverResult | undefined {
     const offset = clampOffset(source, rawOffset)
-    if (!Number.isFinite(rawOffset)) return undefined
     const analysis = tryAnalyze(source)
     if (analysis === undefined) return undefined
     let best: Node | undefined

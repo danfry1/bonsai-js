@@ -341,7 +341,7 @@ describe('language service', () => {
   it('treats a non-numeric offset as the end of the source', () => {
     const result = service.complete('user.', Number.NaN)
     expect(result.start).toBe(5)
-    expect(service.hover('user', Number.NaN)).toBeUndefined()
+    expect(service.hover('user', Number.NaN)).toEqual(service.hover('user', 4))
   })
 
   it('keeps diagnostic spans inside the source', () => {

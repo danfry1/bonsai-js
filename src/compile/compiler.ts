@@ -11,7 +11,7 @@ import {
 } from '../functions/define.js'
 import { forHost, isOwn, raised } from '../runtime/attribution.js'
 import type { State } from '../runtime/state.js'
-import { errorInfo, type Tracer } from '../runtime/trace.js'
+import type { TraceRecord, Tracer } from '../runtime/trace.js'
 import {
   add,
   chargeKey,
@@ -96,6 +96,22 @@ function hostDataError(error: unknown, s: State): unknown {
   return s.error('HOST_ERROR', `Reading host data failed: ${errorText(error)}`, undefined, error)
 }
 
+/**
+ * Records a node's failure on its trace, as the error evaluation reports: host
+ * data's failure is a HOST_ERROR here too, not the code of an error it threw.
+ */
+function failed(trace: TraceRecord, error: unknown, s: State): unknown {
+  const failure = hostDataError(error, s) as BonsaiError
+  trace.error = { code: failure.code, message: failure.message }
+  return failure
+}
+
+/** Rethrows a failure of exhaustive explain's extra work only if it is a limit. */
+function extraFailure(error: unknown, s: State): void {
+  const failure = hostDataError(error, s)
+  if (failure instanceof BonsaiLimitError) throw failure
+}
+
 /** Whether `try()` recovers from an error: runtime failures, not limits or host contract violations. */
 function recoverable(error: unknown): boolean {
   return error instanceof BonsaiRuntimeError && error.code !== 'HOST_CONTRACT'
@@ -162,8 +178,7 @@ function compileTree(
           trace.value = value
           return value
         } catch (error) {
-          trace.error = errorInfo(error)
-          throw error
+          throw failed(trace, error, s)
         } finally {
           tracer.exit()
         }
@@ -178,8 +193,7 @@ function compileTree(
         trace.value = value
         return value
       } catch (error) {
-        trace.error = errorInfo(error)
-        throw error
+        throw failed(trace, error, s)
       } finally {
         tracer.exit()
       }
@@ -487,7 +501,7 @@ function compileTree(
         r(s)
       } catch (error) {
         // Only limits stop the extra work; its failures (host data included) are ignored.
-        if (error instanceof BonsaiLimitError) throw error
+        extraFailure(error, s)
       } finally {
         tracer.extraDepth--
       }
@@ -512,7 +526,7 @@ function compileTree(
           try {
             await right.fn(s)
           } catch (error) {
-            if (error instanceof BonsaiLimitError) throw error
+            extraFailure(error, s)
           } finally {
             tracer.extraDepth--
           }
@@ -1010,9 +1024,12 @@ function noOverload(
 /**
  * Whatever a host function throws is a HOST_ERROR with the original as its
  * cause, even a Bonsai error (say, a limit hit by an evaluation the host ran
- * itself): it failed in host code, not in this expression.
+ * itself): it failed in host code, not in this expression. Running out of call
+ * stack is TOO_DEEP, as it is in host data: the stack is shared, so it is not
+ * the host's failure alone, and try() does not recover from it.
  */
 function hostError(s: State, name: string, error: unknown, span: Span): BonsaiError {
+  if (isStackOverflow(error)) return raised(tooDeep(s.source))
   return s.error('HOST_ERROR', `${name}() failed: ${errorText(error)}`, span, error)
 }
 
