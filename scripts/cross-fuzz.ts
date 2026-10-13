@@ -2224,16 +2224,16 @@ async function checkViews(c: Case, tally: Tally): Promise<Failure | undefined> {
   } else {
     views.push(['explainSync', fromExplanation(explainedSync)])
   }
+  // evaluate() and explain() refuse a promise-like result that evaluateSync() returns.
+  const refused = (outcome: Outcome): boolean =>
+    !program.async &&
+    ref.ok &&
+    isPromiseLike(ref.value) &&
+    !outcome.ok &&
+    codeOf(outcome.error) === 'TYPE_ERROR'
   for (const [name, outcome] of views) {
     if (same(ref, outcome)) continue
-    // evaluate() and explain() refuse a promise-like result that evaluateSync() returns.
-    if (
-      !program.async &&
-      ref.ok &&
-      isPromiseLike(ref.value) &&
-      !outcome.ok &&
-      codeOf(outcome.error) === 'TYPE_ERROR'
-    ) {
+    if (refused(outcome)) {
       tally('2 async views refuse a promise-like result')
       continue
     }
@@ -2306,6 +2306,10 @@ async function checkViews(c: Case, tally: Tally): Promise<Failure | undefined> {
       }
       if (isLimit(result)) {
         tally('2 exhaustive explain hit a limit evaluation did not (documented)')
+        continue
+      }
+      if (name === 'explain exhaustive' && refused(result)) {
+        tally('2 async views refuse a promise-like result')
         continue
       }
       if (tinyTimeout && (isTimeout(ref) || isTimeout(result))) continue
