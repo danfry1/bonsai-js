@@ -497,7 +497,7 @@ export function analyze(root: Node, env: CheckEnv, options: CheckOptions = {}): 
   try {
     return withTypeBudget(CHECK_BUDGET, () => analyzeWithin(root, env, options))
   } catch (error) {
-    if (isStackOverflow(error)) throw tooDeep(undefined)
+    if (isStackOverflow(error)) throw tooDeep(undefined, error)
     if (!(error instanceof TypeBudgetExceeded)) throw error
     throw new BonsaiLimitError('TOO_COMPLEX', 'Expression is too complex to check', {
       span: { start: root.start, end: root.end },

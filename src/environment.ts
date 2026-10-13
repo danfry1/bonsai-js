@@ -18,6 +18,7 @@ import {
   isRecord,
   overload,
   type FunctionDef,
+  type Out,
   type ValidationBudget,
 } from './functions/define.js'
 import {
@@ -42,6 +43,7 @@ import {
   DEFAULT_MAX_TRACE_NODES,
   SNAPSHOT_ENTRIES,
   Tracer,
+  freezeAll,
   reasonsOf,
   renderTrace,
   snapshot,
@@ -1254,7 +1256,7 @@ function validatePaths(
  */
 function hostDataFailure(error: unknown, source: string): BonsaiError {
   if (isOwn(error)) return error
-  if (isStackOverflow(error)) return raised(tooDeep(source))
+  if (isStackOverflow(error)) return raised(tooDeep(source, error))
   return raised(
     new BonsaiRuntimeError('HOST_ERROR', `Reading host data failed: ${errorText(error)}`, {
       source,
@@ -1480,6 +1482,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     readonly knownRoots: readonly string[]
     /** The context paths it reads: all a context it does not read whole needs. */
     readonly dependsOn: readonly string[]
+    /** Size and depth of the lists and maps partial() built into its bindings. */
+    readonly shapes: WeakMap<object, number> | undefined
   }
 
   /** How a partial-evaluation residual runs and explains, with the caller's context. */
@@ -1533,7 +1537,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     let pooled: State | undefined
     let pooledInUse = false
 
-    const compileOptions = constants === undefined ? {} : { constants }
+    const compileOptions = constants === undefined ? {} : { constants, shapes: residualOf?.shapes }
     const syncProgram = (): CompiledProgram =>
       (syncCode ??= compileProgram(analysis, 'sync', compileOptions))
     const asyncProgram = (): CompiledProgram =>
@@ -1645,7 +1649,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       const state = new State(settings.runtimeLimits, settings.clock)
       try {
         prepare(state, ctx, limits, code.localCount)
-        const result = await code.run(state)
+        const result = ((await code.run(state)) as Out).v
         checked(result, state)
         state.checkTime()
         return settle(result as R)
@@ -1683,6 +1687,12 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       outcome: { ok: true; value: R } | { ok: false; error: BonsaiError },
     ): Explanation<R> {
       const trace = tracer.finish()
+      // A result refused after the run (a promise-like value, a failed `expect`
+      // check) is the whole expression's failure: marked on the root.
+      if (!outcome.ok && trace.evaluated && trace.error === undefined) {
+        trace.error = { code: outcome.error.code, message: outcome.error.message }
+        delete trace.value
+      }
       const truncated = tracer.truncated
       // Every rendering of this explanation lists a map's keys once, however it is sliced.
       const { listings } = tracer
@@ -1696,7 +1706,12 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         const result = outcome.ok
           ? { ok: true as const, value: snapshot(outcome.value, budget) }
           : { ok: false as const, error: outcome.error.toJSON() }
-        return (json = { ...result, truncated, trace: snapshotTrace(trace, budget, parts) })
+        // Frozen: every serialization (and every part of it) is this same snapshot.
+        return (json = freezeAll({
+          ...result,
+          truncated,
+          trace: snapshotTrace(trace, budget, parts),
+        }))
       }
       tracer.parts = () => (toJSON(), parts)
       return Object.freeze({
@@ -1805,7 +1820,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         prepare(state, ctx, limits, code.localCount)
         tracer = tracerFor(explain)
         state.tracer = tracer
-        const value = settle((await code.run(state)) as R)
+        const value = settle(((await code.run(state)) as Out).v as R)
         checked(value, state)
         state.checkTime()
         return explanation(tracer, { ok: true, value })
@@ -2002,7 +2017,13 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
                   runner = made
                 },
                 new Map(Object.entries(bindings)),
-                { source: residualSource, readsContext, knownRoots, dependsOn },
+                {
+                  source: residualSource,
+                  readsContext,
+                  knownRoots,
+                  dependsOn,
+                  shapes: state.shapes,
+                },
               )
               return runner as ResidualRunner
             },
@@ -2027,7 +2048,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         // Host data is read through readKnown, evaluate, and the checks above,
         // which report its failures as HOST_ERROR; anything else is a failure
         // of the engine itself, not of the caller's data, so it is not relabeled.
-        if (isStackOverflow(error)) throw tooDeep(source)
+        if (isStackOverflow(error)) throw tooDeep(source, error)
         throw error
       } finally {
         state.release()

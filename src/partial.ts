@@ -445,8 +445,9 @@ export interface PartialEngine {
 
 /**
  * An error a subtree raises only if evaluation reaches it: an evaluation
- * error, or a limit on the size of a value it builds. Budget limits (steps,
- * time, cancellation) bound partial evaluation's own work, so they end it.
+ * error, a limit on the size of a value it builds, or host data running out of
+ * call stack. Budget limits (steps, time, cancellation) bound partial
+ * evaluation's own work, so they end it.
  */
 type Failure = BonsaiRuntimeError | BonsaiLimitError
 
@@ -455,6 +456,7 @@ const VALUE_LIMITS: ReadonlySet<string> = new Set([
   'LIST_LIMIT',
   'VALUE_DEPTH_LIMIT',
   'PATTERN_LIMIT',
+  'TOO_DEEP',
 ])
 
 function failureOf(error: unknown): Failure | undefined {

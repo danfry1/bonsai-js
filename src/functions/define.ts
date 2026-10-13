@@ -20,6 +20,18 @@ export interface CallSite {
   readonly span: Span
 }
 
+/**
+ * What async evaluation resolves to: a value in a box. JavaScript adopts (runs
+ * `then` on) any thenable an async function returns or awaits, and data from
+ * the host is opaque, never awaited, so values cross an `await` boxed.
+ */
+export class Out {
+  readonly v: unknown
+  constructor(v: unknown) {
+    this.v = v
+  }
+}
+
 export interface Overload {
   /** Parameter types. Function-typed parameters take lambdas. */
   readonly params: readonly Type[]
@@ -30,8 +42,11 @@ export interface Overload {
   /** Result type; may reference type variables bound by the parameters. */
   readonly result: Type
   readonly run: (args: unknown[], site: CallSite) => unknown
-  /** Variant used when a lambda argument is asynchronous. */
-  readonly runAsync?: ((args: unknown[], site: CallSite) => Promise<unknown>) | undefined
+  /**
+   * Variant used when a lambda argument is asynchronous. Its lambdas resolve
+   * to an {@link Out}, and so does it.
+   */
+  readonly runAsync?: ((args: unknown[], site: CallSite) => Promise<Out>) | undefined
   /** Type variables that must bind to one orderable kind (number, string, timestamp, duration). */
   readonly ordered?: readonly string[]
   /**

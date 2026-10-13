@@ -495,6 +495,22 @@ function genOptions(R: Random): Record<string, unknown> {
   return out
 }
 
+/**
+ * Calls of a thenable's `then` in the data. safety.md: "a thenable in the
+ * context is opaque data that is never awaited", so no view may call it.
+ */
+let thenCalls = 0
+const THENABLE = Object.freeze({
+  then(): void {
+    thenCalls++
+  },
+})
+
+/** Whether `value` is promise-like, as evaluate() refuses to return it. */
+function isPromiseLike(value: unknown): boolean {
+  return value === THENABLE
+}
+
 /** A value of the wrong type for `type`, to exercise context validation. */
 function corruptValue(R: Random, type: Type): unknown {
   const base = strip(type)
@@ -510,9 +526,9 @@ function corruptValue(R: Random, type: Type): unknown {
     case 'duration':
       return R.pick([1000, 'PT1H'])
     case 'list':
-      return R.pick(['x', {}, [Symbol.for('x')]])
+      return R.pick(['x', {}, [Symbol.for('x')], [THENABLE]])
     case 'map':
-      return R.pick([[], 'x', 5])
+      return R.pick([[], 'x', 5, THENABLE])
     case 'any':
     case 'function':
     case 'literal':
@@ -2088,6 +2104,13 @@ async function throwingHostData(hc: HostDataCase): Promise<Failure | undefined> 
 
 /** Checks every view of one case; the first disagreement, or undefined. */
 async function checkCase(c: Case, tally: Tally): Promise<Failure | undefined> {
+  const before = thenCalls
+  const failure = await checkViews(c, tally)
+  if (failure !== undefined || thenCalls === before) return failure
+  return { invariant: 'a thenable in the data was called', detail: {} }
+}
+
+async function checkViews(c: Case, tally: Tally): Promise<Failure | undefined> {
   const R = random(c.seed)
   const fail = (invariant: string, detail: Record<string, unknown> = {}): Failure => ({
     invariant,
@@ -2197,6 +2220,17 @@ async function checkCase(c: Case, tally: Tally): Promise<Failure | undefined> {
   }
   for (const [name, outcome] of views) {
     if (same(ref, outcome)) continue
+    // evaluate() and explain() refuse a promise-like result that evaluateSync() returns.
+    if (
+      !program.async &&
+      ref.ok &&
+      isPromiseLike(ref.value) &&
+      !outcome.ok &&
+      codeOf(outcome.error) === 'TYPE_ERROR'
+    ) {
+      tally('2 async views refuse a promise-like result')
+      continue
+    }
     if (tinyTimeout && (isTimeout(ref) || isTimeout(outcome))) {
       tally('2 timing divergence under a tiny timeout (skipped)')
       return undefined

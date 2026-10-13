@@ -33,7 +33,7 @@ user.toString // => null
 
 **Escape into async work.** A host function must be declared `async: true` to be awaited. `evaluateSync()` rejects an expression that calls one before any host code runs. A promise returned from a function not declared async is a `HOST_CONTRACT` error, a thenable in the context is opaque data that is never awaited, and `evaluate()` and `explain()` refuse to return a promise-like value (a `TYPE_ERROR`).
 
-**Hide failures.** Every failure surfaces as a `BonsaiError` with a stable code. A host function that throws, or a getter or Proxy in the context that throws, becomes a `HOST_ERROR`. A host function that breaks its declared contract is a `HOST_CONTRACT` error, which `try()` cannot catch.
+**Hide failures.** Every failure surfaces as a `BonsaiError` with a stable code. A host function that throws, or a getter or Proxy in the context that throws, becomes a `HOST_ERROR` (a getter or Proxy that runs out of call stack is `TOO_DEEP`, see [Limits](/api/limits)). A host function that breaks its declared contract is a `HOST_CONTRACT` error, which `try()` cannot catch.
 
 ## What remains your responsibility
 

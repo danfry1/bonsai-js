@@ -51,6 +51,7 @@ import {
 import { isExact, t, unionOf, widen, type Type } from '../types.js'
 import {
   K,
+  Out,
   T,
   U,
   define,
@@ -224,6 +225,11 @@ function textOf(value: unknown, site: CallSite): string {
 
 function asLambda(value: unknown): Lambda {
   return value as Lambda
+}
+
+/** The value an async lambda's run resolved to (see {@link Out}). */
+function ran(out: unknown): unknown {
+  return (out as Out).v
 }
 
 function truthy(value: unknown, site: CallSite): boolean {
@@ -1184,7 +1190,7 @@ function hof(
     fn: Lambda,
     site: CallSite,
     extra: unknown[],
-  ) => Promise<unknown>,
+  ) => Promise<Out>,
   {
     lambda = predicate,
     extraParams = [],
@@ -1221,8 +1227,8 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     },
     async (items, fn, site) => {
       const out = newList(items.length, site)
-      for (let i = 0; i < items.length; i++) out[i] = await fn(items[i], i)
-      return made(out, site)
+      for (let i = 0; i < items.length; i++) out[i] = ran(await fn(items[i], i))
+      return new Out(made(out, site))
     },
     { lambda: fnType([T, num], U) },
   ),
@@ -1239,8 +1245,8 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     async (items, fn, site) => {
       const out: unknown[] = []
       for (let i = 0; i < items.length; i++)
-        if (truthy(await fn(items[i], i), site)) out.push(items[i] ?? null)
-      return made(out, site)
+        if (truthy(ran(await fn(items[i], i)), site)) out.push(items[i] ?? null)
+      return new Out(made(out, site))
     },
   ),
   hof(
@@ -1254,8 +1260,8 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     },
     async (items, fn, site) => {
       for (let i = 0; i < items.length; i++)
-        if (truthy(await fn(items[i], i), site)) return items[i] ?? null
-      return null
+        if (truthy(ran(await fn(items[i], i)), site)) return new Out(items[i] ?? null)
+      return new Out(null)
     },
   ),
   hof(
@@ -1267,8 +1273,9 @@ const LIST_FUNCTIONS: FunctionDef[] = [
       return -1
     },
     async (items, fn, site) => {
-      for (let i = 0; i < items.length; i++) if (truthy(await fn(items[i], i), site)) return i
-      return -1
+      for (let i = 0; i < items.length; i++)
+        if (truthy(ran(await fn(items[i], i)), site)) return new Out(i)
+      return new Out(-1)
     },
   ),
   hof(
@@ -1280,8 +1287,9 @@ const LIST_FUNCTIONS: FunctionDef[] = [
       return false
     },
     async (items, fn, site) => {
-      for (let i = 0; i < items.length; i++) if (truthy(await fn(items[i], i), site)) return true
-      return false
+      for (let i = 0; i < items.length; i++)
+        if (truthy(ran(await fn(items[i], i)), site)) return new Out(true)
+      return new Out(false)
     },
   ),
   hof(
@@ -1293,8 +1301,9 @@ const LIST_FUNCTIONS: FunctionDef[] = [
       return true
     },
     async (items, fn, site) => {
-      for (let i = 0; i < items.length; i++) if (!truthy(await fn(items[i], i), site)) return false
-      return true
+      for (let i = 0; i < items.length; i++)
+        if (!truthy(ran(await fn(items[i], i)), site)) return new Out(false)
+      return new Out(true)
     },
   ),
   hof(
@@ -1306,8 +1315,9 @@ const LIST_FUNCTIONS: FunctionDef[] = [
       return true
     },
     async (items, fn, site) => {
-      for (let i = 0; i < items.length; i++) if (truthy(await fn(items[i], i), site)) return false
-      return true
+      for (let i = 0; i < items.length; i++)
+        if (truthy(ran(await fn(items[i], i)), site)) return new Out(false)
+      return new Out(true)
     },
   ),
   hof(
@@ -1324,9 +1334,9 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     async (items, fn, site) => {
       const out: unknown[] = []
       for (let i = 0; i < items.length; i++) {
-        appendFlat(out, await fn(items[i], i), site)
+        appendFlat(out, ran(await fn(items[i], i)), site)
       }
-      return made(out, site)
+      return new Out(made(out, site))
     },
     { lambda: fnType([T, num], t.union(t.list(U), U)) },
   ),
@@ -1341,8 +1351,8 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     },
     async (items, fn, site, [direction]) => {
       const keys: unknown[] = []
-      for (let i = 0; i < items.length; i++) keys.push(await fn(items[i], i))
-      return sortKeyed(items, keys, direction, site)
+      for (let i = 0; i < items.length; i++) keys.push(ran(await fn(items[i], i)))
+      return new Out(sortKeyed(items, keys, direction, site))
     },
     { lambda: fnType([T, num], K), extraParams: [t.enum('asc', 'desc')], ordered: ['K'] },
   ),
@@ -1359,8 +1369,8 @@ const LIST_FUNCTIONS: FunctionDef[] = [
     async (items, fn, site) => {
       const out: Record<string, unknown[]> = {}
       for (let i = 0; i < items.length; i++)
-        bucket(out, groupKey(await fn(items[i], i), site)).push(items[i] ?? null)
-      return madeGroups(out, site)
+        bucket(out, groupKey(ran(await fn(items[i], i)), site)).push(items[i] ?? null)
+      return new Out(madeGroups(out, site))
     },
     { lambda: fnType([T, num], t.union(str, num, bool)) },
   ),
@@ -1381,8 +1391,8 @@ const LIST_FUNCTIONS: FunctionDef[] = [
           const items = list(l)
           const fn = asLambda(f)
           let n = 0
-          for (let i = 0; i < items.length; i++) if (truthy(await fn(items[i], i), site)) n++
-          return n
+          for (let i = 0; i < items.length; i++) if (truthy(ran(await fn(items[i], i)), site)) n++
+          return new Out(n)
         },
       },
     ),
@@ -1408,8 +1418,8 @@ const LIST_FUNCTIONS: FunctionDef[] = [
             const fn = f as (acc: unknown, item: unknown, index: number) => unknown
             let acc = initial
             // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
-            for (let i = 0; i < items.length; i++) acc = await fn(acc, items[i], i)
-            return acc
+            for (let i = 0; i < items.length; i++) acc = ran(await fn(acc, items[i], i))
+            return new Out(acc)
           },
         },
       ),
