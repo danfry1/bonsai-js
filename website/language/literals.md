@@ -17,6 +17,8 @@ Numbers are IEEE-754 doubles, written as in JavaScript. `_` may separate digits,
 .5 // error: SYNTAX
 ```
 
+A number does not end in `.` either, so `1.e3` reads a property `e3` of `1` and is a check error. Write `1e3` or `1.0e3`.
+
 Doubles are binary floating point, so most decimal fractions are approximate, as in JavaScript. For money, keep amounts in integer cents (or the currency's smallest unit) and round only to display; `round(x, 2)` and `formatCurrency` round the value as written.
 
 ```bonsai
@@ -27,7 +29,7 @@ round(0.1 + 0.2, 2) // => 0.3
 
 ## Strings
 
-Strings use double or single quotes. Escapes are `\n \t \r \0 \\ \' \" \` \$`, `\xHH`, `\uHHHH`, and `\u{H...}`.
+Strings use double or single quotes. Escapes are `\n \t \r \0 \\ \' \" \` \$`, `\xHH`, `\uHHHH`, and `\u{H...}` (a code point up to `10FFFF`, with any number of leading zeros, as in JavaScript).
 
 ```bonsai
 "it's" // => "it's"

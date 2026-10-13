@@ -63,7 +63,7 @@ const INVISIBLE = /[\p{Z}\p{Cc}\p{Cf}]/u
 const HEX_RADIX = 16
 const OCTAL_RADIX = 8
 const MAX_CODE_POINT = 0x10ffff
-/** Hex digits in the longest `\\u{...}` escape. */
+/** Significant hex digits in the longest `\\u{...}` escape (leading zeros aside). */
 const MAX_CODE_POINT_DIGITS = 6
 /** Length of a `uXXXX` escape body, counted from the `u`. */
 const UNICODE_ESCAPE_END = 5
@@ -306,8 +306,12 @@ function readEscape(source: string, i: number, fail: Fail): { text: string; end:
         let close = i + 2
         while (close < source.length && /[0-9a-fA-F]/u.test(source[close])) close++
         const hex = source.slice(i + 2, close)
+        // Leading zeros are allowed, as in JavaScript: `\u{00000041}` is "A".
+        const digits = hex.replace(/^0+(?=.)/u, '')
         const code =
-          hex.length >= 1 && hex.length <= MAX_CODE_POINT_DIGITS ? parseInt(hex, HEX_RADIX) : -1
+          hex.length >= 1 && digits.length <= MAX_CODE_POINT_DIGITS
+            ? parseInt(digits, HEX_RADIX)
+            : -1
         if (source[close] !== '}' || code < 0 || code > MAX_CODE_POINT) {
           fail('Invalid \\u{...} escape', i - 1, Math.min(close + 1, source.length))
         }
