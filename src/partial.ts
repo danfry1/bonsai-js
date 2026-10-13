@@ -953,12 +953,8 @@ export function partiallyEvaluate<R>(
     onlyFirstMayFail = false,
   ): Outcome => {
     // A list literal without spreads is checked against maxListLength before its
-    // items run (unless an item awaits a host function), so that limit comes first.
-    if (
-      node.type === 'List' &&
-      !node.items.some((item) => item.type === 'Spread') &&
-      (locate(node).info.flags & ASYNC_HOST) === 0
-    ) {
+    // items run, in sync and async evaluation alike, so that limit comes first.
+    if (node.type === 'List' && !node.items.some((item) => item.type === 'Spread')) {
       try {
         engine.listLimit(node.items.length, node)
       } catch (error) {
