@@ -1075,9 +1075,10 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       const suggestion = suggest(name, () => Object.keys(objectType.fields))
       // The span is the name itself, so a quick-fix can replace it with the suggestion.
       const span = nameSpan(at, name)
+      const receiver = at.type === 'Member' || at.type === 'Index' ? pathText(at.object) : undefined
       report(
         'UNKNOWN_PROPERTY',
-        `Property "${name}" does not exist on ${typeText(objectType)}${didYouMean(suggestion)}`,
+        `Property "${name}" does not exist on ${receiver ?? typeText(objectType)}${didYouMean(suggestion)}`,
         span ?? at,
         'error',
         span === undefined ? undefined : suggestion,
@@ -2360,6 +2361,27 @@ function typeText(type: Type): string {
   let text = typeTexts.get(type)
   if (text === undefined) typeTexts.set(type, (text = formatType(type, MESSAGE_TYPE_TEXT)))
   return text
+}
+
+/** Longest receiver path a diagnostic message names instead of its type. */
+const MESSAGE_PATH_TEXT = 60
+
+/**
+ * A receiver as the expression reads it (`customer.address`), for messages
+ * people who write rules can follow; undefined unless it is a plain path of
+ * names that fits in a message.
+ */
+function pathText(node: Node): string | undefined {
+  let suffix = ''
+  let current = node
+  while (current.type === 'Member') {
+    suffix = `${current.optional ? '?.' : '.'}${current.name}${suffix}`
+    if (suffix.length > MESSAGE_PATH_TEXT) return undefined
+    current = current.object
+  }
+  if (current.type !== 'Variable' && current.type !== 'Local') return undefined
+  const text = `${current.name}${suffix}`
+  return text.length > MESSAGE_PATH_TEXT ? undefined : text
 }
 
 /**

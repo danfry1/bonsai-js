@@ -60,6 +60,8 @@ No single operation can do unbounded work between checks, so the budget bounds t
 
 The step count is deterministic: the same expression over the same data always uses the same number of steps, whatever the machine or its load. That makes `maxSteps` the right limit for rejecting expensive expressions consistently. `timeout` is wall-clock time and varies with load; use it to bound time spent in your own host functions.
 
+Time zones are loaded once per process, which takes a few milliseconds the first time. Compiling an expression loads the zones it names (`hour(at, "Europe/Berlin")`) and, when a zone comes from data (`hour(at, user.zone)`), the data all zones share, so the remaining cost of a new zone on first use is about a millisecond. A service with a tight `timeout` can evaluate its expressions once at startup with the zones it expects.
+
 ## Parse limits and evaluation limits
 
 Parse limits (`maxSourceLength`, `maxDepth`, `maxNodes`) are enforced before anything runs, and they also bound the work of checking and compiling. `env.check()` reports them as a `LIMIT` diagnostic; `compile()` and `evaluate*()` throw a `BonsaiLimitError`.

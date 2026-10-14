@@ -406,9 +406,20 @@ describe('production hardening', () => {
   })
 
   it('suggests the closest row, known value, or column for a misspelled name', () => {
+    // The filter never reads the row: the row option is the likely mistake.
     expect(() =>
       toSQL(env.compile('order.total > 1'), { row: 'orders', columns, dialect: 'sqlite' }),
-    ).toThrow(/order is neither the row \(orders\) nor a known value; did you mean "orders"\?/u)
+    ).toThrow(
+      /order is neither the row \(orders\) nor a known value; if order names the record, pass row: "order"/u,
+    )
+    // The filter reads the row and a name like it: the filter is the likely mistake.
+    expect(() =>
+      toSQL(env.compile('ordr.total > 1 && order.total < 5'), {
+        row: 'order',
+        columns,
+        dialect: 'sqlite',
+      }),
+    ).toThrow(/ordr is neither the row \(order\) nor a known value; did you mean "order"\?/u)
     expect(() =>
       toSQL(env.compile('order.total > minTotal'), {
         row: 'order',
@@ -690,8 +701,27 @@ describe('toSQL', () => {
     ['order == null', /not order itself/u],
     ['order.name > "a"', /Ordering text/u],
     ['order.name.toUpperCase() == "A"', /no exact database equivalent|not translated/u],
-    ['order.total / 2 > 1', /"\/" is not translated/u],
-    ['order.name', /Only boolean columns/u],
+    ['order.total / 2 > 1', /"\/" is not translated, since databases differ on division by zero/u],
+    ['order.total % 2 == 1', /"%" is not translated; SQL translates \+ - \* only/u],
+    [
+      'order.name',
+      /^The filter must produce a boolean; compare order\.name with ==, <, >, or in$/u,
+    ],
+    [
+      'order.active && order.name',
+      /^A condition must produce a boolean; compare order\.name with ==, <, >, or in$/u,
+    ],
+    ['order.name.trim() == "a"', /trim\(\) is not translated; the functions that are: startsWith/u],
+    [
+      'limit > 0 && [1].some(x => order.total > x)',
+      /some\(\) is not translated, since a lambda has no database equivalent/u,
+    ],
+    [
+      'try(order.total > 1, false)',
+      /the query already excludes a record on which the filter fails/u,
+    ],
+    ['`${order.name}` == "a"', /Templates are not translated; compare text with ==/u],
+    ['has(order.name)', /databases do not tell a missing field from a null one/u],
   ])('rejects %s', (source, message) => {
     expect(() =>
       toSQL(env.compile(source), { row: 'order', columns, dialect: 'postgres', known }),

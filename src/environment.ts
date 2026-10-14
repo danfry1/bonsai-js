@@ -9,7 +9,7 @@ import {
   locate,
   type Diagnostic,
 } from './errors.js'
-import { BUILTINS } from './functions/builtins.js'
+import { BUILTINS, zoneParameter } from './functions/builtins.js'
 import {
   assertHostSpec,
   assertType,
@@ -30,6 +30,7 @@ import {
   type PartialResult,
 } from './partial.js'
 import { isStackOverflow, tooDeep } from './runtime/overflow.js'
+import { warmZone } from './runtime/time.js'
 import {
   DEFAULT_RUNTIME_LIMITS,
   MAX_VALUE_DEPTH_LIMIT,
@@ -1352,6 +1353,22 @@ function explainSettings(options: unknown): ExplainSettings {
   }
 }
 
+/**
+ * Loads the time zone data a program's calls need, so its first evaluation
+ * does not pay for it inside its deadline. Only built-in functions that take a
+ * zone count: a zone written as text is loaded itself, and any other zone
+ * argument loads the data every zone shares.
+ */
+function warmZones(analysis: Analysis): void {
+  for (const [call, plan] of analysis.calls) {
+    const index = zoneParameter(plan.def)
+    const arg = index === undefined ? undefined : call.args[index]
+    if (arg === undefined) continue
+    if (arg.type !== 'Literal') warmZone(undefined)
+    else if (typeof arg.value === 'string') warmZone(arg.value)
+  }
+}
+
 /** Reads compile() and check() options: only `expect`, which must be a type built with t. */
 function compileExpect(options: unknown): Type | undefined {
   if (options === undefined) return undefined
@@ -1513,6 +1530,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     constants?: ReadonlyMap<string, unknown>,
     residualOf?: ResidualOf,
   ): Program<Ctx, R> | undefined {
+    warmZones(analysis)
     // When the checker cannot prove the result matches `expect` (part of it is
     // `any`, or an open object may hold an unlisted key), it is checked at run
     // time, so the declared result type holds.

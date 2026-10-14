@@ -160,7 +160,9 @@ describe('refusals name the part that does not translate', () => {
   })
 
   it('blames a call that does not translate, not the ?? after it', () => {
-    expect(refusal('order.region?.matches("^E") ?? false')).toBe('matches() is not translated')
+    expect(refusal('order.region?.matches("^E") ?? false')).toBe(
+      'matches() is not translated; the functions that are: startsWith, endsWith, includes, inMilliseconds',
+    )
   })
 
   it('says text length does not translate', () => {

@@ -100,7 +100,8 @@ try {
     'index.d.mts': [
       ...['AbortSignalLike', 'AnyType', 'BinaryNode', 'BinaryOperator', 'BonsaiCheckError'],
       ...['BonsaiError', 'BonsaiErrorJSON', 'BonsaiErrorName'],
-      ...['BonsaiLimitError', 'BonsaiRuntimeError', 'BonsaiSyntaxError', 'BooleanType'],
+      ...['BonsaiLimitError', 'BonsaiRuntimeError', 'BonsaiSyntaxError', 'BonsaiTranslationError'],
+      'BooleanType',
       ...['CallNode', 'CallStyle', 'CheckResult', 'CompileOptions', 'ConditionalNode'],
       ...['Diagnostic', 'DiagnosticCode', 'DiagnosticJSON', 'Duration', 'DurationType'],
       ...['Environment', 'EnvironmentOptions', 'ErrorCode', 'EvaluateOptions'],

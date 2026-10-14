@@ -132,14 +132,16 @@ describe('check errors stay near the size of the source', () => {
     const fields = Object.fromEntries(
       Array.from({ length: 300 }, (_, i) => [`field${i}`, t.number()]),
     )
-    const env = bonsai({ variables: { u: t.object(fields) } })
-    const source = `[${Array.from({ length: 2000 }, (_, i) => `u.q${i}`).join(',')}]`
+    const env = bonsai({ variables: { u: t.object(fields), us: t.list(t.object(fields)) } })
+    // A receiver that is not a plain path is named by its type.
+    const source = `[${Array.from({ length: 2000 }, (_, i) => `us[0].q${i}`).join(',')}]`
     const result = env.check(source)
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.diagnostics).toHaveLength(2000)
     for (const diagnostic of result.diagnostics) expect(diagnostic.message.length).toBeLessThan(200)
     expect(result.diagnostics[0]?.message).toContain('…')
+    expect(env.check('u.q0').diagnostics[0]?.message).toBe('Property "q0" does not exist on u')
     expect(outcome(() => env.compile(source))).toBe('CHECK')
     try {
       env.compile(source)

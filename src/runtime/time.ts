@@ -151,23 +151,33 @@ function unknownZone(zone: string, site: CallSite): Error {
   )
 }
 
+function createFormatter(zone: string): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: zone,
+    hourCycle: 'h23',
+    era: 'short',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+  })
+}
+
+function cacheFormatter(zone: string, formatter: Intl.DateTimeFormat): void {
+  if (formatters.size >= MAX_CACHED_ZONES)
+    formatters.delete(formatters.keys().next().value as string)
+  formatters.set(zone, formatter)
+}
+
 function formatterFor(zone: string, site: CallSite): Intl.DateTimeFormat {
   return site.state.resource(`f${zone}`, ZONE_FORMAT_COST, () => {
     let formatter = formatters.get(zone)
     if (formatter !== undefined) return formatter
     if (zone.length > MAX_ZONE_LENGTH || !ZONE_NAME.test(zone)) throw unknownZone(zone, site)
     try {
-      formatter = new Intl.DateTimeFormat('en-US', {
-        timeZone: zone,
-        hourCycle: 'h23',
-        era: 'short',
-        year: 'numeric',
-        month: 'numeric',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: 'numeric',
-        second: 'numeric',
-      })
+      formatter = createFormatter(zone)
     } catch {
       throw unknownZone(zone, site)
     }
@@ -180,11 +190,39 @@ function formatterFor(zone: string, site: CallSite): Intl.DateTimeFormat {
         site.span,
       )
     }
-    if (formatters.size >= MAX_CACHED_ZONES)
-      formatters.delete(formatters.keys().next().value as string)
-    formatters.set(zone, formatter)
+    cacheFormatter(zone, formatter)
     return formatter
   })
+}
+
+let sharedDataLoaded = false
+
+/**
+ * Loads time zone data ahead of evaluation, outside any step budget or
+ * deadline. The first formatter a process creates loads the runtime's time
+ * zone data (milliseconds of one-off work) and each zone has a smaller cost on
+ * first use; paying them inside an evaluation could exceed a tight timeout.
+ * `undefined` loads the shared data only (for a zone that comes from data).
+ * Steps are unaffected: an evaluation charges for a formatter whether or not it
+ * is cached. Never throws: a name evaluation rejects is left for it to report.
+ */
+export function warmZone(zone: string | undefined): void {
+  try {
+    if (zone === undefined) {
+      if (!sharedDataLoaded) createFormatter('UTC').formatToParts(0)
+      sharedDataLoaded = true
+      return
+    }
+    // UTC is computed without a formatter.
+    if (isUtc(zone) || formatters.has(zone)) return
+    if (zone.length > MAX_ZONE_LENGTH || !ZONE_NAME.test(zone)) return
+    const formatter = createFormatter(zone)
+    formatter.formatToParts(0)
+    sharedDataLoaded = true
+    if (formatter.resolvedOptions().timeZone === zone) cacheFormatter(zone, formatter)
+  } catch {
+    // An unknown zone: evaluation reports it where it is used.
+  }
 }
 
 /** The wall clock a formatter shows at an instant (the exact, uncached read). */

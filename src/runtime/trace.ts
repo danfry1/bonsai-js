@@ -327,10 +327,12 @@ export class Tracer {
 // === reasons ===
 
 /**
- * The conditions that decided a result: follows `&&`, `||`, and `!` down to
- * the comparisons and values that made the expression true or false (and to
- * any error). With `exhaustive`, a false `&&` lists every false condition, not
- * just the first.
+ * The conditions that decided a result: follows `&&` and `||` down to the
+ * comparisons and values that made the expression true or false (and to any
+ * error). A negated condition (`!("vip" in tags)`) is a reason as written, so
+ * its value reads like any other; `!` over `&&` or `||` is followed to the
+ * part that decided it, and `!!x` reads as `x`. With `exhaustive`, a false
+ * `&&` lists every false condition, not just the first.
  */
 export function reasonsOf(root: Trace, listings: Listings = new WeakMap()): Trace[] {
   const out: Trace[] = []
@@ -351,8 +353,15 @@ export function reasonsOf(root: Trace, listings: Listings = new WeakMap()): Trac
       for (const child of decisive && deciding.length > 0 ? deciding : evaluated) visit(child)
       return
     }
-    if (trace.operator === '!' && trace.children[0] !== undefined) {
-      visit(trace.children[0])
+    const negated = trace.operator === '!' ? trace.children[0] : undefined
+    if (negated?.operator === '&&' || negated?.operator === '||') {
+      visit(negated)
+      return
+    }
+    // `!!x` reads as `x`.
+    const doubled = negated?.operator === '!' ? negated.children[0] : undefined
+    if (doubled !== undefined) {
+      visit(doubled)
       return
     }
     out.push(trace)

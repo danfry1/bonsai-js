@@ -44,6 +44,7 @@ export {
   BonsaiCheckError,
   BonsaiLimitError,
   BonsaiRuntimeError,
+  BonsaiTranslationError,
   isBonsaiError,
 } from './errors.js'
 export type {

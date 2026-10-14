@@ -1527,6 +1527,15 @@ const MAP_FUNCTIONS: FunctionDef[] = [
 
 const optZone = t.optional(str)
 
+/** The position of a built-in's time zone parameter, if it takes one. */
+export function zoneParameter(def: FunctionDef): number | undefined {
+  for (const candidate of def.overloads) {
+    const index = candidate.params.indexOf(optZone)
+    if (index >= 0) return index
+  }
+  return undefined
+}
+
 function zoneArg(value: unknown): string | null {
   return value === undefined || value === null ? null : (value as string)
 }

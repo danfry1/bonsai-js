@@ -58,6 +58,22 @@ validated.evaluateSync('user.age >= 18', input) // throws: INVALID_CONTEXT
 
 Without validation, the same mismatch surfaces as a runtime `TYPE_ERROR` where the value is used, or not at all.
 
+JSON has no dates, so a timestamp arrives as text and fails validation (`user.createdAt should be timestamp, got string "2024-01-01T00:00:00.000Z"`). Revive the fields declared as timestamps while parsing; text that is not a date becomes an invalid `Date`, which validation still rejects:
+
+<!-- continue -->
+```ts
+const accounts = bonsai({
+  variables: { user: t.object({ name: t.string(), createdAt: t.timestamp() }) },
+  validateContext: true,
+})
+const body = '{ "user": { "name": "Ada", "createdAt": "2024-01-01T00:00:00.000Z" } }'
+const timestamps = new Set(['createdAt'])
+const revived = JSON.parse(body, (key, value) =>
+  timestamps.has(key) && typeof value === 'string' ? new Date(value) : value,
+)
+accounts.evaluateSync('year(user.createdAt) == 2024', revived) // => true
+```
+
 ## env.check(source, options?)
 
 Parses and checks without evaluating. Never throws for a bad expression: syntax errors, limit errors, and check findings are all returned as diagnostics.

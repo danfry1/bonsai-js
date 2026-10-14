@@ -137,6 +137,28 @@ app.evaluateSync('can("admin") ? userId() : "anonymous"', { user: { id: 'u_1', r
 
 The type parameter is a promise you make: Bonsai passes whatever context the evaluation received. Declare the same shape as `variables` with `validateContext: true` if the context is not built by your own typed code.
 
+When the environment declares `variables`, type the context from them instead of writing the shape twice: `InferVariables` gives the context type of a `variables` record.
+
+<!-- continue -->
+```ts
+import { type InferVariables } from 'bonsai-js'
+
+const variables = { user: t.object({ id: t.string(), roles: t.list(t.string()) }) }
+const typedFn = withContext<InferVariables<typeof variables>>()
+
+const typedApp = bonsai({
+  variables,
+  functions: {
+    can: typedFn({
+      params: [t.string()],
+      returns: t.boolean(),
+      run: (call, role) => call.context.user.roles.includes(role),
+    }),
+  },
+})
+typedApp.evaluateSync('can("admin")', { user: { id: 'u_1', roles: ['admin'] } }) // => true
+```
+
 ## Async functions
 
 Declare `async: true` for a function that returns a promise. The expression must then be evaluated with `evaluate()`; `evaluateSync()` rejects it with `ASYNC_IN_SYNC` before any host code runs. Waiting on an async function honors the evaluation's timeout and `AbortSignal`: the evaluation stops waiting with `TIMEOUT` or `ABORTED`. To stop the function's own work too, declare it `call: true` and pass `call.signal` on: it aborts, with that error as its `reason`, when the evaluation stops waiting.
@@ -188,6 +210,37 @@ await slow.evaluate('lookup("a")', {}, { timeout: 50 }) // throws: TIMEOUT
 Calls run one at a time, left to right, in async mode too: an expression cannot start several host calls concurrently. If a function reaches a network or database, prefetch the data into the context or batch inside your function.
 
 A function that is not declared `async` must not return a promise; doing so is a `HOST_CONTRACT` error. Any value with a callable `then` counts, so passing a thenable map from the context straight back is one too. An `async` function's result is awaited by JavaScript, so returning a thenable from the context (an ORM query object, say) runs its `then`; return a plain value, or wrap the object (`{ value }`).
+
+## Logging failures
+
+Anything a host function throws becomes a `HOST_ERROR`, which `try()` in an expression recovers from: `try(price(sku) > 100, false)` turns an outage of your pricing service into `false`, and nothing reaches your logs. To see those failures, record them inside `run` and rethrow:
+
+<!-- continue -->
+```ts
+const failures: unknown[] = []
+const lookupPrice = (sku: string): number => {
+  throw new Error(`pricing service unavailable (${sku})`)
+}
+
+const pricing = bonsai({
+  functions: {
+    price: fn({
+      params: [t.string()],
+      returns: t.number(),
+      run: (sku) => {
+        try {
+          return lookupPrice(sku)
+        } catch (error) {
+          failures.push(error) // or send it to your logger and metrics
+          throw error
+        }
+      },
+    }),
+  },
+})
+pricing.evaluateSync('try(price("a1") > 100, false)') // => false
+failures.length // => 1
+```
 
 ## Replacing built-ins
 

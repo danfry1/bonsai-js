@@ -13,7 +13,7 @@
  * the type the field really has.
  */
 import type { AbortSignalLike } from '../environment.js'
-import { BonsaiError, BonsaiLimitError, type Span } from '../errors.js'
+import { BonsaiLimitError, BonsaiTranslationError, type Span } from '../errors.js'
 import { failureAt, translating, type PartialOptions, type PartialResult } from '../partial.js'
 import { Duration, isMap, isValidDuration } from '../runtime/values.js'
 import { declaredVariables } from '../declared.js'
@@ -26,6 +26,8 @@ import {
   type Node,
   type SpreadNode,
 } from '../syntax/ast.js'
+
+export { BonsaiTranslationError }
 
 /** A compiled program (from `env.compile`) whose predicate is translated. */
 export interface Translatable {
@@ -117,15 +119,6 @@ export interface MongoQuery {
   readonly filter: Record<string, unknown>
   /** Pass to find(): binary string comparison, whatever the collection's default collation. */
   readonly options: { readonly collation: { readonly locale: 'simple' } }
-}
-
-/** The predicate (or part of it) has no exact equivalent in the target database. */
-export class BonsaiTranslationError extends BonsaiError {
-  /** @internal */
-  constructor(message: string, source: string, span?: Span, cause?: unknown) {
-    super('UNTRANSLATABLE', message, { source, span, cause })
-    this.name = 'BonsaiTranslationError'
-  }
 }
 
 // === a small predicate language both targets are generated from ===
@@ -242,6 +235,9 @@ const CALENDAR = new Set([
 ])
 
 const COMPARISONS = new Set(['==', '!=', '<', '<=', '>', '>=', 'in', 'not in', '&&', '||'])
+
+/** Longest piece of the filter a message quotes. */
+const MESSAGE_SOURCE_TEXT = 60
 
 /** The largest distance from the epoch a Date can hold, in milliseconds. */
 const MAX_TIME = 8.64e15
@@ -995,9 +991,14 @@ function lower(
         fail(`${name} is undefined in the known values: pass null when it has no value`)
       // Known names first: a name close to both is more likely a misspelled known value.
       const names = hostRead(() => Object.keys(knownData), 'the known values')
-      fail(
-        `${name} is neither the row (${options.row}) nor a known value${hint(name, [...names, options.row])}`,
-      )
+      const suggestion = closest(name, [...names, options.row])
+      // A filter that never reads the row but reads a name like it: the option is misspelled.
+      if (suggestion === options.row && !program.references.variables.includes(options.row)) {
+        fail(
+          `${name} is neither the row (${options.row}) nor a known value; if ${name} names the record, pass row: "${name}"`,
+        )
+      }
+      fail(`${name} is neither the row (${options.row}) nor a known value${didYouMean(suggestion)}`)
     }
   }
   checkKnownPaths(program.ast, {
@@ -1023,7 +1024,9 @@ function lower(
   if (result.status === 'error') throw result.error
   if (result.status === 'value') {
     if (typeof result.value !== 'boolean' && result.value !== null)
-      fail('The predicate does not produce a boolean')
+      fail(
+        'The filter must produce a boolean, but the known values decide it as another kind of value',
+      )
     return { kind: 'const', value: result.value === true }
   }
   const { bindings, hostFunctions } = result
@@ -1041,23 +1044,51 @@ function lower(
             node,
           )
         }
-        return fail(`${node.name}() is not translated`, node)
+        if (node.name === 'toUpperCase' || node.name === 'toLowerCase') {
+          return fail(
+            `${node.name}() is not translated, since databases do not change case as JavaScript does`,
+            node,
+          )
+        }
+        if (node.args.some((arg) => arg.type === 'Lambda')) {
+          return fail(
+            `${node.name}() is not translated, since a lambda has no database equivalent; write the condition for each value with || or &&, or use "in" with a known list`,
+            node,
+          )
+        }
+        return fail(
+          `${node.name}() is not translated; the functions that are: startsWith, endsWith, includes, inMilliseconds`,
+          node,
+        )
       case 'Let':
         return fail('let is not translated; write the value in place', node)
       case 'Conditional':
         return fail('?: is not translated; write the condition with && and ||', node)
       case 'Try':
-        return fail('try() is not translated', node)
+        return fail(
+          'try() is not translated; the query already excludes a record on which the filter fails, as try(filter, false) would',
+          node,
+        )
       case 'Template':
-        return fail('Templates are not translated', node)
+        return fail(
+          'Templates are not translated; compare text with ==, startsWith, endsWith, or includes',
+          node,
+        )
       case 'Index':
-        return fail('Computed reads ([...]) are not translated', node)
+        return fail('Computed reads ([...]) are not translated; read a field by name', node)
       case 'Has':
-        return fail('has() is not translated', node)
+        return fail(
+          'has() is not translated, since databases do not tell a missing field from a null one; to test for a value, use != null',
+          node,
+        )
       case 'Binary':
-        return COMPARISONS.has(node.operator)
-          ? fail('A comparison is translated as a condition, not as a value', node)
-          : fail(`"${node.operator}" is not translated`, node)
+        if (COMPARISONS.has(node.operator))
+          return fail('A comparison is translated as a condition, not as a value', node)
+        if (node.operator === '/')
+          return fail('"/" is not translated, since databases differ on division by zero', node)
+        if (node.operator === '%' || node.operator === '**')
+          return fail(`"${node.operator}" is not translated; SQL translates + - * only`, node)
+        return fail(`"${node.operator}" is not translated here`, node)
       case 'Unary':
         return fail(`"${node.operator}" is not translated here`, node)
       case 'It':
@@ -1500,16 +1531,26 @@ function lower(
     return { kind: 'shifted', column: shift.column, op: columnOp, bound, limit }
   }
 
+  /** A value where a condition belongs: the whole filter, or an operand of && || !. */
+  const notCondition = (node: Node): never => {
+    const text = node.end > node.start ? source.slice(node.start, node.end) : ''
+    const shown = text === '' || text.length > MESSAGE_SOURCE_TEXT ? 'it' : text
+    return fail(
+      `${node === result.ast ? 'The filter' : 'A condition'} must produce a boolean; compare ${shown} with ==, <, >, or in`,
+      node,
+    )
+  }
+
   const pred = (node: Node): Pred => {
     reachable(node)
     switch (node.type) {
       case 'Literal':
         if (typeof node.value === 'boolean' || node.value === null)
           return { kind: 'const', value: node.value === true }
-        return fail('A condition must be a boolean', node)
+        return notCondition(node)
       case 'Unary':
         if (node.operator === '!') return { kind: 'not', item: pred(node.operand) }
-        return fail('A condition must be a boolean', node)
+        return notCondition(node)
       case 'Binary':
         switch (node.operator) {
           case '&&':
@@ -1562,13 +1603,13 @@ function lower(
           case '-':
           case '/':
           default:
-            return fail(`"${node.operator}" is not translated in a condition`, node)
+            return notCondition(node)
         }
       case 'Member': {
         const column = columnOf(node)
         if (column?.kind === 'column' && column.type === 'boolean')
           return { kind: 'truthy', column }
-        return fail('Only boolean columns can be used as conditions', node)
+        return notCondition(node)
       }
       case 'Call':
         return textCall(node) ?? untranslatable(blamed(node))
