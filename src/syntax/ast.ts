@@ -88,9 +88,12 @@ export interface CallNode extends Base {
   readonly style: CallStyle
   /** `x?.f()`: the call yields null without running when the receiver is null. */
   readonly optional: boolean
-  /** Span of the function name, for diagnostics and editor features. */
-  readonly nameStart: number
-  readonly nameEnd: number
+  /**
+   * Span of the function name, for diagnostics and editor features. The parser
+   * always sets it; it is optional so trees built by hand for print() need not.
+   */
+  readonly nameStart?: number
+  readonly nameEnd?: number
 }
 
 export type UnaryOperator = '!' | '-'

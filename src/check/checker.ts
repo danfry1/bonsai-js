@@ -1498,7 +1498,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       report(
         'UNKNOWN_FUNCTION',
         `Unknown function "${node.name}"${hint}`,
-        { start: node.nameStart, end: node.nameEnd },
+        { start: node.nameStart ?? node.start, end: node.nameEnd ?? node.end },
         'error',
         suggestion,
       )

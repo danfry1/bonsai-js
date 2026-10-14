@@ -54,6 +54,6 @@ print({
 }) // 'user.age >= 18'
 ```
 
-A hand-built `Call` needs `nameStart` and `nameEnd` too; `print()` ignores every offset, so `0` will do. To change a tree, `mapChildren` copies a node with its children replaced (see [Transforming a tree](./syntax-tree#transforming-a-tree)).
+`print()` ignores every offset, so `0` will do, and a hand-built `Member` or `Call` can leave out `nameStart` and `nameEnd`. To change a tree, `mapChildren` copies a node with its children replaced (see [Transforming a tree](./syntax-tree#transforming-a-tree)).
 
 For the rest of an editor, `env.listFunctions()` lists every function with its signatures and description, `env.check()` reports diagnostics with source ranges and positions and returns the checked tree with the type of each node, and the [language service](./service) returns completions and the type at any position.
