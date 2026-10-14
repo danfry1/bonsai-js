@@ -1,5 +1,9 @@
-import { analyze, type Analysis, type CallPlan, type CheckEnv } from './check/checker.js'
-import { compileProgram, type CompiledProgram } from './compile/compiler.js'
+import { analyze, type Analysis, type CheckEnv } from './check/checker.js'
+import {
+  compileProgram,
+  type CompiledProgram,
+  type CompileOptions as CompilerOptions,
+} from './compile/compiler.js'
 import { escaping, isOwn, raised } from './runtime/attribution.js'
 import {
   BonsaiCheckError,
@@ -21,14 +25,7 @@ import {
   type Out,
   type ValidationBudget,
 } from './functions/define.js'
-import {
-  forTranslation,
-  partiallyEvaluate,
-  residualTexts,
-  type PartialData,
-  type PartialOptions,
-  type PartialResult,
-} from './partial.js'
+import type { PartialData, PartialOptions, PartialResult } from './partial.js'
 import { isStackOverflow, tooDeep } from './runtime/overflow.js'
 import { warmZone } from './runtime/time.js'
 import {
@@ -38,23 +35,10 @@ import {
   type RuntimeLimits,
 } from './runtime/state.js'
 import { recordDeclared } from './declared.js'
-import { errorText, isMap, keyListCost } from './runtime/values.js'
-import {
-  DEFAULT_MAX_ITERATIONS,
-  DEFAULT_MAX_TRACE_NODES,
-  SNAPSHOT_ENTRIES,
-  Tracer,
-  freezeAll,
-  reasonsOf,
-  renderTrace,
-  snapshot,
-  snapshotTrace,
-  type ExplanationJSON,
-  type Parts,
-  type Trace,
-} from './runtime/trace.js'
-import { forEachChild, type CallNode, type Node } from './syntax/ast.js'
-import { BLOCKED_NAMES, isName } from './syntax/lexer.js'
+import { errorText, isMap } from './runtime/values.js'
+import type { ExplanationJSON, Trace } from './runtime/trace.js'
+import type { Node } from './syntax/ast.js'
+import { isName } from './syntax/lexer.js'
 import { DEFAULT_PARSE_LIMITS, MAX_DEPTH_LIMIT, parse, type ParseLimits } from './syntax/parser.js'
 import {
   formatType,
@@ -262,7 +246,7 @@ export interface Library<
 
 /** No declared variables: the empty record, which adds nothing to a context type. */
 // oxlint-disable-next-line typescript/no-generated-empty-object-type -- intentionally empty
-type NoVariables = Record<never, never>
+export type NoVariables = Record<never, never>
 
 /**
  * The variables one library declares. A library annotated `: Library` has the
@@ -296,7 +280,7 @@ type MoreKeys = Readonly<Record<string, any>>
  * With `strict: false` (`S`), undeclared variables are allowed, so the context
  * may carry keys beyond the declared ones.
  */
-type ContextFor<V, L, S = undefined> = [S] extends [false]
+export type ContextFor<V, L, S = undefined> = [S] extends [false]
   ? ContextOf<V & LibraryVariables<L>> & MoreKeys
   : ContextOf<V & LibraryVariables<L>>
 
@@ -310,7 +294,7 @@ type Override<Ctx, New> = [keyof New] extends [never]
   : { [K in keyof Ctx as K extends keyof New ? never : K]: Ctx[K] } & New
 
 /** The context type extend() produces: re-declared variables replaced, strict: false loosened. */
-type Extended<Ctx, V, L, S> = [S] extends [false]
+export type Extended<Ctx, V, L, S> = [S] extends [false]
   ? Override<Ctx, ContextOf<V & LibraryVariables<L>>> & MoreKeys
   : Override<Ctx, ContextOf<V & LibraryVariables<L>>>
 
@@ -352,7 +336,10 @@ export interface EnvironmentOptions<
  * so spreading the result or `structuredClone` does not copy them.
  */
 // oxlint-disable-next-line typescript/no-explicit-any -- the same erased context as a bare Program
-export type CheckResult<Ctx = any, R = unknown> = (
+export type CheckResult<Ctx = any, R = unknown> = Checked<Program<Ctx, R>>
+
+/** What check() found, over the kind of program it compiles. */
+type Checked<P> = (
   | {
       readonly ok: true
       readonly type: Type
@@ -361,7 +348,7 @@ export type CheckResult<Ctx = any, R = unknown> = (
        * The checked expression, compiled when first read: a program equal to
        * the one compile() returns, without parsing and checking again.
        */
-      readonly program: Program<Ctx, R>
+      readonly program: P
     }
   | {
       readonly ok: false
@@ -564,6 +551,51 @@ export interface Environment<Ctx = any> {
 }
 
 /**
+ * A program from `bonsai-js/lite`: a {@link Program} without `explain`,
+ * `explainSync`, and `partial`. Every Program is also a LiteProgram, so code
+ * that only evaluates can accept either.
+ */
+// oxlint-disable-next-line typescript/no-explicit-any -- the same erased context as a bare Program
+export type LiteProgram<Ctx = any, R = unknown> = Omit<
+  Program<Ctx, R>,
+  'explain' | 'explainSync' | 'partial'
+>
+
+/** What a `bonsai-js/lite` environment's check() found. */
+// oxlint-disable-next-line typescript/no-explicit-any -- the same erased context as a bare Program
+export type LiteCheckResult<Ctx = any, R = unknown> = Checked<LiteProgram<Ctx, R>>
+
+/**
+ * An environment from `bonsai-js/lite`: an {@link Environment} without
+ * `explain`, `explainSync`, and `partial`, whose programs are LitePrograms.
+ * Every Environment is also a LiteEnvironment.
+ */
+// oxlint-disable-next-line typescript/no-explicit-any -- the same erased context as a bare Environment
+export interface LiteEnvironment<Ctx = any> extends Omit<
+  Environment<Ctx>,
+  'check' | 'compile' | 'extend' | 'explain' | 'explainSync' | 'partial'
+> {
+  /** See Environment.check. */
+  check: <E extends Type = AnyType>(
+    source: string,
+    options?: CompileOptions<E>,
+  ) => LiteCheckResult<Ctx, Infer<E>>
+  /** See Environment.compile. */
+  compile: <E extends Type = AnyType>(
+    source: string,
+    options?: CompileOptions<E>,
+  ) => LiteProgram<Ctx, Infer<E>>
+  /** See Environment.extend. */
+  extend: <
+    const V2 extends Readonly<Record<string, Type>> = NoVariables,
+    const L2 extends readonly Library[] = [],
+    const S2 extends boolean | undefined = undefined,
+  >(
+    options: EnvironmentOptions<V2, L2> & { readonly strict?: S2 },
+  ) => LiteEnvironment<Extended<Ctx, V2, L2, S2>>
+}
+
+/**
  * The context type of declared variables `V`. An open environment (no
  * variables) accepts any object, including values typed by an interface, and
  * so does a schema only known at run time (`Record<string, Type>`), whose
@@ -585,7 +617,7 @@ export interface EnvironmentInternals {
 
 const internals = new WeakMap<object, EnvironmentInternals>()
 
-export function internalsOf(env: Environment<never>): EnvironmentInternals {
+export function internalsOf(env: object): EnvironmentInternals {
   const found = internals.get(env)
   if (found === undefined) throw new TypeError('Not a Bonsai environment')
   return found
@@ -594,10 +626,8 @@ export function internalsOf(env: Environment<never>): EnvironmentInternals {
 /** Compiled programs kept per environment unless `cacheSize` says otherwise. */
 const DEFAULT_CACHE_SIZE = 256
 
-/** Subtrees compiled for partial evaluation, in nodes, kept per program: this times its own. */
-const SUBTREE_CACHE_FACTOR = 2
-
-interface Settings {
+/** An environment's settings (not public API). */
+export interface Settings {
   readonly variables: Readonly<Record<string, Type>> | undefined
   /** The explicit `strict` option, if one was given (here or in a base environment). */
   readonly strictOption: boolean | undefined
@@ -609,6 +639,82 @@ interface Settings {
   readonly cacheSize: number
   readonly clock: () => Date
   readonly validateContext: boolean
+  /** Explaining and partial evaluation, when the entry point provides them. */
+  readonly features: Features | undefined
+}
+
+/**
+ * What a program shares with the features that extend it (not public API):
+ * its source, analysis, and settings, and how it prepares, checks, and settles
+ * an evaluation.
+ */
+export interface ProgramCore<R> {
+  readonly source: string
+  readonly analysis: Analysis
+  readonly expect: Type | undefined
+  readonly settings: Settings
+  readonly checkEnv: CheckEnv
+  readonly compileOptions: CompilerOptions
+  /** Set when the program is a partial-evaluation residual. */
+  readonly residualOf: ResidualOf | undefined
+  prepare: (
+    state: State,
+    ctx: Record<string, unknown>,
+    limits: EvaluationLimits,
+    locals: number,
+  ) => void
+  checked: (result: unknown, state: State) => void
+  settle: (result: R) => R
+  /** Compiles a residual of this program and returns how it runs. */
+  residual: (
+    analysis: Analysis,
+    constants: ReadonlyMap<string, unknown>,
+    residualOf: ResidualOf,
+  ) => ResidualRunner
+}
+
+/** The program methods a feature set provides (not public API). */
+export interface ProgramFeatures<Ctx, R> {
+  explainSync: (
+    context: unknown,
+    options: ExplainOptions | undefined,
+    promised?: boolean,
+  ) => Explanation<R>
+  explainAsync: (context: unknown, options: ExplainOptions | undefined) => Promise<Explanation<R>>
+  partial: (program: object, known: object, options: unknown) => PartialResult<Ctx, R>
+}
+
+/**
+ * Explaining and partial evaluation, supplied by the entry point (not public
+ * API): kept out of this module so a bundle that only checks and evaluates
+ * does not carry them.
+ */
+export interface Features {
+  program: <Ctx, R>(core: ProgramCore<R>) => ProgramFeatures<Ctx, R>
+}
+
+/** What a residual keeps from its partial evaluation. */
+export interface ResidualOf {
+  /** Its printed source: the text of its explanations. */
+  readonly source: string
+  /** Whether `call: true` host functions read the context it is given. */
+  readonly readsContext: boolean
+  /** The variables known to partial(), which a context read whole must hold. */
+  readonly knownRoots: readonly string[]
+  /** The context paths it reads: all a context it does not read whole needs. */
+  readonly dependsOn: readonly string[]
+  /** Size and depth of the lists and maps partial() built into its bindings. */
+  readonly shapes: WeakMap<object, number> | undefined
+}
+
+/** How a partial-evaluation residual runs and explains, with the caller's context. */
+export interface ResidualRunner {
+  /** Whether the residual calls an async host function. */
+  async: boolean
+  runSync: (ctx: unknown, options: unknown) => unknown
+  runAsync: (ctx: unknown, options: unknown) => Promise<unknown>
+  explainSync: (ctx: unknown, options: unknown) => Explanation
+  explainAsync: (ctx: unknown, options: unknown) => Promise<Explanation>
 }
 
 function toDef(name: string, host: HostFunction): FunctionDef {
@@ -857,6 +963,7 @@ function settingsFrom(base: Settings | undefined, options: unknown): Settings {
     ),
     clock: options.clock === undefined ? (base?.clock ?? systemClock) : checkedClock(options.clock),
     validateContext: options.validateContext ?? base?.validateContext ?? false,
+    features: base?.features,
   }
 }
 
@@ -962,9 +1069,15 @@ class CheckSuccess extends CheckFailure {
   }
 }
 
-const EVALUATE_OPTION_KEYS = new Set(['timeout', 'maxSteps', 'signal', 'now', 'validateContext'])
+export const EVALUATE_OPTION_KEYS = new Set([
+  'timeout',
+  'maxSteps',
+  'signal',
+  'now',
+  'validateContext',
+])
 
-interface EvaluationLimits {
+export interface EvaluationLimits {
   readonly maxSteps: number
   readonly timeout: number
   readonly signal: AbortSignal | undefined
@@ -975,7 +1088,7 @@ interface EvaluationLimits {
 }
 
 /** Whether a value is a valid Date (an object that only inherits from Date.prototype is not). */
-function isValidDate(value: unknown): value is Date {
+export function isValidDate(value: unknown): value is Date {
   try {
     return value instanceof Date && !Number.isNaN(Date.prototype.getTime.call(value))
   } catch {
@@ -998,7 +1111,7 @@ function looksLikeSignal(signal: object): boolean {
 }
 
 /** Validates per-evaluation options the way `limits` are validated; nothing fails open. */
-function evaluationLimits(options: unknown, settings: Settings): EvaluationLimits {
+export function evaluationLimits(options: unknown, settings: Settings): EvaluationLimits {
   if (options === undefined) {
     return {
       maxSteps: settings.runtimeLimits.maxSteps,
@@ -1067,7 +1180,7 @@ interface ValidationLimits {
   readonly timeout: number
 }
 
-function validationBudget(source: string, limits: ValidationLimits): ValidationBudget {
+export function validationBudget(source: string, limits: ValidationLimits): ValidationBudget {
   return {
     maxDepth: limits.maxDepth,
     remaining: limits.maxSteps > 0 ? limits.maxSteps : Number.POSITIVE_INFINITY,
@@ -1095,7 +1208,7 @@ function validationBudget(source: string, limits: ValidationLimits): ValidationB
   }
 }
 
-function invalidContext(problem: string | undefined, source: string): void {
+export function invalidContext(problem: string | undefined, source: string): void {
   if (problem !== undefined) {
     throw raised(
       new BonsaiRuntimeError('INVALID_CONTEXT', `Invalid context: ${problem}`, { source }),
@@ -1114,77 +1227,6 @@ function validateContext(
     const value = Object.hasOwn(ctx, name) ? ctx[name] : undefined
     invalidContext(describeMismatch(value, type, name, budget), source)
   }
-}
-
-/** Paths listed as unknown, as a tree of segments: `whole` marks a listed path. */
-interface UnknownTree {
-  whole: boolean
-  readonly next: Map<string, UnknownTree>
-}
-
-function unknownTree(paths: readonly string[]): UnknownTree {
-  const root: UnknownTree = { whole: false, next: new Map() }
-  for (const path of paths) {
-    let node = root
-    for (const segment of path.split('.')) {
-      let child = node.next.get(segment)
-      if (child === undefined) node.next.set(segment, (child = { whole: false, next: new Map() }))
-      node = child
-    }
-    node.whole = true
-  }
-  return root
-}
-
-/**
- * Why `value` does not conform to `type`, leaving out the parts of it under
- * listed unknown paths (`skip`): those are incomplete by design. Everything
- * else is checked as evaluation checks a context.
- */
-function describeKnown(
-  value: unknown,
-  type: Type,
-  path: string,
-  skip: UnknownTree | undefined,
-  budget: ValidationBudget,
-): string | undefined {
-  if (skip === undefined) return describeMismatch(value, type, path, budget)
-  if (skip.whole) return undefined
-  if (type.kind === 'union') {
-    let first: string | undefined
-    for (const member of type.types) {
-      const problem = describeKnown(value, member, path, skip, budget)
-      if (problem === undefined) return undefined
-      first ??= problem
-    }
-    return first
-  }
-  const actual = value === undefined ? null : value
-  if (type.kind !== 'map' || !isMap(actual)) return describeMismatch(value, type, path, budget)
-  if (--budget.remaining < 0) budget.onExhausted('steps')
-  for (const [key, fieldType] of Object.entries(type.fields)) {
-    const field = Object.hasOwn(actual, key) ? actual[key] : null
-    const problem = describeKnown(field, fieldType, `${path}.${key}`, skip.next.get(key), budget)
-    if (problem !== undefined) return problem
-  }
-  if (type.rest === undefined) return undefined
-  const keys = Object.keys(actual)
-  budget.remaining -= keyListCost(keys.length)
-  if (budget.remaining < 0) budget.onExhausted('steps')
-  for (const key of keys) {
-    // As evaluation's validation: keys the language never reads, or that hold undefined, are not data.
-    if (Object.hasOwn(type.fields, key) || BLOCKED_NAMES.has(key) || actual[key] === undefined)
-      continue
-    const problem = describeKnown(
-      actual[key],
-      type.rest,
-      `${path}.${key}`,
-      skip.next.get(key),
-      budget,
-    )
-    if (problem !== undefined) return problem
-  }
-  return undefined
 }
 
 /**
@@ -1255,7 +1297,7 @@ function validatePaths(
  * evaluation, from parsing, checking, or translating, or built by the host)
  * that host data threw is the host data's failure too.
  */
-function hostDataFailure(error: unknown, source: string): BonsaiError {
+export function hostDataFailure(error: unknown, source: string): BonsaiError {
   if (isOwn(error)) return error
   if (isStackOverflow(error)) return raised(tooDeep(source, error))
   return raised(
@@ -1286,70 +1328,6 @@ function checkedClock(clock: () => Date): () => Date {
       )
     }
     return value
-  }
-}
-
-const EXPLAIN_OPTION_KEYS: ReadonlySet<string> = new Set([
-  ...EVALUATE_OPTION_KEYS,
-  'maxIterations',
-  'maxTraceNodes',
-  'exhaustive',
-])
-
-interface ExplainSettings {
-  readonly maxIterations: number
-  readonly maxNodes: number
-  readonly exhaustive: boolean
-  /** The evaluation options among them, validated by evaluationLimits. */
-  readonly evaluate: EvaluateOptions | undefined
-}
-
-/** Reads explain options once, with the same TypeError/RangeError rules as evaluate's. */
-function explainSettings(options: unknown): ExplainSettings {
-  if (options === undefined) {
-    return {
-      maxIterations: DEFAULT_MAX_ITERATIONS,
-      maxNodes: DEFAULT_MAX_TRACE_NODES,
-      exhaustive: false,
-      evaluate: undefined,
-    }
-  }
-  if (typeof options !== 'object' || options === null || Array.isArray(options))
-    throw new TypeError('Explain options must be an object')
-  let copy: Record<string, unknown>
-  try {
-    copy = { ...(options as Record<string, unknown>) }
-  } catch {
-    throw new TypeError('Explain options could not be read')
-  }
-  for (const key of Object.keys(copy)) {
-    if (!EXPLAIN_OPTION_KEYS.has(key)) {
-      throw new TypeError(
-        `Unknown explain option key "${key}" (expected one of: ${[...EXPLAIN_OPTION_KEYS].join(', ')})`,
-      )
-    }
-  }
-  const count = (name: string, fallback: number): number => {
-    const value = copy[name]
-    if (value === undefined) return fallback
-    if (typeof value !== 'number') throw new TypeError(`Explain option "${name}" must be a number`)
-    if (!Number.isSafeInteger(value) || value < 0)
-      throw new RangeError(`Explain option "${name}" must be a non-negative integer`)
-    return value
-  }
-  if (copy.exhaustive !== undefined && typeof copy.exhaustive !== 'boolean')
-    throw new TypeError('Explain option "exhaustive" must be a boolean')
-  const {
-    maxIterations: _iterations,
-    maxTraceNodes: _nodes,
-    exhaustive: _exhaustive,
-    ...evaluate
-  } = copy
-  return {
-    maxIterations: count('maxIterations', DEFAULT_MAX_ITERATIONS),
-    maxNodes: count('maxTraceNodes', DEFAULT_MAX_TRACE_NODES),
-    exhaustive: copy.exhaustive === true,
-    evaluate,
   }
 }
 
@@ -1389,51 +1367,7 @@ function compileExpect(options: unknown): Type | undefined {
   return expect
 }
 
-const PARTIAL_OPTION_KEYS: ReadonlySet<string> = new Set([
-  'unknown',
-  'callHostFunctions',
-  'now',
-  'maxSteps',
-  'timeout',
-  'signal',
-])
-/** A variable name, then field names as reads spell them: none empty or blocked. */
-const isPath = (path: unknown): boolean => {
-  if (typeof path !== 'string') return false
-  const [name, ...fields] = path.split('.')
-  return isName(name) && fields.every((field) => field !== '' && !BLOCKED_NAMES.has(field))
-}
-
-/** Reads partial() options once, with the same TypeError rules as the other options. */
-function partialOptions(options: unknown): PartialOptions {
-  if (options === undefined) return {}
-  if (typeof options !== 'object' || options === null || Array.isArray(options))
-    throw new TypeError('Partial options must be an object')
-  let copy: Record<string, unknown>
-  try {
-    copy = { ...(options as Record<string, unknown>) }
-    if (Array.isArray(copy.unknown)) copy.unknown = [...(copy.unknown as unknown[])]
-  } catch {
-    throw new TypeError('Partial options could not be read')
-  }
-  for (const key of Object.keys(copy)) {
-    if (!PARTIAL_OPTION_KEYS.has(key)) {
-      throw new TypeError(
-        `Unknown partial option key "${key}" (expected one of: ${[...PARTIAL_OPTION_KEYS].join(', ')})`,
-      )
-    }
-  }
-  const unknown = copy.unknown
-  if (unknown !== undefined && (!Array.isArray(unknown) || !unknown.every(isPath)))
-    throw new TypeError('Partial option "unknown" must be a list of variable names or dotted paths')
-  if (copy.callHostFunctions !== undefined && typeof copy.callHostFunctions !== 'boolean')
-    throw new TypeError('Partial option "callHostFunctions" must be a boolean')
-  if (copy.now !== undefined && !isValidDate(copy.now))
-    throw new TypeError('Partial option "now" must be a valid Date')
-  return copy
-}
-
-function contextOf(value: unknown): Record<string, unknown> {
+export function contextOf(value: unknown): Record<string, unknown> {
   if (value === undefined || value === null) return EMPTY_CONTEXT
   let map: boolean
   try {
@@ -1489,47 +1423,21 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     }
   }
 
-  /** What a residual keeps from its partial evaluation. */
-  interface ResidualOf {
-    /** Its printed source: the text of its explanations. */
-    readonly source: string
-    /** Whether `call: true` host functions read the context it is given. */
-    readonly readsContext: boolean
-    /** The variables known to partial(), which a context read whole must hold. */
-    readonly knownRoots: readonly string[]
-    /** The context paths it reads: all a context it does not read whole needs. */
-    readonly dependsOn: readonly string[]
-    /** Size and depth of the lists and maps partial() built into its bindings. */
-    readonly shapes: WeakMap<object, number> | undefined
-  }
-
-  /** How a partial-evaluation residual runs and explains, with the caller's context. */
-  interface ResidualRunner {
-    /** Whether the residual calls an async host function. */
-    async: boolean
-    runSync: (ctx: unknown, options: unknown) => unknown
-    runAsync: (ctx: unknown, options: unknown) => Promise<unknown>
-    explainSync: (ctx: unknown, options: unknown) => Explanation
-    explainAsync: (ctx: unknown, options: unknown) => Promise<Explanation>
-  }
-
   function makeProgram<R>(source: string, analysis: Analysis, expect?: Type): Program<Ctx, R>
   function makeProgram(
     source: string,
     analysis: Analysis,
     expect: Type | undefined,
-    asResidual: (runner: ResidualRunner) => void,
     constants: ReadonlyMap<string, unknown>,
     residualOf: ResidualOf,
-  ): undefined
+  ): ResidualRunner
   function makeProgram<R>(
     source: string,
     analysis: Analysis,
     expect?: Type,
-    asResidual?: (runner: ResidualRunner) => void,
     constants?: ReadonlyMap<string, unknown>,
     residualOf?: ResidualOf,
-  ): Program<Ctx, R> | undefined {
+  ): Program<Ctx, R> | ResidualRunner {
     warmZones(analysis)
     // When the checker cannot prove the result matches `expect` (part of it is
     // `any`, or an open object may hold an unlisted key), it is checked at run
@@ -1697,413 +1605,50 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       return result
     }
 
-    let traceSync: CompiledProgram | undefined
-    let traceAsync: CompiledProgram | undefined
+    const features = settings.features?.program<Ctx, R>({
+      source,
+      analysis,
+      expect,
+      settings,
+      checkEnv,
+      compileOptions,
+      residualOf,
+      prepare,
+      checked,
+      settle,
+      residual: (residualAnalysis, residualConstants, residualFrom) =>
+        makeProgram(source, residualAnalysis, expect, residualConstants, residualFrom),
+    })
 
-    function explanation(
-      tracer: Tracer,
-      outcome: { ok: true; value: R } | { ok: false; error: BonsaiError },
-    ): Explanation<R> {
-      const trace = tracer.finish()
-      // A result refused after the run (a promise-like value, a failed `expect`
-      // check) is the whole expression's failure: marked on the root.
-      if (!outcome.ok && trace.evaluated && trace.error === undefined) {
-        trace.error = { code: outcome.error.code, message: outcome.error.message }
-        delete trace.value
-      }
-      const truncated = tracer.truncated
-      // Every rendering of this explanation lists a map's keys once, however it is sliced.
-      const { listings } = tracer
-      // Taken once, the first time any part is serialized: one budget for the
-      // whole snapshot, however often a value recurs or the traces are sliced.
-      let json: ExplanationJSON | undefined
-      const parts: Parts = new WeakMap()
-      const toJSON = (): ExplanationJSON => {
-        if (json !== undefined) return json
-        const budget = { left: SNAPSHOT_ENTRIES, keys: listings }
-        const result = outcome.ok
-          ? { ok: true as const, value: snapshot(outcome.value, budget) }
-          : { ok: false as const, error: outcome.error.toJSON() }
-        // Frozen: every serialization (and every part of it) is this same snapshot.
-        return (json = freezeAll({
-          ...result,
-          truncated,
-          trace: snapshotTrace(trace, budget, parts),
-        }))
-      }
-      tracer.parts = () => (toJSON(), parts)
-      return Object.freeze({
-        ...outcome,
-        trace,
-        truncated,
-        reasons: () => reasonsOf(trace, listings),
-        toString: () => renderTrace(trace, truncated, listings),
-        toJSON,
-      })
-    }
-
-    function failure(error: unknown): { ok: false; error: BonsaiError } {
-      return { ok: false, error: escaping(hostDataFailure(error, source)) }
-    }
-
-    // A residual's nodes keep the original's offsets (or none, for known
-    // values), so their text comes from the printed residual instead: mapped
-    // once, the first time the residual is explained.
-    let residualText: ReadonlyMap<Node, string> | undefined
-    const residualTextMap = (printed: string): ReadonlyMap<Node, string> =>
-      (residualText ??= residualTexts(analysis.root, printed, {
-        maxSourceLength: Math.max(settings.parseLimits.maxSourceLength, printed.length),
-        // Printing adds parentheses (and unary minus for negative literals).
-        maxDepth: settings.parseLimits.maxDepth * 4,
-        maxNodes: settings.parseLimits.maxNodes * 4,
-      }))
-    const textOfResidual =
-      residualOf === undefined
-        ? undefined
-        : (node: Node): string => residualTextMap(residualOf.source).get(node) ?? ''
-
-    function tracerFor(explain: ExplainSettings): Tracer {
-      return new Tracer(
-        source,
-        analysis.root,
-        explain.maxIterations,
-        explain.maxNodes,
-        explain.exhaustive,
-        textOfResidual,
-      )
-    }
-
-    /** With `promised`, a thenable result fails as evaluate() fails it (see settle). */
-    function explainSync(
-      context: unknown,
-      options: ExplainOptions | undefined,
-      promised = false,
-    ): Explanation<R> {
-      const explain = explainSettings(options)
-      if (analysis.async) {
-        return explanation(
-          tracerFor(explain),
-          failure(
-            raised(
-              new BonsaiRuntimeError(
-                'ASYNC_IN_SYNC',
-                'This expression calls an async function; use explain() instead of explainSync()',
-                { source },
-              ),
-            ),
-          ),
-        )
-      }
-      const code = (traceSync ??= compileProgram(analysis, 'sync', {
-        ...compileOptions,
-        trace: true,
-      }))
-      const limits = evaluationLimits(explain.evaluate, settings)
-      const ctx = contextOf(context)
-      const state = new State(settings.runtimeLimits, settings.clock)
-      // A residual's text is mapped once per residual, work its partial()
-      // already charged, so explaining costs the steps evaluating does.
-      let tracer: Tracer | undefined
-      try {
-        prepare(state, ctx, limits, code.localCount)
-        tracer = tracerFor(explain)
-        state.tracer = tracer
-        const value = code.run(state) as R
-        checked(value, state)
-        state.checkTime()
-        if (promised) settle(value)
-        return explanation(tracer, { ok: true, value })
-      } catch (error) {
-        return explanation(tracer ?? tracerFor(explain), failure(error))
-      } finally {
-        state.release()
-      }
-    }
-
-    async function explainAsync(
-      context: unknown,
-      options: ExplainOptions | undefined,
-    ): Promise<Explanation<R>> {
-      if (!analysis.async) return explainSync(context, options, true)
-      const explain = explainSettings(options)
-      const code = (traceAsync ??= compileProgram(analysis, 'async', {
-        ...compileOptions,
-        trace: true,
-      }))
-      const limits = evaluationLimits(explain.evaluate, settings)
-      const ctx = contextOf(context)
-      const state = new State(settings.runtimeLimits, settings.clock)
-      let tracer: Tracer | undefined
-      try {
-        prepare(state, ctx, limits, code.localCount)
-        tracer = tracerFor(explain)
-        state.tracer = tracer
-        const value = ((await code.run(state)) as Out).v as R
-        // In evaluate()'s order: the expected type, the deadline, then a promise-like value.
-        checked(value, state)
-        state.checkTime()
-        settle(value)
-        return explanation(tracer, { ok: true, value })
-      } catch (error) {
-        return explanation(tracer ?? tracerFor(explain), failure(error))
-      } finally {
-        state.release()
-      }
-    }
-
-    // Each call the original program checked, by its source span and name. A
-    // residual keeps the spans of the calls it copies, so it can run each one
-    // with the overloads the original chose from the declared types: checking
-    // the residual again would see other types (a known branch removed, an
-    // open environment) and could pick another overload.
-    let callsBySpan: Map<string, CallPlan | null> | undefined
-    const callKey = (call: CallNode): string => `${call.start}:${call.end}:${call.name}`
-
-    function originalPlans(
-      compiled: Node,
-      checkedCalls: ReadonlyMap<CallNode, CallPlan>,
-    ): ReadonlyMap<CallNode, CallPlan> {
-      if (callsBySpan === undefined) {
-        callsBySpan = new Map()
-        for (const [call, plan] of analysis.calls) {
-          const key = callKey(call)
-          // Two calls with one span cannot be told apart; neither is reused.
-          callsBySpan.set(key, callsBySpan.has(key) ? null : plan)
-        }
-      }
-      const bySpan = callsBySpan
-      const plans = new Map(checkedCalls)
-      const visit = (node: Node): void => {
-        if (node.type === 'Call') {
-          const plan = bySpan.get(callKey(node))
-          if (plan !== undefined && plan !== null) plans.set(node, plan)
-        }
-        forEachChild(node, visit)
-      }
-      visit(compiled)
-      return plans
-    }
-
-    // Sub-trees compiled on their own for partial evaluation, by free locals.
-    // Which subtrees are closed depends on the data, so the cache holds at most
-    // a few times the program's own nodes, and starts over when full.
-    let subtrees = new Map<Node, Map<string, CompiledProgram>>()
-    let subtreeNodes = 0
-
-    function partial(
-      known: Record<string, unknown>,
-      rawOptions: unknown,
-      translation = false,
-    ): PartialResult<Ctx, R> {
-      const options = partialOptions(rawOptions)
-      // One budget for the whole partial evaluation, validated as evaluation's is.
-      const limits = evaluationLimits(
-        { maxSteps: options.maxSteps, timeout: options.timeout, signal: options.signal },
-        settings,
-      )
-      const context = contextOf(known)
-      const now = options.now
-      const state = new State(
-        settings.runtimeLimits,
-        now === undefined ? settings.clock : () => now,
-      )
-      state.reset(context, source, 0, limits.maxSteps, limits.timeout, limits.signal)
-      try {
-        // Known variables are validated as evaluation validates them, all but
-        // the parts under listed unknown paths (incomplete by design): all the
-        // data a residual has folded in is checked here, once.
-        if (settings.validateContext && settings.variables !== undefined) {
-          const variables = settings.variables
-          const skip = unknownTree(options.unknown ?? [])
-          try {
-            const budget = validationBudget(source, {
-              maxDepth: settings.runtimeLimits.maxValueDepth,
-              maxSteps: limits.maxSteps,
-              timeout: limits.timeout,
-            })
-            for (const [name, type] of Object.entries(variables)) {
-              if (!Object.hasOwn(context, name)) continue
-              const problem = describeKnown(context[name], type, name, skip.next.get(name), budget)
-              invalidContext(problem, source)
-            }
-          } catch (error) {
-            // Validation only reads the known data, so any other failure is the host's.
-            if (!isOwn(error)) throw hostDataFailure(error, source)
-            if (error instanceof BonsaiRuntimeError) return { status: 'error', error }
-            throw error
-          }
-        }
-        const result = partiallyEvaluate<R>(
-          {
-            analysis,
-            hostKind: (name) => {
-              const def = settings.host.get(name)
-              return def === undefined
-                ? undefined
-                : { async: def.async === true, call: def.call === true }
-            },
-            charge: (steps = 1) => {
-              state.charge(steps)
-            },
-            checkTime: () => {
-              state.checkTime()
-            },
-            listLimit: (length, at) => {
-              state.listLimit(length, at)
-            },
-            // Translation reads the residual tree, never its printed source.
-            maxSourceLength: translation ? Infinity : settings.parseLimits.maxSourceLength,
-            readKnown: (read) => {
-              try {
-                return read()
-              } catch (error) {
-                throw hostDataFailure(error, source)
-              }
-            },
-            evaluate: (node, locals, size, total) => {
-              const key = locals.map(([name]) => name).join('\u0000')
-              let code = subtrees.get(node)?.get(key)
-              if (code === undefined) {
-                if (subtreeNodes + size > SUBTREE_CACHE_FACTOR * total) {
-                  subtrees = new Map()
-                  subtreeNodes = 0
-                }
-                code = compileProgram({ ...analysis, root: node }, 'sync', {
-                  locals: locals.map(([name]) => name),
-                })
-                let byLocals = subtrees.get(node)
-                if (byLocals === undefined) subtrees.set(node, (byLocals = new Map()))
-                byLocals.set(key, code)
-                subtreeNodes += size
-              }
-              state.ensureLocals(code.localCount)
-              locals.forEach(([, value], slot) => {
-                state.locals[slot] = value
-              })
-              try {
-                return code.run(state)
-              } catch (error) {
-                throw hostDataFailure(error, source)
-              }
-            },
-            evaluateFolded: (node, origin, locals) => {
-              const plan = origin.type === 'Call' ? analysis.calls.get(origin) : undefined
-              const code = compileProgram(
-                {
-                  ...analysis,
-                  root: node,
-                  calls: plan === undefined ? new Map() : new Map([[node as CallNode, plan]]),
-                },
-                'sync',
-                { locals: locals.map(([name]) => name) },
-              )
-              state.ensureLocals(code.localCount)
-              locals.forEach(([, value], slot) => {
-                state.locals[slot] = value
-              })
-              try {
-                return code.run(state)
-              } catch (error) {
-                throw hostDataFailure(error, source)
-              }
-            },
-            compileResidual: (
-              residual,
-              bindings,
-              residualSource,
-              readsContext,
-              knownRoots,
-              dependsOn,
-            ) => {
-              // The original expression passed the checker; inlining known
-              // values can make a failing branch statically visible, and that
-              // failure must happen at run time, as it would have, so findings
-              // here do not stop compilation. Analyzed as a tree (not
-              // re-parsed), so the printer's parentheses cannot push it past
-              // the parse depth limit.
-              const reanalyzed = analyze(
-                residual,
-                { ...checkEnv, variables: undefined, strict: false },
-                { expected: expect },
-              )
-              let runner: ResidualRunner | undefined
-              makeProgram(
-                source,
-                // The plans go on the calls of the tree that is compiled: the
-                // analysis root, where implicit lambdas are explicit nodes.
-                { ...reanalyzed, calls: originalPlans(reanalyzed.root, reanalyzed.calls) },
-                expect,
-                (made) => {
-                  runner = made
-                },
-                new Map(Object.entries(bindings)),
-                {
-                  source: residualSource,
-                  readsContext,
-                  knownRoots,
-                  dependsOn,
-                  shapes: state.shapes,
-                },
-              )
-              return runner as ResidualRunner
-            },
-          },
-          context,
-          options,
-        )
-        // A decided result still has to match `expect`, as evaluation would check it.
-        if (result.status === 'value') {
-          try {
-            checked(result.value, state)
-          } catch (error) {
-            // Checking reads the value, which can be host data.
-            if (!isOwn(error)) throw hostDataFailure(error, source)
-            if (error instanceof BonsaiRuntimeError) return { status: 'error', error }
-            throw error
-          }
-        }
-        // The residual accepts any object at run time; its parameter is typed by this program's context.
-        return result as PartialResult<Ctx, R>
-      } catch (error) {
-        // Host data is read through readKnown, evaluate, and the checks above,
-        // which report its failures as HOST_ERROR; anything else is a failure
-        // of the engine itself, not of the caller's data, so it is not relabeled.
-        if (isStackOverflow(error)) throw tooDeep(source, error)
-        throw error
-      } finally {
-        state.release()
-      }
-    }
-
-    if (asResidual !== undefined) {
-      asResidual({
-        async: analysis.async,
-        runSync: (ctx, options) => runSync(ctx, options as EvaluateOptions | undefined),
-        runAsync: (ctx, options) => runAsync(ctx, options as EvaluateOptions | undefined),
-        explainSync: (ctx, options) => explainSync(ctx, options as ExplainOptions | undefined),
-        explainAsync: (ctx, options) => explainAsync(ctx, options as ExplainOptions | undefined),
-      })
+    if (residualOf !== undefined) {
+      // Only partial() makes residuals, so the features that made this one are present.
+      const made = features as ProgramFeatures<Ctx, R>
       // A residual is used only through its runner, so no Program is built for
       // it (freezing its type and references would be work on every partial());
       // its tree is the result's `ast`, and compiles lazily, so it is frozen.
       deepFreeze(analysis.root)
-      return undefined
+      const runner: ResidualRunner = {
+        async: analysis.async,
+        runSync: (ctx, options) => runSync(ctx, options as EvaluateOptions | undefined),
+        runAsync: (ctx, options) => runAsync(ctx, options as EvaluateOptions | undefined),
+        explainSync: (ctx, options) => made.explainSync(ctx, options as ExplainOptions | undefined),
+        explainAsync: (ctx, options) =>
+          made.explainAsync(ctx, options as ExplainOptions | undefined),
+      }
+      return runner
     }
     // Programs are shared: the tree compiles lazily, so it must not change afterwards.
-    const program: Program<Ctx, R> = Object.freeze({
-      explain: (...args: ExplainArgs<Ctx>) => explainAsync(args[0], args[1]),
-      explainSync: (...args: ExplainArgs<Ctx>) => explainSync(args[0], args[1]),
-      partial: (known: object, options?: PartialOptions) => {
-        const translation = forTranslation(program)
-        let result: PartialResult<Ctx, R>
-        try {
-          result = partial(known as Record<string, unknown>, options, translation)
-        } catch (error) {
-          throw escaping(error)
-        }
-        if (result.status === 'error') escaping(result.error)
-        return Object.freeze(result)
-      },
+    // A lite program is typed as a LiteProgram by its entry point.
+    const program = Object.freeze({
+      // Without features (bonsai-js/lite), a program has no explain or partial.
+      ...(features === undefined
+        ? {}
+        : {
+            explain: (...args: ExplainArgs<Ctx>) => features.explainAsync(args[0], args[1]),
+            explainSync: (...args: ExplainArgs<Ctx>) => features.explainSync(args[0], args[1]),
+            partial: (known: object, options?: PartialOptions) =>
+              features.partial(program, known, options),
+          }),
       source,
       ast: deepFreeze(analysis.root),
       type: deepFreeze(analysis.type),
@@ -2119,7 +1664,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       evaluateSync: (...args: Args<Ctx>) => runSync(args[0], args[1]),
     })
     recordDeclared(program, settings.variables)
-    return program
+    return program as Program<Ctx, R>
   }
 
   function compile<R>(source: string, expect: Type | undefined): Program<Ctx, R> {
@@ -2166,7 +1711,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     }
   }
 
-  const env: Environment<Ctx> = Object.freeze({
+  // A lite environment is typed as a LiteEnvironment by its entry point.
+  const env = Object.freeze({
     variables: settings.variables,
     strict: settings.strict,
     parse: parseSource,
@@ -2214,8 +1760,16 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     },
     compile: <E extends Type = AnyType>(source: string, options?: CompileOptions<E>) =>
       cachedCompile<Infer<E>>(source, compileExpect(options)),
-    partial: <R>(source: string, known: PartialData<Ctx> & object, options?: PartialOptions) =>
-      cached(source).partial(known, options) as PartialResult<Ctx, R>,
+    // Without features (bonsai-js/lite), an environment has no partial or explain.
+    ...(settings.features === undefined
+      ? {}
+      : {
+          partial: <R>(
+            source: string,
+            known: PartialData<Ctx> & object,
+            options?: PartialOptions,
+          ) => cached(source).partial(known, options) as PartialResult<Ctx, R>,
+        }),
     evaluate<R>(source: string, ...args: Args<Ctx>): Promise<R> {
       try {
         return cached(source).evaluate(...args) as Promise<R>
@@ -2225,15 +1779,19 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     },
     evaluateSync: <R>(source: string, ...args: Args<Ctx>) =>
       cached(source).evaluateSync(...args) as R,
-    explain<R>(source: string, ...args: ExplainArgs<Ctx>): Promise<Explanation<R>> {
-      try {
-        return cached(source).explain(...args) as Promise<Explanation<R>>
-      } catch (error) {
-        return Promise.reject(error instanceof Error ? error : new Error(String(error)))
-      }
-    },
-    explainSync: <R>(source: string, ...args: ExplainArgs<Ctx>) =>
-      cached(source).explainSync(...args) as Explanation<R>,
+    ...(settings.features === undefined
+      ? {}
+      : {
+          explain<R>(source: string, ...args: ExplainArgs<Ctx>): Promise<Explanation<R>> {
+            try {
+              return cached(source).explain(...args) as Promise<Explanation<R>>
+            } catch (error) {
+              return Promise.reject(error instanceof Error ? error : new Error(String(error)))
+            }
+          },
+          explainSync: <R>(source: string, ...args: ExplainArgs<Ctx>) =>
+            cached(source).explainSync(...args) as Explanation<R>,
+        }),
     describeFunction(name: string): FunctionInfo | undefined {
       const def = checkEnv.lookup(name)
       return def === undefined ? undefined : info(def)
@@ -2250,25 +1808,17 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     },
   })
   internals.set(env, { checkEnv, parseLimits: settings.parseLimits })
-  return env
+  return env as Environment<Ctx>
 }
 
 /**
- * Creates an environment: the variables, functions, and limits expressions are
- * checked and evaluated against.
- *
- * ```ts
- * const env = bonsai({ variables: { user: t.object({ age: t.number() }) } })
- * const adult = env.compile('user.age >= 18', { expect: t.boolean() })
- * adult.evaluateSync({ user: { age: 30 } }) // true
- * ```
+ * An environment from `bonsai()` options, with the features its entry point
+ * provides (not public API): `bonsai-js` passes explaining and partial
+ * evaluation, `bonsai-js/lite` passes none.
  */
-export function bonsai<
-  const V extends Readonly<Record<string, Type>> = NoVariables,
-  const L extends readonly Library[] = [],
-  const S extends boolean | undefined = undefined,
->(
-  options: EnvironmentOptions<V, L> & { readonly strict?: S } = {},
-): Environment<ContextFor<V, L, S>> {
-  return createEnvironment<ContextFor<V, L, S>>(settingsFrom(undefined, options))
+export function environmentWith<Ctx>(
+  features: Features | undefined,
+  options: unknown,
+): Environment<Ctx> {
+  return createEnvironment<Ctx>({ ...settingsFrom(undefined, options), features })
 }

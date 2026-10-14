@@ -62,7 +62,7 @@ Try it in the [Playground](https://danfry1.github.io/bonsai-js/playground).
 | Evaluation budget for untrusted input (as documented) | Yes, on by default | Parse-time limits only | No expression budget | No | No | No | No |
 | SQL or MongoDB translation | Yes | No | No | No | No | No | No |
 
-Bonsai is the largest of these in the browser and the newest. If rules must also run in Go or Java, CEL or ZEN fit better; if rules are JSON produced by a form builder and size matters most, json-logic-js does. The [full comparison](https://danfry1.github.io/bonsai-js/guide/comparison) covers more libraries, throughput, and the method behind every number.
+Bonsai is the largest of these in the browser (about 56 KB from `bonsai-js/lite`, without explaining and partial evaluation) and the newest. If rules must also run in Go or Java, CEL or ZEN fit better; if rules are JSON produced by a form builder and size matters most, json-logic-js does. The [full comparison](https://danfry1.github.io/bonsai-js/guide/comparison) covers more libraries, throughput, and the method behind every number.
 
 ## Install
 
@@ -74,7 +74,7 @@ This README describes 1.0, which is in release candidate on the `next` tag; `npm
 
 Requires Node.js 22 or newer, current Bun, or a modern browser. The package is ESM; `require('bonsai-js')` works where Node can load ES modules synchronously (22.12 and newer).
 
-In a browser bundle, an app that evaluates expressions adds about 67 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. `bonsai-js/query` and `bonsai-js/service` are separate entry points; the language service on its own is about 46 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets (`bun run check:size`).
+In a browser bundle, an app that evaluates expressions adds about 68 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. `bonsai-js/lite` leaves those two out, for about 56 KB. `bonsai-js/query` and `bonsai-js/service` are separate entry points; the language service on its own is about 46 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets (`bun run check:size`).
 
 ## The language in one screen
 

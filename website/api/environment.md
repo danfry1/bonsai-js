@@ -223,3 +223,18 @@ typed.parse('a + 1').type // => "Binary"
 ## env.variables and env.strict
 
 The declared variables (or `undefined` for an open environment) and the strict flag.
+
+## The lite entry point
+
+`bonsai-js/lite` exports the same `bonsai()` without explaining and partial evaluation, for browser bundles that only check and evaluate expressions: about 56 KB minified and gzipped instead of about 68 KB. Its environments and programs have every method on this page except `explain`, `explainSync`, and `partial`, and behave identically, step counts included. It also exports `t`, `fn`, `withContext`, the error classes, `parse`, `print`, and the types; not `BonsaiTranslationError` or the explanation and partial evaluation types. The language service accepts its environments.
+
+```ts
+import { bonsai, t } from 'bonsai-js/lite'
+
+const rules = bonsai({ variables: { user: t.object({ age: t.number() }) } })
+const adult = rules.compile('user.age >= 18', { expect: t.boolean() })
+adult.evaluateSync({ user: { age: 30 } }) // => true
+'explain' in adult // => false
+```
+
+The types are `LiteEnvironment`, `LiteProgram`, and `LiteCheckResult`. Every `Environment` and `Program` from `bonsai-js` is also a `LiteEnvironment` and a `LiteProgram`, so code that only checks and evaluates can accept either. `toSQL` and `toMongo` translate through partial evaluation, so they take programs from `bonsai-js`.

@@ -1,4 +1,5 @@
-export { bonsai, fn, withContext } from './environment.js'
+export { bonsai } from './bonsai.js'
+export { fn, withContext } from './environment.js'
 export type {
   AbortSignalLike,
   CheckResult,
