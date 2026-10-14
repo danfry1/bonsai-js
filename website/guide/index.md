@@ -45,3 +45,6 @@ Bonsai is not a general-purpose language. There are no loops, no recursion, no a
 | Handle errors | [Errors](/api/errors) |
 | Set limits for untrusted input | [Limits](/api/limits) |
 | Upgrade from 0.x | [Migrating from 0.x](/guide/migrating) |
+| Build feature flag targeting | [Recipe: Feature Flag Targeting](/recipes/feature-flags) |
+| Let users filter a table in SQL | [Recipe: User-Defined Filters in SQL](/recipes/user-filters-sql) |
+| Explain eligibility decisions | [Recipe: Eligibility Rules with Reasons](/recipes/eligibility-rules) |
