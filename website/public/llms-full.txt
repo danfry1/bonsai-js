@@ -55,7 +55,7 @@ env.evaluateSync('customer.email ?? "no email"', ctx) // one-off evaluation, com
 11. prefix `!` `-`
 12. `.` `?.` `[]` `?.[]` calls
 
-Syntax errors instead of silent groupings: `??` mixed with `&&`/`||` without parentheses, `-x ** 2`, `a < b < c`, `a == b == c`.
+Syntax errors instead of silent groupings: `??` beside any other binary operator without parentheses (`a ?? b || c`, `a ?? b == c`, `a ?? b + 1`), `-x ** 2`, `a < b < c`, `a == b == c`.
 
 - Equality: by value, no coercion. `1 == "1"` false; `[1, [2]] == [1, [2]]` true; maps compare by keys and values in any order; timestamps by instant; different kinds are unequal (never an error). `x == null` is true for missing or null.
 - Ordering: two numbers, two strings, two timestamps, or two durations. If either side is `null` the result is `false` (so `users.filter(.age >= 18)` skips users without an age). Other mixes are type errors.
@@ -110,7 +110,7 @@ Environment members:
 - `listFunctions()`, `describeFunction(name)` -> `{ name, description, host, async, call, cost?, signatures: [{ params, required, rest?, returns }] }` (`call` for host functions declared `call: true`; `cost` when a host function declares one).
 - `parse(src)` -> syntax tree; `variables`; `strict`.
 
-Evaluation options: `timeout` (ms), `maxSteps`, `signal` (AbortSignal), `now` (Date: the time `now()` returns in this evaluation). `compile(src, { expect })` is cached: the same source and expected type return the same program. `env.partial(src, known, options?)` compiles through the cache and partially evaluates.
+Evaluation options: `timeout` (ms), `maxSteps`, `signal` (AbortSignal), `now` (Date: the time `now()` returns in this evaluation), `validateContext` (boolean, overrides the environment's setting for this evaluation). `compile(src, { expect })` is cached: the same source and expected type return the same program. `env.partial(src, known, options?)` compiles through the cache and partially evaluates.
 
 ### Program
 
@@ -118,7 +118,7 @@ Evaluation options: `timeout` (ms), `maxSteps`, `signal` (AbortSignal), `now` (D
 
 ### Explain
 
-`await program.explain(ctx, options?)` (async, like `evaluate`) or `program.explainSync(ctx, options?)` evaluates and records every sub-expression's value. Returns `{ ok: true, value } | { ok: false, error }` plus `trace` (nodes with `id`, `kind`, `text`, `start`, `end`, `value` or `error`, `children`, `evaluated: false` for skipped parts, `iterations` for lambda runs), `truncated`, `reasons()` (the conditions that decided the result), `toString()` (indented tree), and `toJSON()` (bounded snapshot that never runs getters). Evaluation errors are returned, not thrown. Options: the evaluation options plus `maxIterations` (default 20), `maxTraceNodes` (default 10000), `exhaustive` (also evaluate skipped `&&`/`||` sides so `reasons()` lists every failing condition).
+`await program.explain(ctx, options?)` (async, like `evaluate`) or `program.explainSync(ctx, options?)` evaluates and records every sub-expression's value. Returns `{ ok: true, value } | { ok: false, error }` plus `trace` (nodes with `id`, `kind`, `text`, `start`, `end`, `value` or `error`, `children`, `evaluated: false` for skipped parts, `iterations` for lambda runs), `truncated`, `reasons()` (the conditions that decided the result; a negated condition is a reason as written, `!(x in y)` with value `false`), `toString()` (indented tree), and `toJSON()` (bounded snapshot that never runs getters). Evaluation errors are returned, not thrown. Options: the evaluation options plus `maxIterations` (default 20), `maxTraceNodes` (default 10000), `exhaustive` (also evaluate skipped `&&`/`||` sides so `reasons()` lists every failing condition).
 
 ### Partial evaluation
 
@@ -160,7 +160,7 @@ All errors from checking and evaluating extend `BonsaiError` with `name` (the cl
 - `BonsaiSyntaxError`: `SYNTAX`
 - `BonsaiCheckError`: `CHECK` (`.diagnostics`)
 - `BonsaiLimitError`: `SOURCE_TOO_LONG`, `TOO_DEEP` (syntax), `TOO_MANY_NODES`, `TOO_COMPLEX`, `STEP_LIMIT`, `STRING_LIMIT`, `LIST_LIMIT`, `VALUE_DEPTH_LIMIT` (nested data), `PATTERN_LIMIT`, `TIMEOUT`, `ABORTED`; `.limit` names the option to raise (`maxSteps`, `timeout`, `signal`, ...; undefined for fixed bounds and for a call stack overflow)
-- `BonsaiTranslationError` (from `bonsai-js/query`): `UNTRANSLATABLE`
+- `BonsaiTranslationError` (exported from `bonsai-js` and `bonsai-js/query`): `UNTRANSLATABLE`
 - `BonsaiRuntimeError`: `TYPE_ERROR`, `NO_OVERLOAD`, `NULL_RECEIVER`, `DIVISION_BY_ZERO`, `NON_FINITE`, `BLOCKED_PROPERTY`, `INVALID_ARGUMENT`, `ASYNC_IN_SYNC`, `HOST_ERROR`, `HOST_CONTRACT`, `INVALID_CONTEXT`
 
 ### Limits (defaults)
@@ -173,7 +173,7 @@ All errors from checking and evaluating extend `BonsaiError` with `name` (the cl
 
 ## Security model
 
-Expression text is untrusted; context data and host functions are trusted. Expressions cannot run code, reach prototypes or globals, call functions found in data, trigger conversion hooks, mutate data, or run unbounded: the step budget charges every operation for its real cost, including text search, regular expressions, sorting, and time zone math. Built-ins never run host code on receivers (no iterators, species, or methods). Host functions run with full privileges and cannot be interrupted while running synchronously; getters and Proxies in the context run when read. Declared types are not access control: `keys()`, `values()`, `entries()`, and dynamic indexing read every own enumerable property of the data passed in.
+Expression text is untrusted; context data and host functions are trusted. Expressions cannot run code, reach prototypes or globals, call functions found in data, trigger conversion hooks, mutate data, or run unbounded: the step budget charges every operation for its real cost, including text search, regular expressions, sorting, and time zone math. Built-ins never run host code on receivers (no iterators, species, or methods). Host functions run with full privileges and cannot be interrupted while running synchronously; getters and Proxies in the context run when read. Declared types are not access control: dynamic indexing reads any own property of the data passed in (other than the blocked names), and `keys()`, `values()`, `entries()` list every own enumerable one.
 
 ## Migrating from 0.x
 

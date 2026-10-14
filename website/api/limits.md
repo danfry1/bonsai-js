@@ -1,6 +1,6 @@
 # Limits
 
-Every limit is on by default except `timeout`. The `limits` option of `bonsai()` changes the budgets. For `timeout` and `maxSteps`, `0` means no limit. `timeout` is a number of milliseconds and may be fractional; every other limit must be a positive integer, and `bonsai()` throws a `RangeError` for an invalid value or a `TypeError` for an unknown limit name.
+Every limit is on by default except `timeout`. The `limits` option of `bonsai()` changes the budgets. For `timeout` and `maxSteps`, `0` means no limit. `timeout` is a number of milliseconds and may be fractional; every other limit must be a positive integer, and `bonsai()` throws a `RangeError` for an invalid value or a `TypeError` for an unknown limit name. For budgets suited to expressions written by people you do not fully trust, see [A hardened setup](/guide/safety#a-hardened-setup).
 
 | Limit | Default | Bounds |
 | --- | --- | --- |

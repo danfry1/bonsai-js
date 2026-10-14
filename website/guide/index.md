@@ -9,7 +9,7 @@ user.plan == "pro" && orders.filter(.paid).map(.total).sum() > 100 // => true
 
 against data you pass in, without executing JavaScript. It is meant for logic that people other than your developers write: pricing and eligibility rules, saved filters, formula fields, notification templates, and feature conditions.
 
-Throughout this site, `// => value` after an expression shows its result.
+Throughout this site, `// => value` after an expression shows its result, and the **host** is your application: the data it passes in (the context) and the functions it adds (host functions).
 
 ## What you get
 
@@ -31,3 +31,16 @@ Bonsai is not a general-purpose language. There are no loops, no recursion, no a
 - Browse the [language reference](/language/) and the [built-in functions](/functions/).
 - Try expressions in the [Playground](/playground).
 - Upgrading? See [Migrating from 0.x](/guide/migrating).
+
+## Common tasks
+
+| Task | Where |
+| --- | --- |
+| Save a rule written by a user, safely | [A hardened setup](/guide/safety#a-hardened-setup) |
+| Show why a rule passed or failed | [Reasons](/api/explain#reasons) |
+| Autocomplete and diagnostics in an editor | [Editor Support](/guide/editor-support) |
+| Run a filter in SQL or MongoDB | [Database Filters](/api/query) |
+| Add your own function | [Host Functions](/api/host-functions) |
+| Handle errors | [Errors](/api/errors) |
+| Set limits for untrusted input | [Limits](/api/limits) |
+| Upgrade from 0.x | [Migrating from 0.x](/guide/migrating) |

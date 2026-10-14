@@ -70,6 +70,26 @@ user.name.startsWith(user.nickname ?? "") // => true
 
 Functions such as `isEmpty`, `toString`, and `type` accept `null`, and the calendar functions accept `null` as the time zone (meaning UTC).
 
+## Regular expressions
+
+`matches(text, pattern)` uses JavaScript regular expression syntax, as with the `u` flag, restricted to what can run in time linear in the pattern and the text, so a pattern a user writes cannot hang evaluation. A pattern using any of these is an `INVALID_ARGUMENT` error:
+
+- backreferences (`\1`, `\k<name>`) and lookaround (`(?=`, `(?!`, `(?<=`, `(?<!`);
+- named groups (`(?<name>...)`);
+- Unicode property escapes (`\p{...}`, `\P{...}`) and control escapes (`\cX`);
+- inline flags other than a leading `(?i)`, and flag groups such as `(?i:...)`;
+- a quantifier on an assertion (`(?:^)*`, `\b+`);
+- a repeat count above 1000, groups nested more than 100 deep, or a pattern that compiles to more than 5000 instructions.
+
+A leading `(?i)` makes the match ignore ASCII case (other letters match exactly). A backslash before ASCII punctuation that needs no escape (`\-`, `\!`) matches that character; before any other character it is an error. A pattern longer than `maxPatternLength` (default 4,096) is a `PATTERN_LIMIT` error, which `try()` does not catch.
+
+<!-- context: { code: "INV-2041", pattern: "(a)\\1" } -->
+```bonsai
+code.matches("^INV-[0-9]+$") // => true
+"Hello".matches("(?i)^hello$") // => true
+code.matches(pattern) // error: INVALID_ARGUMENT
+```
+
 ## Host functions
 
 The host can add functions with typed parameters. They are called exactly like built-ins, in either form. A host function with the same name as a built-in replaces the built-in for that environment, so built-ins added in future releases never change the meaning of an existing host's expressions. See [Host Functions](/api/host-functions).

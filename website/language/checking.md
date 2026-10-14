@@ -44,7 +44,7 @@ An expression with errors does not compile: `env.compile()` throws a `BonsaiChec
 | Code | Meaning |
 | --- | --- |
 | `SYNTAX` | The text is not valid syntax (reported by `check()`). |
-| `LIMIT` | A parse limit was exceeded (reported by `check()`). |
+| `LIMIT` | A parse or checking limit was exceeded (reported by `check()` instead of thrown). |
 | `UNKNOWN_VARIABLE` | An undeclared variable in a strict environment. |
 | `UNKNOWN_PROPERTY` | A field that a closed record or map literal does not have. |
 | `UNKNOWN_FUNCTION` | A call to a function that does not exist. |

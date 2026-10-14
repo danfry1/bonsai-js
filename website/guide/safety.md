@@ -62,9 +62,14 @@ result.ok // => true
 
 // Save only expressions that pass the check, then evaluate the saved text:
 const rule = env.compile(source, { expect: t.boolean() })
+rule.evaluateSync({ account: { plan: 'pro', seats: 10 } }) // => true
+
+// To cancel from outside (a request that was abandoned), evaluate asynchronously with a signal:
 const controller = new AbortController()
-rule.evaluateSync({ account: { plan: 'pro', seats: 10 } }, { signal: controller.signal }) // => true
+await rule.evaluate({ account: { plan: 'pro', seats: 10 } }, { signal: controller.signal }) // => true
 ```
+
+A signal can cancel only an async evaluation, while it waits on host functions: nothing outside a synchronous run can abort it while it runs, so synchronous runs are bounded by `maxSteps` and `timeout`.
 
 Checking at save time rejects typos and type errors before they reach production:
 

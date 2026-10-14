@@ -24,11 +24,11 @@ const env = bonsai({
 })
 ```
 
-`t.optional(T)` means the value may be `null` or missing. Because variables are declared, the environment is strict: any variable you did not declare is an error.
+Each declared variable is a key of the context: the object you pass when you evaluate. `t.optional(T)` means the value may be `null` or missing. Because variables are declared, the environment is strict: any variable you did not declare is an error.
 
 ## 2. Check expressions before saving them
 
-`check()` never throws and never evaluates. It reports every problem with a code, a message, and a source range you can underline in an editor.
+`check()` never evaluates, and never throws for a bad expression. It reports every problem with a code, a message, and a source range you can underline in an editor.
 
 <!-- continue -->
 ```ts
@@ -67,7 +67,30 @@ freeShipping.evaluateSync({
 
 The context argument is typed from the declaration, and the result is typed as `boolean` because of `expect`.
 
-## 4. Evaluate one-off expressions
+## 4. Handle errors
+
+`check()` reports problems as data; `compile()` and the `evaluate` methods throw a `BonsaiError` with a stable `code` and a `formatted` message that includes a code frame.
+
+<!-- continue -->
+```ts
+import { isBonsaiError } from 'bonsai-js'
+
+try {
+  env.compile('customer.teir == "gold"', { expect: t.boolean() })
+} catch (error) {
+  if (isBonsaiError(error)) {
+    error.code // => "CHECK"
+    console.log(error.formatted) // the message, then the source with the problem underlined
+  }
+}
+
+const average = env.compile('cart.items.map(.price).sum() / cart.items.length')
+average.evaluateSync({ customer: { name: 'Ada', tier: 'gold', country: 'GB' }, cart: { items: [] } }) // throws: DIVISION_BY_ZERO
+```
+
+A failure while evaluating is a `BonsaiRuntimeError` (or a `BonsaiLimitError` when a limit is reached). See [Errors](/api/errors) for every code, and set [limits](/guide/safety#a-hardened-setup) for expressions written by people you do not fully trust.
+
+## 5. Evaluate one-off expressions
 
 `env.evaluateSync(source, context)` compiles, caches, and evaluates in one call. Repeated sources reuse the cached program.
 
@@ -81,7 +104,9 @@ env.evaluateSync('`Hello ${customer.name}, you have ${cart.items.length} items`'
 env.evaluateSync('customer.email ?? "no email"', context) // => "no email"
 ```
 
-## 5. Use `evaluate()` for async host functions
+`as const` keeps `'gold'` typed as the enum value rather than `string` when the context is built in a variable first.
+
+## 6. Use `evaluate()` for async host functions
 
 If an expression calls a host function declared with `async: true`, evaluate it with `await env.evaluate(...)` or `await program.evaluate(...)`. `evaluateSync()` rejects such an expression before any host code runs. See [Host Functions](/api/host-functions).
 

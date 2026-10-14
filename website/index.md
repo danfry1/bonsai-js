@@ -11,6 +11,9 @@ hero:
     alt: Bonsai
   actions:
     - theme: brand
+      text: Get Started
+      link: /guide/quick-start
+    - theme: alt
       text: Open Playground
       link: /playground
     - theme: alt

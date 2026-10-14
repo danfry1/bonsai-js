@@ -9,8 +9,8 @@ const env = bonsai()
 const rule = env.compile('user.age >= 18 && user.plan == "pro"')
 const explanation = rule.explainSync({ user: { age: 25, plan: 'free' } })
 
-explanation.ok // true
-if (explanation.ok) explanation.value // false
+explanation.ok // => true
+explanation.ok ? explanation.value : explanation.error // => false
 String(explanation)
 // user.age >= 18 && user.plan == "pro"  → false
 // ├─ user.age >= 18  → true
@@ -30,8 +30,7 @@ import { bonsai } from 'bonsai-js'
 
 const cart = { total: 50, items: [{ price: 10 }, { price: 40 }] }
 const rule = bonsai().compile('cart.total > 100 || cart.items.some(.price > 100)')
-rule.explainSync({ cart }).reasons().map((r) => r.text)
-// ['cart.total > 100', 'cart.items.some(.price > 100)']
+rule.explainSync({ cart }).reasons().map((r) => r.text) // => ["cart.total > 100", "cart.items.some(.price > 100)"]
 ```
 
 A negated condition is a reason as written, so its value reads like every other reason's: for `!("vip" in customer.tags) && order.total > 10` with a VIP customer, the reason is `!("vip" in customer.tags)` with the value `false`. A `!` over `&&` or `||` (`!(a || b)`) is followed to the part that decided it, whose value is the opposite of what the rule needed, and `!!x` reads as `x`.
@@ -41,8 +40,7 @@ import { bonsai } from 'bonsai-js'
 
 const rule = bonsai().compile('!("vip" in customer.tags) && order.total > 10')
 const context = { customer: { tags: ['vip'] }, order: { total: 50 } }
-rule.explainSync(context).reasons().map((r) => [r.text, r.value])
-// [['!("vip" in customer.tags)', false]]
+rule.explainSync(context).reasons().map((r) => [r.text, r.value]) // => [["!(\"vip\" in customer.tags)", false]]
 ```
 
 The same condition can appear more than once when several sub-expressions reach it (with `exhaustive`, for example); de-duplicate by `id` when listing reasons in a UI.
@@ -57,10 +55,8 @@ import { bonsai } from 'bonsai-js'
 const rule = bonsai().compile('user.age >= 18 && user.plan == "pro" && user.verified')
 const user = { age: 16, plan: 'free', verified: true }
 
-rule.explainSync({ user }).reasons().map((r) => r.text)
-// ['user.age >= 18']
-rule.explainSync({ user }, { exhaustive: true }).reasons().map((r) => r.text)
-// ['user.age >= 18', 'user.plan == "pro"']
+rule.explainSync({ user }).reasons().map((r) => r.text) // => ["user.age >= 18"]
+rule.explainSync({ user }, { exhaustive: true }).reasons().map((r) => r.text) // => ["user.age >= 18", "user.plan == \"pro\""]
 ```
 
 ## The trace
@@ -81,7 +77,25 @@ rule.explainSync({ user }, { exhaustive: true }).reasons().map((r) => r.text)
 | `iterations` | For calls that take a lambda: `{ index, item, result or error, trace }` for each item the lambda ran on (reduce adds `accumulator`) |
 | `omittedIterations` | Lambda runs beyond `maxIterations`, counted but not recorded |
 
-Values in `trace` are the live values from your context, not copies. The trace is typed read-only but not frozen at run time (a trace can hold thousands of records, and freezing each would cost more than recording it), so treat it as read-only. The explanation's own `error` has the same JSON form as `JSON.stringify(error)` (see [Errors](/api/errors#json-form)); an error recorded on a trace node is the shorter `{ code, message }`, since its node already gives the span. To send an explanation to a browser or store it, use `JSON.stringify(explanation)` (or `explanation.toJSON()`): values become bounded, cycle-safe copies (at most 10,000 values in total, however often a value recurs), getters are never run, host collections such as typed arrays and `Map` are summarized by type, and a value that throws when read becomes `"[unreadable]"`. `JSON.stringify(explanation.trace)`, any single trace or lambda run, and any list of them you pick out yourself (`reasons().filter(...)`, `[...reasons()]`, `trace.children`, `trace.iterations`) serialize as their parts of `JSON.stringify(explanation)`, so they stay within its bound. That form is taken the first time any part of the explanation is serialized and reused afterwards, so it is the same on every serialization even if your data changes later. It is frozen: copy what `toJSON()` returns before trimming or editing it. `JSON.stringify(explanation.reasons())` serializes the reasons together under a budget of their own. A map shows its first 50 keys and how many more it has, and is listed once per explanation however often it recurs, so serializing never grows with a map's size; listing a map counts one value per 50 keys it has toward the 10,000, the same on every serialization, so a very large map can leave later values as `"..."`; `String(explanation)` shares one budget across the whole rendering.
+### Live values
+
+Values in `trace` are the live values from your context, not copies. The trace is typed read-only but not frozen at run time (a trace can hold thousands of records, and freezing each would cost more than recording it), so treat it as read-only. The explanation's own `error` has the same JSON form as `JSON.stringify(error)` (see [Errors](/api/errors#json-form)); an error recorded on a trace node is the shorter `{ code, message }`, since its node already gives the span.
+
+### Serializing
+
+To send an explanation to a browser or store it, use `JSON.stringify(explanation)` (or `explanation.toJSON()`). The JSON is bounded and cycle-safe:
+
+- values become copies, at most 10,000 values in total, however often a value recurs;
+- getters are never run, host collections such as typed arrays and `Map` are summarized by type, and a value that throws when read becomes `"[unreadable]"`;
+- a map shows its first 50 keys and how many more it has, and is listed once per explanation however often it recurs, so serializing never grows with a map's size. Listing a map counts one value per 50 keys it has toward the 10,000, so a very large map can leave later values as `"..."`.
+
+`JSON.stringify(explanation.trace)`, any single trace or lambda run, and any list of them you pick out yourself (`reasons().filter(...)`, `[...reasons()]`, `trace.children`, `trace.iterations`) serialize as their parts of `JSON.stringify(explanation)`, so they stay within its bound. `JSON.stringify(explanation.reasons())` serializes the reasons together under a budget of their own, and `String(explanation)` shares one budget across the whole rendering.
+
+### Stability of the snapshot
+
+The JSON form is taken the first time any part of the explanation is serialized and reused afterwards, so it is the same on every serialization, map listings included, even if your data changes later. It is frozen: copy what `toJSON()` returns before trimming or editing it.
+
+### What the JSON records
 
 The JSON holds the whole value of every node it records: a variable records the whole object passed for it, so `subject.id == resource.owner` records every field of `subject`, including ones the rule never reads (tokens, personal data). For audit logs, pass only the fields a rule needs, or log `JSON.stringify(explanation.reasons())`, which records only the deciding conditions (and the values beneath them).
 
@@ -93,7 +107,7 @@ The JSON holds the whole value of every node it records: a variable records the 
 import { bonsai } from 'bonsai-js'
 
 const explanation = bonsai().explainSync('stats.visits / stats.days', { stats: { visits: 10, days: 0 } })
-explanation.ok // false
+explanation.ok // => false
 String(explanation)
 // stats.visits / stats.days  → error DIVISION_BY_ZERO: Division by zero
 // ├─ stats.visits  → 10
@@ -104,7 +118,7 @@ Syntax and check errors reject from `env.explain(source)` and throw from `env.ex
 
 ## Options
 
-`explain(context, options)` accepts the evaluation options (`timeout`, `maxSteps`, `signal`, `now`) plus:
+`explain(context, options)` accepts the evaluation options (`timeout`, `maxSteps`, `signal`, `now`, `validateContext`) plus:
 
 | Option | Default | Effect |
 |---|---|---|

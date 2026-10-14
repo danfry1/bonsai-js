@@ -8,9 +8,9 @@ import { bonsai, print } from 'bonsai-js'
 const env = bonsai()
 const tree = env.parse('trim(name).toUpperCase()')
 
-print(tree)                        // 'trim(name).toUpperCase()'
-print(tree, { calls: 'method' })   // 'name.trim().toUpperCase()'
-print(tree, { calls: 'function' }) // 'toUpperCase(trim(name))'
+print(tree)                        // => 'trim(name).toUpperCase()'
+print(tree, { calls: 'method' })   // => 'name.trim().toUpperCase()'
+print(tree, { calls: 'function' }) // => 'toUpperCase(trim(name))'
 ```
 
 A tool that only parses and prints can use the standalone `parse(source, limits?)` instead of an environment. It parses as `env.parse` does, with the same parse limits (`maxSourceLength`, `maxDepth`, `maxNodes`), and a bundle that imports only `parse` and `print` stays around 10 KB gzipped instead of including the type checker and evaluator:
@@ -18,7 +18,7 @@ A tool that only parses and prints can use the standalone `parse(source, limits?
 ```ts
 import { parse, print } from 'bonsai-js'
 
-print(parse('a+b*2')) // 'a + b * 2'
+print(parse('a+b*2')) // => 'a + b * 2'
 ```
 
 ## Guarantees
@@ -51,7 +51,7 @@ print({
   left: { type: 'Member', object: { type: 'Variable', name: 'user', ...at }, name: 'age', optional: false, ...at },
   right: { type: 'Literal', value: 18, ...at },
   ...at,
-}) // 'user.age >= 18'
+}) // => 'user.age >= 18'
 ```
 
 `print()` ignores every offset, so `0` will do, and a hand-built `Member` or `Call` can leave out `nameStart` and `nameEnd`. To change a tree, `mapChildren` copies a node with its children replaced (see [Transforming a tree](./syntax-tree#transforming-a-tree)).

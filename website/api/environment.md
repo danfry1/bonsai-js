@@ -150,6 +150,7 @@ The context must be a plain object or class instance (or omitted when no variabl
 | `maxSteps` | `number` | Step budget for this evaluation, replacing the environment's (`0` for none). |
 | `signal` | `AbortSignal` | Cancels the evaluation with an `ABORTED` error. |
 | `now` | `Date` | The time `now()` returns in this evaluation, instead of the environment's `clock`. A value that is not a valid `Date` is a `TypeError`. |
+| `validateContext` | `boolean` | Whether to [validate the context](#validating-the-context) in this evaluation, overriding the environment's setting. |
 
 <!-- continue -->
 ```ts
