@@ -66,6 +66,15 @@ export default defineConfig({
         ],
       },
       {
+        text: 'Recipes',
+        items: [
+          { text: 'Overview', link: '/recipes/' },
+          { text: 'Feature Flag Targeting', link: '/recipes/feature-flags' },
+          { text: 'User-Defined Filters in SQL', link: '/recipes/user-filters-sql' },
+          { text: 'Eligibility Rules with Reasons', link: '/recipes/eligibility-rules' },
+        ],
+      },
+      {
         text: 'Language',
         items: [
           { text: 'Overview and Values', link: '/language/' },
