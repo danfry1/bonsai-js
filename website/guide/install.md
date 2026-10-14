@@ -41,7 +41,7 @@ These docs describe 1.0, which is in release candidate on npm's `next` tag. With
 
 ## Bundle size
 
-In a browser bundle, an app that evaluates expressions adds about 64 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. The `query` and `service` entry points are separate; the language service on its own is about 44 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.4 KB. CI enforces these budgets.
+In a browser bundle, an app that evaluates expressions adds about 67 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. The `query` and `service` entry points are separate; the language service on its own is about 46 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets.
 
 ## First evaluation
 
