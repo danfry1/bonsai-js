@@ -367,8 +367,10 @@ only when every field the record might lack is optional.
   it decides something (an ordering comparison, `!`, `&&`, `||`, a `?:`
   condition, or a lambda result where a boolean is expected), and number
   literals past 2^53.
-- Declared types describe data; they are not access control. Computed keys and
-  `keys()`/`values()`/`entries()` read every own property the host passes in.
+- Declared types describe data; they are not access control. A computed key
+  reads any own property of the value passed in (other than the blocked
+  names), and `keys()`/`values()`/
+  `entries()` list every own enumerable one.
 
 When several overloads could match because an argument is `any`, the call's
 result is `any` unless every candidate agrees; the runtime then dispatches on

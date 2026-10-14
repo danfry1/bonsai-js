@@ -2,7 +2,7 @@
 
 # Text
 
-Functions over strings. Positions and lengths count UTF-16 code units, as in JavaScript. `includes`, `indexOf`, `replace`, and `replaceAll` match literal text; `matches` tests a regular expression.
+Functions over strings. Positions and lengths count UTF-16 code units, as in JavaScript. `includes`, `indexOf`, `replace`, and `replaceAll` match literal text; `matches` tests a regular expression (see [Regular expressions](/language/functions#regular-expressions) for the syntax it accepts).
 
 Every function can be called as `f(x, ...)` or as a method, `x.f(...)`. In the signatures, `T` and `U` stand for any type, `T[]` is a list, `?` marks an optional parameter, and `(T, number) => boolean` is a lambda parameter.
 

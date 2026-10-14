@@ -97,10 +97,11 @@ await env.evaluate('price * qty', { price: 3, qty: 4 }) // => 12
 const program = env.compile('items.filter(.active).length')
 const items = [{ active: true }, { active: false }]
 program.evaluateSync({ items }) // => 1
-program.evaluateSync({ items }, { timeout: 50, maxSteps: 10_000, signal: AbortSignal.timeout(1_000) }) // => 1
+program.evaluateSync({ items }, { timeout: 50, maxSteps: 10_000 }) // => 1
+await program.evaluate({ items }, { signal: AbortSignal.timeout(1_000) }) // => 1
 ```
 
-`evaluateSync` compiles the source once and caches the program; `evaluate` is needed only for expressions that call async host functions.
+`evaluateSync` compiles the source once and caches the program; `evaluate` is needed only for expressions that call async host functions. A `signal` cancels an evaluation while it waits on async host functions; nothing outside a synchronous run can abort it while it runs, so it is bounded by `maxSteps` and `timeout`.
 
 Without declared variables an environment is open: unknown identifiers read the context and are typed `any`. With `variables`, the environment is strict: the checker knows their types and rejects any other name. Pass `strict: false` to let undeclared names read the context as `any`.
 
@@ -111,16 +112,16 @@ import { bonsai, t } from 'bonsai-js'
 
 const env = bonsai({ variables: { user: t.object({ age: t.number(), nick: t.optional(t.string()) }) } })
 
-env.check('user.agee > 18')
-// { ok: false, type: { kind: 'boolean' }, diagnostics: [{ code: 'UNKNOWN_PROPERTY', message: 'Property "agee" does not exist on user; did you mean "age"?', severity: 'error', start: 5, end: 9, span: { start: 5, end: 9 }, position: { line: 1, column: 6 }, suggestion: 'age' }] }
+const checked = env.check('user.agee > 18')
+checked.ok // => false
+checked.diagnostics // => [{ code: "UNKNOWN_PROPERTY", message: "Property \"agee\" does not exist on user; did you mean \"age\"?", severity: "error", start: 5, end: 9, span: { start: 5, end: 9 }, position: { line: 1, column: 6 }, suggestion: "age" }]
 
-env.check('user.nick.toUpperCase()')
-// NULLABLE_RECEIVER: The value before .toUpperCase() may be null; use ?.toUpperCase() or ?? to supply a default
+env.check('user.nick.toUpperCase()').diagnostics.map((d) => `${d.code}: ${d.message}`) // => ["NULLABLE_RECEIVER: The value before .toUpperCase() may be null; use ?.toUpperCase() or ?? to supply a default"]
 
 env.compile('user.age + 1', { expect: t.boolean() }) // throws: CHECK
 ```
 
-Types: `t.string()`, `t.number()`, `t.boolean()`, `t.null()`, `t.timestamp()`, `t.duration()`, `t.literal(v)`, `t.enum(...values)`, `t.list(T)`, `t.object({...})`, `t.record(V)`, `t.optional(T)`, `t.union(...)`, `t.any()`. `Infer<typeof type>` gives the TypeScript type.
+Types: `t.string()`, `t.number()`, `t.boolean()`, `t.null()`, `t.timestamp()`, `t.duration()`, `t.literal(v)`, `t.enum(...values)`, `t.list(T)`, `t.object({...})`, `t.record(V)`, `t.optional(T)`, `t.union(...)`, `t.any()`, `t.opaque(name)` (a host value expressions can hold but not read), `t.never()`. `Infer<typeof type>` gives the TypeScript type.
 
 ## Host functions
 
@@ -152,6 +153,38 @@ await env.evaluate('hasRole("admin") || orders.map(fxRate(.currency) * .amount).
 
 Context data is not validated against the declared types by default (it is your data, and validation costs time proportional to it). Pass `validateContext: true` to check it before every evaluation; a mismatch fails with `INVALID_CONTEXT` and the exact path, e.g. `user.created should be timestamp, got string "2026-01-01"`. Objects may carry more keys than their declared type lists (a database row with extra columns is fine); the checker accounts for that.
 
+## Errors
+
+Every error thrown while checking or evaluating an expression is a `BonsaiError` with a stable `code`, the `source`, a `span` (`{ start, end }`), a 1-based `position`, and a `formatted` message with a code frame. That includes failures in your own code: a host function that throws, or a getter or Proxy in the context that throws when read, becomes a `HOST_ERROR` with the original error as its `cause`. Invalid configuration passed to `bonsai()` or `fn()`, and a syntax tree `print()` cannot print faithfully, throw a `TypeError` or `RangeError` immediately; invalid per-evaluation options do too from `evaluateSync()`, and make `evaluate()` reject.
+
+| Class | Codes |
+|---|---|
+| `BonsaiSyntaxError` | `SYNTAX` |
+| `BonsaiCheckError` | `CHECK` (see `.diagnostics`) |
+| `BonsaiLimitError` | `SOURCE_TOO_LONG` `TOO_DEEP` `TOO_MANY_NODES` `TOO_COMPLEX` `STEP_LIMIT` `STRING_LIMIT` `LIST_LIMIT` `VALUE_DEPTH_LIMIT` `PATTERN_LIMIT` `TIMEOUT` `ABORTED` |
+| `BonsaiRuntimeError` | `TYPE_ERROR` `NO_OVERLOAD` `NULL_RECEIVER` `DIVISION_BY_ZERO` `NON_FINITE` `BLOCKED_PROPERTY` `INVALID_ARGUMENT` `INVALID_CONTEXT` `ASYNC_IN_SYNC` `HOST_ERROR` `HOST_CONTRACT` |
+| `BonsaiTranslationError` | `UNTRANSLATABLE` (thrown by `toSQL` and `toMongo`) |
+
+`try(expr, fallback)` in an expression catches runtime errors except `HOST_CONTRACT`; it never catches syntax, check, or limit errors.
+
+## Limits
+
+Every limit except `timeout` is on by default; `limits` changes the budget. `0` disables `maxSteps` and `timeout`; the other limits must be positive integers.
+
+| Limit | Default | Bounds |
+|---|---|---|
+| `maxSourceLength` | 100,000 | expression length |
+| `maxDepth` | 128 | syntax nesting depth |
+| `maxNodes` | 20,000 | syntax tree size, and the work of checking and compiling |
+| `maxSteps` | 1,000,000 | work per evaluation, charged by the real cost of each operation |
+| `maxStringLength` | 100,000 | strings an expression produces |
+| `maxListLength` | 100,000 | lists an expression produces |
+| `maxValueDepth` | 64 | nesting of values an expression builds or walks (cyclic data fails closed) |
+| `maxPatternLength` | 4,096 | regular expression patterns passed to `matches` |
+| `timeout` | none | wall-clock milliseconds per evaluation |
+
+The step budget is deterministic: the same expression over the same data uses the same steps on every machine, and at the default budget any expression finishes or fails within about 100 ms on Node (about 150 ms for the slowest shapes we have found). Host functions are trusted code: limits cannot interrupt a synchronous host function that is already running, and a getter or Proxy you put in the context runs when it is read. Set a `timeout` when expressions call slow host functions. See [SECURITY.md](https://github.com/danfry1/bonsai-js/blob/main/SECURITY.md) and [docs/threat-model.md](https://github.com/danfry1/bonsai-js/blob/main/docs/threat-model.md).
+
 ## Built-in functions
 
 All callable as `f(x, ...)` or `x.f(...)`.
@@ -159,12 +192,14 @@ All callable as `f(x, ...)` or `x.f(...)`.
 | Area | Functions |
 |---|---|
 | Text | `toUpperCase` `toLowerCase` `trim` `trimStart` `trimEnd` `startsWith` `endsWith` `includes` `indexOf` `lastIndexOf` `slice` `split` `replace` `replaceAll` `padStart` `padEnd` `repeat` `at` `matches` `toString` `toNumber` |
-| Lists | `map` `filter` `find` `findIndex` `some` `every` `none` `count` `flatMap` `reduce` `sort` `sortBy` `groupBy` `reverse` `unique` `flat` `first` `last` `join` `slice` `at` `includes` `indexOf` `isEmpty` |
+| Lists | `map` `filter` `find` `findIndex` `some` `every` `none` `count` `flatMap` `reduce` `sort` `sortBy` `groupBy` `reverse` `unique` `flat` `first` `last` `join` `slice` `at` `includes` `indexOf` `lastIndexOf` `isEmpty` `min` `max` `sum` `avg` |
 | Numbers | `round` `floor` `ceil` `trunc` `abs` `sqrt` `clamp` `toFixed` `formatNumber` `formatCurrency` `min` `max` `sum` `avg` |
-| Maps | `keys` `values` `entries` `type` |
-| Time | `now` `timestamp` `weeks` `days` `hours` `minutes` `seconds` `milliseconds` `inDays` `inHours` `inMinutes` `inSeconds` `inMilliseconds` `year` `month` `day` `hour` `minute` `second` `dayOfWeek` `startOfDay` `startOfMonth` `startOfYear` `addDays` `addMonths` `addYears` `formatDate` |
+| Maps and values | `keys` `values` `entries` `isEmpty` `type` `toString` |
+| Time | `now` `timestamp` `duration` `weeks` `days` `hours` `minutes` `seconds` `milliseconds` `inDays` `inHours` `inMinutes` `inSeconds` `inMilliseconds` `year` `month` `day` `hour` `minute` `second` `dayOfWeek` `startOfDay` `startOfMonth` `startOfYear` `addDays` `addMonths` `addYears` `formatDate` |
 
-`matches(text, pattern)` uses JavaScript regular expression syntax (as with the `u` flag) and runs in linear time, so a user-written pattern cannot hang evaluation; backreferences, lookaround, named groups, `\p{...}`, and inline flags other than a leading `(?i)` are rejected ([full list](https://github.com/danfry1/bonsai-js/blob/main/docs/language.md)), a leading `(?i)` ignores ASCII case, and a pattern longer than `maxPatternLength` is a `PATTERN_LIMIT` error. `formatDate` understands `yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS` and rejects unknown letters; constant patterns are checked when the expression is compiled.
+Signatures and examples: [Built-in Functions](https://danfry1.github.io/bonsai-js/functions/).
+
+`matches(text, pattern)` uses JavaScript regular expression syntax (as with the `u` flag) and runs in linear time, so a user-written pattern cannot hang evaluation; backreferences, lookaround, named groups, `\p{...}`, and inline flags other than a leading `(?i)` are rejected ([full list](https://danfry1.github.io/bonsai-js/language/functions#regular-expressions)), a leading `(?i)` ignores ASCII case, and a pattern longer than `maxPatternLength` is a `PATTERN_LIMIT` error. `formatDate` understands `yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS` and rejects unknown letters; constant patterns are checked when the expression is compiled.
 
 `env.listFunctions()` returns every signature and description, for documentation or tooling.
 
@@ -178,8 +213,8 @@ import { bonsai } from 'bonsai-js'
 const rule = bonsai().compile('user.age >= 18 && user.plan == "pro"')
 const explanation = rule.explainSync({ user: { age: 25, plan: 'free' } })
 
-explanation.ok // true
-if (explanation.ok) explanation.value // false
+explanation.ok // => true
+explanation.ok ? explanation.value : explanation.error // => false
 console.log(String(explanation))
 // user.age >= 18 && user.plan == "pro"  → false
 // ├─ user.age >= 18  → true
@@ -196,8 +231,7 @@ import { bonsai } from 'bonsai-js'
 const rule = bonsai().compile('user.age >= 18 && user.plan == "pro"')
 const user = { age: 16, plan: 'free' }
 
-rule.explainSync({ user }, { exhaustive: true }).reasons().map((r) => r.text)
-// ['user.age >= 18', 'user.plan == "pro"']
+rule.explainSync({ user }, { exhaustive: true }).reasons().map((r) => r.text) // => ["user.age >= 18", "user.plan == \"pro\""]
 ```
 
 `explanation.trace` is the full tree: each node has an `id`, `kind`, `text`, `start`/`end` source offsets, `value` or `error`, and `children`. Parts skipped by short-circuiting are marked `evaluated: false`, and lambdas record each item they ran on under `iterations` (up to `maxIterations`, default 20; `maxTraceNodes` caps the whole trace). `JSON.stringify(explanation)` gives a bounded, cycle-safe snapshot that never runs getters; it records the whole value of each variable the rule reads, so for audit logs pass only the fields a rule needs (or log `JSON.stringify(explanation.reasons())`, which is bounded the same way). Evaluation errors are returned (`ok: false`, `error`) with the failing node marked, never thrown; invalid options or context throw, as with `evaluate()`. Like `evaluate()` and `evaluateSync()`, `explain()` returns a promise (and supports async host functions) and `explainSync()` returns the explanation directly. Explaining uses a separately compiled program, so ordinary evaluation is not slowed down.
@@ -212,13 +246,14 @@ import { bonsai } from 'bonsai-js'
 const rule = bonsai().compile('user.plan == "pro" && order.total > limits.minTotal')
 const limits = { minTotal: 100 }
 
-rule.partial({ user: { plan: 'free' }, limits }) // { status: 'value', value: false }
+rule.partial({ user: { plan: 'free' }, limits }) // => { status: "value", value: false }
 
 const result = rule.partial({ user: { plan: 'pro' }, limits })
 if (result.status === 'residual') {
-  result.source // 'order.total > 100'
-  result.dependsOn // ['order.total']
-  result.evaluateSync({ order: { total: 150 } }) // true, the same answer as with all the data
+  result.source // => 'order.total > 100'
+  result.dependsOn // => ["order.total"]
+  // The same answer as with all the data:
+  result.evaluateSync({ order: { total: 150 } }) // => true
 }
 ```
 
@@ -237,12 +272,11 @@ import { toMongo, toSQL } from 'bonsai-js/query'
 const filter = bonsai().compile('order.status == "paid" && order.total > minTotal')
 const columns = { status: 'text', total: 'number' } as const
 
-toSQL(filter, { row: 'order', columns, dialect: 'postgres', known: { minTotal: 100 } })
-// { sql: '((("status" COLLATE "C") = ($1::text COLLATE "C")) AND ("total"::float8 > $2::float8))',
-//   params: ['paid', 100] }
+const query = toSQL(filter, { row: 'order', columns, dialect: 'postgres', known: { minTotal: 100 } })
+query.sql // => '((("status" COLLATE "C") = ($1::text COLLATE "C")) AND ("total"::float8 > $2::float8))'
+query.params // => ["paid", 100]
 
-toMongo(filter, { row: 'order', fields: columns, known: { minTotal: 100 } })
-// { filter: { $and: [{ status: { $eq: 'paid' } }, { total: { $gt: 100 } }] }, options: { collation: { locale: 'simple' } } }
+toMongo(filter, { row: 'order', fields: columns, known: { minTotal: 100 } }) // => { filter: { $and: [{ status: { $eq: "paid" } }, { total: { $gt: 100 } }] }, options: { collation: { locale: "simple" } } }
 ```
 
 The query selects exactly the records for which the filter evaluates to `true` in Bonsai, including null handling (SQL's three-valued logic is made two-valued) and records where the filter would fail (they are excluded). One exception: in Postgres, a record whose arithmetic overflows a double (or whose nonzero product rounds to zero) makes the whole query fail with `value out of range`, an error rather than a different set of rows, where SQLite excludes the record; keep stored numbers within range to avoid it (see the query guide's caveats). Only declared columns can be queried, values are always parameters, and anything without an exact database equivalent throws a `BonsaiTranslationError` pointing at it. This is checked by differential tests against real SQLite, Postgres, and a MongoDB query engine.
@@ -255,9 +289,9 @@ The query selects exactly the records for which the filter evaluates to `true` i
 import { bonsai, print } from 'bonsai-js'
 
 const tree = bonsai().parse('trim(name).toUpperCase()')
-print(tree)                        // 'trim(name).toUpperCase()'
-print(tree, { calls: 'method' })   // 'name.trim().toUpperCase()'
-print(tree, { calls: 'function' }) // 'toUpperCase(trim(name))'
+print(tree)                        // => 'trim(name).toUpperCase()'
+print(tree, { calls: 'method' })   // => 'name.trim().toUpperCase()'
+print(tree, { calls: 'function' }) // => 'toUpperCase(trim(name))'
 ```
 
 `f(x)` and `x.f()` produce the same call node, so a builder can show any chain as a list of steps and choose how to print it. `env.listFunctions()` provides the palette (names, signatures, descriptions), and the language service provides the types at any position for dropdowns. `forEachChild` walks a tree, `mapChildren` rewrites one, and `env.check(source).typeOf(node)` gives the type of any checked node. Comments and spacing are not part of the tree, so printing drops them; to change a saved rule and keep its comments, edit the source at the spans the parser records (`nameStart` and `nameEnd` cover a property or function name). See the [syntax tree reference](https://danfry1.github.io/bonsai-js/api/syntax-tree).
@@ -275,38 +309,6 @@ service.diagnostics('user.agee')        // same diagnostics as env.check
 ```
 
 The service never evaluates expressions or calls host functions.
-
-## Errors
-
-Every error thrown while checking or evaluating an expression is a `BonsaiError` with a stable `code`, the `source`, a `span` (`{ start, end }`), a 1-based `position`, and a `formatted` message with a code frame. That includes failures in your own code: a host function that throws, or a getter or Proxy in the context that throws when read, becomes a `HOST_ERROR` with the original error as its `cause`. Invalid configuration passed to `bonsai()` or `fn()`, and a syntax tree `print()` cannot print faithfully, throw a `TypeError` or `RangeError` immediately; invalid per-evaluation options do too from `evaluateSync()`, and make `evaluate()` reject.
-
-| Class | Codes |
-|---|---|
-| `BonsaiSyntaxError` | `SYNTAX` |
-| `BonsaiCheckError` | `CHECK` (see `.diagnostics`) |
-| `BonsaiLimitError` | `SOURCE_TOO_LONG` `TOO_DEEP` `TOO_MANY_NODES` `TOO_COMPLEX` `STEP_LIMIT` `STRING_LIMIT` `LIST_LIMIT` `VALUE_DEPTH_LIMIT` `PATTERN_LIMIT` `TIMEOUT` `ABORTED` |
-| `BonsaiRuntimeError` | `TYPE_ERROR` `NO_OVERLOAD` `NULL_RECEIVER` `DIVISION_BY_ZERO` `NON_FINITE` `BLOCKED_PROPERTY` `INVALID_ARGUMENT` `INVALID_CONTEXT` `ASYNC_IN_SYNC` `HOST_ERROR` `HOST_CONTRACT` |
-| `BonsaiTranslationError` | `UNTRANSLATABLE` (thrown by `toSQL` and `toMongo`) |
-
-`try(expr, fallback)` in an expression catches runtime errors except `HOST_CONTRACT`; it never catches syntax, check, or limit errors.
-
-## Limits
-
-All limits are on by default; `limits` changes the budget. `0` disables `maxSteps` and `timeout`; the other limits must be positive integers.
-
-| Limit | Default | Bounds |
-|---|---|---|
-| `maxSourceLength` | 100,000 | expression length |
-| `maxDepth` | 128 | syntax nesting depth |
-| `maxNodes` | 20,000 | syntax tree size, and the work of checking and compiling |
-| `maxSteps` | 1,000,000 | work per evaluation, charged by the real cost of each operation |
-| `maxStringLength` | 100,000 | strings an expression produces |
-| `maxListLength` | 100,000 | lists an expression produces |
-| `maxValueDepth` | 64 | nesting of values an expression builds or walks (cyclic data fails closed) |
-| `maxPatternLength` | 4,096 | regular expression patterns passed to `matches` |
-| `timeout` | none | wall-clock milliseconds per evaluation |
-
-The step budget is deterministic: the same expression over the same data uses the same steps on every machine, and at the default budget any expression finishes or fails within about 100 ms on Node (about 150 ms for the slowest shapes we have found). Host functions are trusted code: limits cannot interrupt a synchronous host function that is already running, and a getter or Proxy you put in the context runs when it is read. Set a `timeout` when expressions call slow host functions. See [SECURITY.md](https://github.com/danfry1/bonsai-js/blob/main/SECURITY.md) and [docs/threat-model.md](https://github.com/danfry1/bonsai-js/blob/main/docs/threat-model.md).
 
 ## Stability
 

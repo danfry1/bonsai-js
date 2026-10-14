@@ -19,8 +19,10 @@ const { filter: mongoFilter, options } = toMongo(filter, { row: 'order', fields:
 
 ## The contract
 
-- A filter is an expression over one record variable (`row`), from a compiled program (`env.compile`); translate the original program with `known` rather than a partial-evaluation residual. Every other variable must be in `known`, which is applied by [partial evaluation](./partial) before translating; a variable that is neither is rejected, so a misspelled `row` cannot silently read as null; the error names the closest row, known value, or declared column. With `validateContext`, the known values are validated as evaluation validates them (`INVALID_CONTEXT`).
-- A path the filter reads must be present in the known value it reads from: `order.total > limits.max` with `known: { limits: { min: 1 } }` is rejected (`limits.max is missing from the known values`) instead of reading the missing field as null. Pass `null` for a field with no value, or guard the read in the filter: `limits.max ?? 5`, a `limits.max == null` test, or `has(limits.max) && order.total > limits.max`. A guard covers only the read it guards (or the reads its `&&`, `||`, or `?:` branch reaches), and a `let` name is followed to the path it stands for. When the program's environment declares a known variable's type, a known object read whole (spread, `keys()`/`values()`/`entries()`, `==`, passed to a function) must have every field its type declares: `order.total in limits.values()` with `{ min: 1 }` for a declared `{ min, max }` is rejected.
+- **One record variable.** A filter is an expression over one record variable (`row`), from a compiled program (`env.compile`); translate the original program with `known` rather than a partial-evaluation residual.
+- **Everything else is known.** Every other variable must be in `known`, which is applied by [partial evaluation](./partial) before translating. A variable that is neither is rejected, so a misspelled `row` cannot silently read as null; the error names the closest row, known value, or declared column. With `validateContext`, the known values are validated as evaluation validates them (`INVALID_CONTEXT`).
+- **Known paths must be present.** `order.total > limits.max` with `known: { limits: { min: 1 } }` is rejected (`limits.max is missing from the known values`) instead of reading the missing field as null. Pass `null` for a field with no value, or guard the read in the filter: `limits.max ?? 5`, a `limits.max == null` test, or `has(limits.max) && order.total > limits.max`. A guard covers only the read it guards (or the reads its `&&`, `||`, or `?:` branch reaches), and a `let` name is followed to the path it stands for.
+- **Known objects read whole are complete.** When the program's environment declares a known variable's type, a known object read whole (spread, `keys()`/`values()`/`entries()`, `==`, passed to a function) must have every field its type declares: `order.total in limits.values()` with `{ min: 1 }` for a declared `{ min, max }` is rejected.
 - The query selects **exactly** the records for which the filter evaluates to `true` in Bonsai. Records for which it would fail (for example calling `startsWith` on a null field) are excluded, as `try(filter, false)` would.
 - SQL's three-valued `NULL` logic is converted to Bonsai's: `x != "a"` includes rows where `x` is `NULL`, comparisons with `NULL` are false, and `!` of a failing condition stays excluded. The returned SQL is true for the selected rows and may be `NULL` for the others, so negate a filter by translating `!(filter)`, not by wrapping the SQL in `NOT`. The records for which a filter fails are those selected by neither: with `N` records in all, they number `N - count(filter) - count(!(filter))`, which counts failing records without evaluating them in JavaScript.
 - This is verified by differential tests that run random filters over random rows and compare the selected records with Bonsai's evaluation: in SQLite and PGlite on every run, and against Postgres 13 and 17 (through `pg` and `postgres`) and MongoDB 8.0 (through the official driver) with `bun run test:servers`.
@@ -83,7 +85,31 @@ order.email?.endsWith("@acme.com") ?? false // => false
 
 Relative dates need `now`, from the `now` option (or a known timestamp in its place); the comparison is rewritten as the column against a fixed instant, so it can use an index. A null timestamp fails the subtraction, so the record is excluded from the filter and from its negation, as in Bonsai, and so is a record that a shift would push past the range of dates, or whose distance from the known time is past the range of durations (about ±285,000 years). Durations are whole milliseconds, like timestamps, so the bound is exact.
 
-Anything else throws a `BonsaiTranslationError` (code `UNTRANSLATABLE`) with the span of the part that has no exact equivalent, including calls to host functions (which may replace a built-in of the same name). The message says why: `now()` without the `now` option, calendar functions such as `hour()` or `startOfDay()` (they follow time zone rules databases do not apply as Bonsai does; compare the timestamp with known bounds instead), `let`, `?:` (write the condition with `&&` and `||`), functions that take a lambda such as `some()` (write the condition for each value with `||` or `&&`, or use `in` with a known list), `try()`, computed reads, and other operators each name themselves. Deliberately not translated: ordering text (databases order by code point, Bonsai by UTF-16 unit), the `.length` of text (databases count characters, Bonsai UTF-16 units), `toLowerCase`/`toUpperCase` (databases do not match JavaScript's Unicode case mapping), and division (databases differ on division by zero). Text with a lone surrogate is rejected, since drivers send it as U+FFFD, and so is known text containing a NUL character (U+0000) in SQL (the databases cannot take it as text) and in a MongoDB pattern (`startsWith`, `endsWith`, `includes`).
+### Not translated, and why
+
+Anything else throws a `BonsaiTranslationError` (code `UNTRANSLATABLE`) with the span of the part that has no exact equivalent. The message says why, and what to write instead where there is an alternative:
+
+| Not translated | Why | Instead |
+|---|---|---|
+| Host functions | They may replace a built-in of the same name, and run your code | Call them before translating with `callHostFunctions: true` and known inputs (see [Host functions](#host-functions)) |
+| `now()` without the `now` option | | Pass `now`, or a known timestamp in its place |
+| Calendar functions (`hour()`, `startOfDay()`, ...) | Databases do not apply time zone rules as Bonsai does | Compare the timestamp with known bounds |
+| Functions that take a lambda (`some()`, `every()`, ...) | A lambda has no database equivalent | Write the condition for each value with `\|\|` or `&&`, or use `in` with a known list |
+| `?:` | | Write the condition with `&&` and `\|\|` |
+| `let` | | Write the value in place |
+| `try()` | The query already excludes a record on which the filter fails | Leave it out: `try(filter, false)` is what the query does |
+| `has()` | Databases do not tell a missing field from a null one | To test for a value, use `!= null` |
+| Templates | | Compare text with `==`, `startsWith`, `endsWith`, or `includes` |
+| Computed reads (`order[key]`) | | Read a field by name |
+| Ordering text (`<`, `>` on text) | Databases order by code point, Bonsai by UTF-16 unit | |
+| The `.length` of text | Databases count characters, Bonsai UTF-16 units | |
+| `toLowerCase`, `toUpperCase` | Databases do not match JavaScript's Unicode case mapping | |
+| Division (`/`) | Databases differ on division by zero | |
+| `%`, `**` | SQL translates `+ - *` only | |
+
+Text with a lone surrogate is rejected, since drivers send it as U+FFFD, and so is known text containing a NUL character (U+0000) in SQL (the databases cannot take it as text) and in a MongoDB pattern (`startsWith`, `endsWith`, `includes`).
+
+### Size and budgets
 
 A failing `&&` or `||` repeats part of its left side in the query, so deeply nested filters grow quickly; a translation larger than 1,000,000 characters of SQL or 100,000 MongoDB filter nodes is rejected, as is one needing more parameters than the database accepts (65,535 in Postgres, 32,766 in SQLite), more than 1,000,000 entries in Postgres array parameters, or more than 16,000,000 characters of SQL parameter text. In a MongoDB filter, every 160 characters of text count as one node toward its limit, so the filter stays near the 16 MB a MongoDB document can hold. In SQL, a known value is sent once however often the filter uses it: a parameter is reused wherever the same value (with the same type) appears.
 

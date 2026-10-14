@@ -30,7 +30,7 @@ rows.map(.[0]) // => [1, 3]
 `.` is only allowed where the lambda's first parameter is the current item. In `reduce` the first parameter is the accumulator, so `.` there is a check error; name both parameters instead:
 
 ```bonsai
-xs.reduce(. + 10, 0) // error: CHECK
+xs.reduce(. + 10, 0) // error: INVALID_LAMBDA
 xs.reduce((total, x) => total + x, 0) // => 37
 ```
 

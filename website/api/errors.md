@@ -35,7 +35,35 @@ try {
 | `formatted` | `string` | The message followed by a code frame, when a span is known. The frame shows at most 120 columns of the line around the span, with `...` where the line is cut. |
 | `cause` | `unknown` | For `HOST_ERROR`, the error your host function (or a getter or Proxy in the context) threw. For `ABORTED`, the signal's `reason` (what was passed to `abort()`, or the default `AbortError`), so a shutdown can be told apart from a user cancel; the message stays "Evaluation was aborted". `TIMEOUT` has no cause. The JSON form leaves `cause` out. |
 
-`isBonsaiError(value)` is a type guard for `BonsaiError`. Checking and evaluating an expression only ever throw `BonsaiError`s, including when your own code fails: a host function that throws (even a `BonsaiError`, for example from an evaluation it runs itself), or a getter, Proxy trap, or `then` hook in the context that throws when read (including while `validateContext` or an `expect` check reads it), becomes a `HOST_ERROR` with the original error as its `cause`. That holds for every Bonsai error host code throws: one from another evaluation, explanation, or `partial()`, a syntax, check, or translation error, or one your code built itself, so it never shows up as the evaluation's own error, and `try()` can recover from it. Only the errors an evaluation raises itself keep their code. Running out of call stack while reading host data is the exception: a stack overflow in a getter or Proxy trap cannot be told apart from the evaluation's own, so it is `TOO_DEEP` (the engine's error is its `cause`), which `try()` does not recover from. A stack overflow in a host function is a `HOST_ERROR` like anything else it throws. Any other error escaping from Bonsai is a bug. Invalid configuration is reported differently, as a `TypeError` or `RangeError` thrown synchronously: by `bonsai()`, `extend()`, or `fn()` (an unknown option or limit, a limit out of range, a malformed parameter list, a duplicate or invalid name), for invalid per-evaluation options and a context that is not an object (an unknown key, a negative `maxSteps`, a `signal` that is not an `AbortSignal`, a `Map` or a string as the context: `evaluateSync()` throws, and `evaluate()` returns a rejected promise), and by `print()` for a tree the parser could not have produced.
+`isBonsaiError(value)` is a type guard for `BonsaiError`.
+
+### Only `BonsaiError`s are thrown
+
+Checking and evaluating an expression only ever throw `BonsaiError`s. Any other error escaping from Bonsai is a bug.
+
+### Failures in your code become `HOST_ERROR`
+
+When your own code fails during an evaluation, the error becomes a `HOST_ERROR` with the original error as its `cause`, so `try()` can recover from it:
+
+- a host function that throws anything, including a `BonsaiError` (for example from an evaluation it runs itself);
+- a getter, Proxy trap, or `then` hook in the context that throws when read, including while `validateContext` or an `expect` check reads it;
+- any Bonsai error host code throws: one from another evaluation, explanation, or `partial()`, a syntax, check, or translation error, or one your code built itself. It never shows up as the evaluation's own error.
+
+Only the errors an evaluation raises itself keep their code.
+
+### Exception: stack overflow while reading host data
+
+A stack overflow in a getter or Proxy trap cannot be told apart from the evaluation's own, so it is `TOO_DEEP` (the engine's error is its `cause`), which `try()` does not recover from. A stack overflow in a host function is a `HOST_ERROR` like anything else it throws.
+
+### Invalid configuration
+
+Invalid configuration is reported differently, as a `TypeError` or `RangeError` thrown synchronously:
+
+| Where | What |
+| --- | --- |
+| `bonsai()`, `extend()`, `fn()` | An unknown option or limit, a limit out of range, a malformed parameter list, a duplicate or invalid name. |
+| Per-evaluation options and the context | An unknown key, a negative `maxSteps`, a `signal` that is not an `AbortSignal`, a `Map` or a string as the context: `evaluateSync()` throws, and `evaluate()` returns a rejected promise. |
+| `print()` | A tree the parser could not have produced. |
 
 ## JSON form
 
@@ -155,7 +183,7 @@ Errors have `severity: "error"` and make `check()` return `ok: false`. Warnings 
 | `NULLABLE_RECEIVER` | error | A possibly-null value where `null` is not accepted. |
 | `INVALID_LAMBDA` | error | A misplaced `.` or lambda. |
 | `BLOCKED_PROPERTY` | error | A blocked key (`__proto__`, `constructor`, `prototype`) used as a static or constant computed key, such as `{["__proto__"]: 1}`, or as a computed key or `groupBy` key whose every possible value is a blocked name (`let k = "constructor"; {[k]: 1}`). |
-| `EXPECTED_TYPE` | error | The result does not match `expect`. |
+| `EXPECTED_TYPE` | error (warning for an extra field) | The result does not match `expect`; a map literal with fields the expected object type does not name is only a warning, and the result keeps them. |
 | `INVALID_ARGUMENT` | error | A literal argument with an invalid value, such as an unknown `formatDate` pattern letter. |
 | `ALWAYS_FALSE` | warning | A comparison or membership test that can never hold, such as `plan == "premium"` when `plan` is `"free" \| "pro"`. |
 | `ALWAYS_TRUE` | warning | The negation of one: `!=` or `not in` that always holds, such as `plan != "premium"`. |

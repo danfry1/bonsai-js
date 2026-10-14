@@ -38,14 +38,15 @@ The examples on these pages run with the clock fixed at `2026-01-15T10:30:00Z`.
 | map | `{ a: 1 }` | A plain object or class instance, read through its own properties, and object literals. |
 | timestamp | `now()`, `timestamp("2026-01-01")` | A host `Date`, or one produced by `timestamp()` or `now()`. An invalid `Date` is an error when used. |
 | duration | `days(3)`, `hours(1)` | A span of time. Also the result of subtracting two timestamps. |
+| opaque | a host `Map`, a function | A host value an expression can hold, compare, and pass on, but not read (see below). |
 
 Functions, symbols, bigints, and built-in host objects such as `Map`, `Set`, `RegExp`, promises, typed arrays, and errors are **opaque**: they can be compared with `==` and passed to host functions, but reading a property of one is an error. Plain objects and class instances are maps: an expression sees only their own properties, never members inherited from a prototype such as class methods.
 
 `type(x)` returns the kind of any value as a string:
 
-<!-- context: { when: new Date("2026-01-01T00:00:00Z") } -->
+<!-- context: { when: new Date("2026-01-01T00:00:00Z"), cache: new Map() } -->
 ```bonsai
-[type(null), type(true), type(1), type("a"), type([]), type({}), type(when), type(days(1))] // => ["null", "boolean", "number", "string", "list", "map", "timestamp", "duration"]
+[type(null), type(true), type(1), type("a"), type([]), type({}), type(when), type(days(1)), type(cache)] // => ["null", "boolean", "number", "string", "list", "map", "timestamp", "duration", "opaque"]
 ```
 
 ## Pages

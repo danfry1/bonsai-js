@@ -50,6 +50,8 @@ formatType(Customer) // => '{ id: string, tier: "standard" | "gold", email: stri
 
 ## Closed and open records
 
+Both `t.object` and `t.record` describe maps, the language's name for plain objects (their type's `kind` is `map`): `t.object` is a closed record with known fields, and `t.record` an open one with any key.
+
 `t.object` is closed: reading a field it does not declare is a check error (`UNKNOWN_PROPERTY`), which catches typos. Closed describes what expressions may name, not what the value holds: at run time the object may have more keys (a database row with extra columns), so `values()`, `entries()`, and computed-key reads on it include values of unknown type, and a closed object is not accepted where a `t.record` is expected. `t.record` is open: any key may be read, and the result is `V | null` because the key may be missing.
 
 <!-- continue -->

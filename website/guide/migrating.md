@@ -6,133 +6,18 @@ Most expressions need small, mechanical changes, and the checker finds most of t
 
 ## Before you start
 
-- **Node.js 22 or newer.** The package is ESM. `require('bonsai-js')` works on Node versions that can load ES modules synchronously (22.12 and newer).
+- **Node.js 22 or newer**, as for 0.5. `require('bonsai-js')` works on Node versions that can load ES modules synchronously (22.12 and newer).
 - **Every built-in is included.** Remove `bonsai-js/stdlib` imports and `.use(...)` calls.
 - **Declaring variables makes the environment strict.** With `variables`, an undeclared name is a check error instead of reading the context. Pass `strict: false` to keep reading undeclared names as `any`, or declare everything the expressions read.
 
-## Expressions
+## Suggested order
 
-| 0.x | 1.x | Notes |
-| --- | --- | --- |
-| `name \|> trim \|> upper` | `name.trim().toUpperCase()` | `\|>` is reserved and is a syntax error in 1.x. |
-| `a \|> f(b)` | `a.f(b)` or `f(a, b)` | Every function is also a method. |
-| `upper`, `lower` | `toUpperCase`, `toLowerCase` | JavaScript names. |
-| `flatten` | `flat` | |
-| `x \|> isString`, `x \|> isNumber`, `x \|> isArray` | `type(x) == "string"`, `"number"`, `"list"` | `type()` returns the kind of any value. |
-| `x \|> isNull` | `x == null` | Also true when `x` is missing. |
-| `x \|> toBool` | an explicit test, for example `x != ""` or `x > 0` | Booleans are strict. |
-| `a \|> diffDays(b)` (epoch milliseconds) | `round(abs(inDays(timestamp(a) - timestamp(b))))` | Subtracting timestamps gives a signed, fractional duration. See [Results that changed](#results-that-changed). |
-| `now()` (epoch milliseconds) | `now()` (a timestamp) | Compare with `now() - t > days(30)`. |
-| `ts \|> formatDate("YYYY-MM-DD")` | `formatDate(timestamp(ts), "yyyy-MM-dd")` | Takes a timestamp, not epoch milliseconds (`timestamp(ts)` converts them). Tokens are `yyyy MM dd HH mm ss SSS` (and more); an optional time zone argument is accepted. |
-| `xs \|> filter`, `xs \|> some`, `xs \|> every` (no argument, by truthiness) | `xs.filter(. != null)`, `flags.some(.)`, `flags.every(.)` | Lambdas are required. `.` alone works for lists of booleans; for other lists write the test. |
-| `undefined` | `null` | There is no `undefined` literal. |
-| `substring(i, j)` | `slice(i, j)` | The same for `0 <= i <= j`. `slice` does not swap reversed arguments and counts negative positions from the end. See [Results that changed](#results-that-changed). |
-| `charAt(i)` | `at(i)` | `at` gives `null` past the end and counts negative positions from the end. |
-| `concat` | `+` | |
-| `toSorted()`, `toReversed()` | `sort()`, `reverse()` | They never mutate, so the `to` prefix is not needed. `sort()` orders numbers numerically. |
-| `toSpliced(i, n)` | `xs.slice(0, i) + xs.slice(i + n)` | |
-| `with(i, v)` | `xs.slice(0, i) + [v] + xs.slice(i + 1)` | |
-| `charCodeAt(i)` | none | Declare a host function if you need code points. |
-| `+x` (unary plus) | `toNumber(x)` | There is no unary plus. |
-| `indexOf(s, from)`, `includes(s, from)`, `startsWith(s, from)` | `let i = x.slice(from).indexOf(s); i < 0 ? -1 : i + from`, `slice(from).includes(s)`, `slice(from).startsWith(s)` | The position argument is gone; the checker reports the extra argument. |
-| `toString(16)`, `split()` with no separator | a host function; `[s]` | Radix and whole-string split are gone; the checker reports both. |
-| `slice()`, `at()`, `toFixed()` with no argument | `slice(0)`, `at(0)`, `toFixed(0)` | The argument is required; the checker reports the call. |
-
-<!-- context: { a: 1767484800000, b: 1767229200000, xs: [1, 2, 3], flags: [false, true], items: [1, null, 2] } -->
-```bonsai
-round(abs(inDays(timestamp(a) - timestamp(b)))) // => 3
-xs.slice(0, 1) + xs.slice(2) // => [1, 3]
-xs.slice(0, 1) + [9] + xs.slice(2) // => [1, 9, 3]
-flags.some(.) // => true
-items.filter(. != null) // => [1, 2]
-```
-
-## Results that changed
-
-These expressions give different results in the two versions. The table writes them in 1.x syntax; in 0.x, functions such as `round`, `avg`, `toNumber`, and `toString` were pipe transforms (`-2.5 |> round`). Most run without any error in 1.x, so the checker cannot flag them; search stored expressions for the functions involved. Rows whose 1.x column is a check error are the exception, and `env.check()` finds them.
-
-| Expression | 0.x | 1.x | To keep the old result |
-| --- | --- | --- | --- |
-| `round(-2.5)` | `-2` | `-3` | Halves round away from zero, as `toFixed` does. |
-| `round(2.345, 2)` | `2` (digits ignored) | `2.35` | Drop the second argument. |
-| `(1.005).toFixed(2)` | `"1.00"` | `"1.01"` | Rounds the decimal value as written, not its binary approximation. |
-| `avg([])` | `0` | `null` | `avg(xs) ?? 0` |
-| `unique` on lists of maps or lists | compares by reference | compares by value (`==`) | |
-| `diffDays(a, b)` | whole days, always positive | `inDays(a - b)` is fractional and signed | `round(abs(inDays(a - b)))`. At exactly half a day this rounds up in both orders; 0.x rounded 3.5 days apart to 3 when `a` was earlier and to 4 when it was later. |
-| `` `${x}` `` with `x` null | `"null"` | `""` | `` `${x ?? "null"}` `` |
-| `` `${x}` `` with `x` undefined or missing | `"undefined"` | `""` | |
-| `` `${date}` `` | local `Date.toString()` text | ISO-8601 in UTC | `formatDate(date, pattern, zone)` |
-| `` `${list}` ``, `` `${map}` `` | `"1,2"`, `"[object Object]"` | `TYPE_ERROR` | `join(list, ",")` |
-| `toString(null)` | `"null"` | `""` | |
-| `toNumber("")` | `0` | `INVALID_ARGUMENT` | `try(toNumber(s), 0)` |
-| `toNumber("abc")` | `NaN` | `INVALID_ARGUMENT` | `try(toNumber(s), null)` |
-| `toNumber(true)`, `toNumber(null)` | `1`, `0` | check error | `b ? 1 : 0`, `x ?? 0` |
-| `sort` on a list mixing numbers and text | sorted numbers first | `TYPE_ERROR` (a check error when the types are known) | Sort one kind at a time. |
-| `x / 0`, `x % 0` | `Infinity`, `NaN` | `DIVISION_BY_ZERO` | `try(x / y, 0)` |
-| `"a" + 1`, `null + 1` | `"a1"`, `1` | `TYPE_ERROR` | `` `a${1}` ``, `(x ?? 0) + 1` |
-| `x == null` with `x` missing | `false` | `true` | |
-| `[1] == [1]` | `false` | `true` | |
-| `null < 1` | `true` | `false` | |
-| `0 \|\| "d"` | `"d"` | `TYPE_ERROR` | `x ?? "d"` for defaults, or an explicit test |
-| `nums.toSorted()` with `nums` = `[10, 9, 1, 100]` | `[1, 10, 100, 9]` (text order, as JavaScript) | `[1, 9, 10, 100]` | Sort text with `map(toString(.)).sort()`. |
-| `ll.includes([1])`, `ll.indexOf([2])`, `[1] in ll`, `objs.includes({ a: 1 })` | `false`, `-1`, `false`, `false` (by reference) | `true`, `1`, `true`, `true` (by value) | |
-| `d1 == d2`, two `Date`s at the same instant | `false` (different objects) | `true` | |
-| `"abc".replace("b", "$&$&")` | `"abbc"` (`$&`, `$$`, and `` $` ``/`$'` patterns expand) | `"a$&$&c"` (replacement text is literal) | Build the text: `` s.replace("b", `${x}${x}`) `` |
-| `"hello".substring(3, 1)` → `slice(3, 1)` | `"el"` (arguments swapped) | `""` | `slice(min(i, j), max(i, j))` |
-| `"hello".substring(-2)` → `slice(-2)` | `"hello"` (negative treated as 0) | `"lo"` (counts from the end) | `slice(max(i, 0))` |
-| `"hello".charAt(10)` → `at(10)` | `""` | `null` | `at(i) ?? ""` |
-| `"hello".charAt(-1)` → `at(-1)` | `""` | `"o"` (counts from the end) | `i < 0 ? "" : at(i) ?? ""` |
-| A host `Map`, `Set`, or `RegExp` in the context | read through its prototype: `m.size`, `re.source`, even `m.get` as a function | an opaque value; reading any property is a `TYPE_ERROR` | Pass plain objects, arrays, and values (`m.size` as a number). |
-
-<!-- context: { x: null, xs: [], d: new Date("2026-01-02T03:04:05Z") } -->
-```bonsai
-round(-2.5) // => -3
-round(2.345, 2) // => 2.35
-(1.005).toFixed(2) // => "1.01"
-avg(xs) ?? 0 // => 0
-[{ a: 1 }, { a: 1 }].unique().length // => 1
-`${x}` // => ""
-`${d}` // => "2026-01-02T03:04:05.000Z"
-try(toNumber(""), 0) // => 0
-5 % 0 // error: DIVISION_BY_ZERO
-```
-
-## Semantics that changed
-
-**`== null` includes missing values.** In 0.x `==` was JavaScript `===`, so a missing property (`undefined`) was not equal to `null`. Now every absent value is `null`:
-
-<!-- context: { user: { name: "Ada" } } -->
-```bonsai
-user.middleName == null // => true
-```
-
-**`==` compares by value.** Lists and maps compare deeply; in 0.x they compared by reference.
-
-<!-- context: {} -->
-```bonsai
-[1, 2] == [1, 2] // => true
-```
-
-**Booleans are strict.** `&&`, `||`, `!`, and `?:` accept booleans and `null` (as `false`). In 0.x they followed JavaScript truthiness and `a || b` returned `a` itself. Replace `name || "Anonymous"` with `name ?? "Anonymous"`, and `items.length && ...` with `items.length > 0 && ...`.
-
-<!-- context: { name: null, items: [] } -->
-```bonsai
-name ?? "Anonymous" // => "Anonymous"
-items.length > 0 && items[0] == 1 // => false
-name || "Anonymous" // error: TYPE_ERROR
-```
-
-**No coercion.** `"a" + 1` and `null + 1` are errors. Use a template for text (`` `a${1}` ``) and `??` for defaults.
-
-**No `NaN` or `Infinity`.** Division and remainder by zero are `DIVISION_BY_ZERO` errors instead of `Infinity` and `NaN`, and any computation that would produce a non-finite number is a `NON_FINITE` error. Wrap with `try(expr, fallback)` if a default is wanted.
-
-**Comparisons with `null` are `false`.** `null < 1` is `false`, not `true` as in JavaScript.
-
-**Dates are timestamps.** A `Date` in the context is a timestamp, and arithmetic uses durations (`days(3)`, `hours(1)`). Numbers are not treated as dates; convert epoch milliseconds with `timestamp(ms)`.
-
-**Lambdas are type-directed.** `.` binds to the nearest enclosing argument whose parameter is a function, so an expression such as `items.filter(.price > max(.bonus, 10))` now works: `.bonus` belongs to the item. In 0.x the shorthand could not be passed into another call.
-
-**Only plain data is navigable.** Plain objects and class instances are read through their own properties. In 0.x, built-in objects were also read through their prototypes (`m.size`, `re.source`). Now `Map`, `Set`, `RegExp`, promises, typed arrays, errors, and boxed primitives are opaque: they can be compared and passed to host functions, but reading a property of one is a `TYPE_ERROR`. Convert them to plain objects and arrays before evaluating.
+1. Upgrade to Node.js 22 or newer.
+2. Replace the instance setup with `bonsai({ ... })` and move functions into `functions` with `fn`.
+3. Run `env.check()` over your stored expressions. Syntax errors point at `|>` and removed names; check errors point at type problems and undeclared names.
+4. Rewrite pipes as method calls and rename functions using the [Expressions](#expressions) table.
+5. Review expressions that relied on truthiness (`||` for defaults, numbers or strings as conditions), on `undefined`, and on the [results that changed](#results-that-changed).
+6. Add `variables` declarations with `t` to get type errors and editor completions, and `validateContext: true` if the context comes from outside your code.
 
 ## API
 
@@ -196,7 +81,7 @@ Syntax tree node types were renamed and regrouped. Code that walks trees needs u
 | `maxDepth` (evaluation depth, default 100) | `limits.maxDepth` limits syntax nesting (default 128). Nesting of values is `limits.maxValueDepth` (default 64). |
 | `maxArrayLength` | `limits.maxListLength` |
 | `maxStringLength` | `limits.maxStringLength` |
-| none | `maxSourceLength`, `maxNodes`, `maxSteps`, `maxPatternLength`. See [Limits](/api/limits). |
+| none | `maxSourceLength` (default 100,000), `maxNodes` (20,000), `maxSteps` (1,000,000), and `maxPatternLength` (4,096), all on by default, so an expression that ran over large data in 0.x can now stop with a limit error. See [Limits](/api/limits). |
 
 ### Errors
 
@@ -254,11 +139,118 @@ env.evaluateSync('hasPermission("admin") ? total.discount(0.1) : total', {
 
 Declared parameter and result types mean the checker rejects `discount("a", 1)` before it runs, arguments are validated before your code is called, and a result of the wrong type is a `HOST_CONTRACT` error instead of propagating. In 0.x an async function could be called from `evaluate()` without being declared; in 1.x add `async: true`, and `evaluateSync()` rejects expressions that call it before any host code runs.
 
-## Suggested order
+## Expressions
 
-1. Upgrade to Node.js 22 or newer.
-2. Replace the instance setup with `bonsai({ ... })` and move functions into `functions` with `fn`.
-3. Run `env.check()` over your stored expressions. Syntax errors point at `|>` and removed names; check errors point at type problems and undeclared names.
-4. Rewrite pipes as method calls and rename functions using the tables above.
-5. Review expressions that relied on truthiness (`||` for defaults, numbers or strings as conditions), on `undefined`, and on the [results that changed](#results-that-changed).
-6. Add `variables` declarations with `t` to get type errors and editor completions, and `validateContext: true` if the context comes from outside your code.
+| 0.x | 1.x | Notes |
+| --- | --- | --- |
+| `name \|> trim \|> upper` | `name.trim().toUpperCase()` | `\|>` is reserved and is a syntax error in 1.x. |
+| `a \|> f(b)` | `a.f(b)` or `f(a, b)` | Every function is also a method. |
+| `upper`, `lower` | `toUpperCase`, `toLowerCase` | JavaScript names. |
+| `flatten` | `flat` | |
+| `x \|> isString`, `x \|> isNumber`, `x \|> isArray` | `type(x) == "string"`, `"number"`, `"list"` | `type()` returns the kind of any value. |
+| `x \|> isNull` | `x == null` | Also true when `x` is missing. |
+| `x \|> toBool` | an explicit test, for example `x != ""` or `x > 0` | Booleans are strict. |
+| `a \|> diffDays(b)` (epoch milliseconds) | `round(abs(inDays(timestamp(a) - timestamp(b))))` | Subtracting timestamps gives a signed, fractional duration. See [Results that changed](#results-that-changed). |
+| `now()` (epoch milliseconds) | `now()` (a timestamp) | Compare with `now() - t > days(30)`. |
+| `ts \|> formatDate("YYYY-MM-DD")` | `formatDate(timestamp(ts), "yyyy-MM-dd")` | Takes a timestamp, not epoch milliseconds (`timestamp(ts)` converts them). Tokens are `yyyy MM dd HH mm ss SSS` (and more); an optional time zone argument is accepted. |
+| `xs \|> filter`, `xs \|> some`, `xs \|> every` (no argument, by truthiness) | `xs.filter(. != null)`, `flags.some(.)`, `flags.every(.)` | Lambdas are required. `.` alone works for lists of booleans; for other lists write the test. |
+| `undefined` | `null` | There is no `undefined` literal. |
+| `substring(i, j)` | `slice(i, j)` | The same for `0 <= i <= j`. `slice` does not swap reversed arguments and counts negative positions from the end. See [Results that changed](#results-that-changed). |
+| `charAt(i)` | `at(i)` | `at` gives `null` past the end and counts negative positions from the end. |
+| `concat` | `+` | |
+| `toSorted()`, `toReversed()` | `sort()`, `reverse()` | They never mutate, so the `to` prefix is not needed. `sort()` orders numbers numerically. |
+| `toSpliced(i, n)` | `xs.slice(0, i) + xs.slice(i + n)` | |
+| `with(i, v)` | `xs.slice(0, i) + [v] + xs.slice(i + 1)` | |
+| `charCodeAt(i)` | none | Declare a host function if you need code points. |
+| `+x` (unary plus) | `toNumber(x)` | There is no unary plus. |
+| `indexOf(s, from)`, `includes(s, from)`, `startsWith(s, from)` | `let i = x.slice(from).indexOf(s); i < 0 ? -1 : i + from`, `slice(from).includes(s)`, `slice(from).startsWith(s)` | The position argument is gone; the checker reports the extra argument. |
+| `endsWith(s, length)`, `lastIndexOf(s, from)`, `flat(depth)` | `slice(0, length).endsWith(s)`, `slice(0, from + s.length).lastIndexOf(s)` (for a list, `slice(0, from + 1)`), `flat()` once per level | The extra argument is gone; the checker reports it. |
+| `toString(16)`, `split()` with no separator | a host function; `[s]` | Radix and whole-string split are gone; the checker reports both. |
+| `slice()`, `at()`, `toFixed()` with no argument | `slice(0)`, `at(0)`, `toFixed(0)` | The argument is required; the checker reports the call. |
+
+<!-- context: { a: 1767484800000, b: 1767229200000, xs: [1, 2, 3], flags: [false, true], items: [1, null, 2] } -->
+```bonsai
+round(abs(inDays(timestamp(a) - timestamp(b)))) // => 3
+xs.slice(0, 1) + xs.slice(2) // => [1, 3]
+xs.slice(0, 1) + [9] + xs.slice(2) // => [1, 9, 3]
+flags.some(.) // => true
+items.filter(. != null) // => [1, 2]
+```
+
+## Results that changed
+
+These expressions give different results in the two versions. The table writes them in 1.x syntax; in 0.x, functions such as `round`, `avg`, `toNumber`, and `toString` were pipe transforms (`-2.5 |> round`). Most run without any error in 1.x, so the checker cannot flag them; search stored expressions for the functions involved. Rows whose 1.x column is a check error are the exception, and `env.check()` finds them.
+
+| Expression | 0.x | 1.x | To keep the old result |
+| --- | --- | --- | --- |
+| `round(-2.5)` | `-2` | `-3` | Halves round away from zero, as `toFixed` does. |
+| `round(2.345, 2)` | `2` (digits ignored) | `2.35` | Drop the second argument. |
+| `(1.005).toFixed(2)` | `"1.00"` | `"1.01"` | Rounds the decimal value as written, not its binary approximation. |
+| `avg([])` | `0` | `null` | `avg(xs) ?? 0` |
+| `unique` on lists of maps or lists | compares by reference | compares by value (`==`) | |
+| `diffDays(a, b)` | whole days, always positive | `inDays(a - b)` is fractional and signed | `round(abs(inDays(a - b)))`. At exactly half a day this rounds up in both orders; 0.x rounded 3.5 days apart to 3 when `a` was earlier and to 4 when it was later. |
+| `` `${x}` `` with `x` null | `"null"` | `""` | `` `${x ?? "null"}` `` |
+| `` `${x}` `` with `x` undefined or missing | `"undefined"` | `""` | |
+| `` `${date}` `` | local `Date.toString()` text | ISO-8601 in UTC | `formatDate(date, pattern, zone)` |
+| `` `${list}` ``, `` `${map}` `` | `"1,2"`, `"[object Object]"` | `TYPE_ERROR` | `join(list, ",")` |
+| `toString(null)` | `"null"` | `""` | |
+| `toNumber("")` | `0` | `INVALID_ARGUMENT` | `try(toNumber(s), 0)` |
+| `toNumber("abc")` | `NaN` | `INVALID_ARGUMENT` | `try(toNumber(s), null)` |
+| `toNumber(true)`, `toNumber(null)` | `1`, `0` | check error | `b ? 1 : 0`, `x ?? 0` |
+| `sort` on a list mixing numbers and text | sorted numbers first | `TYPE_ERROR` (a check error when the types are known) | Sort one kind at a time. |
+| `x / 0`, `x % 0` | `Infinity`, `NaN` | `DIVISION_BY_ZERO` | `try(x / y, 0)` |
+| `"a" + 1`, `null + 1` | `"a1"`, `1` | `TYPE_ERROR` | `` `a${1}` ``, `(x ?? 0) + 1` |
+| `x == null` with `x` missing | `false` | `true` | |
+| `[1] == [1]` | `false` | `true` | |
+| `null < 1` | `true` | `false` | |
+| `0 \|\| "d"` | `"d"` | `TYPE_ERROR` | `x ?? "d"` for defaults, or an explicit test |
+| `nums.toSorted()` with `nums` = `[10, 9, 1, 100]` | `[1, 10, 100, 9]` (text order, as JavaScript) | `[1, 9, 10, 100]` | Sort text with `map(toString(.)).sort()`. |
+| `ll.includes([1])`, `ll.indexOf([2])`, `[1] in ll`, `objs.includes({ a: 1 })` | `false`, `-1`, `false`, `false` (by reference) | `true`, `1`, `true`, `true` (by value) | |
+| `d1 == d2`, two `Date`s at the same instant | `false` (different objects) | `true` | |
+| `"abc".replace("b", "$&$&")` | `"abbc"` (`$&`, `$$`, and `` $` ``/`$'` patterns expand) | `"a$&$&c"` (replacement text is literal) | Build the text: `` s.replace("b", `${x}${x}`) `` |
+| `"hello".substring(3, 1)` → `slice(3, 1)` | `"el"` (arguments swapped) | `""` | `slice(min(i, j), max(i, j))` |
+| `"hello".substring(-2)` → `slice(-2)` | `"hello"` (negative treated as 0) | `"lo"` (counts from the end) | `slice(max(i, 0))` |
+| `"hello".charAt(10)` → `at(10)` | `""` | `null` | `at(i) ?? ""` |
+| `"hello".charAt(-1)` → `at(-1)` | `""` | `"o"` (counts from the end) | `i < 0 ? "" : at(i) ?? ""` |
+| `filter`, `map`, and `sum` over about 100,000 records | ran | `STEP_LIMIT` at the default budget | Raise `limits.maxSteps` (see [What fits in the default budget](/guide/performance#what-fits-in-the-default-budget)). |
+| A host `Map`, `Set`, or `RegExp` in the context | read through its prototype: `m.size`, `re.source`, even `m.get` as a function | an opaque value; reading any property is a `TYPE_ERROR` | Pass plain objects, arrays, and values (`m.size` as a number). |
+
+<!-- context: { x: null, xs: [], d: new Date("2026-01-02T03:04:05Z") } -->
+```bonsai
+round(-2.5) // => -3
+round(2.345, 2) // => 2.35
+(1.005).toFixed(2) // => "1.01"
+avg(xs) ?? 0 // => 0
+[{ a: 1 }, { a: 1 }].unique().length // => 1
+`${x}` // => ""
+`${d}` // => "2026-01-02T03:04:05.000Z"
+try(toNumber(""), 0) // => 0
+5 % 0 // error: DIVISION_BY_ZERO
+```
+
+## Semantics that changed
+
+The rules behind the [results that changed](#results-that-changed); the table shows the expressions each one affects.
+
+**`== null` includes missing values.** In 0.x `==` was JavaScript `===`, so a missing property (`undefined`) was not equal to `null`. Now every absent value is `null`.
+
+**`==` compares by value.** Lists and maps compare deeply; in 0.x they compared by reference.
+
+**Booleans are strict.** `&&`, `||`, `!`, and `?:` accept booleans and `null` (as `false`). In 0.x they followed JavaScript truthiness and `a || b` returned `a` itself. Replace `name || "Anonymous"` with `name ?? "Anonymous"`, and `items.length && ...` with `items.length > 0 && ...`.
+
+<!-- context: { name: null, items: [] } -->
+```bonsai
+name ?? "Anonymous" // => "Anonymous"
+items.length > 0 && items[0] == 1 // => false
+name || "Anonymous" // error: TYPE_ERROR
+```
+
+**No coercion, no `NaN` or `Infinity`.** `"a" + 1` and `null + 1` are errors (use a template for text and `??` for defaults). Division and remainder by zero are `DIVISION_BY_ZERO` errors, and any other non-finite result is `NON_FINITE`.
+
+**Comparisons with `null` are `false`**, not `true` as in JavaScript.
+
+**Dates are timestamps.** A `Date` in the context is a timestamp, and arithmetic uses durations (`days(3)`, `hours(1)`). Numbers are not treated as dates; convert epoch milliseconds with `timestamp(ms)`.
+
+**Lambdas are type-directed.** `.` binds to the nearest enclosing argument whose parameter is a function, so an expression such as `items.filter(.price > max(.bonus, 10))` now works: `.bonus` belongs to the item. In 0.x the shorthand could not be passed into another call.
+
+**Only plain data is navigable.** Plain objects and class instances are read through their own properties. In 0.x, built-in objects were also read through their prototypes (`m.size`, `re.source`). Now `Map`, `Set`, `RegExp`, promises, typed arrays, errors, and boxed primitives are opaque: they can be compared and passed to host functions, but reading a property of one is a `TYPE_ERROR`. Convert them to plain objects and arrays before evaluating.

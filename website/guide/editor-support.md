@@ -13,7 +13,7 @@ const env = bonsai({
     user: t.object({ name: t.string(), email: t.optional(t.string()) }),
     orders: t.list(t.object({ id: t.string(), total: t.number(), paid: t.boolean() })),
   },
-  strict: true,
+  strict: true, // the default when variables are declared
 })
 
 const service = createLanguageService(env)

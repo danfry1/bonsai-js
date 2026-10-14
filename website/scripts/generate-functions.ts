@@ -28,7 +28,7 @@ const AREAS: Area[] = [
     file: 'text',
     title: 'Text',
     intro:
-      'Functions over strings. Positions and lengths count UTF-16 code units, as in JavaScript. `includes`, `indexOf`, `replace`, and `replaceAll` match literal text; `matches` tests a regular expression.',
+      'Functions over strings. Positions and lengths count UTF-16 code units, as in JavaScript. `includes`, `indexOf`, `replace`, and `replaceAll` match literal text; `matches` tests a regular expression (see [Regular expressions](/language/functions#regular-expressions) for the syntax it accepts).',
     names: [
       'toUpperCase', 'toLowerCase', 'trim', 'trimStart', 'trimEnd', 'startsWith', 'endsWith',
       'includes', 'indexOf', 'lastIndexOf', 'slice', 'split', 'replace', 'replaceAll',

@@ -14,22 +14,21 @@ const env = bonsai({
 })
 const rule = env.compile('user.plan == "pro" && order.total > limits.minTotal')
 
-rule.partial({ user: { plan: 'free' }, limits: { minTotal: 100 } })
-// { status: 'value', value: false }
+rule.partial({ user: { plan: 'free' }, limits: { minTotal: 100 } }) // => { status: "value", value: false }
 
 const result = rule.partial({ user: { plan: 'pro' }, limits: { minTotal: 100 } })
-result.status // 'residual'
+result.status // => "residual"
 if (result.status === 'residual') {
-  result.source // 'order.total > 100'
-  result.dependsOn // ['order.total']
-  result.evaluateSync({ order: { total: 150 } }) // true
+  result.source // => 'order.total > 100'
+  result.dependsOn // => ["order.total"]
+  result.evaluateSync({ order: { total: 150 } }) // => true
 }
 ```
 
 ## Uses
 
 - **Decide early.** A `value` result means no value of the missing data changes the outcome (a free user never passes this rule). With `validateContext`, data that is never read is never validated, so a decided value (or a residual on the full context) does not check it either.
-- **Precompute.** Evaluate the per-tenant or per-user part of a rule once, keep the result, and evaluate only the per-request part later. A residual does less of the expression's own work than the original program. With `validateContext`, a residual whose `readsContext` is `true` still validates the whole context on every evaluation, as the program does, so it saves little; see the last points below.
+- **Precompute.** Evaluate the per-tenant or per-user part of a rule once, keep the result, and evaluate only the per-request part later. A residual does less of the expression's own work than the original program. With `validateContext`, a residual whose `readsContext` is `true` still validates the whole context on every evaluation, as the program does, so it saves little; see [Validation](#validation).
 - **Push filters down.** [`toSQL` and `toMongo`](./query) run this partial evaluation for you: pass the original program with the known values in `known`, and the part that reads the record becomes a database query.
 
 ## Results
@@ -38,18 +37,35 @@ if (result.status === 'residual') {
 |---|---|
 | `value` | The known data decides the result: `value` |
 | `error` | Evaluation fails whatever the unknown data is: `error` |
-| `residual` | `ast` (syntax tree; see Offsets below), `source`, `bindings`, `dependsOn` (the context paths the residual reads; for `x.length`, the path of `x`), `hostFunctions` (host functions the residual still calls), `readsContext` (whether one of them is declared `call: true`, so it reads the whole context you pass, not only `dependsOn`), and `evaluateSync(context, options?)` / `evaluate(context, options?)`, which take the same evaluation options as a program (`timeout`, `maxSteps`, `signal`, `now`); `context` is typed as any part of the program's context, so a misspelled variable does not compile. `explainSync(context, options?)` / `explain(context, options?)` [explain](/api/explain) the residual the same way: each trace node's text is the residual's own (printed) text, and its offsets refer to the original expression (0 for values filled in from the known data) |
+| `residual` | The expression still needs the unknown data: the fields below |
+
+A residual result has these fields:
+
+| Field | Meaning |
+|---|---|
+| `ast` | The residual's syntax tree (see [Offsets](#offsets)) |
+| `source` | The residual as source text |
+| `bindings` | Known values the residual refers to by name (see [Bindings](#bindings)) |
+| `dependsOn` | The context paths the residual reads; for `x.length`, the path of `x` |
+| `hostFunctions` | Host functions the residual still calls |
+| `readsContext` | Whether one of them is declared `call: true`, so it reads the whole context you pass, not only `dependsOn` |
+| `async` | Whether the residual calls an async host function (`evaluateSync` rejects it) |
+| `type` | The program's inferred result type, which the residual's result also has |
+| `evaluateSync(context, options?)`, `evaluate(context, options?)` | Evaluate the residual, with the same evaluation options as a program (`timeout`, `maxSteps`, `signal`, `now`, `validateContext`). `context` is typed as any part of the program's context, so a misspelled variable does not compile |
+| `explainSync(context, options?)`, `explain(context, options?)` | [Explain](/api/explain) the residual the same way: each trace node's text is the residual's own (printed) text, and its offsets refer to the original expression |
 
 The residual is exact: evaluating it with the full data gives the same value or error as evaluating the original expression with the full data. Simplifications that would change a result (for example turning `x && false` into `false` when `x` could fail) are not made. Two things hold this promise to the data you pass:
 
 - **The context must agree with `known`.** A residual checks that a variable `known` gave is present when it calls a `call: true` function, but not that its value is the one `partial()` saw. A context whose known parts differ (a `user.role` of `"admin"` where `known` had `"viewer"`) gives results the original expression could never produce, mixing the folded values with the ones you pass.
-- **With `validateContext`, only what is read is validated.** The program validates the whole context; a residual validates the data it reads (see the last points below). Data the residual never reads, such as an ill-typed variable the known data made unnecessary, is not validated, so the residual can return a value where the program raises `INVALID_CONTEXT`.
+- **With `validateContext`, only what is read is validated.** The program validates the whole context; a residual validates the data it reads (see [Validation](#validation)). Data the residual never reads, such as an ill-typed variable the known data made unnecessary, is not validated, so the residual can return a value where the program raises `INVALID_CONTEXT`.
 
-**Offsets.** The `start` and `end` of the nodes in `ast`, of a residual's trace nodes, and of its errors refer to the original expression, not to `source`: a part kept from the program has its span there, and a value filled in from the known data has `start` and `end` 0. A residual's errors carry the original expression as their `source`, so their position and code frame point into it. These offsets may become more precise in a minor release.
+### Offsets
+
+The `start` and `end` of the nodes in `ast`, of a residual's trace nodes, and of its errors refer to the original expression, not to `source`: a part kept from the program has its span there, and a value filled in from the known data has `start` and `end` 0. A residual's errors carry the original expression as their `source`, so their position and code frame point into it. These offsets may become more precise in a minor release.
 
 ## Bindings
 
-Short primitives (numbers, booleans, `null`, strings up to 16 characters) are written into the residual. Other known values, such as longer strings, lists, maps, dates, and durations, are kept in `result.bindings` (the values you passed, not copies; see below) and named in the residual (`order.sku in __known1`); a value used in several places is bound once. `result.evaluateSync(context)` and `result.evaluate(context)` supply the bindings for you; to store a residual instead, see Storing a residual below.
+Short primitives (numbers, booleans, `null`, strings up to 16 characters) are written into the residual. Other known values, such as longer strings, lists, maps, dates, and durations, are kept in `result.bindings` (the values you passed, not copies; see below) and named in the residual (`order.sku in __known1`); a value used in several places is bound once. `result.evaluateSync(context)` and `result.evaluate(context)` supply the bindings for you; to store a residual instead, see [Storing a residual](#storing-a-residual).
 
 ## Options
 
@@ -76,10 +92,8 @@ Budget limits (steps, time, cancellation) are thrown from `partial()` rather tha
 - **The residual reads your context as it is.** The bindings are compiled into the residual, so evaluating it copies nothing: variables and getters read your own object, and only the ones the residual reads. When `readsContext` is `false`, pass at least every path in `dependsOn`; a part that always fails stays in the residual and reads the known variables again (see the first point).
 - **Bindings are shared with `known`.** `partial()` reads `known` when it is called, and the values it binds are your own objects, not copies (so class instances, `Map`s, and arrays keep what they are). Do not change the known data afterwards: a residual whose decision used `config.threshold` and whose binding is `config.allowed` would mix the old threshold with the new list. When the data changes, call `partial()` again, and key cached residuals by the configuration's version. To guard against changes in place, pass a deep-frozen copy (`structuredClone` does not keep `Duration` or other class instances: they come back as plain objects, which the language reads as maps, so a duration field stops comparing as a duration). Host functions must not change their arguments either: a residual reuses its bound values on every evaluation.
 - **`call: true` functions read the context you pass** (`readsContext` is `true`). `call.context` is exactly that object, as in a program evaluation, so pass the full context, known values included. Their reads are not visible in `dependsOn`, so a context missing a variable that `known` gave (and `unknown` did not list whole; in a strict environment, only declared variables count) is an `INVALID_CONTEXT` error before anything runs. A variable you pass only part of is read as you pass it, as a program would read it.
-- **With `validateContext`, a residual validates what it reads.** Everything the residual folded in was validated by `partial()`. When `readsContext` is `false`, the residual validates each path in `dependsOn` step by step, each step against its own declared type: an absent or `null` value passes only where that type allows `null` (a required object that is missing fails, and so does a missing required field of an object that is present), a key an object type does not declare and a record entry that is absent end the check, and the value at the end of the path is checked whole. Fields the path does not name are not checked, so a context holding exactly `dependsOn` passes. When `readsContext` is `true`, it validates the whole context, as a program does, on every evaluation; when your own code builds or has already validated that context (a tenant configuration validated once by `partial()`, plus request data you validate yourself), pass `validateContext: false` to the residual's evaluation to skip it. For a large configuration this is the difference between paying the full validation on each request and almost nothing.
 - **Explaining a residual explains the residual.** Its trace and `reasons()` cover the residual's own conditions, with known values shown as the `__known` names of their bindings; the conditions the known data decided are gone. For a screen that answers "why did this user get this result", explain the full program with the full context instead. Explaining a residual costs the steps evaluating it does, so a budget that fits one fits the other.
 - **Residual size is limited.** Printing the residual counts toward the step budget, and a residual longer than the environment's `maxSourceLength` is a `SOURCE_TOO_LONG` limit error thrown from `partial()`.
-- **Storing a residual.** `result.evaluateSync` and `result.evaluate` are the reliable way to run it; keep the result in memory where you can. If you store `source` and `bindings` and compile them yourself, use a non-strict environment (the binding names are not declared variables) and pass the bindings in the context. Bindings are your known values: JSON turns a date or a duration into ISO-8601 text, so restore dates with `new Date(text)` (or store bindings in a format that keeps them) before evaluating. Inlined values can also make a type error in an untaken branch visible to the checker.
 
 A deep-frozen copy of a configuration keeps its dates and durations as they are:
 
@@ -96,3 +110,10 @@ function deepFreeze<T>(value: T): T {
 const residual = rule.partial({ tenant: deepFreeze(loadTenantConfig()) })
 ```
 
+### Validation
+
+With `validateContext`, a residual validates what it reads. Everything the residual folded in was validated by `partial()`. When `readsContext` is `false`, the residual validates each path in `dependsOn` step by step, each step against its own declared type: an absent or `null` value passes only where that type allows `null` (a required object that is missing fails, and so does a missing required field of an object that is present), a key an object type does not declare and a record entry that is absent end the check, and the value at the end of the path is checked whole. Fields the path does not name are not checked, so a context holding exactly `dependsOn` passes. When `readsContext` is `true`, it validates the whole context, as a program does, on every evaluation; when your own code builds or has already validated that context (a tenant configuration validated once by `partial()`, plus request data you validate yourself), pass `validateContext: false` to the residual's evaluation to skip it. For a large configuration this is the difference between paying the full validation on each request and almost nothing.
+
+### Storing a residual
+
+`result.evaluateSync` and `result.evaluate` are the reliable way to run it; keep the result in memory where you can. If you store `source` and `bindings` and compile them yourself, use a non-strict environment (the binding names are not declared variables) and pass the bindings in the context. Bindings are your known values: JSON turns a date or a duration into ISO-8601 text, so restore dates with `new Date(text)` (or store bindings in a format that keeps them) before evaluating. Inlined values can also make a type error in an untaken branch visible to the checker.
