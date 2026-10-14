@@ -30,6 +30,7 @@ Bonsai is not a general-purpose language. There are no loops, no recursion, no a
 - Read the [Mental Model](/guide/mental-model): the handful of rules that differ from JavaScript.
 - Browse the [language reference](/language/) and the [built-in functions](/functions/).
 - Try expressions in the [Playground](/playground).
+- Choosing a library? See how Bonsai [compares with others](/guide/comparison), including where another library is the better fit.
 - Upgrading? See [Migrating from 0.x](/guide/migrating).
 
 ## Common tasks

@@ -17,26 +17,52 @@
 
 A small, safe, typed expression language for rules, filters, formulas, and templates that people other than your developers write. Zero dependencies, runs in any modern JavaScript runtime, and never executes JavaScript.
 
+**Who it's for:** teams whose customers, admins, or operations staff write logic into the product (eligibility and pricing rules, saved filters, formula fields, notification templates) and who need to reject a broken rule when it is saved, explain its result, and run it safely.
+
 ```ts
 import { bonsai, t } from 'bonsai-js'
 
 const env = bonsai({
-  variables: {
-    user: t.object({ age: t.number(), plan: t.enum('free', 'pro'), tags: t.list(t.string()) }),
-    orders: t.list(t.object({ total: t.number(), paid: t.boolean(), created: t.timestamp() })),
-  },
+  variables: { user: t.object({ age: t.number(), plan: t.enum('free', 'pro') }) },
 })
 
-const rule = env.compile(
-  'user.plan == "pro" && orders.filter(.paid && now() - .created < days(30)).map(.total).sum() > 100',
-  { expect: t.boolean() },
-)
+// Reject a broken rule when it is saved, before it ever runs.
+// Its message: Property "agee" does not exist on user; did you mean "age"?
+const [problem] = env.check('user.agee >= 18').diagnostics
+problem?.suggestion // => "age"
 
-rule.evaluateSync({
-  user: { age: 36, plan: 'pro', tags: [] },
-  orders: [{ total: 150, paid: true, created: new Date() }],
-}) // => true
+const rule = env.compile('user.age >= 18 && user.plan == "pro"', { expect: t.boolean() })
+rule.evaluateSync({ user: { age: 36, plan: 'pro' } }) // => true
+
+// Show the author why it was rejected
+const why = rule.explainSync({ user: { age: 16, plan: 'free' } }, { exhaustive: true })
+why.reasons().map((r) => r.text) // => ["user.age >= 18", "user.plan == \"pro\""]
 ```
+
+Try it in the [Playground](https://danfry1.github.io/bonsai-js/playground).
+
+## Why Bonsai
+
+- **Familiar.** JavaScript syntax and JavaScript names: `a.b`, `?.`, `??`, templates, `filter`, `map`, `includes`, `toUpperCase`. Every function also works as a method, so `sum(xs)` and `xs.sum()` are the same call.
+- **Mistakes are caught when a rule is saved, not in production.** Declare your data once with `t`: `user.agee >= 18` is rejected with `did you mean "age"?` and an exact source range, and `user.nick.toUpperCase()` on an optional field is flagged as possibly null. TypeScript types for the context and result come from the same declaration.
+- **Every result can be explained.** `explain()` records the value of every sub-expression, and `reasons()` returns the conditions that decided the result, so a "why was this rejected" screen can list `user.age >= 18` and `user.plan == "pro"`.
+- **Safe by construction, and every evaluation is bounded.** No prototype access, no globals, no calling functions found in data, no conversion hooks, no mutation: `user.constructor` is rejected when the expression is parsed. A deterministic step budget is on by default and charges each operation for the work it does (including text search, regular expressions, sorting, and time zone math), so three nested `map` calls over a 1,000-item list stop with `STEP_LIMIT` within milliseconds. Produced strings, lists, and nested values are size-limited (`"x".repeat(1000000000)` fails with `STRING_LIMIT`), and `matches()` runs in linear time, so `(a+)+$` cannot hang. A timeout and an `AbortSignal` bound time spent waiting on your own host functions.
+- **One rule, three places to run it.** `partial()` evaluates what it can and returns the rest: knowing only `{ user: { plan: "pro" } }`, `user.plan == "pro" && order.total > 100` becomes `order.total > 100`. `bonsai-js/query` turns that into a parameterized SQL `WHERE` clause (Postgres, SQLite) or a MongoDB filter.
+- **Editor-ready.** `bonsai-js/service` provides completions (after `user.` it offers `age` and `plan`, then the methods that apply), hover types, and diagnostics without evaluating anything.
+- **Fast.** Expressions compile to closures once (no `eval`, CSP-safe). A typical rule evaluates about 10 million times per second on Node, 1.1x to 2.8x faster than `@marcbachmann/cel-js` on the same workloads (`bun run bench` reproduces this with `benchmarks/vs-cel.bench.ts`).
+
+## Compared with other libraries
+
+| | Bonsai | cel-js | zen-engine | json-rules-engine | json-logic-js | jsonata | jexl |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Rules are | text, JS-like | text, CEL | text and JSON decisions | JSON | JSON | text | text, JS-like |
+| Browser size (min+gzip) | 67.6 KB | 24.3 KB | 4.1 KB JS + 470 KB WASM | 24.3 KB | 2.0 KB | 26.5 KB | 6.1 KB |
+| Type check against a schema | Yes, with suggestions | Yes | Yes | No | No | No | No |
+| Explains results | Yes | No | Per decision node | Per condition | No | No | No |
+| Evaluation budget for untrusted input (as documented) | Yes, on by default | Parse-time limits only | No expression budget | No | No | No | No |
+| SQL or MongoDB translation | Yes | No | No | No | No | No | No |
+
+Bonsai is the largest of these in the browser and the newest. If rules must also run in Go or Java, CEL or ZEN fit better; if rules are JSON produced by a form builder and size matters most, json-logic-js does. The [full comparison](https://danfry1.github.io/bonsai-js/guide/comparison) covers more libraries, throughput, and the method behind every number.
 
 ## Install
 
@@ -48,15 +74,7 @@ This README describes 1.0, which is in release candidate on the `next` tag; `npm
 
 Requires Node.js 22 or newer, current Bun, or a modern browser. The package is ESM; `require('bonsai-js')` works where Node can load ES modules synchronously (22.12 and newer).
 
-In a browser bundle, an app that evaluates expressions adds about 64 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. `bonsai-js/query` and `bonsai-js/service` are separate entry points; the language service on its own is about 44 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.4 KB. CI enforces these budgets (`bun run check:size`).
-
-## Why Bonsai
-
-- **Familiar.** JavaScript syntax and JavaScript names: `a.b`, `?.`, `??`, templates, `filter`, `map`, `includes`, `toUpperCase`. Every function also works as a method, so `sum(xs)` and `xs.sum()` are the same call.
-- **Checked.** Declare your data once with `t` and get errors for typos, wrong types, and possible nulls before an expression is saved, with "did you mean" suggestions and exact source ranges. TypeScript types for the context and result are inferred from the same declaration.
-- **Safe by construction.** No prototype access, no globals, no calling functions found in data, no conversion hooks, no mutation. Every evaluation terminates: a deterministic step budget charges each operation for the work it does (including text search, regular expressions, sorting, and time zone math), and produced strings, lists, and nested values are size-limited. A timeout and an `AbortSignal` bound time spent waiting on your own host functions.
-- **Fast.** Expressions compile to closures once (no `eval`, CSP-safe). A typical rule evaluates about 10 million times per second on Node, 1.1x to 2.8x faster than `@marcbachmann/cel-js` on the same workloads (`bun run bench` reproduces this with `benchmarks/vs-cel.bench.ts`).
-- **Editor-ready.** A language service provides completions (including methods applicable to each type), hover, and diagnostics without evaluating anything.
+In a browser bundle, an app that evaluates expressions adds about 67 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. `bonsai-js/query` and `bonsai-js/service` are separate entry points; the language service on its own is about 46 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets (`bun run check:size`).
 
 ## The language in one screen
 

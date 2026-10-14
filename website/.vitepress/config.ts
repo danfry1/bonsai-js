@@ -60,6 +60,7 @@ export default defineConfig({
           { text: 'Safety', link: '/guide/safety' },
           { text: 'Performance', link: '/guide/performance' },
           { text: 'Editor Support', link: '/guide/editor-support' },
+          { text: 'Compared with Others', link: '/guide/comparison' },
           { text: 'Migrating from 0.x', link: '/guide/migrating' },
           { text: 'Stability Policy', link: '/guide/stability' },
         ],
