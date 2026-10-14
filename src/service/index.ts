@@ -471,7 +471,13 @@ export function createLanguageService(
     visit(analysis.root)
     if (best === undefined) return undefined
     const node: Node = best
-    if (node.type === 'Call' && offset >= node.nameStart && offset <= node.nameEnd) {
+    if (
+      node.type === 'Call' &&
+      node.nameStart !== undefined &&
+      node.nameEnd !== undefined &&
+      offset >= node.nameStart &&
+      offset <= node.nameEnd
+    ) {
       const def = checkEnv.lookup(node.name)
       if (def !== undefined) {
         return {

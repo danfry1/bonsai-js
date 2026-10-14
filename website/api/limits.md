@@ -44,9 +44,9 @@ await env.evaluate('xs.length', { xs: [] }, { timeout: 25, maxSteps: 1_000, sign
 
 ## Steps
 
-The step budget is the main guarantee against expensive expressions. Every operation charges steps in proportion to its real worst-case cost, before it runs:
+The step budget is the main guarantee against expensive expressions. Every operation whose work can grow with its input charges steps in proportion to its real worst-case cost, before it runs. Constant-time operations, such as arithmetic, comparing numbers, reading a property, and a list's `length`, cost nothing: the parse limits bound how many of them an expression contains. What is charged:
 
-- lambda calls, and every element touched by equality, membership, concatenation, spread, and templates;
+- lambda calls, and every element touched by equality, membership, concatenation, spread, templates, and built-ins that walk a list (`sum`, `max`, `slice`, `join`, ...);
 - characters scanned by text functions (`includes`, `indexOf`, `split`, `replace`, comparisons, and sorting of text), including the pattern and text of a search;
 - regular expressions, charged for compiling the pattern and for every step of the match;
 - sorting, charged per comparison and by the size of what is compared;

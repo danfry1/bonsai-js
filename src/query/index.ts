@@ -1765,7 +1765,7 @@ function lower(
     return fail('"in" is translated for known lists and text only', at)
   }
 
-  return pred(result.residual)
+  return pred(result.ast)
 }
 
 // === three-valued lowering ===

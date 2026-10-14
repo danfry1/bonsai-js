@@ -280,9 +280,11 @@ export interface ResidualResult<Ctx = any, R = unknown> {
   /**
    * The simplified expression that still needs the unknown data. Known values
    * that are not short primitives are referenced as variables named in
-   * `bindings` rather than copied into the tree.
+   * `bindings` rather than copied into the tree. Offsets refer to the original
+   * expression, not to `source`: a node kept from the program has its span
+   * there, and a value filled in from the known data has start and end 0.
    */
-  readonly residual: Node
+  readonly ast: Node
   /** The residual as source, for display and storage alongside `bindings`. */
   readonly source: string
   /**
@@ -1111,7 +1113,7 @@ export function partiallyEvaluate<R>(
   // The runners take (context, options) and always return a promise when async.
   return Object.freeze({
     status: 'residual',
-    residual: outcome.node,
+    ast: outcome.node,
     source,
     bindings: frozenBindings,
     dependsOn: sortedDependsOn,

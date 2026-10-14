@@ -2067,7 +2067,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       })
       // A residual is used only through its runner, so no Program is built for
       // it (freezing its type and references would be work on every partial());
-      // its tree is the result's `residual`, and compiles lazily, so it is frozen.
+      // its tree is the result's `ast`, and compiles lazily, so it is frozen.
       deepFreeze(analysis.root)
       return undefined
     }

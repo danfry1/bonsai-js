@@ -57,18 +57,22 @@ To rewrite expressions, such as renaming a field when a schema changes, edit the
 
 <!-- continue -->
 ```ts
-import { formatType, t } from 'bonsai-js'
+import { formatType, isAssignable, t, type Type } from 'bonsai-js'
 
 const order = t.object({ qty: t.number(), price: t.number() })
 const shop = bonsai({ variables: { order, stock: t.object({ qty: t.number() }) } })
 const source = 'order.qty * order.price + stock.qty // per line'
 const checked = shop.check(source)
 
+// The same type: each assignable to the other (`any` is assignable both ways, so exclude it).
+const isOrder = (type: Type): boolean =>
+  type.kind !== 'any' && isAssignable(type, order) && isAssignable(order, type)
+
 const edits: { start: number; end: number }[] = []
 const collect = (node: Node): void => {
   if (node.type === 'Member' && node.name === 'qty' && node.nameStart !== undefined && node.nameEnd !== undefined) {
     const owner = checked.typeOf(node.object)
-    if (owner && formatType(owner) === formatType(order)) edits.push({ start: node.nameStart, end: node.nameEnd })
+    if (owner && isOrder(owner)) edits.push({ start: node.nameStart, end: node.nameEnd })
   }
   forEachChild(node, collect)
 }
@@ -113,4 +117,4 @@ formatType(result.typeOf(qty as Node) ?? t.any()) // => "number"
 
 ## Building trees by hand
 
-`start` and `end` are required on every node, and `nameStart` and `nameEnd` on a `Call`. `print()` does not read them, so a tree built by hand can set them to `0`. `nameStart` and `nameEnd` are optional on a `Member`.
+`start` and `end` are required on every node. `print()` does not read them, so a tree built by hand can set them to `0`. `nameStart` and `nameEnd` are optional on a `Member` and a `Call`: the parser always sets them, and a tree built by hand can leave them out.

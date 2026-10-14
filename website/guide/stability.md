@@ -32,6 +32,18 @@ Bonsai follows Semantic Versioning for its three package entrypoints:
     `expect`.
   - `partial()` is synchronous and keeps its name. An asynchronous variant, if
     one is added, gets a new name rather than changing this one.
+- **Error codes.** The error class and code an expression and input produce
+  do not change in a minor release, except that an error reported as
+  `HOST_ERROR` or `TYPE_ERROR` may get a more specific code. Where the
+  specification does not fix which of several errors is reported (a limit and
+  a runtime error in the same evaluation, say), the one reported may change.
+- **Default limits.** The default values in `limits` are part of the API: a
+  minor release does not lower one except to fix a security problem, and may
+  raise one. Set limits explicitly to pin them.
+- **Offsets.** Spans and offsets (`start`, `end`, `nameStart`, `nameEnd`,
+  `span`) count UTF-16 code units. A `position` is 1-based: `line` counts line
+  feeds (`\n`, so `\r\n` ends one line and a lone `\r` does not end a line),
+  and `column` counts UTF-16 code units from the start of the line.
 - **SQL and MongoDB translation.** A filter that translates selects exactly
   the records Bonsai accepts. The generated text and parameter numbering may
   change in a minor release (for example to use an index), and a filter that
@@ -50,8 +62,10 @@ Bonsai follows Semantic Versioning for its three package entrypoints:
 - **Context validation.** `validateContext` may get stricter in a minor
   release only to reject values the language cannot represent (as it rejects
   `NaN` for a declared number).
-- **Runtimes.** Node.js 22 and newer, current Bun, and modern ESM browsers with
-  ES2022 and `Intl.DateTimeFormat` time zone support.
+- **Runtimes.** The Node.js versions in the release's `engines` field (Node.js
+  22 and newer for 1.0), current Bun, and modern ESM browsers with ES2022 and
+  `Intl.DateTimeFormat` time zone support. The type declarations need
+  TypeScript 5.0 or newer.
 
 ## What may change in a minor release
 
@@ -77,29 +91,45 @@ Bonsai follows Semantic Versioning for its three package entrypoints:
   rather than implementing exported interfaces (such as `Limits`) in full.
   `Environment`, `Program`, `Explanation`, `Trace`, and `LanguageService` are
   for using, not implementing: they may gain members in a minor release.
+  Existing syntax node types may gain fields; a field added to an existing
+  node type is optional in the trees you pass to `print()` and `mapChildren()`.
 - **New variants in exported unions.** This covers syntax node types,
   `BinaryOperator` and `UnaryOperator`, `Type` kinds, `ErrorCode`,
-  `DiagnosticCode`, a diagnostic's `severity`, `LimitName`, `CompletionKind`,
+  `BonsaiErrorName` (a new error class), `DiagnosticCode`, a diagnostic's
+  `severity`, `LimitName`, `CompletionKind`,
   a `Trace`'s `kind`, partial evaluation's `status`, the query `ColumnType` and
   `SQLParam`, `CallStyle`, and the kinds of value a literal node holds. Avoid
   exhaustive switches without a default branch.
 - **More precise static types.** A result type may become narrower when
   inference improves (for example `any` becoming `number`). New warnings may
   appear. New errors appear only for expressions that could not have evaluated
-  successfully.
-- **Messages and performance.** Error and diagnostic wording, benchmark
-  numbers, and internal modules under `src/`. A diagnostic's `suggestion` may
+  successfully. `isAssignable` follows the checker, so its answer for a pair
+  of types may change when the checker improves.
+- **TypeScript types.** The minimum TypeScript version may be raised in a minor
+  release. Declarations that make inferred types more precise (`Infer`,
+  context types, option types) may report new compile errors in code that was
+  already wrong.
+- **Runtime support.** Support for a Node.js release line may be dropped in a
+  minor release once that line has reached its end of life; the `engines`
+  field says which versions a release supports.
+- **Messages, display text, and performance.** Error and diagnostic wording,
+  `formatType()` output, `String(explanation)`, the `formatted` code frame,
+  benchmark numbers, and internal modules under `src/`. Compare types with
+  `isAssignable`, not by their formatted text. A diagnostic's `suggestion` may
   name a different (better) candidate.
 - **Editor results.** The language service's completion items, their details,
   and their order are not covered; they may change to give better suggestions.
 - **Partial-evaluation output.** The residual a `partial()` call produces may
   get simpler, and the names of its bindings (`__known1`) may change. A stored
   residual stays valid as long as its `source` and `bindings` are stored and
-  used together, which is the only supported way to store one.
+  used together, which is the only supported way to store one. The offsets of
+  a residual's nodes, trace entries, and errors refer to the original
+  expression and may become more precise.
 - **Step costs.** The number of steps an operation charges may be adjusted to
   follow its real cost, so an expression close to its `maxSteps` budget may
   start or stop hitting it. Leave headroom in the budgets you set. Within one
-  release the count is deterministic.
+  release the count is deterministic. The default host function `cost` (32
+  steps) follows the same rule.
 
 ## Release discipline
 
