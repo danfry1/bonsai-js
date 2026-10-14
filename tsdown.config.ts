@@ -5,7 +5,7 @@ import { defineConfig } from 'tsdown'
 const DECLARATION_MAP_COMMENT = /\n\/\/# sourceMappingURL=\S+\.d\.mts\.map\s*$/u
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/service/index.ts', 'src/query/index.ts'],
+  entry: ['src/index.ts', 'src/lite/index.ts', 'src/service/index.ts', 'src/query/index.ts'],
   format: 'esm',
   // One output file per source module, so `sideEffects: false` lets bundlers
   // drop whole modules a consumer never reaches (importing only `t` stays ~1 KB).

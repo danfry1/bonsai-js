@@ -27,7 +27,8 @@
  *   6. the language service's diagnostics match check(), and hover matches the
  *      checked type of the node under the cursor;
  *   7. an environment built with extend() or a library checks and evaluates as
- *      the same declarations made by one bonsai() call;
+ *      the same declarations made by one bonsai() call, and so does one from
+ *      bonsai-js/lite (step counts included);
  *   8. a getter in the context or known data that throws (a plain error or a
  *      Bonsai error from elsewhere) is HOST_ERROR in every view, never the
  *      thrown error itself, and partial() agrees with evaluation, inside try()
@@ -78,6 +79,7 @@ import {
   type Program,
   type Type,
 } from '../src/index.js'
+import { bonsai as liteBonsai, type LiteEnvironment } from '../src/lite/index.js'
 import { toMongo, toSQL, type Columns } from '../src/query/index.js'
 import { createLanguageService, type LanguageService } from '../src/service/index.js'
 
@@ -398,6 +400,8 @@ interface EnvConfig {
   readonly env: Environment
   /** The same environment built by one bonsai() call, when env was built with extend(). */
   readonly flat: Environment | undefined
+  /** The same declarations from bonsai-js/lite. */
+  readonly lite: LiteEnvironment
   readonly host: ReadonlySet<string>
   readonly strict: boolean
   readonly validateContext: boolean
@@ -468,6 +472,7 @@ function genEnvironment(R: Random, variables: Record<string, Type>): EnvConfig {
   return {
     env,
     flat,
+    lite: liteBonsai({ ...options, variables: { ...env.variables } }),
     host: new Set(Object.keys(functions)),
     strict: strictOption ?? true,
     validateContext,
@@ -2438,6 +2443,17 @@ async function checkViews(c: Case, tally: Tally): Promise<Failure | undefined> {
         flat: show(flatOutcome),
       })
   }
+
+  // 7c. The lite entry point evaluates the same.
+  tally('7 lite matches the main entry (evaluate)')
+  const liteOutcome = program.async
+    ? await attemptAsync(() => cfg.lite.compile(source).evaluate(data, opts))
+    : attempt(() => cfg.lite.compile(source).evaluateSync(data, opts))
+  if (!same(ref, liteOutcome) && !(tinyTimeout && (isTimeout(ref) || isTimeout(liteOutcome))))
+    return fail('bonsai-js/lite evaluates differently', {
+      ref: show(ref),
+      lite: show(liteOutcome),
+    })
 
   // 1. Check soundness.
   tally('1 check soundness')

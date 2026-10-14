@@ -47,6 +47,8 @@ try {
     'package/package.json',
     'package/dist/index.mjs',
     'package/dist/index.d.mts',
+    'package/dist/lite/index.mjs',
+    'package/dist/lite/index.d.mts',
     'package/dist/service/index.mjs',
     'package/dist/service/index.d.mts',
     'package/dist/query/index.mjs',
@@ -83,6 +85,7 @@ try {
   }
   for (const [subpath, file] of [
     ['.', './dist/index.mjs'],
+    ['./lite', './dist/lite/index.mjs'],
     ['./service', './dist/service/index.mjs'],
   ] as const) {
     const conditions = packedPkg.exports?.[subpath]
@@ -125,6 +128,29 @@ try {
       ...['ListNode', 'ListType', 'LiteralNode', 'LiteralType', 'LocalNode', 'MapEntry'],
       ...['MapNode', 'MapType', 'MemberNode', 'NeverType', 'Node', 'NullType', 'NumberType'],
       ...['OpaqueType', 'ParseOptions', 'PrintOptions', 'Program', 'Span'],
+      ...['SpreadNode', 'StringType', 'TemplateNode', 'TimestampType', 'TryNode', 'Type'],
+      ...['TypeVar', 'UnaryNode', 'UnaryOperator', 'UnionType', 'VariableNode', 'bonsai', 'fn'],
+      ...['forEachChild', 'formatType', 'isAssignable', 'isBonsaiError', 'mapChildren', 'parse'],
+      'print',
+      't',
+      'withContext',
+    ],
+    // The main entry without explaining and partial evaluation.
+    'lite/index.d.mts': [
+      ...['AbortSignalLike', 'AnyType', 'BinaryNode', 'BinaryOperator', 'BonsaiCheckError'],
+      ...['BonsaiError', 'BonsaiErrorJSON', 'BonsaiErrorName'],
+      ...['BonsaiLimitError', 'BonsaiRuntimeError', 'BonsaiSyntaxError', 'BooleanType'],
+      ...['CallNode', 'CallStyle', 'CompileOptions', 'ConditionalNode'],
+      ...['Diagnostic', 'DiagnosticCode', 'DiagnosticJSON', 'Duration', 'DurationType'],
+      ...['EnvironmentOptions', 'ErrorCode', 'EvaluateOptions'],
+      ...['FnSpec', 'FunctionInfo', 'FunctionType', 'HasNode', 'HostCall', 'HostFunction'],
+      'IndexNode',
+      ...['Infer', 'InferVariables', 'ItNode', 'LambdaNode', 'LetNode', 'Library', 'LimitName'],
+      'Limits',
+      ...['ListNode', 'ListType', 'LiteCheckResult', 'LiteEnvironment', 'LiteProgram'],
+      ...['LiteralNode', 'LiteralType', 'LocalNode', 'MapEntry'],
+      ...['MapNode', 'MapType', 'MemberNode', 'NeverType', 'Node', 'NullType', 'NumberType'],
+      ...['OpaqueType', 'ParseOptions', 'PrintOptions', 'Span'],
       ...['SpreadNode', 'StringType', 'TemplateNode', 'TimestampType', 'TryNode', 'Type'],
       ...['TypeVar', 'UnaryNode', 'UnaryOperator', 'UnionType', 'VariableNode', 'bonsai', 'fn'],
       ...['forEachChild', 'formatType', 'isAssignable', 'isBonsaiError', 'mapChildren', 'parse'],
@@ -175,7 +201,7 @@ try {
     throw new Error('Packed query export does not point to ./dist/query/index.mjs')
   }
   const exportKeys = [...Object.keys(packedPkg.exports ?? {})].sort()
-  if (exportKeys.join(',') !== '.,./query,./service') {
+  if (exportKeys.join(',') !== '.,./lite,./query,./service') {
     throw new Error(`Packed package exports unexpected subpaths: ${exportKeys.join(', ')}`)
   }
 
@@ -191,6 +217,7 @@ try {
       "import { bonsai, fn, t, BonsaiCheckError, BonsaiRuntimeError, isBonsaiError } from 'bonsai-js'",
       "import { createLanguageService } from 'bonsai-js/service'",
       "import { toMongo, toSQL } from 'bonsai-js/query'",
+      "import { bonsai as liteBonsai } from 'bonsai-js/lite'",
       '',
       'const env = bonsai({',
       '  variables: { user: t.object({ name: t.string(), age: t.number() }), items: t.list(t.number()) },',
@@ -224,6 +251,12 @@ try {
       "const mongo = toMongo(filter, { row: 'order', fields: { total: 'number', status: 'text' }, known: { limit: 5 } })",
       "if (JSON.stringify(mongo.filter) !== JSON.stringify({ $and: [{ total: { $gt: 5 } }, { status: { $eq: 'paid' } }] })) throw new Error('Query subpath toMongo failed')",
       '',
+      'const lite = liteBonsai({ variables: { user: t.object({ age: t.number() }) } })',
+      "const liteRule = lite.compile('user.age >= 18', { expect: t.boolean() })",
+      "if (liteRule.evaluateSync({ user: { age: 36 } }) !== true) throw new Error('Lite subpath evaluation failed')",
+      "if ('explain' in liteRule || 'partial' in liteRule || 'explain' in lite) throw new Error('Lite subpath has explain or partial')",
+      "if (createLanguageService(lite).diagnostics('user.agee').length === 0) throw new Error('Service over a lite environment failed')",
+      '',
       "console.log('packed package smoke test passed')",
       '',
     ].join('\n'),
@@ -234,7 +267,9 @@ try {
     [
       "const { bonsai } = require('bonsai-js')",
       "const { createLanguageService } = require('bonsai-js/service')",
+      "const lite = require('bonsai-js/lite')",
       "if (bonsai().evaluateSync('1 + 2') !== 3) throw new Error('require() of the package failed')",
+      "if (lite.bonsai().evaluateSync('1 + 2') !== 3) throw new Error('require() of the lite entry failed')",
       "if (typeof createLanguageService !== 'function') throw new Error('require() of the service failed')",
       "console.log('require() smoke test passed')",
       '',

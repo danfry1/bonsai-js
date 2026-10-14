@@ -24,6 +24,7 @@ These docs describe 1.0, which is in release candidate on npm's `next` tag. With
 | Import | Contents |
 | --- | --- |
 | `bonsai-js` | `bonsai()`, `fn()`, the type builders `t`, error classes, and types |
+| `bonsai-js/lite` | The same, without explaining and partial evaluation, for smaller browser bundles (see [the lite entry point](/api/environment#the-lite-entry-point)) |
 | `bonsai-js/service` | `createLanguageService()` for editor completions, hover, and diagnostics |
 | `bonsai-js/query` | `toSQL()` and `toMongo()`, which translate a filter to a SQL `WHERE` clause or a MongoDB filter |
 
@@ -36,12 +37,12 @@ These docs describe 1.0, which is in release candidate on npm's `next` tag. With
 ### TypeScript settings
 
 - The type declarations use `const` type parameters (TypeScript 5.0 or newer) and are tested with TypeScript 5.9 and 7.0.
-- They resolve under every `moduleResolution` setting, including the legacy `node` (node10) for the `bonsai-js/service` and `bonsai-js/query` entry points.
+- They resolve under every `moduleResolution` setting, including the legacy `node` (node10) for the `bonsai-js/lite`, `bonsai-js/service`, and `bonsai-js/query` entry points.
 - Projects compiling to CommonJS should use `"module": "node20"` or `"nodenext"`. The older `"node16"` setting does not know `require()` can load ES modules and reports TS1479; use `await import('bonsai-js')` there.
 
 ## Bundle size
 
-In a browser bundle, an app that evaluates expressions adds about 67 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. The `query` and `service` entry points are separate; the language service on its own is about 46 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets.
+In a browser bundle, an app that evaluates expressions adds about 68 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. From `bonsai-js/lite`, which leaves those two out, it adds about 56 KB. The `query` and `service` entry points are separate; the language service on its own is about 46 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets.
 
 ## First evaluation
 

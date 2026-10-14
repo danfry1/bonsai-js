@@ -1,5 +1,5 @@
 import { acceptsArgument, analyze, signatureText, type Analysis } from '../check/checker.js'
-import { internalsOf, type Environment } from '../environment.js'
+import { internalsOf, type Environment, type LiteEnvironment } from '../environment.js'
 import { BonsaiError, BonsaiSyntaxError, locate, type Diagnostic } from '../errors.js'
 import { assertType, type FunctionDef } from '../functions/define.js'
 import { forEachChild, type Node } from '../syntax/ast.js'
@@ -117,7 +117,7 @@ function serviceExpect(options: unknown): Type | undefined {
  * calls a host function: completions and hovers come from the static checker.
  */
 export function createLanguageService(
-  env: Environment,
+  env: Environment | LiteEnvironment,
   options?: LanguageServiceOptions,
 ): LanguageService {
   const { checkEnv, parseLimits } = internalsOf(env)

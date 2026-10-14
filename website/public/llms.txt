@@ -2,7 +2,7 @@
 
 > A small, safe, typed expression language for JavaScript: rules, filters, formulas, and templates written by people other than your developers. JavaScript-like syntax, static checking against declared data types, bounded evaluation, zero dependencies.
 
-- Package: `bonsai-js` (ESM, TypeScript types included). Entry points: `bonsai-js`, `bonsai-js/service`, and `bonsai-js/query`. 1.0 is in release candidate: install `bonsai-js@next` (plain `bonsai-js` is 0.5.0 until 1.0.0).
+- Package: `bonsai-js` (ESM, TypeScript types included). Entry points: `bonsai-js`, `bonsai-js/lite` (the same without explain and partial, for smaller browser bundles), `bonsai-js/service`, and `bonsai-js/query`. 1.0 is in release candidate: install `bonsai-js@next` (plain `bonsai-js` is 0.5.0 until 1.0.0).
 - Runtimes: Node.js 22+, current Bun, modern ESM browsers. No eval, no generated code.
 
 ## Example

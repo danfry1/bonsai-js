@@ -18,6 +18,7 @@ interface SizeCase {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const entry = JSON.stringify(join(root, 'dist', 'index.mjs'))
+const liteEntry = JSON.stringify(join(root, 'dist', 'lite', 'index.mjs'))
 const serviceEntry = JSON.stringify(join(root, 'dist', 'service', 'index.mjs'))
 
 const cases: SizeCase[] = [
@@ -35,6 +36,13 @@ const cases: SizeCase[] = [
     // for round ten (hostile thrown values, deterministic rendering, checked
     // unknown paths).
     maxGzipBytes: 68_000,
+  },
+  {
+    // The lite entry: checking and evaluating, without explaining and partial
+    // evaluation. 55.8 KB when set (2026-10-14), 11.9 KB under the main entry.
+    name: "lite: bonsai().evaluateSync('1 + 2')",
+    source: `import { bonsai } from ${liteEntry}\nconsole.log(bonsai().evaluateSync('1 + 2'))`,
+    maxGzipBytes: 57_000,
   },
   {
     name: 't only',
