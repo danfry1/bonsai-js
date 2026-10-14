@@ -233,6 +233,39 @@ describe('explain: review findings and extras', () => {
     ).toEqual(['b / 0'])
   })
 
+  it('reasons() reports a negated condition as written, with its own value', () => {
+    const rule = bonsai().compile('!("vip" in customer.tags) && order.total > 10')
+    const context = { customer: { tags: ['vip'] }, order: { total: 5 } }
+    const reasons = rule.explainSync(context).reasons()
+    expect(reasons.map((r) => [r.text, r.value])).toEqual([['!("vip" in customer.tags)', false]])
+    expect(
+      rule
+        .explainSync(context, { exhaustive: true })
+        .reasons()
+        .map((r) => [r.text, r.value]),
+    ).toEqual([
+      ['!("vip" in customer.tags)', false],
+      ['order.total > 10', false],
+    ])
+    // A passing rule lists the negated condition as true.
+    expect(
+      rule
+        .explainSync({ customer: { tags: [] }, order: { total: 50 } })
+        .reasons()
+        .map((r) => [r.text, r.value]),
+    ).toEqual([
+      ['!("vip" in customer.tags)', true],
+      ['order.total > 10', true],
+    ])
+    // !!x reads as x.
+    expect(
+      env
+        .explainSync('!!(a > 1)', { a: 0 })
+        .reasons()
+        .map((r) => [r.text, r.value]),
+    ).toEqual([['(a > 1)', false]])
+  })
+
   it('caps the total number of recorded nodes', () => {
     const xs = Array.from({ length: 100 }, (_, i) => i)
     const explanation = env.explainSync(

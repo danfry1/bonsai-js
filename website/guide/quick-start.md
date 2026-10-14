@@ -35,7 +35,7 @@ const env = bonsai({
 const typo = env.check('customer.teir == "gold"')
 typo.ok // => false
 typo.diagnostics[0].code // => "UNKNOWN_PROPERTY"
-typo.diagnostics[0].message // => 'Property "teir" does not exist on { name: string, tier: "standard" | "gold", country: string, email: string | null }; did you mean "tier"?'
+typo.diagnostics[0].message // => 'Property "teir" does not exist on customer; did you mean "tier"?'
 
 const nullable = env.check('customer.email.endsWith("@example.com")')
 nullable.diagnostics[0].code // => "NULLABLE_RECEIVER"

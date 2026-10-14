@@ -327,12 +327,20 @@ function parseTree(source: string, limits: ParseLimits): Node {
         )
       }
       const right = parseBinary(operator === '**' ? level : level + 1)
-      if (
-        (operator === '??' && (isBare(left, ['&&', '||']) || isBare(right, ['&&', '||']))) ||
-        ((operator === '&&' || operator === '||') &&
-          (isBare(left, ['??']) || isBare(right, ['??'])))
-      ) {
-        fail('Parenthesize "??" when mixing it with "&&" or "||"', left.start, right.end)
+      // `a && b ?? c` and `a ?? b || c`: the caret goes on the "??" and the
+      // hint shows both readings. "??" binds loosest, so it is the operator here.
+      if (operator === '??') {
+        const logical = [left, right].find((side) => isBare(side, ['&&', '||']))
+        if (logical !== undefined) {
+          const op = (logical as { operator: string }).operator
+          fail(
+            logical === left
+              ? `Parenthesize "??" when mixing it with "${op}": write (a ${op} b) ?? c or a ${op} (b ?? c)`
+              : `Parenthesize "??" when mixing it with "${op}": write (a ?? b) ${op} c or a ?? (b ${op} c)`,
+            token.start,
+            token.end,
+          )
+        }
       }
       // `score ?? 0 > 10` means score ?? (0 > 10), which reads as (score ?? 0) > 10.
       if (operator === '??') {

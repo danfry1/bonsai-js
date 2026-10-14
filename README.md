@@ -76,7 +76,7 @@ startOfDay(order.placedAt, "Europe/Berlin")             // calendar math in time
 // comments work too
 ```
 
-The full reference is [docs/language.md](./docs/language.md). The rules that matter most:
+The full reference is [docs/language.md](https://github.com/danfry1/bonsai-js/blob/main/docs/language.md). The rules that matter most:
 
 - There is one absent value, `null`. Missing properties and host `undefined` read as `null`, so `x == null` means "missing or null". A key holding `undefined` is absent everywhere: `{ a: 1, b: undefined }` equals `{ a: 1 }`, and `"b" in` it is false.
 - `==` compares by value (lists and maps deeply). There is no type coercion: `1 == "1"` is `false` and `"a" + 1` is an error.
@@ -112,7 +112,7 @@ import { bonsai, t } from 'bonsai-js'
 const env = bonsai({ variables: { user: t.object({ age: t.number(), nick: t.optional(t.string()) }) } })
 
 env.check('user.agee > 18')
-// { ok: false, type: { kind: 'boolean' }, diagnostics: [{ code: 'UNKNOWN_PROPERTY', message: 'Property "agee" does not exist on { age: number, nick: string | null }; did you mean "age"?', severity: 'error', start: 5, end: 9, span: { start: 5, end: 9 }, position: { line: 1, column: 6 }, suggestion: 'age' }] }
+// { ok: false, type: { kind: 'boolean' }, diagnostics: [{ code: 'UNKNOWN_PROPERTY', message: 'Property "agee" does not exist on user; did you mean "age"?', severity: 'error', start: 5, end: 9, span: { start: 5, end: 9 }, position: { line: 1, column: 6 }, suggestion: 'age' }] }
 
 env.check('user.nick.toUpperCase()')
 // NULLABLE_RECEIVER: The value before .toUpperCase() may be null; use ?.toUpperCase() or ?? to supply a default
@@ -164,7 +164,7 @@ All callable as `f(x, ...)` or `x.f(...)`.
 | Maps | `keys` `values` `entries` `type` |
 | Time | `now` `timestamp` `weeks` `days` `hours` `minutes` `seconds` `milliseconds` `inDays` `inHours` `inMinutes` `inSeconds` `inMilliseconds` `year` `month` `day` `hour` `minute` `second` `dayOfWeek` `startOfDay` `startOfMonth` `startOfYear` `addDays` `addMonths` `addYears` `formatDate` |
 
-`matches(text, pattern)` uses JavaScript regular expression syntax (as with the `u` flag) and runs in linear time, so a user-written pattern cannot hang evaluation; backreferences, lookaround, named groups, `\p{...}`, and inline flags other than a leading `(?i)` are rejected ([full list](./docs/language.md)), a leading `(?i)` ignores ASCII case, and a pattern longer than `maxPatternLength` is a `PATTERN_LIMIT` error. `formatDate` understands `yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS` and rejects unknown letters; constant patterns are checked when the expression is compiled.
+`matches(text, pattern)` uses JavaScript regular expression syntax (as with the `u` flag) and runs in linear time, so a user-written pattern cannot hang evaluation; backreferences, lookaround, named groups, `\p{...}`, and inline flags other than a leading `(?i)` are rejected ([full list](https://github.com/danfry1/bonsai-js/blob/main/docs/language.md)), a leading `(?i)` ignores ASCII case, and a pattern longer than `maxPatternLength` is a `PATTERN_LIMIT` error. `formatDate` understands `yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS` and rejects unknown letters; constant patterns are checked when the expression is compiled.
 
 `env.listFunctions()` returns every signature and description, for documentation or tooling.
 
@@ -286,6 +286,7 @@ Every error thrown while checking or evaluating an expression is a `BonsaiError`
 | `BonsaiCheckError` | `CHECK` (see `.diagnostics`) |
 | `BonsaiLimitError` | `SOURCE_TOO_LONG` `TOO_DEEP` `TOO_MANY_NODES` `TOO_COMPLEX` `STEP_LIMIT` `STRING_LIMIT` `LIST_LIMIT` `VALUE_DEPTH_LIMIT` `PATTERN_LIMIT` `TIMEOUT` `ABORTED` |
 | `BonsaiRuntimeError` | `TYPE_ERROR` `NO_OVERLOAD` `NULL_RECEIVER` `DIVISION_BY_ZERO` `NON_FINITE` `BLOCKED_PROPERTY` `INVALID_ARGUMENT` `INVALID_CONTEXT` `ASYNC_IN_SYNC` `HOST_ERROR` `HOST_CONTRACT` |
+| `BonsaiTranslationError` | `UNTRANSLATABLE` (thrown by `toSQL` and `toMongo`) |
 
 `try(expr, fallback)` in an expression catches runtime errors except `HOST_CONTRACT`; it never catches syntax, check, or limit errors.
 
@@ -305,7 +306,7 @@ All limits are on by default; `limits` changes the budget. `0` disables `maxStep
 | `maxPatternLength` | 4,096 | regular expression patterns passed to `matches` |
 | `timeout` | none | wall-clock milliseconds per evaluation |
 
-The step budget is deterministic: the same expression over the same data uses the same steps on every machine, and at the default budget any expression finishes or fails within about 100 ms on Node (about 150 ms for the slowest shapes we have found). Host functions are trusted code: limits cannot interrupt a synchronous host function that is already running, and a getter or Proxy you put in the context runs when it is read. Set a `timeout` when expressions call slow host functions. See [SECURITY.md](./SECURITY.md) and [docs/threat-model.md](./docs/threat-model.md).
+The step budget is deterministic: the same expression over the same data uses the same steps on every machine, and at the default budget any expression finishes or fails within about 100 ms on Node (about 150 ms for the slowest shapes we have found). Host functions are trusted code: limits cannot interrupt a synchronous host function that is already running, and a getter or Proxy you put in the context runs when it is read. Set a `timeout` when expressions call slow host functions. See [SECURITY.md](https://github.com/danfry1/bonsai-js/blob/main/SECURITY.md) and [docs/threat-model.md](https://github.com/danfry1/bonsai-js/blob/main/docs/threat-model.md).
 
 ## Stability
 

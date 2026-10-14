@@ -389,6 +389,18 @@ export class BonsaiCheckError extends BonsaiError {
 }
 
 /**
+ * A filter (or part of it) has no exact equivalent in the target database:
+ * thrown by `toSQL` and `toMongo` from `bonsai-js/query`.
+ */
+export class BonsaiTranslationError extends BonsaiError {
+  /** @internal */
+  constructor(message: string, source: string, span?: Span, cause?: unknown) {
+    super('UNTRANSLATABLE', message, { source, span, cause })
+    this.name = 'BonsaiTranslationError'
+  }
+}
+
+/**
  * Whether `value` is a Bonsai error, including one thrown by another copy of
  * the package (where `instanceof` fails).
  */

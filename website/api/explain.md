@@ -23,7 +23,7 @@ String(explanation)
 
 ## Reasons
 
-`explanation.reasons()` returns only the conditions that decided the result: it follows `&&`, `||`, and `!` down to the comparisons and values (or the error) behind the outcome. It stops at anything else: a `?:`, a `let`, or a call that takes a lambda (`some`, `every`, `filter`, ...) is reported whole, so look in `trace` (its children, or `iterations` for a lambda) for what decided it:
+`explanation.reasons()` returns only the conditions that decided the result: it follows `&&` and `||` down to the comparisons and values (or the error) behind the outcome. It stops at anything else: a `?:`, a `let`, or a call that takes a lambda (`some`, `every`, `filter`, ...) is reported whole, so look in `trace` (its children, or `iterations` for a lambda) for what decided it:
 
 ```ts
 import { bonsai } from 'bonsai-js'
@@ -32,6 +32,17 @@ const cart = { total: 50, items: [{ price: 10 }, { price: 40 }] }
 const rule = bonsai().compile('cart.total > 100 || cart.items.some(.price > 100)')
 rule.explainSync({ cart }).reasons().map((r) => r.text)
 // ['cart.total > 100', 'cart.items.some(.price > 100)']
+```
+
+A negated condition is a reason as written, so its value reads like every other reason's: for `!("vip" in customer.tags) && order.total > 10` with a VIP customer, the reason is `!("vip" in customer.tags)` with the value `false`. A `!` over `&&` or `||` (`!(a || b)`) is followed to the part that decided it, whose value is the opposite of what the rule needed, and `!!x` reads as `x`.
+
+```ts
+import { bonsai } from 'bonsai-js'
+
+const rule = bonsai().compile('!("vip" in customer.tags) && order.total > 10')
+const context = { customer: { tags: ['vip'] }, order: { total: 50 } }
+rule.explainSync(context).reasons().map((r) => [r.text, r.value])
+// [['!("vip" in customer.tags)', false]]
 ```
 
 The same condition can appear more than once when several sub-expressions reach it (with `exhaustive`, for example); de-duplicate by `id` when listing reasons in a UI.

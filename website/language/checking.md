@@ -74,9 +74,9 @@ try {
   env.compile('user.agee > 18')
 } catch (error) {
   console.log((error as BonsaiError).formatted)
-  // Property "agee" does not exist on { plan: "free" | "pro", age: number | null, email: string | null }; did you mean "age"?
+  // Property "agee" does not exist on user; did you mean "age"?
   // 1 | user.agee > 18
-  //   | ^^^^^^^^^
+  //   |      ^^^^
 }
 ```
 
