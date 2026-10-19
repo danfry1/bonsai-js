@@ -713,6 +713,18 @@ describe('toSQL', () => {
     ],
     ['order.name.trim() == "a"', /trim\(\) is not translated; the functions that are: startsWith/u],
     [
+      'limit > 0 && "abc".startsWith(order.name)',
+      /^startsWith\(\) is translated only when called on a text field \(or on \(field \?\? "text"\)\) with a known text argument$/u,
+    ],
+    [
+      '(order.name ?? order.city).includes("a")',
+      /^includes\(\) is translated only when called on a text field/u,
+    ],
+    [
+      'inMilliseconds(order.placed - order.placed) > 0',
+      /^inMilliseconds\(\) is translated only on a duration field$/u,
+    ],
+    [
       'limit > 0 && [1].some(x => order.total > x)',
       /some\(\) is not translated, since a lambda has no database equivalent/u,
     ],
@@ -727,6 +739,15 @@ describe('toSQL', () => {
       toSQL(env.compile(source), { row: 'order', columns, dialect: 'postgres', known }),
     ).toThrow(message)
   })
+
+  it.each(['order.total % 2 == 1', 'order.total ** 2 > 1', 'order.total / 2 > 1'])(
+    'refuses %s for MongoDB as arithmetic, which it does not translate',
+    (source) => {
+      expect(() => toMongo(env.compile(source), { row: 'order', fields: columns, known })).toThrow(
+        /^Arithmetic is not translated for MongoDB$/u,
+      )
+    },
+  )
 
   it('rethrows errors that happen whatever the row is', () => {
     expect(() =>

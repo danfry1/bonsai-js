@@ -107,6 +107,30 @@ describe('time zones loaded at compile time', () => {
     )
   })
 
+  it('gives the same results however many zones, aliases, and repeats a source holds', () => {
+    // More distinct zones than one program warms, written more than once, plus an
+    // alias (Asia/Calcutta resolves to Asia/Kolkata) and names evaluation rejects.
+    const zones = Intl.supportedValuesOf('timeZone')
+      .filter((zone) => zone.includes('/'))
+      .slice(0, 40)
+    const names = [...zones, ...zones, 'Asia/Calcutta', 'Asia/Calcutta']
+    const literal = env.compile(`[${names.map((zone) => `hour(at, "${zone}")`).join(', ')}]`)
+    const expected = names.map((zone) => env.evaluateSync('hour(at, zone)', { at, zone }))
+    expect(literal.evaluateSync({ at, zone: '' })).toEqual(expected)
+    for (let i = 0; i < 2; i++) {
+      warmZone('Europe/LONDON')
+      expect(() => env.evaluateSync('hour(at, "Europe/LONDON")', { at, zone: '' })).toThrow(
+        /Write the time zone as "Europe\/London"/u,
+      )
+    }
+    // A residual keeps its zones without warming them again.
+    const result = env
+      .compile('hour(at, "Asia/Calcutta") + hour(at, zone)')
+      .partial({ zone: 'Asia/Tokyo' })
+    if (result.status !== 'residual') throw new Error('expected a residual')
+    expect(result.evaluateSync({ at })).toBe(17 + 21)
+  })
+
   it('gives the same results for literal and data zones', () => {
     expect(env.evaluateSync('hour(at, "Asia/Tokyo")', { at, zone: '' })).toBe(21)
     expect(env.evaluateSync('at.hour(zone)', { at, zone: 'Asia/Tokyo' })).toBe(21)

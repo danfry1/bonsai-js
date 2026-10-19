@@ -457,16 +457,23 @@ const SQL_OPTION_KEYS: readonly string[] = [
 ]
 const MONGO_OPTION_KEYS: readonly string[] = [...COMMON_OPTION_KEYS, 'fields']
 
-/** Rejects anything but a compiled program, such as a partial-evaluation residual. */
+/**
+ * Rejects anything but a compiled program from `bonsai-js`, such as a
+ * partial-evaluation residual or a program from `bonsai-js/lite`.
+ */
 function checkProgram(program: unknown, translator: string): void {
-  const isProgram =
+  const compiled =
     isRecord(program) &&
     typeof program.source === 'string' &&
-    typeof program.partial === 'function' &&
     isRecord(program.ast) &&
     isRecord(program.references) &&
     Array.isArray(program.references.variables)
-  if (!isProgram) {
+  if (compiled && typeof program.partial !== 'function') {
+    throw new TypeError(
+      `${translator} translates through partial evaluation, which programs from bonsai-js/lite do not have; compile the filter with an environment from bonsai-js`,
+    )
+  }
+  if (!compiled) {
     throw new TypeError(
       `${translator} takes a compiled program (from env.compile); to translate after partial evaluation, pass the original program and the values in known`,
     )
@@ -1056,6 +1063,14 @@ function lower(
             node,
           )
         }
+        if (node.name === 'startsWith' || node.name === 'endsWith' || node.name === 'includes') {
+          return fail(
+            `${node.name}() is translated only when called on a text field (or on (field ?? "text")) with a known text argument`,
+            node,
+          )
+        }
+        if (node.name === 'inMilliseconds')
+          return fail('inMilliseconds() is translated only on a duration field', node)
         return fail(
           `${node.name}() is not translated; the functions that are: startsWith, endsWith, includes, inMilliseconds`,
           node,
@@ -1084,6 +1099,8 @@ function lower(
       case 'Binary':
         if (COMPARISONS.has(node.operator))
           return fail('A comparison is translated as a condition, not as a value', node)
+        if (!target.arithmetic && node.operator !== '??')
+          return fail(`Arithmetic is not translated for ${target.name}`, node)
         if (node.operator === '/')
           return fail('"/" is not translated, since databases differ on division by zero', node)
         if (node.operator === '%' || node.operator === '**')

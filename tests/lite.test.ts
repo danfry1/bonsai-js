@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import * as main from '../src/index.js'
 import * as lite from '../src/lite/index.js'
 import type { LiteEnvironment, LiteProgram } from '../src/lite/index.js'
+import { toMongo, toSQL } from '../src/query/index.js'
 import { createLanguageService } from '../src/service/index.js'
 
 const variables = {
@@ -149,6 +150,21 @@ describe('bonsai-js/lite', () => {
       void small.extend({}).explainSync('1')
     }
     expect(typeof typed).toBe('function')
+  })
+
+  it('says why its programs cannot be translated to a query', () => {
+    const program = small.compile('user.age >= 18')
+    const columns = { age: 'number' } as const
+    const message =
+      /translates through partial evaluation, which programs from bonsai-js\/lite do not have/u
+    expect(() => toSQL(program as never, { row: 'user', columns, dialect: 'sqlite' })).toThrow(
+      message,
+    )
+    expect(() => toMongo(program as never, { row: 'user', fields: columns })).toThrow(message)
+    // A program from the main entry translates.
+    expect(
+      toSQL(full.compile('user.age >= 18'), { row: 'user', columns, dialect: 'sqlite' }).sql,
+    ).toContain('age')
   })
 
   it('works with the language service', () => {
