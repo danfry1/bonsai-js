@@ -40,6 +40,7 @@ Bonsai is not a general-purpose language. There are no loops, no recursion, no a
 | Save a rule written by a user, safely | [A hardened setup](/guide/safety#a-hardened-setup) |
 | Show why a rule passed or failed | [Reasons](/api/explain#reasons) |
 | Autocomplete and diagnostics in an editor | [Editor Support](/guide/editor-support) |
+| Add Bonsai to a CodeMirror editor | [CodeMirror](/guide/codemirror) |
 | Run a filter in SQL or MongoDB | [Database Filters](/api/query) |
 | Add your own function | [Host Functions](/api/host-functions) |
 | Handle errors | [Errors](/api/errors) |

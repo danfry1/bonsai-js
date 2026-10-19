@@ -75,7 +75,9 @@ filters.diagnostics('user.email')[0].code // => "EXPECTED_TYPE"
 
 ## Wiring it to an editor
 
-Any editor component that can ask for completions at an offset works. The pattern is the same for CodeMirror, Monaco, or a plain `<textarea>`:
+For CodeMirror 6, the [CodeMirror guide](/guide/codemirror) has a complete extension to copy, with a live demo: completions, underlined diagnostics with a "did you mean" quick-fix, and hover types.
+
+Any other editor component that can ask for completions at an offset works the same way, whether Monaco or a plain `<textarea>`:
 
 <!-- no-run -->
 ```ts
