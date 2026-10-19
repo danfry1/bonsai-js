@@ -72,7 +72,7 @@ npm install bonsai-js@next
 
 This README describes 1.0, which is in release candidate on the `next` tag; `npm install bonsai-js` still installs 0.5.0 until 1.0.0 is released.
 
-Requires Node.js 22 or newer, current Bun, or a modern browser. The package is ESM; `require('bonsai-js')` works where Node can load ES modules synchronously (22.12 and newer).
+Requires Node.js 22 or newer, current Bun, or a modern browser. The package is ESM; `require('bonsai-js')` works where Node can load ES modules synchronously (22.12 and newer); for the TypeScript settings that allow it, see [Install](https://danfry1.github.io/bonsai-js/guide/install#typescript-settings).
 
 In a browser bundle, an app that evaluates expressions adds about 68 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. `bonsai-js/lite` leaves those two out, for about 56 KB. `bonsai-js/query` and `bonsai-js/service` are separate entry points; the language service on its own is about 46 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets (`bun run check:size`).
 

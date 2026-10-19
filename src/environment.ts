@@ -1446,7 +1446,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     constants?: ReadonlyMap<string, unknown>,
     residualOf?: ResidualOf,
   ): Program<Ctx, R> | ResidualRunner {
-    // A residual's zones were warmed when the program it came from was compiled.
+    // Residuals are not warmed: partial() runs often, and a zone it writes into
+    // the residual as text loads on first use (the shared data is already loaded).
     if (residualOf === undefined) warmZones(analysis)
     // When the checker cannot prove the result matches `expect` (part of it is
     // `any`, or an open object may hold an unlisted key), it is checked at run

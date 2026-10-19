@@ -36,7 +36,7 @@ export function bonsaiCompletions(service: LanguageService) {
         label: item.label,
         type: TYPES[item.kind],
         detail: item.detail,
-        info: item.documentation,
+        ...(item.documentation === undefined ? {} : { info: item.documentation }),
         // An item with its own range (a field inserted as ["first-name"]) replaces that range.
         apply: (view, _completion, from, to) => {
           const start = item.range?.start ?? from

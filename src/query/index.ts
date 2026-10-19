@@ -1065,12 +1065,15 @@ function lower(
         }
         if (node.name === 'startsWith' || node.name === 'endsWith' || node.name === 'includes') {
           return fail(
-            `${node.name}() is translated only when called on a text field (or on (field ?? "text")) with a known text argument`,
+            `${node.name}() is translated only when called on a text field (or on (field ?? "text")) with a known text argument${node.name === 'includes' ? '; to test a field against a known list, write field in list' : ''}`,
             node,
           )
         }
         if (node.name === 'inMilliseconds')
-          return fail('inMilliseconds() is translated only on a duration field', node)
+          return fail(
+            'inMilliseconds() is translated only when called directly on a duration field',
+            node,
+          )
         return fail(
           `${node.name}() is not translated; the functions that are: startsWith, endsWith, includes, inMilliseconds`,
           node,
