@@ -105,7 +105,7 @@ Anything else throws a `BonsaiTranslationError` (code `UNTRANSLATABLE`) with the
 | The `.length` of text | Databases count characters, Bonsai UTF-16 units | |
 | `toLowerCase`, `toUpperCase` | Databases do not match JavaScript's Unicode case mapping | |
 | Division (`/`) | Databases differ on division by zero | |
-| `%`, `**` | SQL translates `+ - *` only | |
+| `%`, `**` | SQL translates `+ - *` only, and MongoDB no arithmetic | |
 
 Text with a lone surrogate is rejected, since drivers send it as U+FFFD, and so is known text containing a NUL character (U+0000) in SQL (the databases cannot take it as text) and in a MongoDB pattern (`startsWith`, `endsWith`, `includes`).
 

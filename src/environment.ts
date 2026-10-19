@@ -1331,19 +1331,27 @@ function checkedClock(clock: () => Date): () => Date {
   }
 }
 
+/** The most zones one program warms when it is compiled. */
+const WARMED_ZONES = 16
+
 /**
  * Loads the time zone data a program's calls need, so its first evaluation
  * does not pay for it inside its deadline. Only built-in functions that take a
  * zone count: a zone written as text is loaded itself, and any other zone
- * argument loads the data every zone shares.
+ * argument loads the data every zone shares. Each zone is warmed once, and at
+ * most WARMED_ZONES of them, so a source full of zone names compiles quickly.
  */
 function warmZones(analysis: Analysis): void {
+  const seen = new Set<string | undefined>()
   for (const [call, plan] of analysis.calls) {
     const index = zoneParameter(plan.def)
     const arg = index === undefined ? undefined : call.args[index]
     if (arg === undefined) continue
-    if (arg.type !== 'Literal') warmZone(undefined)
-    else if (typeof arg.value === 'string') warmZone(arg.value)
+    const zone = arg.type === 'Literal' ? arg.value : undefined
+    if ((zone !== undefined && typeof zone !== 'string') || seen.has(zone)) continue
+    seen.add(zone)
+    warmZone(zone)
+    if (seen.size >= WARMED_ZONES) return
   }
 }
 
@@ -1438,7 +1446,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     constants?: ReadonlyMap<string, unknown>,
     residualOf?: ResidualOf,
   ): Program<Ctx, R> | ResidualRunner {
-    warmZones(analysis)
+    // A residual's zones were warmed when the program it came from was compiled.
+    if (residualOf === undefined) warmZones(analysis)
     // When the checker cannot prove the result matches `expect` (part of it is
     // `any`, or an open object may hold an unlisted key), it is checked at run
     // time, so the declared result type holds.

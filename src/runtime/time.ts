@@ -196,6 +196,11 @@ function formatterFor(zone: string, site: CallSite): Intl.DateTimeFormat {
 }
 
 let sharedDataLoaded = false
+/**
+ * Names already warmed, cached or not (an alias resolves to another name and a
+ * rejected name is left for evaluation), so compiling never repeats the work.
+ */
+const warmed = new Set<string>()
 
 /**
  * Loads time zone data ahead of evaluation, outside any step budget or
@@ -214,8 +219,10 @@ export function warmZone(zone: string | undefined): void {
       return
     }
     // UTC is computed without a formatter.
-    if (isUtc(zone) || formatters.has(zone)) return
     if (zone.length > MAX_ZONE_LENGTH || !ZONE_NAME.test(zone)) return
+    if (isUtc(zone) || formatters.has(zone) || warmed.has(zone)) return
+    if (warmed.size >= MAX_CACHED_ZONES) warmed.clear()
+    warmed.add(zone)
     const formatter = createFormatter(zone)
     formatter.formatToParts(0)
     sharedDataLoaded = true
