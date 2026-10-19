@@ -2,7 +2,7 @@
 
 Bonsai (`bonsai-js` on npm) is a small, total, typed expression language for JavaScript. It evaluates untrusted expression text against host data without executing JavaScript. Every expression terminates: there are no loops, recursion, or assignment. An expression reaches host code only through functions the host declared and data the host put in the context.
 
-Entry points: `bonsai-js` (environment, types, errors, `print`), `bonsai-js/lite` (the same `bonsai()` and exports without `explain`, `explainSync`, and `partial`, about 12 KB smaller in a browser bundle), `bonsai-js/service` (editor features), and `bonsai-js/query` (SQL and MongoDB translation). ESM only, zero dependencies. 1.0 is in release candidate: install `bonsai-js@next` (plain `bonsai-js` is 0.5.0 until 1.0.0). Runtimes: Node.js 22+, current Bun, modern ESM browsers.
+Entry points: `bonsai-js` (environment, types, errors, `print`), `bonsai-js/lite` (the same `bonsai()` and exports without `explain`, `explainSync`, and `partial`, about 12 KB smaller in a browser bundle), `bonsai-js/service` (editor features), and `bonsai-js/query` (SQL and MongoDB translation). ESM only, zero dependencies. Runtimes: Node.js 22+, current Bun, modern ESM browsers.
 
 ## Quick start
 

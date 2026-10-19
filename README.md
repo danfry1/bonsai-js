@@ -67,10 +67,10 @@ Bonsai is the largest of these in the browser (about 56 KB from `bonsai-js/lite`
 ## Install
 
 ```bash
-npm install bonsai-js@next
+npm install bonsai-js
 ```
 
-This README describes 1.0, which is in release candidate on the `next` tag; `npm install bonsai-js` still installs 0.5.0 until 1.0.0 is released.
+Upgrading from 0.x? The [migration guide](https://danfry1.github.io/bonsai-js/guide/migrating) covers every change.
 
 Requires Node.js 22 or newer, current Bun, or a modern browser. The package is ESM; `require('bonsai-js')` works where Node can load ES modules synchronously (22.12 and newer); for the TypeScript settings that allow it, see [Install](https://danfry1.github.io/bonsai-js/guide/install#typescript-settings).
 
@@ -94,7 +94,7 @@ startOfDay(order.placedAt, "Europe/Berlin")             // calendar math in time
 // comments work too
 ```
 
-The full reference is [docs/language.md](https://github.com/danfry1/bonsai-js/blob/main/docs/language.md). The rules that matter most:
+The full reference is [docs/language.md](https://github.com/danfry1/bonsai-js/blob/v1.0.0/docs/language.md). The rules that matter most:
 
 - There is one absent value, `null`. Missing properties and host `undefined` read as `null`, so `x == null` means "missing or null". A key holding `undefined` is absent everywhere: `{ a: 1, b: undefined }` equals `{ a: 1 }`, and `"b" in` it is false.
 - `==` compares by value (lists and maps deeply). There is no type coercion: `1 == "1"` is `false` and `"a" + 1` is an error.
@@ -201,7 +201,7 @@ Every limit except `timeout` is on by default; `limits` changes the budget. `0` 
 | `maxPatternLength` | 4,096 | regular expression patterns passed to `matches` |
 | `timeout` | none | wall-clock milliseconds per evaluation |
 
-The step budget is deterministic: the same expression over the same data uses the same steps on every machine, and at the default budget any expression finishes or fails within about 100 ms on Node (about 150 ms for the slowest shapes we have found). Host functions are trusted code: limits cannot interrupt a synchronous host function that is already running, and a getter or Proxy you put in the context runs when it is read. Set a `timeout` when expressions call slow host functions. See [SECURITY.md](https://github.com/danfry1/bonsai-js/blob/main/SECURITY.md) and [docs/threat-model.md](https://github.com/danfry1/bonsai-js/blob/main/docs/threat-model.md).
+The step budget is deterministic: the same expression over the same data uses the same steps on every machine, and at the default budget any expression finishes or fails within about 100 ms on Node (about 150 ms for the slowest shapes we have found). Host functions are trusted code: limits cannot interrupt a synchronous host function that is already running, and a getter or Proxy you put in the context runs when it is read. Set a `timeout` when expressions call slow host functions. See [SECURITY.md](https://github.com/danfry1/bonsai-js/blob/main/SECURITY.md) and [docs/threat-model.md](https://github.com/danfry1/bonsai-js/blob/v1.0.0/docs/threat-model.md).
 
 ## Built-in functions
 
