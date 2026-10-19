@@ -4,20 +4,20 @@ Bonsai is published to npm as an ESM-only package with TypeScript types included
 
 ::: code-group
 ```bash [npm]
-npm install bonsai-js@next
+npm install bonsai-js
 ```
 ```bash [bun]
-bun add bonsai-js@next
+bun add bonsai-js
 ```
 ```bash [pnpm]
-pnpm add bonsai-js@next
+pnpm add bonsai-js
 ```
 ```bash [yarn]
-yarn add bonsai-js@next
+yarn add bonsai-js
 ```
 :::
 
-These docs describe 1.0, which is in release candidate on npm's `next` tag. Without `@next`, the commands above install 0.5.0 until 1.0.0 is released.
+Upgrading from 0.x? The [migration guide](/guide/migrating) covers every change.
 
 ## Entry points
 
