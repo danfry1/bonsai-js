@@ -1,9 +1,11 @@
 // Verifies the expressions shown by the site's Vue components:
 // every playground example evaluates (or fails with its expected check
 // error) the way the playground runs it, every home-page sample produces the
-// result it displays, and every home-page use-case snippet parses.
+// result it displays, and every home-page use-case snippet parses. Also checks
+// that the CodeMirror guide shows exactly the extension its demo runs.
 //
 //   bun website/scripts/check-components.ts
+import { readFileSync } from 'node:fs'
 import { bonsai, formatType } from '../../src/index.ts'
 import { examples } from '../.vitepress/theme/components/playground/examples.ts'
 import { buildContext } from '../.vitepress/theme/components/playground/schema.ts'
@@ -51,6 +53,18 @@ for (const sample of samples) {
 for (const useCase of useCases) {
   const check = open.check(useCase.code)
   if (!check.ok) fail(`home use case ${useCase.title}: ${check.diagnostics.map((d) => d.message).join('; ')}`)
+}
+
+// The block after <!-- codemirror-extension --> must be the demo's module, character for character.
+const guide = readFileSync(new URL('../guide/codemirror.md', import.meta.url), 'utf8')
+const shown = /<!-- codemirror-extension -->\n```ts\n([\s\S]*?)\n```/u.exec(guide)?.[1]
+const module = readFileSync(
+  new URL('../.vitepress/theme/components/codemirror/bonsai-language.ts', import.meta.url),
+  'utf8',
+)
+if (shown === undefined) fail('codemirror guide: no ```ts block after <!-- codemirror-extension -->')
+else if (shown !== module.trimEnd()) {
+  fail('codemirror guide: the extension shown differs from components/codemirror/bonsai-language.ts')
 }
 
 console.log(`${examples.length} playground examples, ${samples.length + useCases.length} home snippets checked, ${failures} failures`)

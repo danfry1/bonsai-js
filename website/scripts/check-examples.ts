@@ -38,6 +38,10 @@ const websiteDir = fileURLToPath(new URL('..', import.meta.url))
 const repoDir = fileURLToPath(new URL('../../', import.meta.url))
 const srcDir = fileURLToPath(new URL('../../src/', import.meta.url))
 const formatModule = fileURLToPath(new URL('./format.ts', import.meta.url))
+// The CodeMirror guide imports its extension as './bonsai-language': the module the page's demo runs.
+const codemirrorModule = fileURLToPath(
+  new URL('../.vitepress/theme/components/codemirror/bonsai-language.ts', import.meta.url),
+)
 
 function markdownFiles(dir: string): string[] {
   const out: string[] = []
@@ -214,7 +218,11 @@ function transformTs(block: Block): string {
         : `${indent}await __throws(async () => { return ${code} }, ${expected}, ${lineNo})`,
     )
   })
-  return redirectImports(out.join('\n'))
+  // Examples run from a temporary directory, so packages resolve from the repository.
+  return redirectImports(out.join('\n')).replaceAll(
+    /from '(@codemirror\/[a-z]+)'/gu,
+    (_, name: string) => `from ${JSON.stringify(fileURLToPath(import.meta.resolve(name)))}`,
+  )
 }
 
 /** A chain of ts blocks as written, for the type-check pass, with its position in the docs. */
@@ -232,6 +240,7 @@ function redirectImports(code: string): string {
     .replaceAll("from 'bonsai-js/service'", `from ${JSON.stringify(join(srcDir, 'service/index.ts'))}`)
     .replaceAll("from 'bonsai-js/query'", `from ${JSON.stringify(join(srcDir, 'query/index.ts'))}`)
     .replaceAll("from 'bonsai-js'", `from ${JSON.stringify(join(srcDir, 'index.ts'))}`)
+    .replaceAll("from './bonsai-language'", `from ${JSON.stringify(codemirrorModule)}`)
 }
 
 function queueTypeCheck(file: string, blocks: Block[], dir: string): void {
@@ -266,6 +275,11 @@ function typeCheck(dir: string): void {
         skipLibCheck: true,
         types: ['node'],
         lib: ['es2022', 'dom'],
+        // For modules an example imports (the CodeMirror extension), not only the example itself.
+        paths: {
+          'bonsai-js': [join(srcDir, 'index.ts')],
+          'bonsai-js/*': [join(srcDir, '*/index.ts')],
+        },
       },
       include: ['typed-*.ts'],
     }),
