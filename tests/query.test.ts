@@ -718,11 +718,11 @@ describe('toSQL', () => {
     ],
     [
       '(order.name ?? order.city).includes("a")',
-      /^includes\(\) is translated only when called on a text field/u,
+      /^includes\(\) is translated only when called on a text field .*; to test a field against a known list, write field in list$/u,
     ],
     [
       'inMilliseconds(order.placed - order.placed) > 0',
-      /^inMilliseconds\(\) is translated only on a duration field$/u,
+      /^inMilliseconds\(\) is translated only when called directly on a duration field$/u,
     ],
     [
       'limit > 0 && [1].some(x => order.total > x)',
