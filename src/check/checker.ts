@@ -1,30 +1,23 @@
+import { bindImplicit } from './bind.js'
 import { BonsaiLimitError, type DiagnosticCode, type Finding } from '../errors.js'
 import { RESULT_REFINERS } from '../functions/builtins.js'
 import { isStackOverflow, tooDeep } from '../runtime/overflow.js'
 import { closest, didYouMean } from '../suggest.js'
 import { BLOCKED_NAMES } from '../syntax/lexer.js'
 import { writtenWithExponent } from '../syntax/parser.js'
-import {
-  isItemLambdaPosition,
-  isLambdaPosition,
-  type FunctionDef,
-  type Overload,
-} from '../functions/define.js'
+import { signatureText, type FunctionDef, type Overload } from '../functions/define.js'
 import {
   forEachChild,
-  mapChildren,
   type CallNode,
   type LambdaNode,
   type MemberNode,
   type Node,
-  type SpreadNode,
 } from '../syntax/ast.js'
 import {
   chargeTypeWork,
   exactObject,
   freshLiteral,
   fieldOf,
-  formatType,
   isAssignable,
   isExact,
   isProvenAssignable,
@@ -40,6 +33,7 @@ import {
   widenFresh,
   withFields,
   withTypeBudget,
+  typeText,
   type MapType,
   type Type,
 } from '../types.js'
@@ -136,15 +130,6 @@ interface Scope {
  * limits admit, small enough that a pathological one fails fast.
  */
 const CHECK_BUDGET = 500_000
-
-function containsIt(node: Node): boolean {
-  if (node.type === 'It') return true
-  let found = false
-  forEachChild(node, (child) => {
-    if (!found && containsIt(child)) found = true
-  })
-  return found
-}
 
 /** Whether a type explicitly admits null (unlike `any`, which admits everything). */
 function mayBeNull(type: Type): boolean {
@@ -588,93 +573,21 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
 
   // === pass 1: bind the implicit parameter ===
 
-  // Binding only rewrites the tree around `.`; most expressions have none.
-  const bound = containsIt(root) ? bind(root) : { node: root, free: false }
-  if (bound.free) {
-    const it = findIt(bound.node)
-    report(
-      'INVALID_LAMBDA',
-      '"." (the current item) must be inside an argument of a function that takes a lambda, e.g. items.filter(.active)',
-      it ?? bound.node,
-    )
-  }
-
-  /** Rewrites implicit lambdas as explicit ones; `free` when a `.` is left unbound. */
-  function bind(node: Node): { node: Node; free: boolean } {
-    if (node.type === 'It') return { node, free: true }
-    if (node.type === 'Call') return bindCall(node)
-    let free = false
-    const out = mapChildren(node, (child) => {
-      const r = bind(child)
-      free ||= r.free
-      return r.node
-    })
-    // A lambda outside a call argument position (the parser only allows
-    // arguments, so this is a lambda in a non-function parameter).
-    return { node: out, free: node.type === 'Lambda' ? false : free }
-  }
-
-  function bindCall(node: CallNode): { node: Node; free: boolean } {
-    const def = env.lookup(node.name)
-    let free = false
-    let sawSpread = false
-    const args = node.args.map((arg, index): Node | SpreadNode => {
-      if (arg.type === 'Spread') {
-        sawSpread = true
-        const r = bind(arg.argument)
-        free ||= r.free
-        return { ...arg, argument: r.node }
-      }
-      // An unknown function reports itself; treat its arguments as lambdas so a
-      // misspelled filter(.x) does not also report a stray `.`.
-      const lambdaPosition = !sawSpread && (def === undefined || isLambdaPosition(def, index))
-      if (arg.type === 'Lambda') {
-        const body = bind(arg.body)
-        if (body.free) {
-          report(
-            'INVALID_LAMBDA',
-            'Use the lambda parameter instead of "." inside an explicit lambda',
-            findIt(body.node) ?? arg,
-          )
-        }
-        return { ...arg, body: body.node }
-      }
-      const r = bind(arg)
-      if (lambdaPosition && r.free) {
-        if (def !== undefined && !isItemLambdaPosition(def, index)) {
-          report(
-            'INVALID_LAMBDA',
-            `"." is the current item, but the first parameter of ${def.name}'s lambda is not; write the parameters, e.g. (acc, x) => acc + x`,
-            findIt(r.node) ?? arg,
-          )
-        }
-        const lambda: LambdaNode = {
-          type: 'Lambda',
-          params: [],
-          implicit: true,
-          body: r.node,
-          start: r.node.start,
-          end: r.node.end,
-        }
-        return lambda
-      }
-      free ||= r.free
-      return r.node
-    })
-    return { node: { ...node, args }, free }
-  }
+  const binding = bindImplicit(root, (name) => env.lookup(name))
+  for (const problem of binding.problems) report('INVALID_LAMBDA', problem.message, problem.at)
+  const boundRoot = binding.root
 
   // === pass 2: types ===
 
   const rootScope: Scope = { locals: new Map(), it: undefined }
-  const raw = check(bound.node, rootScope, options.expected)
+  const raw = check(boundRoot, rootScope, options.expected)
   // The expectation sees literal types (a plan enum accepts "pro"); the result shows base kinds.
   let checkResult = false
   if (options.expected !== undefined) {
     const problem = expectationProblem(raw, options.expected)
-    if (problem !== undefined) report('EXPECTED_TYPE', problem, resultSpan(bound.node))
+    if (problem !== undefined) report('EXPECTED_TYPE', problem, resultSpan(boundRoot))
     const extra = unexpectedFields(raw, options.expected)
-    if (extra !== undefined) report('EXPECTED_TYPE', extra, resultSpan(bound.node), 'warning')
+    if (extra !== undefined) report('EXPECTED_TYPE', extra, resultSpan(boundRoot), 'warning')
     checkResult = containsAny(raw) || !isProvenAssignable(raw, options.expected)
   }
   const type = widen(raw)
@@ -1907,12 +1820,12 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
   }
 
   return {
-    root: bound.node,
+    root: boundRoot,
     type,
     diagnostics,
     calls,
     types,
-    async: asyncNodes.has(bound.node),
+    async: asyncNodes.has(boundRoot),
     checkResult,
     references: { variables: [...variables], functions: [...functions] },
     probeScope,
@@ -2281,24 +2194,6 @@ function substitute(type: Type, b: ReadonlyMap<string, Type>): Type {
   }
 }
 
-export function signatureText(name: string, candidate: Overload): string {
-  const required = candidate.required ?? candidate.params.length
-  const params = candidate.params.map((param, i) => `${typeText(param)}${i >= required ? '?' : ''}`)
-  if (candidate.rest !== undefined) params.push(`...${typeText(candidate.rest)}`)
-  return `${name}(${params.join(', ')}): ${typeText(candidate.result)}`
-}
-
-function findIt(node: Node): Node | undefined {
-  if (node.type === 'It') return node
-  let found: Node | undefined
-  const visit = (child: Node): void => {
-    found ??= findIt(child)
-  }
-  if (node.type === 'Lambda') return undefined
-  forEachChild(node, visit)
-  return found
-}
-
 /** Names from other languages, with the Bonsai spelling. */
 const FUNCTION_ALIASES: Readonly<Record<string, string>> = {
   length: 'length is a property: write x.length',
@@ -2345,22 +2240,6 @@ const JS_GLOBALS: Readonly<Record<string, string>> = {
   Number: 'use toNumber(x)',
   String: 'use toString(x)',
   Array: 'use a list literal [...]',
-}
-
-/**
- * Longest type text in a diagnostic message. A message can name a large object
- * type, and a source can repeat the mistake thousands of times, so a short cap
- * keeps diagnostics (and their JSON) near the size of the source.
- */
-const MESSAGE_TYPE_TEXT = 120
-
-const typeTexts = new WeakMap<Type, string>()
-
-/** A type's text for a diagnostic message, shortened with an ellipsis. */
-function typeText(type: Type): string {
-  let text = typeTexts.get(type)
-  if (text === undefined) typeTexts.set(type, (text = formatType(type, MESSAGE_TYPE_TEXT)))
-  return text
 }
 
 /** Longest receiver path a diagnostic message names instead of its type. */
