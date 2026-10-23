@@ -191,6 +191,8 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
       return true
     }
     case 'union':
+      // Each member may be tried: a union of thousands of literals is real work.
+      state.charge(type.types.length)
       return type.types.some((member) => conforms(value, member, state, depth))
     case 'timestamp':
       // An invalid Date is an opaque host value, not a timestamp.
