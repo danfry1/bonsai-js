@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { fc, test } from '@fast-check/vitest'
 import { artifactDigest } from '../src/artifact.js'
 import { bindImplicit } from '../src/check/bind.js'
 import { internalsOf } from '../src/environment.js'
 import { bonsai, fn, t, toArtifact, type Artifact } from '../src/index.js'
 import {
   BonsaiArtifactError,
+  isBonsaiError,
   Duration,
   runtime,
   type ArtifactProblem,
@@ -224,4 +226,116 @@ describe('refusing artifacts', () => {
   it('rejects the strict option, which only affects checking', () => {
     expect(() => runtime({ strict: true } as never)).toThrow(TypeError)
   })
+})
+
+describe('overload choices', () => {
+  // The checker's overload choices change results only for sum and avg of an
+  // empty list, and for data that does not match its declared type. Both are
+  // generated here, for every built-in with more than one overload.
+  const declared = {
+    number: t.number(),
+    string: t.string(),
+    duration: t.duration(),
+    numbers: t.list(t.number()),
+    durations: t.list(t.duration()),
+    strings: t.list(t.string()),
+  }
+  const values = fc.oneof(
+    fc.integer({ min: -5, max: 5 }),
+    fc.constantFrom('', 'ab', 'b'),
+    fc.constantFrom(new Duration(0), new Duration(7_200_000)),
+    fc.array(fc.integer({ min: -5, max: 5 }), { maxLength: 3 }),
+    fc.array(fc.constantFrom(new Duration(0), new Duration(60_000)), { maxLength: 3 }),
+    fc.array(fc.constantFrom('a', 'b'), { maxLength: 3 }),
+  )
+  const sources = [
+    'x.abs()',
+    'x.sum()',
+    'x.avg()',
+    'x.sum() == hours(0)',
+    'x.includes(1)',
+    'x.includes("a")',
+    'x.indexOf("b")',
+    'x.lastIndexOf(1)',
+    'x.slice(0, 1)',
+    'x.at(0)',
+    'min(x)',
+    'max(x)',
+    'x.count()',
+    'timestamp(x)',
+    'duration(x)',
+  ]
+
+  const outcome = (run: () => unknown): unknown => {
+    try {
+      return { value: run() }
+    } catch (error) {
+      return { error: (error as { code?: string }).code ?? String(error) }
+    }
+  }
+
+  test.prop([fc.constantFrom(...Object.keys(declared)), fc.constantFrom(...sources), values], {
+    numRuns: 2000,
+  })(
+    'a loaded artifact matches the checked program for any declared type and data',
+    (kind, source, x) => {
+      const variables = { x: declared[kind as keyof typeof declared] }
+      const env = bonsai({ variables })
+      if (!env.check(source).ok) return
+      const program = env.compile(source)
+      const loaded = runtime({ variables }).load(
+        shipped(toArtifact(program)) as unknown as Artifact,
+      )
+      expect(outcome(() => loaded.evaluateSync({ x }))).toEqual(
+        outcome(() => program.evaluateSync({ x })),
+      )
+    },
+  )
+})
+
+describe('hostile artifacts', () => {
+  const variables = { xs: t.list(t.duration()), n: t.number() }
+  const base = shipped(
+    toArtifact(bonsai({ variables }).compile('xs.sum() < hours(n)', { expect: t.boolean() })),
+  )
+  const rt = runtime({ variables, limits: { maxSteps: 10_000 } })
+  const junk = fc.oneof(
+    fc.jsonValue({ maxDepth: 3 }),
+    fc.string({ unit: 'binary', maxLength: 40 }),
+    fc.constantFrom(-0, 2 ** 53, -1, 1.5, '__proto__', 'constructor'),
+  )
+  const plan = fc.tuple(
+    fc.integer({ min: -2, max: 40 }),
+    fc.constantFrom('sum', 'hours', 'x', ''),
+    fc.array(fc.integer({ min: -1, max: 3 }), { maxLength: 3 }),
+  )
+  const field = fc.constantFrom(...Object.keys(base), 'extra')
+  const mutated = fc.record({
+    edits: fc.array(fc.tuple(field, fc.oneof(junk, fc.array(plan, { maxLength: 3 }))), {
+      maxLength: 3,
+    }),
+    drop: fc.array(field, { maxLength: 2 }),
+    resign: fc.boolean(),
+  })
+
+  test.prop([mutated], { numRuns: 1500 })(
+    'only load, a Bonsai error, or a TypeError',
+    ({ edits, drop, resign }) => {
+      let artifact: Record<string, unknown> = { ...base }
+      for (const [key, value] of edits) artifact[key] = value
+      for (const key of drop) delete artifact[key]
+      if (resign && typeof artifact.source === 'string' && Array.isArray(artifact.plans)) {
+        try {
+          artifact = resigned(artifact, { variables })
+        } catch {
+          // Not every edit leaves something a forger could sign.
+        }
+      }
+      try {
+        rt.load(artifact as unknown as Artifact).evaluateSync({ xs: [], n: 1 })
+      } catch (error) {
+        expect(isBonsaiError(error) || error instanceof TypeError, String(error)).toBe(true)
+      }
+    },
+  )
 })

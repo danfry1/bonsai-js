@@ -13,6 +13,8 @@
  *       parsing, checking, evaluation, and the language service.
  *   (b) `evaluateSync`, `await evaluate`, and `compile().evaluateSync` agree:
  *       the same value, or an error with the same code.
+ *   (b') A compiled program and its artifact, through JSON, loaded by
+ *       `bonsai-js/runtime` with the same definitions, agree.
  *   (c) Soundness probe: when an environment whose declared variable types
  *       match the context accepts the expression (`check(source).ok`),
  *       evaluation never fails with TYPE_ERROR, NO_OVERLOAD, or NULL_RECEIVER,
@@ -43,6 +45,8 @@ import {
   t,
   type Type,
 } from '../src/index.js'
+import { toArtifact } from '../src/artifact.js'
+import { runtime } from '../src/runtime/index.js'
 import { createLanguageService } from '../src/service/index.js'
 import { parse } from '../src/syntax/parser.js'
 
@@ -597,18 +601,19 @@ function sameOutcome(a: Outcome, b: Outcome): boolean {
 const clock = (): Date => FIXED_CLOCK
 const openEnv = bonsai({ clock, functions: FUNCTIONS })
 const typedEnvs = new Map<string, ReturnType<typeof bonsai>>()
+/** The runtime with the same definitions as each environment, for (b'). */
+const runtimes = new Map<object, ReturnType<typeof runtime>>([
+  [openEnv, runtime({ clock, functions: FUNCTIONS })],
+])
 
 function typedEnvFor(variables: Scenario['variables']): ReturnType<typeof bonsai> {
   const key = JSON.stringify(variables)
   let env = typedEnvs.get(key)
   if (env === undefined) {
-    env = bonsai({
-      clock,
-      functions: FUNCTIONS,
-      strict: true,
-      variables: Object.fromEntries(variables.map(([name, desc]) => [name, toType(desc)])),
-    })
+    const declared = Object.fromEntries(variables.map(([name, desc]) => [name, toType(desc)]))
+    env = bonsai({ clock, functions: FUNCTIONS, strict: true, variables: declared })
     typedEnvs.set(key, env)
+    runtimes.set(env, runtime({ clock, functions: FUNCTIONS, variables: declared }))
   }
   return env
 }
@@ -743,6 +748,20 @@ async function scenarioHolds(scenario: Scenario): Promise<boolean> {
       throw new FuzzViolation(
         `evaluateSync gave ${describeOutcome(sync)} but compile().evaluateSync gave ${describeOutcome(viaCompiled)}`,
       )
+    }
+    // (b') the artifact of a program that compiles evaluates as the program does.
+    if (env.check(source).ok) {
+      const rt = runtimes.get(env) as ReturnType<typeof runtime>
+      const loaded = capture('runtime', () =>
+        rt
+          .load(JSON.parse(JSON.stringify(toArtifact(env.compile(source)))) as never)
+          .evaluateSync(context),
+      )
+      if (!sameOutcome(sync, loaded)) {
+        throw new FuzzViolation(
+          `evaluateSync gave ${describeOutcome(sync)} but its loaded artifact gave ${describeOutcome(loaded)}`,
+        )
+      }
     }
 
     // (c) a typed environment that accepted the source must not hit a type
