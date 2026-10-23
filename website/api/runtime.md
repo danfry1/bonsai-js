@@ -58,7 +58,7 @@ The source stays the record: it is the rule as written, and a full environment c
 - **Overload choices.** Static types can decide which overload of a built-in a call uses. On an empty list typed as durations, `xs.sum()` is a zero duration; untyped, it is the number `0`. The artifact records each choice the checker made, so the runtime gives the same result.
 - **The digest** covers every field, every function the expression calls (its signatures, and whether it is a host function or a built-in), and the declared type of every variable it reads. A runtime whose definitions differ in any of those refuses the artifact rather than evaluating it differently. Definitions the expression does not use do not matter.
 
-`toArtifact` takes any program an environment compiled, including `env.check(source).program`. It returns the same object on every call for the same program, runs no evaluation and no host code, and throws a `RangeError` when the expected type holds more than 100,000 type nodes. It is a function rather than a method so bundles that never make artifacts leave it out.
+`toArtifact` takes any program an environment compiled, including `env.check(source).program`. It returns the same object on every call for the same program and evaluates nothing. It reads the program's expected type, and the declared types of the variables it reads, as they are when it is called, so pass types built with `t` (which are frozen) rather than objects that change. It throws a `RangeError` when the expected type holds more than 100,000 type nodes. It is a function rather than a method so bundles that never make artifacts leave it out.
 
 ## runtime(options)
 

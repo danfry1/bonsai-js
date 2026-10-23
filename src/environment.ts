@@ -1065,7 +1065,6 @@ function checkedClock(clock: () => Date): () => Date {
   }
 }
 
-/** Reads compile(), check(), and the runtime's load() options: only `expect`, which must be a type built with t. */
 /** Whether a type has an exact map type anywhere in it. */
 function holdsExact(type: Type): boolean {
   const stack: Type[] = [type]
@@ -1085,6 +1084,7 @@ function holdsExact(type: Type): boolean {
   return false
 }
 
+/** Reads compile(), check(), and the runtime's load() options: only `expect`, which must be a type built with t. */
 export function expectOption(options: unknown, what: 'Compile' | 'Load'): Type | undefined {
   if (options === undefined) return undefined
   if (typeof options !== 'object' || options === null || Array.isArray(options))
