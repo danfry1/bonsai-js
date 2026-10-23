@@ -6,7 +6,7 @@ import type { Type } from './types.js'
 import { VERSION } from './version.js'
 
 /** The artifact format this release writes and reads. */
-const ARTIFACT_FORMAT = 1
+export const ARTIFACT_FORMAT = 1
 
 /**
  * The most type nodes an artifact's `expect` may hold, counted along every
@@ -15,7 +15,7 @@ const ARTIFACT_FORMAT = 1
  * maxNodes: a large `t.enum` compiles on a default environment and must load
  * on a default runtime.
  */
-const MAX_EXPECT_NODES = 100_000
+export const MAX_EXPECT_NODES = 100_000
 
 /**
  * A call whose checked candidates are narrower than its function's overloads:
@@ -64,7 +64,7 @@ function assertExpectSize(type: Type, what: string): void {
 }
 
 /** Names of the functions a bound tree calls and the context variables it reads. */
-function treeNames(root: Node): { functions: string[]; variables: string[] } {
+export function treeNames(root: Node): { functions: string[]; variables: string[] } {
   const functions = new Set<string>()
   const variables = new Set<string>()
   const stack: Node[] = [root]
@@ -89,7 +89,7 @@ const section = (value: string): string => `${value.length}:${value}`
  * artifact fails to load instead of running with choices made for something
  * else.
  */
-function artifactDigest(
+export function artifactDigest(
   fields: Omit<Artifact, 'digest'>,
   root: Node,
   lookup: (name: string) => FunctionDef | undefined,

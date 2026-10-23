@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
+import type * as BonsaiModule from '../src/index.js'
 
 // Bundles small consumers of the built package (run `bun run build` first),
 // minified for the browser, and fails when one outgrows its gzip budget. The
@@ -20,6 +21,16 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const entry = JSON.stringify(join(root, 'dist', 'index.mjs'))
 const liteEntry = JSON.stringify(join(root, 'dist', 'lite', 'index.mjs'))
 const serviceEntry = JSON.stringify(join(root, 'dist', 'service', 'index.mjs'))
+const runtimeEntry = JSON.stringify(join(root, 'dist', 'runtime', 'index.mjs'))
+// An artifact as a browser receives it: plain JSON in the bundle.
+const { bonsai, t, toArtifact } = (await import(
+  join(root, 'dist', 'index.mjs')
+)) as typeof BonsaiModule
+const artifact = JSON.stringify(
+  toArtifact(
+    bonsai({ variables: { user: t.object({ age: t.number() }) } }).compile('user.age >= 18'),
+  ),
+)
 
 const cases: SizeCase[] = [
   {
@@ -65,6 +76,14 @@ const cases: SizeCase[] = [
     name: 'language service only',
     source: `import { createLanguageService } from ${serviceEntry}\nconsole.log(createLanguageService)`,
     maxGzipBytes: 46_000,
+  },
+  {
+    // Evaluating artifacts without the checker: the parser, binding, compiler,
+    // built-ins, and loader. 43.6 KB when set (2026-10-23): 36% under the main
+    // entry and 22% under lite. The built-ins (27 KB minified) are most of it.
+    name: 'runtime: runtime().load(artifact).evaluateSync()',
+    source: `import { runtime } from ${runtimeEntry}\nconsole.log(runtime().load(${artifact}).evaluateSync({ user: { age: 30 } }))`,
+    maxGzipBytes: 44_000,
   },
 ]
 

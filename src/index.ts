@@ -45,10 +45,12 @@ export {
   BonsaiCheckError,
   BonsaiLimitError,
   BonsaiRuntimeError,
+  BonsaiArtifactError,
   BonsaiTranslationError,
   isBonsaiError,
 } from './errors.js'
 export type {
+  ArtifactProblem,
   BonsaiErrorJSON,
   BonsaiErrorName,
   Diagnostic,

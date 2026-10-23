@@ -78,9 +78,11 @@ export {
   BonsaiCheckError,
   BonsaiLimitError,
   BonsaiRuntimeError,
+  BonsaiArtifactError,
   isBonsaiError,
 } from '../errors.js'
 export type {
+  ArtifactProblem,
   BonsaiErrorJSON,
   BonsaiErrorName,
   Diagnostic,

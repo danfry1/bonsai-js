@@ -355,7 +355,7 @@ type Checked<P> = (
   readonly typeOf: (node: Node) => Type | undefined
 }
 
-type Args<Ctx> =
+export type Args<Ctx> =
   Record<string, never> extends Ctx
     ? [context?: Ctx, options?: EvaluateOptions]
     : [context: Ctx, options?: EvaluateOptions]
@@ -885,7 +885,7 @@ const DEPTH_CAPS: Readonly<Record<string, number>> = {
   maxValueDepth: MAX_VALUE_DEPTH_LIMIT,
 }
 
-function settingsFrom(base: Settings | undefined, options: unknown): Settings {
+export function settingsFrom(base: Settings | undefined, options: unknown): Settings {
   assertOptions(options)
   const limits = (options.limits ?? {}) as Readonly<Record<string, unknown>>
   const variables = mergeVariables(base?.variables, options)
@@ -932,7 +932,7 @@ const CACHE_MAX_SOURCE = 16_384
  * entry is evicted, unless it was used since it last reached the front (or is
  * the entry being added), in which case it moves to the back unmarked.
  */
-class ProgramCache<V> {
+export class ProgramCache<V> {
   private readonly map = new Map<string, { readonly value: V; used: boolean }>()
   private readonly size: number
   private chars = 0
