@@ -16,6 +16,8 @@ import {
   invalidContext,
   isValidDate,
   validationBudget,
+} from './program.js'
+import {
   type EvaluateOptions,
   type ExplainOptions,
   type Explanation,

@@ -161,7 +161,7 @@ export interface CompileOptions {
 }
 
 export function compileProgram(
-  analysis: Analysis,
+  analysis: Pick<Analysis, 'root' | 'calls'>,
   mode: 'sync' | 'async',
   options: CompileOptions = {},
 ): CompiledProgram {
@@ -169,7 +169,7 @@ export function compileProgram(
 }
 
 function compileTree(
-  analysis: Analysis,
+  analysis: Pick<Analysis, 'root' | 'calls'>,
   mode: 'sync' | 'async',
   options: CompileOptions,
 ): CompiledProgram {
