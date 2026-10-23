@@ -60,6 +60,10 @@ function encode(type: Type): string {
         else members.add(encodeType(member))
       }
       type.types.forEach(add)
+      // never adds no values; a union of one member is that member.
+      members.delete('never')
+      if (members.size === 0) return 'never'
+      if (members.size === 1) return [...members][0]
       return `(${[...members].sort().join('|')})`
     }
     case 'opaque':

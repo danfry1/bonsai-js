@@ -444,3 +444,70 @@ describe('round 3 regressions', () => {
     )
   })
 })
+
+describe('round 4 regressions', () => {
+  it('records the checked expected type, not extra keys or what toJSON says', () => {
+    const extra = { kind: 'number', description: 'age', title: 'Age' }
+    const withExtra = toArtifact(bonsai().compile('o', { expect: extra as never }))
+    expect(withExtra.expect).toEqual({ kind: 'number' })
+    expect(
+      runtime()
+        .load(shipped(withExtra) as unknown as Artifact)
+        .evaluateSync({ o: 3 }),
+    ).toBe(3)
+
+    const lying = { kind: 'number', toJSON: () => ({ kind: 'string' }) }
+    const program = bonsai().compile('o', { expect: lying as never })
+    const loaded = runtime().load(shipped(toArtifact(program)) as unknown as Artifact)
+    expect(() => program.evaluateSync({ o: 'x' })).toThrow(
+      expect.objectContaining({ code: 'TYPE_ERROR' }),
+    )
+    expect(() => loaded.evaluateSync({ o: 'x' })).toThrow(
+      expect.objectContaining({ code: 'TYPE_ERROR' }),
+    )
+  })
+
+  it('refuses a later format as a version however many fields it has', () => {
+    const later = Object.fromEntries([
+      ['bonsai', 2],
+      ...Array.from({ length: 30 }, (_, i) => [`f${i}`, i]),
+    ])
+    expect(reasonOf(() => runtime().load(later as never))).toBe('version')
+  })
+
+  it('refuses a self-containing expected type quickly', () => {
+    const base = toArtifact(bonsai().compile('1'))
+    const union: { kind: string; types: unknown[] } = { kind: 'union', types: [] }
+    union.types.push(union, ...Array.from({ length: 99_998 }, () => ({ kind: 'number' })))
+    const artifact = structuredClone({ ...base, expect: union })
+    const started = performance.now()
+    expect(reasonOf(() => runtime().load(artifact as never))).toBe('limit')
+    expect(performance.now() - started).toBeLessThan(150)
+  })
+
+  it('passes through only its own errors while reading an artifact', () => {
+    const base = shipped(toArtifact(bonsai().compile('1')))
+    const fake = { [Symbol.for('bonsai-js.error')]: true, message: 'fake' }
+    const real = bonsai().compile('1 / 0')
+    let runtimeError: unknown
+    try {
+      real.evaluateSync()
+    } catch (error) {
+      runtimeError = error
+    }
+    for (const thrown of [fake, runtimeError]) {
+      const proxy = new Proxy(base, {
+        ownKeys() {
+          throw thrown
+        },
+      })
+      expect(reasonOf(() => runtime().load(proxy as never))).toBe('TypeError')
+    }
+  })
+
+  it('accepts an expected type that is written differently but means the same', () => {
+    const artifact = toArtifact(bonsai().compile('1', { expect: t.number() }))
+    for (const same of [t.union(t.number(), t.number()), t.union(t.number(), t.never())])
+      expect(runtime().load(artifact, { expect: same }).evaluateSync()).toBe(1)
+  })
+})

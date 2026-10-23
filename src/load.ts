@@ -10,7 +10,7 @@ import { bindImplicit } from './check/bind.js'
 import type { CallPlan } from './check/checker.js'
 import { encodeType, lengthPrefixed } from './digest.js'
 import type { Settings } from './environment.js'
-import { BonsaiArtifactError, BonsaiError, isBonsaiError, type ArtifactProblem } from './errors.js'
+import { BonsaiArtifactError, BonsaiError, type ArtifactProblem } from './errors.js'
 import { BUILTINS } from './functions/builtins.js'
 import { assertType, type FunctionDef } from './functions/define.js'
 import { programRunner, warmZones, type ProgramAnalysis } from './program.js'
@@ -42,12 +42,14 @@ const MAX_TYPE_KEYS = 3
  */
 const MAX_PLAN_LENGTH = 34
 
-const fail = (reason: ArtifactProblem, message: string, cause?: unknown): never => {
-  throw new BonsaiArtifactError(reason, message, cause === undefined ? {} : { cause })
-}
-
-/** The TypeErrors readArtifact throws itself, as opposed to ones host objects throw. */
+/** The errors the loader throws itself, as opposed to ones host objects throw while being read. */
 const own = new WeakSet()
+
+const fail = (reason: ArtifactProblem, message: string, cause?: unknown): never => {
+  const error = new BonsaiArtifactError(reason, message, cause === undefined ? {} : { cause })
+  own.add(error)
+  throw error
+}
 
 function notArtifact(): never {
   const error = new TypeError('An artifact must be an object made by toArtifact()')
@@ -111,7 +113,13 @@ function copyType(value: unknown): Type {
       case 'list':
         return Object.freeze({ kind, element: copy(data.get('element'), depth + 1) })
       case 'union': {
-        const members = arrayData(data.get('types'), MAX_EXPECT_NODES, 'expect.types', 'limit')
+        // Every member is at least one more node, so a longer list cannot fit.
+        const members = arrayData(
+          data.get('types'),
+          MAX_EXPECT_NODES - nodes,
+          'expect.types',
+          'limit',
+        )
         return Object.freeze({ kind, types: Object.freeze(members.map((m) => copy(m, depth + 1))) })
       }
       case 'map': {
@@ -119,7 +127,7 @@ function copyType(value: unknown): Type {
         if (typeof record !== 'object' || record === null)
           return fail('shape', "The artifact's expected type has map fields that are not an object")
         const fields = Object.create(null) as Record<string, unknown>
-        for (const [key, field] of ownData(record, 'expect.fields', MAX_EXPECT_NODES))
+        for (const [key, field] of ownData(record, 'expect.fields', MAX_EXPECT_NODES - nodes))
           Object.defineProperty(fields, key, { value: copy(field, depth + 1), enumerable: true })
         const rest = data.get('rest')
         return Object.freeze({
@@ -155,18 +163,18 @@ export function readArtifact(value: unknown, settings: Settings): Artifact {
   try {
     return read(value, settings)
   } catch (error) {
-    if (isBonsaiError(error) || (typeof error === 'object' && error !== null && own.has(error)))
-      throw error
+    if (typeof error === 'object' && error !== null && own.has(error)) throw error
     throw new TypeError('The artifact could not be read', { cause: error })
   }
 }
 
 function read(value: unknown, settings: Settings): Artifact {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) notArtifact()
-  const data = ownData(value, 'The artifact', ARTIFACT_KEYS.size * 2)
-  // Only the format is required to say which format it is: a later one may rename the rest.
-  if (!data.has('bonsai')) notArtifact()
-  const format = data.get('bonsai')
+  // The format is read first and alone: a later format may rename or add any other field.
+  const formatField = Reflect.getOwnPropertyDescriptor(value, 'bonsai')
+  if (formatField === undefined) return notArtifact()
+  if (!('value' in formatField)) fail('shape', 'The artifact format is an accessor')
+  const format: unknown = formatField.value
   if (typeof format !== 'number' || !Number.isSafeInteger(format) || format < 1)
     fail('shape', 'The artifact format must be a positive integer')
   if (format !== ARTIFACT_FORMAT)
@@ -174,6 +182,7 @@ function read(value: unknown, settings: Settings): Artifact {
       'version',
       `Artifact format ${String(format)} is not supported (this runtime reads format ${ARTIFACT_FORMAT})`,
     )
+  const data = ownData(value, 'The artifact', ARTIFACT_KEYS.size)
   for (const key of data.keys()) {
     if (!ARTIFACT_KEYS.has(key))
       fail('version', `The artifact has a field "${key}" this runtime does not know`)
