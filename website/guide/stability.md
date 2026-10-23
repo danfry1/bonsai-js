@@ -60,6 +60,16 @@ Bonsai follows Semantic Versioning for its four package entrypoints:
     `reasons()` selects may improve in a minor release.
   - A residual's `dependsOn` may only get more precise: it never misses a path
     the residual reads.
+  - An artifact (`toArtifact()`) in format version 1 loads in every 1.x
+    `bonsai-js/runtime` whose definitions reproduce its digest, and evaluates
+    as the program it was made from. The format is not changed in place: a
+    change that older runtimes would misread is a new format version, which
+    they refuse with `ARTIFACT` (`reason: 'version'`). Artifacts are bound to
+    the definitions they were made with, built-in signatures included, so a
+    minor release that changes a built-in's signature makes artifacts calling
+    it fail to load (`reason: 'digest'`) until they are made again; release
+    notes list such changes. Keep each artifact's source, which every release
+    can compile again.
 - **Context validation.** `validateContext` may get stricter in a minor
   release only to reject values the language cannot represent (as it rejects
   `NaN` for a declared number).
@@ -103,9 +113,14 @@ Bonsai follows Semantic Versioning for its four package entrypoints:
   exhaustive switches without a default branch.
 - **More precise static types.** A result type may become narrower when
   inference improves (for example `any` becoming `number`). New warnings may
-  appear. New errors appear only for expressions that could not have evaluated
-  successfully. `isAssignable` follows the checker, so its answer for a pair
-  of types may change when the checker improves.
+  appear. New errors appear only for expressions that could not have
+  evaluated successfully. One result depends on inference: `sum` of an empty
+  list is a zero duration when the checker knows the list holds durations and
+  the number `0` otherwise, so where better inference proves a list holds
+  durations, an empty one sums to a duration instead of `0`. For data that
+  matches its declared types, this is the only such case; 2.0 removes it.
+  `isAssignable` follows the checker, so its answer for a pair of types may
+  change when the checker improves.
 - **TypeScript types.** The minimum TypeScript version may be raised in a minor
   release. Declarations that make inferred types more precise (`Infer`,
   context types, option types) may report new compile errors in code that was

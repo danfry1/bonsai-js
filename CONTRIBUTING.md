@@ -101,7 +101,7 @@ Version and changelog are derived from the [bump files](.bumpy/) that PRs accumu
 bun run bump:version
 ```
 
-This consumes `.bumpy/*.md`, bumps `version` in `package.json`, and updates `CHANGELOG.md`. Open the result as a PR titled `chore: release X.Y.Z` and merge it to `main`. Then tag that commit and push the tag:
+This consumes `.bumpy/*.md`, bumps `version` in `package.json`, and updates `CHANGELOG.md`. Set `VERSION` in `src/version.ts` to the same version (artifacts record it; `tests/artifact.test.ts` fails until the two match). Open the result as a PR titled `chore: release X.Y.Z` and merge it to `main`. Then tag that commit and push the tag:
 
 ```bash
 git tag vX.Y.Z
