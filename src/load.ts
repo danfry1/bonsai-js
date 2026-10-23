@@ -42,18 +42,23 @@ const MAX_TYPE_KEYS = 3
  */
 const MAX_PLAN_LENGTH = 34
 
-/** The errors the loader throws itself, as opposed to ones host objects throw while being read. */
-const own = new WeakSet()
+/**
+ * The errors the current readArtifact call raises itself, as opposed to
+ * anything a host object throws while it is read (including a loader error
+ * from another call, rethrown by a Proxy trap). Reads nest when a trap loads
+ * another artifact, so each call has its own set.
+ */
+let raisedHere: WeakSet<WeakKey> | undefined
 
 const fail = (reason: ArtifactProblem, message: string, cause?: unknown): never => {
   const error = new BonsaiArtifactError(reason, message, cause === undefined ? {} : { cause })
-  own.add(error)
+  raisedHere?.add(error)
   throw error
 }
 
 function notArtifact(): never {
   const error = new TypeError('An artifact must be an object made by toArtifact()')
-  own.add(error)
+  raisedHere?.add(error)
   throw error
 }
 
@@ -160,11 +165,16 @@ function copyType(value: unknown): Type {
  * its cause.
  */
 export function readArtifact(value: unknown, settings: Settings): Artifact {
+  const outer = raisedHere
+  const mine = new WeakSet()
+  raisedHere = mine
   try {
     return read(value, settings)
   } catch (error) {
-    if (typeof error === 'object' && error !== null && own.has(error)) throw error
+    if (typeof error === 'object' && error !== null && mine.has(error)) throw error
     throw new TypeError('The artifact could not be read', { cause: error })
+  } finally {
+    raisedHere = outer
   }
 }
 
@@ -344,7 +354,9 @@ export function artifactKey(artifact: Artifact): string {
     lengthPrefixed(artifact.by),
     lengthPrefixed(artifact.source),
     lengthPrefixed(JSON.stringify(artifact.plans)),
-    artifact.expect === undefined ? '-' : lengthPrefixed(encodeType(artifact.expect)),
+    // As written, not canonically: equal types written differently report
+    // themselves differently in result-mismatch messages.
+    artifact.expect === undefined ? '-' : lengthPrefixed(JSON.stringify(artifact.expect)),
     artifact.guard ? 'g' : '-',
     artifact.async ? 'a' : '-',
   ].join('')

@@ -511,3 +511,58 @@ describe('round 4 regressions', () => {
       expect(runtime().load(artifact, { expect: same }).evaluateSync()).toBe(1)
   })
 })
+
+describe('round 5 regressions', () => {
+  it('refuses an expected union with a hole when compiling and loading', () => {
+    // oxlint-disable-next-line no-sparse-arrays -- the hole is the point
+    const holey = { kind: 'union', types: [, t.number()] }
+    expect(() => bonsai().compile('o', { expect: holey as never })).toThrow('types[0]')
+    const artifact = toArtifact(bonsai().compile('1', { expect: t.number() }))
+    expect(() => runtime().load(artifact, { expect: holey as never })).toThrow('types[0]')
+  })
+
+  it('caches artifacts by their expected type as written, so messages match the environment', () => {
+    const rt = runtime()
+    const written = [t.number(), t.union(t.number(), t.never()), t.union(t.string(), t.number())]
+    for (const expectType of written) {
+      const program = bonsai().compile('o', { expect: expectType })
+      const artifact = shipped(toArtifact(program)) as unknown as Artifact
+      let fromEnv = ''
+      let fromRuntime = ''
+      try {
+        program.evaluateSync({ o: true })
+      } catch (error) {
+        fromEnv = (error as Error).message
+      }
+      try {
+        rt.evaluateSync(artifact, { o: true })
+      } catch (error) {
+        fromRuntime = (error as Error).message
+      }
+      expect(fromRuntime).toBe(fromEnv)
+    }
+  })
+
+  it('wraps a loader error from another load thrown by a Proxy trap', () => {
+    const base = shipped(toArtifact(bonsai().compile('1')))
+    let earlier: unknown
+    try {
+      runtime().load({ bonsai: 7 } as never)
+    } catch (error) {
+      earlier = error
+    }
+    const rethrowing = new Proxy(base, {
+      ownKeys() {
+        throw earlier
+      },
+    })
+    expect(reasonOf(() => runtime().load(rethrowing as never))).toBe('TypeError')
+    const nested = new Proxy(base, {
+      ownKeys() {
+        runtime().load({ bonsai: 1, source: 1 } as never)
+        return []
+      },
+    })
+    expect(reasonOf(() => runtime().load(nested as never))).toBe('TypeError')
+  })
+})
