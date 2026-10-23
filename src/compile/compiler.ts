@@ -1,11 +1,12 @@
 import { BLOCKED_NAMES } from '../syntax/lexer.js'
-import { signatureText, type Analysis, type CallPlan } from '../check/checker.js'
+import type { Analysis, CallPlan } from '../check/checker.js'
 import { BonsaiLimitError, BonsaiRuntimeError, type BonsaiError, type Span } from '../errors.js'
 import { guardDepth, isStackOverflow, tooDeep } from '../runtime/overflow.js'
 import {
   conforms,
   matchesKind,
   Out,
+  signatureText,
   type CallSite,
   type FunctionDef,
   type Overload,
@@ -160,7 +161,7 @@ export interface CompileOptions {
 }
 
 export function compileProgram(
-  analysis: Analysis,
+  analysis: Pick<Analysis, 'root' | 'calls'>,
   mode: 'sync' | 'async',
   options: CompileOptions = {},
 ): CompiledProgram {
@@ -168,7 +169,7 @@ export function compileProgram(
 }
 
 function compileTree(
-  analysis: Analysis,
+  analysis: Pick<Analysis, 'root' | 'calls'>,
   mode: 'sync' | 'async',
   options: CompileOptions,
 ): CompiledProgram {

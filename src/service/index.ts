@@ -1,7 +1,7 @@
-import { acceptsArgument, analyze, signatureText, type Analysis } from '../check/checker.js'
+import { acceptsArgument, analyze, type Analysis } from '../check/checker.js'
 import { internalsOf, type Environment, type LiteEnvironment } from '../environment.js'
 import { BonsaiError, BonsaiSyntaxError, locate, type Diagnostic } from '../errors.js'
-import { assertType, type FunctionDef } from '../functions/define.js'
+import { assertType, signatureText, type FunctionDef } from '../functions/define.js'
 import { forEachChild, type Node } from '../syntax/ast.js'
 import { parse } from '../syntax/parser.js'
 import {

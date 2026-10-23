@@ -925,6 +925,22 @@ export function formatType(type: Type, maxLength = MAX_TYPE_TEXT): string {
   return formatTypeText(type, maxLength)
 }
 
+/**
+ * Longest type text in a diagnostic message. A message can name a large object
+ * type, and a source can repeat the mistake thousands of times, so a short cap
+ * keeps diagnostics (and their JSON) near the size of the source.
+ */
+const MESSAGE_TYPE_TEXT = 120
+
+const typeTexts = new WeakMap<Type, string>()
+
+/** A type's text for a diagnostic message, shortened with an ellipsis. */
+export function typeText(type: Type): string {
+  let text = typeTexts.get(type)
+  if (text === undefined) typeTexts.set(type, (text = formatType(type, MESSAGE_TYPE_TEXT)))
+  return text
+}
+
 const HIGH_SURROGATE_FIRST = 0xd800
 const HIGH_SURROGATE_LAST = 0xdbff
 
