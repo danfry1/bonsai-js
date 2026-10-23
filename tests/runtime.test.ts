@@ -179,8 +179,10 @@ describe('refusing artifacts', () => {
   })
 
   it('throws TypeError for values that are not artifacts', () => {
-    for (const value of [null, 'x', [], { source: '1' }, { bonsai: 1, source: '1' }])
+    for (const value of [null, 'x', [], { source: '1' }])
       expect(reasonOf(() => load(value))).toBe('TypeError')
+    // A format 1 artifact missing its other fields is malformed, not something else.
+    expect(reasonOf(() => load({ bonsai: 1, source: '1' }))).toBe('shape')
   })
 
   it('reads each property once, runs no getter, and keeps a __proto__ field', () => {
@@ -338,4 +340,107 @@ describe('hostile artifacts', () => {
       }
     },
   )
+})
+
+describe('round 3 regressions', () => {
+  it('loads artifacts whose expected type is a checked map literal type, which is exact', () => {
+    const env = bonsai()
+    const shape = env.compile('{ a: 1 }').type
+    const program = env.compile('{ a: 2 }', { expect: shape })
+    const loaded = runtime().load(shipped(toArtifact(program)) as unknown as Artifact)
+    expect(loaded.evaluateSync()).toEqual({ a: 2 })
+    // A declared type with the same JSON is not served the exact program from the cache.
+    const declared = env.compile('{ a: 2 }', { expect: t.object({ a: t.number() }) })
+    expect(() => runtime().load(shipped(toArtifact(declared)) as unknown as Artifact)).not.toThrow()
+  })
+
+  it('loads artifacts reading a variable declared with an exact type and shared as JSON', () => {
+    const shape = bonsai().compile('{ a: 1 }').type
+    const program = bonsai({ variables: { o: shape } }).compile('o.a + 1')
+    const variables = { o: JSON.parse(JSON.stringify(shape)) as typeof shape }
+    expect(
+      runtime({ variables })
+        .load(toArtifact(program))
+        .evaluateSync({ o: { a: 1 } }),
+    ).toBe(2)
+  })
+
+  it('validates load options as compile() validates its own', () => {
+    const artifact = toArtifact(bonsai().compile('1', { expect: t.number() }))
+    expect(() => runtime().load(artifact, { expct: t.number() } as never)).toThrow(
+      'Unknown load option key "expct"',
+    )
+    for (const expectType of [null, { kind: 'nope' }, { kind: 'map', fields: null }])
+      expect(() => runtime().load(artifact, { expect: expectType } as never)).toThrow(
+        'Load option "expect"',
+      )
+    const throwing = Object.defineProperty({}, 'expect', {
+      enumerable: true,
+      get: () => {
+        throw new Error('boom')
+      },
+    })
+    expect(() => runtime().load(artifact, throwing)).toThrow('Load options could not be read')
+  })
+
+  it('counts an expected type the same way when making and loading an artifact', () => {
+    // 34,000 objects are 68,001 type nodes, which loads; counting each field
+    // record too (102,001 parts) used to refuse it.
+    const members = Array.from({ length: 34_000 }, (_, i) => t.object({ [`k${i}`]: t.number() }))
+    const program = bonsai().compile('x', { expect: t.union(...members) })
+    const artifact = toArtifact(program)
+    expect(() => runtime().load(shipped(artifact) as unknown as Artifact)).not.toThrow()
+  })
+
+  it('turns anything a hostile Proxy throws into a TypeError', () => {
+    const base = shipped(toArtifact(bonsai().compile('1')))
+    const throwing = (value: unknown) =>
+      new Proxy(base, {
+        ownKeys() {
+          throw value
+        },
+      })
+    for (const value of [new Error('boom'), 'boom', 42]) {
+      let error: unknown
+      try {
+        runtime().load(throwing(value) as never)
+      } catch (caught) {
+        error = caught
+      }
+      expect(error).toBeInstanceOf(TypeError)
+      expect((error as Error).cause).toBe(value)
+    }
+    const { proxy, revoke } = Proxy.revocable(base, {})
+    revoke()
+    expect(reasonOf(() => runtime().load(proxy as never))).toBe('TypeError')
+  })
+
+  it('refuses an oversized plans array without reading its elements', () => {
+    const base = shipped(toArtifact(bonsai().compile('1')))
+    const plans = new Array<unknown>(1_000_000).fill([0, 'x', 0])
+    const started = performance.now()
+    expect(reasonOf(() => runtime().load({ ...base, plans } as never))).toBe('limit')
+    expect(performance.now() - started).toBeLessThan(100)
+  })
+
+  it('reports different definitions as a digest mismatch, even when they would bind differently', () => {
+    const artifact = toArtifact(bonsai().compile('[1].filter(. > 0)'))
+    const functions = {
+      filter: fn({ params: [t.list(t.number()), t.boolean()], returns: t.number(), run: () => 1 }),
+    }
+    expect(reasonOf(() => runtime({ functions }).load(artifact))).toBe('digest')
+  })
+
+  it('refuses a later format as a version, whatever fields it has', () => {
+    expect(
+      reasonOf(() => runtime().load({ bonsai: 2, source: '1', signature: 'x' } as never)),
+    ).toBe('version')
+  })
+
+  it('accepts strict: undefined and names only runtime options in errors', () => {
+    expect(() => runtime({ strict: undefined } as never)).not.toThrow()
+    expect(() => runtime({ bogus: 1 } as never)).toThrow(
+      'Unknown runtime option key "bogus" (expected one of: variables, functions, libraries, limits, cacheSize, clock, validateContext)',
+    )
+  })
 })

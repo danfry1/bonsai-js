@@ -79,11 +79,12 @@ const cases: SizeCase[] = [
   },
   {
     // Evaluating artifacts without the checker: the parser, binding, compiler,
-    // built-ins, and loader. 43.6 KB when set (2026-10-23): 36% under the main
-    // entry and 22% under lite. The built-ins (27 KB minified) are most of it.
+    // built-ins, loader, and t for the declared variables. 44.2 KB when set
+    // (2026-10-23): 35% under the main entry and 21% under lite. The built-ins
+    // (27 KB minified) are most of it.
     name: 'runtime: runtime().load(artifact).evaluateSync()',
-    source: `import { runtime } from ${runtimeEntry}\nconsole.log(runtime().load(${artifact}).evaluateSync({ user: { age: 30 } }))`,
-    maxGzipBytes: 44_000,
+    source: `import { runtime, t } from ${runtimeEntry}\nconsole.log(runtime({ variables: { user: t.object({ age: t.number() }) } }).load(${artifact}).evaluateSync({ user: { age: 30 } }))`,
+    maxGzipBytes: 45_000,
   },
 ]
 
@@ -98,6 +99,8 @@ try {
     execFileSync('bun', ['build', input, '--minify', '--target', 'browser', '--outfile', output], {
       stdio: ['ignore', 'ignore', 'inherit'],
     })
+    // Each case must also run, so a budget never measures a bundle that would fail.
+    execFileSync('bun', [output], { stdio: ['ignore', 'ignore', 'inherit'] })
     const bytes = gzipSync(readFileSync(output), { level: 9 }).length
     const ok = bytes <= sizeCase.maxGzipBytes
     if (!ok) failed = true

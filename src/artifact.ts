@@ -1,5 +1,5 @@
 import { compiledFacts, type CompiledFacts } from './declared.js'
-import { encodeFunction, encodeType, hash64 } from './digest.js'
+import { encodeFunction, encodeType, hash64, lengthPrefixed } from './digest.js'
 import type { FunctionDef } from './functions/define.js'
 import { forEachChild, type Node } from './syntax/ast.js'
 import type { Type } from './types.js'
@@ -47,7 +47,7 @@ export interface Artifact {
 }
 
 /** Throws RangeError when a type holds more than MAX_EXPECT_NODES nodes along all its paths. */
-function assertExpectSize(type: Type, what: string): void {
+export function assertExpectSize(type: Type, what: string): void {
   let count = 0
   const stack: Type[] = [type]
   while (stack.length > 0) {
@@ -79,8 +79,6 @@ export function treeNames(root: Node): { functions: string[]; variables: string[
   return { functions: [...functions].sort(), variables: [...variables].sort() }
 }
 
-const section = (value: string): string => `${value.length}:${value}`
-
 /**
  * The digest of an artifact: its fields (all but `digest`), every function the
  * bound tree calls, and the declared type of every variable it reads, since
@@ -97,28 +95,28 @@ export function artifactDigest(
 ): string {
   const names = treeNames(root)
   const plans = fields.plans.map(([start, name, ...candidates]) =>
-    section(`${start}:${section(name)}${candidates.join(',')}`),
+    lengthPrefixed(`${start}:${lengthPrefixed(name)}${candidates.join(',')}`),
   )
   const functions = names.functions.map((name) => {
     const def = lookup(name)
-    return def === undefined ? section(`?${name}`) : section(encodeFunction(def))
+    return def === undefined ? lengthPrefixed(`?${name}`) : lengthPrefixed(encodeFunction(def))
   })
   const declared = names.variables.map((name) => {
     const type =
       variables !== undefined && Object.hasOwn(variables, name) ? variables[name] : undefined
-    return section(`${section(name)}${type === undefined ? '?' : encodeType(type)}`)
+    return lengthPrefixed(`${lengthPrefixed(name)}${type === undefined ? '?' : encodeType(type)}`)
   })
   return hash64(
     [
       `bonsai${fields.bonsai}`,
-      section(fields.by),
-      section(fields.source),
-      section(plans.join('')),
-      fields.expect === undefined ? '-' : section(encodeType(fields.expect)),
+      lengthPrefixed(fields.by),
+      lengthPrefixed(fields.source),
+      lengthPrefixed(plans.join('')),
+      fields.expect === undefined ? '-' : lengthPrefixed(encodeType(fields.expect)),
       fields.guard ? 'g' : '-',
       fields.async ? 'a' : '-',
-      section(functions.join('')),
-      section(declared.join('')),
+      lengthPrefixed(functions.join('')),
+      lengthPrefixed(declared.join('')),
     ].join(''),
   )
 }
@@ -154,10 +152,8 @@ function makeArtifact({ source, analysis, expect, lookup, variables }: CompiledF
   const plans: Plan[] = []
   for (const [call, plan] of analysis.calls) {
     if (plan.candidates.length === plan.def.overloads.length) continue
-    // The parser always sets nameStart; a call without one could not be matched on load.
-    if (call.nameStart === undefined)
-      throw new TypeError(`The call to ${call.name}() has no name position`)
-    plans.push([call.nameStart, call.name, ...plan.candidates])
+    // The parser sets nameStart on every call it builds.
+    plans.push([call.nameStart as number, call.name, ...plan.candidates])
   }
   plans.sort((a, b) => a[0] - b[0])
   const fields: Omit<Artifact, 'digest'> = {
@@ -165,7 +161,9 @@ function makeArtifact({ source, analysis, expect, lookup, variables }: CompiledF
     by: VERSION,
     source,
     plans,
-    ...(expect === undefined ? {} : { expect }),
+    // A copy, so freezing the artifact leaves the caller's type alone; plain
+    // JSON data, as a runtime receives it.
+    ...(expect === undefined ? {} : { expect: JSON.parse(JSON.stringify(expect)) as Type }),
     guard: expect !== undefined && analysis.checkResult,
     async: analysis.async,
   }

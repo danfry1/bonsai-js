@@ -4,9 +4,10 @@
  * the full toolchain runs (a server, CI, an admin backend), ship the artifacts,
  * and evaluate them here with the same results.
  */
-import type { Artifact } from '../artifact.js'
+import { assertExpectSize, type Artifact } from '../artifact.js'
 import {
   ProgramCache,
+  expectOption,
   settingsFrom,
   type Args,
   type ContextFor,
@@ -64,11 +65,39 @@ export interface Runtime<Ctx = any> {
   ) => Runtime<Ctx & ContextFor<V2, L2>>
 }
 
+const RUNTIME_KEYS = [
+  'variables',
+  'functions',
+  'libraries',
+  'limits',
+  'cacheSize',
+  'clock',
+  'validateContext',
+]
+
+/**
+ * The runtime takes bonsai()'s options except `strict`, which only affects
+ * checking. An explicit `strict: undefined` is allowed, so options shared with
+ * an environment can be spread in.
+ */
 function assertRuntimeOptions(options: unknown): void {
-  if (typeof options === 'object' && options !== null && Object.hasOwn(options, 'strict'))
-    throw new TypeError(
-      'Unknown runtime option key "strict" (it only affects checking, which the runtime does not do)',
+  if (typeof options !== 'object' || options === null) return
+  let keys: string[]
+  try {
+    keys = Object.keys(options).filter(
+      (key) => key !== 'strict' || (options as { strict?: unknown }).strict !== undefined,
     )
+  } catch (error) {
+    throw new TypeError('Runtime options could not be read', { cause: error })
+  }
+  for (const key of keys) {
+    if (!RUNTIME_KEYS.includes(key))
+      throw new TypeError(
+        key === 'strict'
+          ? 'Unknown runtime option key "strict" (it only affects checking, which the runtime does not do)'
+          : `Unknown runtime option key "${key}" (expected one of: ${RUNTIME_KEYS.join(', ')})`,
+      )
+  }
 }
 
 function createRuntime<Ctx>(settings: Settings): Runtime<Ctx> {
@@ -97,9 +126,9 @@ function createRuntime<Ctx>(settings: Settings): Runtime<Ctx> {
 
   const rt: Runtime<Ctx> = {
     load: <E extends Type = AnyType>(artifact: Artifact, options?: LoadOptions<E>) => {
-      if (options !== undefined && (typeof options !== 'object' || options === null))
-        throw new TypeError('Load options must be an object')
-      return load<Infer<E>>(readArtifact(artifact, settings), options?.expect)
+      const expect = expectOption(options, 'Load')
+      if (expect !== undefined) assertExpectSize(expect, 'Load option "expect"')
+      return load<Infer<E>>(readArtifact(artifact, settings), expect)
     },
     evaluate<R>(artifact: Artifact, ...args: Args<Ctx>): Promise<R> {
       try {

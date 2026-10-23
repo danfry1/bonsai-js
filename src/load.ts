@@ -8,9 +8,9 @@ import {
 } from './artifact.js'
 import { bindImplicit } from './check/bind.js'
 import type { CallPlan } from './check/checker.js'
-import { encodeType } from './digest.js'
+import { encodeType, lengthPrefixed } from './digest.js'
 import type { Settings } from './environment.js'
-import { BonsaiArtifactError, BonsaiError, type ArtifactProblem } from './errors.js'
+import { BonsaiArtifactError, BonsaiError, isBonsaiError, type ArtifactProblem } from './errors.js'
 import { BUILTINS } from './functions/builtins.js'
 import { assertType, type FunctionDef } from './functions/define.js'
 import { programRunner, warmZones, type ProgramAnalysis } from './program.js'
@@ -29,24 +29,42 @@ const ARTIFACT_KEYS: ReadonlySet<string> = new Set([
   'digest',
 ])
 
-/** Deeper than any type assertType accepts, counting the arrays that hold union members. */
-const MAX_COPY_DEPTH = 256
+/** The nesting assertType accepts. */
+const MAX_TYPE_DEPTH = 64
 
-/** Plans list overload indices, at most one fewer than a function's overloads. */
-const MAX_PLAN_LENGTH = 66
+/** A type object holds its kind and at most two other fields (`fields` and `rest`). */
+const MAX_TYPE_KEYS = 3
+
+/**
+ * A plan holds a name position, a name, and fewer overload indices than the
+ * function has overloads (built-ins have at most five, host functions one);
+ * this bounds how much of a hostile entry is read.
+ */
+const MAX_PLAN_LENGTH = 34
 
 const fail = (reason: ArtifactProblem, message: string, cause?: unknown): never => {
   throw new BonsaiArtifactError(reason, message, cause === undefined ? {} : { cause })
 }
 
+/** The TypeErrors readArtifact throws itself, as opposed to ones host objects throw. */
+const own = new WeakSet()
+
+function notArtifact(): never {
+  const error = new TypeError('An artifact must be an object made by toArtifact()')
+  own.add(error)
+  throw error
+}
+
 /**
- * Reads every own property of an object exactly once, through its descriptor,
- * so no getter runs and a Proxy's traps run once per property. Accessors and
- * symbol keys are malformed artifacts.
+ * Reads the own properties of an object exactly once each, through their
+ * descriptors, so no getter runs (a Proxy's traps run once per property).
+ * More than `maxKeys` keys, accessors, and symbol keys are refused.
  */
-function ownData(value: object, what: string): Map<string, unknown> {
+function ownData(value: object, what: string, maxKeys: number): Map<string, unknown> {
+  const keys = Reflect.ownKeys(value)
+  if (keys.length > maxKeys) fail('limit', `${what} has more than ${maxKeys} keys`)
   const out = new Map<string, unknown>()
-  for (const key of Reflect.ownKeys(value)) {
+  for (const key of keys) {
     if (typeof key !== 'string') fail('shape', `${what} has a symbol key`)
     const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
     if (descriptor === undefined) continue
@@ -56,46 +74,67 @@ function ownData(value: object, what: string): Map<string, unknown> {
   return out
 }
 
-/** The elements of an array, read once each; `max` bounds the length before anything else is read. */
+/** The elements of an array, read once each, its length checked against `max` before any element is read. */
 function arrayData(value: unknown, max: number, what: string, tooLong: ArtifactProblem): unknown[] {
   if (!Array.isArray(value)) return fail('shape', `${what} must be an array`)
-  const data = ownData(value, what)
-  const length = data.get('length')
+  const length = Reflect.getOwnPropertyDescriptor(value, 'length')?.value as unknown
   if (typeof length !== 'number') return fail('shape', `${what} has no length`)
   if (length > max) return fail(tooLong, `${what} has more than ${max} entries`)
   const out: unknown[] = []
-  for (let i = 0; i < length; i++) out.push(data.get(String(i)))
+  for (let i = 0; i < length; i++) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(value, String(i))
+    if (descriptor !== undefined && !('value' in descriptor))
+      fail('shape', `${what}[${i}] is an accessor`)
+    out.push(descriptor?.value)
+  }
   return out
 }
 
 /**
- * A copy of an expected type as plain data: objects become null-prototype
- * objects (so a `__proto__` key stays a field), every property is read once,
- * and the copy is bounded by MAX_EXPECT_NODES along every path, so shared
- * subtrees cannot hide its size.
+ * A copy of an expected type, read by its kind so only a type's own fields are
+ * read, with field records as null-prototype objects (so a `__proto__` key
+ * stays a field). Type nodes are counted along every path, as toArtifact
+ * counts them, so shared subtrees cannot hide its size.
  */
 function copyType(value: unknown): Type {
   let nodes = 0
   const copy = (node: unknown, depth: number): unknown => {
-    if (typeof node !== 'object' || node === null) return node
+    if (typeof node !== 'object' || node === null || Array.isArray(node))
+      return fail('shape', "The artifact's expected type must be a type built with t")
     if (++nodes > MAX_EXPECT_NODES)
-      fail('limit', `The artifact's expected type has more than ${MAX_EXPECT_NODES} parts`)
-    // assertType rejects types nested deeper than 64; this only bounds the copy's recursion
-    // (a union's members sit one level further down, inside its array).
-    if (depth > MAX_COPY_DEPTH) fail('shape', "The artifact's expected type nests too deeply")
-    if (Array.isArray(node))
-      return arrayData(node, MAX_EXPECT_NODES, 'expect', 'limit').map((item) =>
-        copy(item, depth + 1),
-      )
-    const out = Object.create(null) as Record<string, unknown>
-    for (const [key, field] of ownData(node, 'expect')) {
-      Object.defineProperty(out, key, {
-        value: copy(field, depth + 1),
-        enumerable: true,
-        writable: false,
-      })
+      fail('limit', `The artifact's expected type has more than ${MAX_EXPECT_NODES} type nodes`)
+    if (depth > MAX_TYPE_DEPTH)
+      fail('shape', `The artifact's expected type nests deeper than ${MAX_TYPE_DEPTH}`)
+    const data = ownData(node, 'expect', MAX_TYPE_KEYS)
+    const kind = data.get('kind')
+    switch (kind) {
+      case 'list':
+        return Object.freeze({ kind, element: copy(data.get('element'), depth + 1) })
+      case 'union': {
+        const members = arrayData(data.get('types'), MAX_EXPECT_NODES, 'expect.types', 'limit')
+        return Object.freeze({ kind, types: Object.freeze(members.map((m) => copy(m, depth + 1))) })
+      }
+      case 'map': {
+        const record = data.get('fields')
+        if (typeof record !== 'object' || record === null)
+          return fail('shape', "The artifact's expected type has map fields that are not an object")
+        const fields = Object.create(null) as Record<string, unknown>
+        for (const [key, field] of ownData(record, 'expect.fields', MAX_EXPECT_NODES))
+          Object.defineProperty(fields, key, { value: copy(field, depth + 1), enumerable: true })
+        const rest = data.get('rest')
+        return Object.freeze({
+          kind,
+          fields: Object.freeze(fields),
+          ...(rest === undefined ? {} : { rest: copy(rest, depth + 1) }),
+        })
+      }
+      case 'literal':
+        return Object.freeze({ kind, value: data.get('value') })
+      case 'opaque':
+        return Object.freeze({ kind, name: data.get('name') })
+      default:
+        return Object.freeze({ kind })
     }
-    return out
   }
   const type = copy(value, 0)
   try {
@@ -106,13 +145,27 @@ function copyType(value: unknown): Type {
   return type
 }
 
-/** An artifact's fields, copied once and checked for shape and size. */
+/**
+ * An artifact's fields, copied once and checked for shape and size before
+ * anything is parsed. A value that is not an artifact is a TypeError, and so
+ * is anything thrown while reading it (a Proxy trap), with the thrown value as
+ * its cause.
+ */
 export function readArtifact(value: unknown, settings: Settings): Artifact {
-  if (typeof value !== 'object' || value === null || Array.isArray(value))
-    throw new TypeError('An artifact must be an object made by toArtifact()')
-  const data = ownData(value, 'The artifact')
-  if (!data.has('bonsai') || !data.has('source') || !data.has('digest'))
-    throw new TypeError('An artifact must be an object made by toArtifact()')
+  try {
+    return read(value, settings)
+  } catch (error) {
+    if (isBonsaiError(error) || (typeof error === 'object' && error !== null && own.has(error)))
+      throw error
+    throw new TypeError('The artifact could not be read', { cause: error })
+  }
+}
+
+function read(value: unknown, settings: Settings): Artifact {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) notArtifact()
+  const data = ownData(value, 'The artifact', ARTIFACT_KEYS.size * 2)
+  // Only the format is required to say which format it is: a later one may rename the rest.
+  if (!data.has('bonsai')) notArtifact()
   const format = data.get('bonsai')
   if (typeof format !== 'number' || !Number.isSafeInteger(format) || format < 1)
     fail('shape', 'The artifact format must be a positive integer')
@@ -214,19 +267,22 @@ export function loadArtifact(
   }
   const lookup = (name: string): FunctionDef | undefined =>
     settings.host.get(name) ?? BUILTINS.get(name)
-  const bound = bindImplicit(parsed, lookup)
-  if (bound.problems.length > 0) fail('binding', bound.problems[0].message)
-  const root = bound.root
-  for (const name of treeNames(root).functions) {
+  // Binding adds lambdas around arguments but no calls or variables, so the
+  // digest is computed from the parsed tree as it is from the checked one:
+  // different definitions are reported as such, before binding with them.
+  for (const name of treeNames(parsed).functions) {
     if (lookup(name) === undefined)
       fail('function', `The artifact calls ${name}(), which this runtime does not define`)
   }
   const { digest, ...fields } = artifact
-  if (artifactDigest(fields, root, lookup, settings.variables) !== digest)
+  if (artifactDigest(fields, parsed, lookup, settings.variables) !== digest)
     fail(
       'digest',
       'The artifact was made for different definitions than this runtime has; make it again from its source',
     )
+  const bound = bindImplicit(parsed, lookup)
+  if (bound.problems.length > 0) fail('binding', bound.problems[0].message)
+  const root = bound.root
 
   const calls = new Map<CallNode, CallPlan>()
   const byStart = callsByStart(root)
@@ -272,16 +328,14 @@ export function loadArtifact(
   }
 }
 
-const section = (value: string): string => `${value.length}:${value}`
-
 /** A key equal for two artifacts exactly when every field is (read with readArtifact). */
 export function artifactKey(artifact: Artifact): string {
   return [
-    section(artifact.digest),
-    section(artifact.by),
-    section(artifact.source),
-    section(JSON.stringify(artifact.plans)),
-    artifact.expect === undefined ? '-' : section(encodeType(artifact.expect)),
+    lengthPrefixed(artifact.digest),
+    lengthPrefixed(artifact.by),
+    lengthPrefixed(artifact.source),
+    lengthPrefixed(JSON.stringify(artifact.plans)),
+    artifact.expect === undefined ? '-' : lengthPrefixed(encodeType(artifact.expect)),
     artifact.guard ? 'g' : '-',
     artifact.async ? 'a' : '-',
   ].join('')

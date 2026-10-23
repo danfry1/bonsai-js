@@ -147,3 +147,14 @@ describe('VERSION', () => {
     expect(VERSION).toBe(pkg.version)
   })
 })
+
+describe('toArtifact and the caller', () => {
+  it("copies the expected type instead of freezing the caller's object", () => {
+    const mine = { kind: 'map', fields: { a: { kind: 'number' } } } as const
+    const program = bonsai().compile('{ a: 1 }', { expect: mine as never })
+    const artifact = toArtifact(program)
+    expect(Object.isFrozen(mine)).toBe(false)
+    expect(artifact.expect).not.toBe(mine)
+    expect(artifact.expect).toEqual(mine)
+  })
+})

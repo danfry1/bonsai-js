@@ -1,5 +1,5 @@
 import type { FunctionDef } from './functions/define.js'
-import { isExact, type Type } from './types.js'
+import type { Type } from './types.js'
 
 // The canonical encoding behind an artifact's digest. Equal encodings mean the
 // checker sees the same thing, so the encoding is part of the artifact format:
@@ -7,7 +7,7 @@ import { isExact, type Type } from './types.js'
 // digests in the tests pin it.
 
 /** Text with its length first, so no two sequences of texts encode alike. */
-function text(value: string): string {
+export function lengthPrefixed(value: string): string {
   return `${value.length}:${value}`
 }
 
@@ -17,7 +17,9 @@ const typeCodes = new WeakMap<Type, string>()
  * A type's canonical encoding: object fields sorted by key, nested unions
  * flattened and their members sorted and deduplicated, literals tagged by kind.
  * Two types the checker treats alike encode alike, whatever order they were
- * written in.
+ * written in. Whether a map type is exact (known to hold only its fields, as a
+ * map literal's inferred type is) is not encoded: it does not survive JSON,
+ * and an artifact records the checker's decisions that depended on it.
  */
 export function encodeType(type: Type): string {
   let code = typeCodes.get(type)
@@ -38,8 +40,8 @@ function encode(type: Type): string {
       return type.kind
     case 'literal': {
       const value = type.value
-      if (typeof value === 'string') return `s${text(value)}`
-      if (typeof value === 'number') return `n${text(String(value))}`
+      if (typeof value === 'string') return `s${lengthPrefixed(value)}`
+      if (typeof value === 'number') return `n${lengthPrefixed(String(value))}`
       return value ? 'true' : 'false'
     }
     case 'list':
@@ -47,9 +49,9 @@ function encode(type: Type): string {
     case 'map': {
       const fields = Object.keys(type.fields)
         .sort()
-        .map((key) => `${text(key)}=${encodeType(type.fields[key])}`)
+        .map((key) => `${lengthPrefixed(key)}=${encodeType(type.fields[key])}`)
       const rest = type.rest === undefined ? '' : `...${encodeType(type.rest)}`
-      return `${isExact(type) ? '!' : ''}{${fields.join(',')}${rest}}`
+      return `{${fields.join(',')}${rest}}`
     }
     case 'union': {
       const members = new Set<string>()
@@ -61,12 +63,12 @@ function encode(type: Type): string {
       return `(${[...members].sort().join('|')})`
     }
     case 'opaque':
-      return `opaque${text(type.name)}`
+      return `opaque${lengthPrefixed(type.name)}`
     case 'function':
       return `fn(${type.params.map(encodeType).join(',')})${encodeType(type.result)}`
     case 'var':
     default:
-      return `var${text(type.name)}`
+      return `var${lengthPrefixed(type.name)}`
   }
 }
 
@@ -82,10 +84,11 @@ export function encodeFunction(def: FunctionDef): string {
     const required = overload.required ?? overload.params.length
     const params = overload.params.map(encodeType).join(',')
     const rest = overload.rest === undefined ? '' : `...${encodeType(overload.rest)}`
-    return `${required}(${params}${rest})${encodeType(overload.result)}`
+    const ordered = overload.ordered === undefined ? '' : lengthPrefixed(overload.ordered.join(','))
+    return `${required}(${params}${rest})${encodeType(overload.result)}${ordered}`
   })
   const flags = `${def.host === true ? 'h' : 'b'}${def.async === true ? 'a' : ''}${def.call === true ? 'c' : ''}`
-  return `${text(def.name)}${flags}${text(overloads.join(';'))}`
+  return `${lengthPrefixed(def.name)}${flags}${lengthPrefixed(overloads.join(';'))}`
 }
 
 const FNV_OFFSET = 0x811c9dc5

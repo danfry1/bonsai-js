@@ -81,7 +81,7 @@ interface RuntimeProgram<Context, Result> {
 }
 ```
 
-`load()` returns a program that evaluates as `Program` does: the same per-evaluation options, limits, and errors. Load an artifact once and keep the program. `rt.evaluate(artifact, ...)` and `rt.evaluateSync(artifact, ...)` load through a cache keyed by every field of the artifact (`cacheSize` entries, as in `bonsai()`), for code that only has the artifact at hand.
+`load()` returns a program that evaluates as `Program` does: the same per-evaluation options, limits, and errors. The one difference comes from passing `expect` (below): checking every result costs steps that the compiled program spends only where the checker could not prove the type, so leave a little headroom in `maxSteps`. Load an artifact once and keep the program. `rt.evaluate(artifact, ...)` and `rt.evaluateSync(artifact, ...)` load through a cache keyed by every field of the artifact (`cacheSize` entries, as in `bonsai()`), for code that only has the artifact at hand.
 
 There is no `compile(source)` in the runtime: without the checker it could not make the checker's overload choices, so it would give different results from `env.compile(source)` under the same name.
 
@@ -98,7 +98,7 @@ Without `expect`, the result type is `unknown`, and the artifact's own run-time 
 
 ## When an artifact is refused
 
-`load()` throws a `BonsaiArtifactError` (code `ARTIFACT`) whose `reason` says what can help, and a `TypeError` when the value is not an artifact at all. Loading reads each property of the artifact once and runs no getter, so a hostile artifact cannot run code; it is bounded by the runtime's parse limits before anything is parsed.
+`load()` throws a `BonsaiArtifactError` (code `ARTIFACT`) whose `reason` says what can help, and a `TypeError` when the value is not an artifact at all. Loading reads each property of the artifact exactly once and runs no getter. A Proxy's traps do run, once per property, and anything they throw becomes a `TypeError` with the thrown value as its `cause`. The artifact is checked against the runtime's limits before anything is parsed.
 
 | `reason` | Meaning | What helps |
 | --- | --- | --- |
