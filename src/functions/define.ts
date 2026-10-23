@@ -9,7 +9,7 @@ import {
   keyListCost,
   shown,
 } from '../runtime/values.js'
-import { formatType, type FunctionType, type Type, type TypeVar } from '../types.js'
+import { formatType, typeText, type FunctionType, type Type, type TypeVar } from '../types.js'
 
 /** A lambda as seen by a built-in: called with the item and its index. */
 export type Lambda = (item: unknown, index: number) => unknown
@@ -76,6 +76,14 @@ export const K: TypeVar = Object.freeze({ kind: 'var', name: 'K' })
 
 export function fnType(params: readonly Type[], result: Type): FunctionType {
   return Object.freeze({ kind: 'function', params: Object.freeze([...params]), result })
+}
+
+/** An overload's signature as messages and hovers show it, e.g. `slice(string, number, number?): string`. */
+export function signatureText(name: string, candidate: Overload): string {
+  const required = candidate.required ?? candidate.params.length
+  const params = candidate.params.map((param, i) => `${typeText(param)}${i >= required ? '?' : ''}`)
+  if (candidate.rest !== undefined) params.push(`...${typeText(candidate.rest)}`)
+  return `${name}(${params.join(', ')}): ${typeText(candidate.result)}`
 }
 
 /** Whether parameter `index` of any overload is function-typed (lambda position). */
