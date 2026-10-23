@@ -272,6 +272,18 @@ export function loadArtifact(
   settings: Settings,
   expect: Type | undefined,
 ): Loaded {
+  // Loading is not part of any read: a load that a Proxy trap runs while an
+  // outer artifact is read must not mark its errors as that read's own.
+  const outer = raisedHere
+  raisedHere = undefined
+  try {
+    return loadRead(artifact, settings, expect)
+  } finally {
+    raisedHere = outer
+  }
+}
+
+function loadRead(artifact: Artifact, settings: Settings, expect: Type | undefined): Loaded {
   const { source } = artifact
   let parsed: Node
   try {

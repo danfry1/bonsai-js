@@ -565,4 +565,22 @@ describe('round 5 regressions', () => {
     })
     expect(reasonOf(() => runtime().load(nested as never))).toBe('TypeError')
   })
+
+  it('wraps refusals from a load that a Proxy trap runs while reading, not only read errors', () => {
+    const rt = runtime()
+    const base = shipped(toArtifact(bonsai().compile('1')))
+    for (const inner of [
+      { ...base, digest: 'x' },
+      { ...base, source: 'missing()' },
+      { ...base, source: '1 +' },
+    ]) {
+      const hostile = new Proxy(base, {
+        ownKeys(target) {
+          rt.load(inner as never)
+          return Reflect.ownKeys(target)
+        },
+      })
+      expect(reasonOf(() => rt.load(hostile as never))).toBe('TypeError')
+    }
+  })
 })
