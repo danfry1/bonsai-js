@@ -24,7 +24,7 @@ import {
   type State,
   type RuntimeLimits,
 } from './runtime/state.js'
-import { recordDeclared } from './declared.js'
+import { recordCompiled, recordDeclared } from './declared.js'
 import {
   assertKeys,
   numberOption,
@@ -1208,6 +1208,13 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       evaluateSync: (...args: Args<Ctx>) => runSync(args[0], args[1]),
     })
     recordDeclared(program, settings.variables)
+    recordCompiled(program, {
+      source,
+      analysis,
+      expect,
+      lookup: checkEnv.lookup,
+      variables: settings.variables,
+    })
     return program as Program<Ctx, R>
   }
 

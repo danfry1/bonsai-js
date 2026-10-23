@@ -116,5 +116,6 @@ export type {
   UnaryOperator,
   VariableNode,
 } from '../syntax/ast.js'
+export { toArtifact, type Artifact, type Plan } from '../artifact.js'
 export { parse, type ParseOptions } from '../parse.js'
 export { print, type PrintOptions } from '../syntax/printer.js'
