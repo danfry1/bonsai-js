@@ -170,7 +170,7 @@
     "tsdown": "0.23.0",
     "typescript": "7.0.2",
     "vitepress": "1.6.4",
-    "vitest": "4.1.11"
+    "vitest": "5.0.5"
   },
   "overrides": {
     "brace-expansion": "5.0.12",
