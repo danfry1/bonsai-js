@@ -10,6 +10,7 @@ import {
   type Diagnostic,
 } from './errors.js'
 import { BUILTINS } from './functions/builtins.js'
+import { descriptionOf } from './functions/descriptions.js'
 import {
   assertHostSpec,
   assertType,
@@ -1286,7 +1287,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
   function info(def: FunctionDef): FunctionInfo {
     return {
       name: def.name,
-      description: def.description,
+      description: descriptionOf(def),
       host: def.host === true,
       async: def.async === true,
       call: def.call === true,
