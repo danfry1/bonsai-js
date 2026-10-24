@@ -30,6 +30,8 @@ export type ErrorCode =
   | 'INVALID_CONTEXT'
   // query translation
   | 'UNTRANSLATABLE'
+  // loading an artifact into bonsai-js/runtime
+  | 'ARTIFACT'
 
 export interface Span {
   readonly start: number
@@ -107,6 +109,8 @@ export interface BonsaiErrorJSON {
   readonly limit?: LimitName
   /** For a check error: every finding, without the `formatted` code frame. */
   readonly diagnostics?: readonly DiagnosticJSON[]
+  /** For an artifact error: why the artifact could not be loaded. */
+  readonly reason?: ArtifactProblem
 }
 
 /**
@@ -133,6 +137,7 @@ export type BonsaiErrorName =
   | 'BonsaiRuntimeError'
   | 'BonsaiCheckError'
   | 'BonsaiTranslationError'
+  | 'BonsaiArtifactError'
 
 /** Base class of every error Bonsai throws. */
 export class BonsaiError extends Error {
@@ -397,6 +402,43 @@ export class BonsaiTranslationError extends BonsaiError {
   constructor(message: string, source: string, span?: Span, cause?: unknown) {
     super('UNTRANSLATABLE', message, { source, span, cause })
     this.name = 'BonsaiTranslationError'
+  }
+}
+
+/**
+ * Why `bonsai-js/runtime` refused an artifact. `digest`: it was made for other
+ * definitions (a fresh artifact from the producer may load). `version`,
+ * `syntax`, `function`, `limit`: this runtime cannot run what the producer
+ * made, so only a newer runtime or a full compile of the source can.
+ * `variable`: it reads a variable this strict runtime does not declare. `shape`,
+ * `binding`, `plan`, `expect`: the artifact is malformed or does not match the
+ * expected type the host passed.
+ */
+export type ArtifactProblem =
+  | 'version'
+  | 'shape'
+  | 'limit'
+  | 'syntax'
+  | 'binding'
+  | 'function'
+  | 'variable'
+  | 'digest'
+  | 'plan'
+  | 'expect'
+
+/** An artifact could not be loaded by `bonsai-js/runtime`; `reason` says why. */
+export class BonsaiArtifactError extends BonsaiError {
+  readonly reason: ArtifactProblem
+
+  /** @internal */
+  constructor(reason: ArtifactProblem, message: string, init: ErrorInit = {}) {
+    super('ARTIFACT', message, init)
+    this.name = 'BonsaiArtifactError'
+    this.reason = reason
+  }
+
+  override toJSON(): BonsaiErrorJSON {
+    return { ...super.toJSON(), reason: this.reason }
   }
 }
 

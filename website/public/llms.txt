@@ -2,7 +2,7 @@
 
 > A small, safe, typed expression language for JavaScript: rules, filters, formulas, and templates written by people other than your developers. JavaScript-like syntax, static checking against declared data types, bounded evaluation, zero dependencies.
 
-- Package: `bonsai-js` (ESM, TypeScript types included). Entry points: `bonsai-js`, `bonsai-js/lite` (the same without explain and partial, for smaller browser bundles), `bonsai-js/service`, and `bonsai-js/query`.
+- Package: `bonsai-js` (ESM, TypeScript types included). Entry points: `bonsai-js`, `bonsai-js/lite` (the same without explain and partial, for smaller browser bundles), `bonsai-js/runtime` (evaluates artifacts of programs compiled elsewhere, without the checker), `bonsai-js/service`, and `bonsai-js/query`.
 - Runtimes: Node.js 22+, current Bun, modern ESM browsers. No eval, no generated code.
 
 ## Example
@@ -46,6 +46,7 @@ rule.evaluateSync(context) // a boolean
 - `await program.explain(ctx)` / `program.explainSync(ctx)` evaluate and return `{ ok, value | error, trace, reasons(), toString(), toJSON() }`, a trace of every sub-expression's value; `reasons()` reports a negated condition as written (`!(x in y)` with value `false`).
 - `program.partial(known, { unknown?, callHostFunctions?, now?, maxSteps?, timeout?, signal? })` (sync) returns `{ status: 'value' }`, `{ status: 'error' }`, or `{ status: 'residual', ast, source, bindings, dependsOn, hostFunctions, readsContext, async, type, evaluate, evaluateSync, explain, explainSync }`: a simplified expression over only the missing data.
 - `toSQL(program, { row, columns, dialect: 'postgres' | 'sqlite', known?, now?, paramOffset?, maxSteps?, timeout?, signal?, callHostFunctions? })` -> `{ sql, params }` and `toMongo(program, { row, fields, known?, now?, maxSteps?, timeout?, signal?, callHostFunctions? })` -> `{ filter, options }` from `bonsai-js/query` translate a filter to a query selecting exactly the records it accepts.
+- `toArtifact(program)` returns plain JSON data (source, the checker's overload choices, `expect`, and a digest of the definitions they depend on); `runtime({ variables, functions, limits })` from `bonsai-js/runtime` loads it with `rt.load(artifact, { expect? })` and evaluates exactly as the program does, or throws `BonsaiArtifactError` (code `ARTIFACT`, with a `reason`: `digest`, `version`, `syntax`, `function`, `limit`, `shape`, `binding`, `plan`, `expect`).
 - `env.parse(src)` gives a JSON syntax tree, as does the standalone `parse(src, limits?)` (no environment); `print(tree, { calls? })` turns it back into source. `forEachChild(node, visit)` walks a tree and `mapChildren(node, rewrite)` rebuilds one.
 - Host functions: `fn({ params: [t.string()], returns: t.boolean(), run, async?, call?, required?, rest?, cost?, description? })`. With `call: true`, `run` first receives `{ context, signal }`.
 - Types: `t.string() number() boolean() null() timestamp() duration() literal() enum() list() object() record() optional() union() opaque() any() never()`; `Infer<typeof T>`.

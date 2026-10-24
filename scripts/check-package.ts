@@ -53,6 +53,8 @@ try {
     'package/dist/service/index.d.mts',
     'package/dist/query/index.mjs',
     'package/dist/query/index.d.mts',
+    'package/dist/runtime/index.mjs',
+    'package/dist/runtime/index.d.mts',
     'package/README.md',
     'package/LICENSE',
     'package/CHANGELOG.md',
@@ -87,6 +89,7 @@ try {
     ['.', './dist/index.mjs'],
     ['./lite', './dist/lite/index.mjs'],
     ['./service', './dist/service/index.mjs'],
+    ['./runtime', './dist/runtime/index.mjs'],
   ] as const) {
     const conditions = packedPkg.exports?.[subpath]
     // `default` lets require() load the ES module (Node 22.12+).
@@ -102,6 +105,7 @@ try {
   const publicExports: Record<string, readonly string[]> = {
     'index.d.mts': [
       ...['AbortSignalLike', 'AnyType', 'BinaryNode', 'BinaryOperator', 'BonsaiCheckError'],
+      ...['Artifact', 'ArtifactProblem', 'BonsaiArtifactError', 'Plan', 'toArtifact'],
       ...['BonsaiError', 'BonsaiErrorJSON', 'BonsaiErrorName'],
       ...['BonsaiLimitError', 'BonsaiRuntimeError', 'BonsaiSyntaxError', 'BonsaiTranslationError'],
       'BooleanType',
@@ -138,6 +142,7 @@ try {
     // The main entry without explaining and partial evaluation.
     'lite/index.d.mts': [
       ...['AbortSignalLike', 'AnyType', 'BinaryNode', 'BinaryOperator', 'BonsaiCheckError'],
+      ...['Artifact', 'ArtifactProblem', 'BonsaiArtifactError', 'Plan', 'toArtifact'],
       ...['BonsaiError', 'BonsaiErrorJSON', 'BonsaiErrorName'],
       ...['BonsaiLimitError', 'BonsaiRuntimeError', 'BonsaiSyntaxError', 'BooleanType'],
       ...['CallNode', 'CallStyle', 'CompileOptions', 'ConditionalNode'],
@@ -174,6 +179,15 @@ try {
       ...['MongoQuery', 'QueryOptions', 'SQLOptions', 'SQLParam', 'SQLQuery', 'Translatable'],
       ...['toMongo', 'toSQL'],
     ],
+    // Evaluating artifacts without the checker.
+    'runtime/index.d.mts': [
+      ...['AbortSignalLike', 'Artifact', 'ArtifactProblem', 'BonsaiArtifactError', 'BonsaiError'],
+      ...['BonsaiErrorJSON', 'BonsaiErrorName', 'BonsaiLimitError', 'BonsaiRuntimeError'],
+      ...['Duration', 'ErrorCode', 'EvaluateOptions', 'FnSpec', 'HostCall', 'HostFunction'],
+      ...['Infer', 'InferVariables', 'Library', 'Limits', 'LoadOptions', 'Plan', 'Runtime'],
+      ...['RuntimeOptions', 'RuntimeProgram', 'Span', 'Type', 'fn', 'formatType', 'isBonsaiError'],
+      ...['runtime', 't', 'withContext'],
+    ],
   }
   for (const [file, expected] of Object.entries(publicExports)) {
     const declarations = readFileSync(join(extractDir, 'package', 'dist', file), 'utf8')
@@ -201,7 +215,7 @@ try {
     throw new Error('Packed query export does not point to ./dist/query/index.mjs')
   }
   const exportKeys = [...Object.keys(packedPkg.exports ?? {})].sort()
-  if (exportKeys.join(',') !== '.,./lite,./query,./service') {
+  if (exportKeys.join(',') !== '.,./lite,./query,./runtime,./service') {
     throw new Error(`Packed package exports unexpected subpaths: ${exportKeys.join(', ')}`)
   }
 
@@ -218,6 +232,8 @@ try {
       "import { createLanguageService } from 'bonsai-js/service'",
       "import { toMongo, toSQL } from 'bonsai-js/query'",
       "import { bonsai as liteBonsai } from 'bonsai-js/lite'",
+      "import { toArtifact } from 'bonsai-js'",
+      "import { runtime } from 'bonsai-js/runtime'",
       '',
       'const env = bonsai({',
       '  variables: { user: t.object({ name: t.string(), age: t.number() }), items: t.list(t.number()) },',
@@ -257,6 +273,10 @@ try {
       "if ('explain' in liteRule || 'partial' in liteRule || 'explain' in lite) throw new Error('Lite subpath has explain or partial')",
       "if (createLanguageService(lite).diagnostics('user.agee').length === 0) throw new Error('Service over a lite environment failed')",
       '',
+      'const shipped = JSON.parse(JSON.stringify(toArtifact(adult)))',
+      'const rt = runtime({ variables: { user: t.object({ name: t.string(), age: t.number() }), items: t.list(t.number()) } })',
+      "if (rt.load(shipped, { expect: t.boolean() }).evaluateSync(ctx) !== true) throw new Error('Runtime subpath evaluation failed')",
+      '',
       "console.log('packed package smoke test passed')",
       '',
     ].join('\n'),
@@ -268,9 +288,11 @@ try {
       "const { bonsai } = require('bonsai-js')",
       "const { createLanguageService } = require('bonsai-js/service')",
       "const lite = require('bonsai-js/lite')",
+      "const { runtime } = require('bonsai-js/runtime')",
       "if (bonsai().evaluateSync('1 + 2') !== 3) throw new Error('require() of the package failed')",
       "if (lite.bonsai().evaluateSync('1 + 2') !== 3) throw new Error('require() of the lite entry failed')",
       "if (typeof createLanguageService !== 'function') throw new Error('require() of the service failed')",
+      "if (runtime().load(JSON.parse(JSON.stringify(require('bonsai-js').toArtifact(bonsai().compile('1 + 2'))))).evaluateSync() !== 3) throw new Error('require() of the runtime failed')",
       "console.log('require() smoke test passed')",
       '',
     ].join('\n'),

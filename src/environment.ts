@@ -24,7 +24,7 @@ import {
   type State,
   type RuntimeLimits,
 } from './runtime/state.js'
-import { recordDeclared } from './declared.js'
+import { recordCompiled, recordDeclared } from './declared.js'
 import {
   assertKeys,
   numberOption,
@@ -37,7 +37,14 @@ import type { ExplanationJSON, Trace } from './runtime/trace.js'
 import type { Node } from './syntax/ast.js'
 import { isName } from './syntax/lexer.js'
 import { DEFAULT_PARSE_LIMITS, MAX_DEPTH_LIMIT, parse, type ParseLimits } from './syntax/parser.js'
-import { isNullable, type AnyType, type Infer, type InferVariables, type Type } from './types.js'
+import {
+  isExact,
+  isNullable,
+  type AnyType,
+  type Infer,
+  type InferVariables,
+  type Type,
+} from './types.js'
 
 // === public option types ===
 
@@ -355,7 +362,7 @@ type Checked<P> = (
   readonly typeOf: (node: Node) => Type | undefined
 }
 
-type Args<Ctx> =
+export type Args<Ctx> =
   Record<string, never> extends Ctx
     ? [context?: Ctx, options?: EvaluateOptions]
     : [context: Ctx, options?: EvaluateOptions]
@@ -885,7 +892,7 @@ const DEPTH_CAPS: Readonly<Record<string, number>> = {
   maxValueDepth: MAX_VALUE_DEPTH_LIMIT,
 }
 
-function settingsFrom(base: Settings | undefined, options: unknown): Settings {
+export function settingsFrom(base: Settings | undefined, options: unknown): Settings {
   assertOptions(options)
   const limits = (options.limits ?? {}) as Readonly<Record<string, unknown>>
   const variables = mergeVariables(base?.variables, options)
@@ -932,7 +939,7 @@ const CACHE_MAX_SOURCE = 16_384
  * entry is evicted, unless it was used since it last reached the front (or is
  * the entry being added), in which case it moves to the back unmarked.
  */
-class ProgramCache<V> {
+export class ProgramCache<V> {
   private readonly map = new Map<string, { readonly value: V; used: boolean }>()
   private readonly size: number
   private chars = 0
@@ -1058,23 +1065,44 @@ function checkedClock(clock: () => Date): () => Date {
   }
 }
 
-/** Reads compile() and check() options: only `expect`, which must be a type built with t. */
-function compileExpect(options: unknown): Type | undefined {
+/** Whether a type has an exact map type anywhere in it. */
+function holdsExact(type: Type): boolean {
+  const stack: Type[] = [type]
+  const seen = new Set<Type>()
+  while (stack.length > 0) {
+    const next = stack.pop() as Type
+    if (seen.has(next)) continue
+    seen.add(next)
+    if (isExact(next)) return true
+    if (next.kind === 'list') stack.push(next.element)
+    else if (next.kind === 'union') stack.push(...next.types)
+    else if (next.kind === 'map') {
+      stack.push(...Object.values(next.fields))
+      if (next.rest !== undefined) stack.push(next.rest)
+    }
+  }
+  return false
+}
+
+/** Reads compile(), check(), and the runtime's load() options: only `expect`, which must be a type built with t. */
+export function expectOption(options: unknown, what: 'Compile' | 'Load'): Type | undefined {
   if (options === undefined) return undefined
   if (typeof options !== 'object' || options === null || Array.isArray(options))
-    throw new TypeError('Compile options must be an object')
+    throw new TypeError(`${what} options must be an object`)
   let expect: unknown
   try {
     for (const key of Object.keys(options)) {
       if (key !== 'expect')
-        throw new TypeError(`Unknown compile option key "${key}" (expected one of: expect)`)
+        throw new TypeError(
+          `Unknown ${what.toLowerCase()} option key "${key}" (expected one of: expect)`,
+        )
     }
     expect = (options as { expect?: unknown }).expect
   } catch (error) {
     if (error instanceof TypeError) throw error
-    throw new TypeError('Compile options could not be read', { cause: error })
+    throw new TypeError(`${what} options could not be read`, { cause: error })
   }
-  if (expect !== undefined) assertType(expect, 'Compile option "expect"')
+  if (expect !== undefined) assertType(expect, `${what} option "expect"`)
   return expect
 }
 
@@ -1208,6 +1236,13 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       evaluateSync: (...args: Args<Ctx>) => runSync(args[0], args[1]),
     })
     recordDeclared(program, settings.variables)
+    recordCompiled(program, {
+      source,
+      analysis,
+      expect,
+      lookup: checkEnv.lookup,
+      variables: settings.variables,
+    })
     return program as Program<Ctx, R>
   }
 
@@ -1224,6 +1259,9 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
    */
   function cachedCompile<R>(source: string, expect: Type | undefined): Program<Ctx, R> {
     if (typeof source !== 'string') throw new TypeError('An expression must be a string')
+    // An exact map type (a checked program's inferred type passed back as
+    // `expect`) checks differently from a declared one with the same JSON.
+    if (expect !== undefined && holdsExact(expect)) return compile<R>(source, expect)
     const expectKey = expect === undefined ? undefined : JSON.stringify(expect)
     const key = expectKey === undefined ? source : `${source}\u0000${expectKey}`
     const entry = cache.get(key)
@@ -1264,7 +1302,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       source: string,
       options?: CompileOptions<E>,
     ): CheckResult<Ctx, Infer<E>> {
-      const expect = compileExpect(options)
+      const expect = expectOption(options, 'Compile')
       let analysis: Analysis
       try {
         analysis = analyzeSource(source, expect)
@@ -1303,7 +1341,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       ) as CheckResult<Ctx, Infer<E>>
     },
     compile: <E extends Type = AnyType>(source: string, options?: CompileOptions<E>) =>
-      cachedCompile<Infer<E>>(source, compileExpect(options)),
+      cachedCompile<Infer<E>>(source, expectOption(options, 'Compile')),
     // Without features (bonsai-js/lite), an environment has no partial or explain.
     ...(settings.features === undefined
       ? {}

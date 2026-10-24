@@ -28,6 +28,15 @@ describe('step budget', () => {
     expect(env.evaluateSync('xs.slice(0, 10).map(. + 1).length', { xs })).toBe(10)
   })
 
+  it('charges each union member tried when checking a result against its expected type', () => {
+    const values = Array.from({ length: 60_000 }, (_, i) => `v${i}`)
+    const program = bonsai().compile('xs', { expect: t.list(t.enum(...values)) })
+    const xs = Array.from({ length: 10_000 }, () => 'v59999')
+    const started = performance.now()
+    expect(codeOf(() => program.evaluateSync({ xs }, { maxSteps: 100_000 }))).toBe('STEP_LIMIT')
+    expect(performance.now() - started).toBeLessThan(500)
+  })
+
   it('bounds quadratic expressions', () => {
     const xs = Array.from({ length: 2000 }, (_, i) => i)
     expect(

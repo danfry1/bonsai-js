@@ -1,8 +1,11 @@
 // Conformance corpus for the Bonsai expression language, derived only from
-// docs/language.md. Every case runs three ways (evaluateSync, evaluate, and
-// compile().evaluateSync) and all three must agree with the expected outcome.
+// docs/language.md. Every case runs four ways (evaluateSync, evaluate,
+// compile().evaluateSync, and the artifact of the compiled program, through
+// JSON, loaded by bonsai-js/runtime) and all four must agree with the expected
+// outcome.
 import { describe, it, expect } from 'vitest'
-import { bonsai, fn, t } from '../src/index.js'
+import { bonsai, fn, t, toArtifact } from '../src/index.js'
+import { runtime } from '../src/runtime/index.js'
 
 type Code = string
 interface Case {
@@ -55,10 +58,16 @@ async function runAll(c: Case): Promise<Outcome[]> {
   } catch (e) {
     out.push(fail(e))
   }
+  try {
+    const artifact = JSON.parse(JSON.stringify(toArtifact(env.compile(c.source))))
+    out.push({ value: normalize(runtime(c.options).load(artifact).evaluateSync(c.context)) })
+  } catch (e) {
+    out.push(fail(e))
+  }
   return out
 }
 
-const MODES = ['evaluateSync', 'evaluate', 'compile().evaluateSync']
+const MODES = ['evaluateSync', 'evaluate', 'compile().evaluateSync', 'runtime().load(toArtifact())']
 
 function runCases(cases: Case[]) {
   for (const c of cases) {
@@ -80,9 +89,10 @@ function runCases(cases: Case[]) {
           expect(o, label).toEqual({ value: c.value })
         }
       })
-      // All three modes agree.
+      // All four modes agree.
       expect(outs[1], `evaluate vs evaluateSync: ${c.source}`).toEqual(outs[0])
       expect(outs[2], `compile vs evaluateSync: ${c.source}`).toEqual(outs[0])
+      expect(outs[3], `runtime vs evaluateSync: ${c.source}`).toEqual(outs[0])
     })
   }
 }

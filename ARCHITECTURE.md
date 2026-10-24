@@ -72,6 +72,22 @@ against `nextSample`, the next step count at which the step limit or the clock
 needs checking. The synchronous path reuses one pooled `State` per program
 (falling back to a fresh one on reentrancy); async runs always get their own.
 
+## Artifacts and the runtime
+
+`toArtifact()` (`src/artifact.ts`) records a compiled program as JSON data, so
+`bonsai-js/runtime` (`src/runtime/index.ts`, `src/load.ts`) can evaluate it
+without the checker. Static types reach evaluation through one channel only:
+the overload candidates the checker leaves for each call (`Analysis.calls`).
+So an artifact holds the source, those candidates where they are narrower than
+all overloads (keyed by each call's `nameStart`), the expected type, and a
+digest (`src/digest.ts`) over its fields, the called functions' signatures, and
+the declared types of the variables it reads. Loading re-parses the source,
+binds `.` with the checker's own binding pass (`src/check/bind.ts`), checks the
+digest against the runtime's definitions, attaches the candidates, and runs the
+program through the same `programRunner` (`src/program.ts`) as an environment.
+Safety never depends on the artifact: every call still checks its argument
+kinds, and every limit is enforced at run time.
+
 ## Values and the cost model
 
 `src/runtime/values.ts` implements the value semantics: kinds, deep equality,

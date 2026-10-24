@@ -191,6 +191,8 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
       return true
     }
     case 'union':
+      // Each member may be tried: a union of thousands of literals is real work.
+      state.charge(type.types.length)
       return type.types.some((member) => conforms(value, member, state, depth))
     case 'timestamp':
       // An invalid Date is an opaque host value, not a timestamp.
@@ -382,9 +384,9 @@ export function assertType(value: unknown, path: string, depth = 0): asserts val
       return
     case 'union':
       if (!Array.isArray(value.types)) throw new TypeError(`${path}.types must be an array`)
-      value.types.forEach((member: unknown, i: number) => {
-        assertType(member, `${path}.types[${i}]`, depth + 1)
-      })
+      // By index, so a hole (which forEach would skip) is refused like any non-type.
+      for (let i = 0; i < value.types.length; i++)
+        assertType(value.types[i], `${path}.types[${i}]`, depth + 1)
       return
     case 'opaque':
       if (typeof value.name !== 'string')
