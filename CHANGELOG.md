@@ -8,6 +8,15 @@ From 1.0.0, entries are generated at release time from the bump files in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+
+## 1.2.0
+<sub>2026-10-25</sub>
+
+- *(minor)*
+  Add `bonsai-js/runtime/core` and `bonsai-js/builtins`: a runtime with only the built-in functions passed in `builtins`, so a browser bundle carries just what its rules call (about 30 KB gzipped for typical rules, against 43 KB for `bonsai-js/runtime`). `bonsai()` takes the same `builtins` option, and a call to a built-in left out is a CHECK error, so rules are checked against what the browser can run.
+- *(patch)*
+  Built-in function descriptions, which only `describeFunction()`, `listFunctions()`, and the language service read, are no longer bundled with `bonsai-js/runtime`, which is about 1.2 KB smaller gzipped (43 KB). Making each built-in separately removable adds about 0.8 KB to `bonsai-js` (69 KB), `bonsai-js/lite` (57 KB), and the language service (47 KB).
+
 ## 1.1.0
 <sub>2026-10-24</sub>
 
