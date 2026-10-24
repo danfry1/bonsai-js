@@ -195,6 +195,7 @@ describe('refusing artifacts', () => {
     })
     expect(reasonOf(() => load(proxy))).toBe('loaded')
     expect(reads.filter((key) => key === 'source')).toHaveLength(1)
+    expect(reads.filter((key) => key === 'bonsai')).toHaveLength(1)
 
     const withGetter = Object.defineProperty({ ...base }, 'digest', {
       get: () => 'x',
@@ -225,8 +226,22 @@ describe('refusing artifacts', () => {
     }
   })
 
-  it('rejects the strict option, which only affects checking', () => {
-    expect(() => runtime({ strict: true } as never)).toThrow(TypeError)
+  it('refuses reading an undeclared variable when strict, as the checker does', () => {
+    const variables = { user: t.object({ age: t.number() }) }
+    const context = { user: { age: 30 }, session: { token: 'secret' } }
+    const source = 'session.token'
+    // A forged artifact: the digest is a checksum, so anyone can recompute it.
+    const loose = toArtifact(bonsai({ variables, strict: false }).compile(source))
+    expect(() => bonsai({ variables }).compile(source)).toThrow('Unknown variable "session"')
+    expect(reasonOf(() => runtime({ variables }).load(loose))).toBe('variable')
+    expect(reasonOf(() => runtime({ variables, strict: true }).load(loose))).toBe('variable')
+    expect(reasonOf(() => runtime({ strict: true }).load(loose))).toBe('variable')
+    expect(runtime({ variables, strict: false }).load(loose).evaluateSync(context)).toBe('secret')
+    // Let bindings and lambda parameters are not variables.
+    const locals = toArtifact(
+      bonsai({ variables }).compile('let y = user.age; [1].map(x => x + y)'),
+    )
+    expect(runtime({ variables }).load(locals).evaluateSync(context)).toEqual([31])
   })
 })
 
@@ -437,10 +452,10 @@ describe('round 3 regressions', () => {
     ).toBe('version')
   })
 
-  it('accepts strict: undefined and names only runtime options in errors', () => {
-    expect(() => runtime({ strict: undefined } as never)).not.toThrow()
+  it('names only runtime options in errors', () => {
+    expect(() => runtime({ strict: undefined })).not.toThrow()
     expect(() => runtime({ bogus: 1 } as never)).toThrow(
-      'Unknown runtime option key "bogus" (expected one of: variables, functions, libraries, limits, cacheSize, clock, validateContext)',
+      'Unknown runtime option key "bogus" (expected one of: variables, functions, libraries, limits, cacheSize, clock, validateContext, strict)',
     )
   })
 })

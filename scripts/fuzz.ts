@@ -613,7 +613,7 @@ function typedEnvFor(variables: Scenario['variables']): ReturnType<typeof bonsai
     const declared = Object.fromEntries(variables.map(([name, desc]) => [name, toType(desc)]))
     env = bonsai({ clock, functions: FUNCTIONS, strict: true, variables: declared })
     typedEnvs.set(key, env)
-    runtimes.set(env, runtime({ clock, functions: FUNCTIONS, variables: declared }))
+    runtimes.set(env, runtime({ clock, functions: FUNCTIONS, strict: true, variables: declared }))
   }
   return env
 }

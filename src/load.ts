@@ -67,16 +67,26 @@ function notArtifact(): never {
  * descriptors, so no getter runs (a Proxy's traps run once per property).
  * More than `maxKeys` keys, accessors, and symbol keys are refused.
  */
-function ownData(value: object, what: string, maxKeys: number): Map<string, unknown> {
+function ownData(
+  value: object,
+  what: string,
+  maxKeys: number,
+  known: ReadonlyMap<string, unknown> = new Map(),
+): Map<string, unknown> {
   const keys = Reflect.ownKeys(value)
   if (keys.length > maxKeys) fail('limit', `${what} has more than ${maxKeys} keys`)
   const out = new Map<string, unknown>()
   for (const key of keys) {
-    if (typeof key !== 'string') fail('shape', `${what} has a symbol key`)
+    if (typeof key !== 'string') return fail('shape', `${what} has a symbol key`)
+    // Fields read already are not read again, so each trap runs once per field.
+    if (known.has(key)) {
+      out.set(key, known.get(key))
+      continue
+    }
     const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
     if (descriptor === undefined) continue
-    if (!('value' in descriptor)) fail('shape', `${what}.${String(key)} is an accessor`)
-    out.set(key as string, descriptor.value)
+    if (!('value' in descriptor)) fail('shape', `${what}.${key} is an accessor`)
+    out.set(key, descriptor.value)
   }
   return out
 }
@@ -192,7 +202,7 @@ function read(value: unknown, settings: Settings): Artifact {
       'version',
       `Artifact format ${String(format)} is not supported (this runtime reads format ${ARTIFACT_FORMAT})`,
     )
-  const data = ownData(value, 'The artifact', ARTIFACT_KEYS.size)
+  const data = ownData(value, 'The artifact', ARTIFACT_KEYS.size, new Map([['bonsai', format]]))
   for (const key of data.keys()) {
     if (!ARTIFACT_KEYS.has(key))
       fail('version', `The artifact has a field "${key}" this runtime does not know`)
@@ -301,9 +311,18 @@ function loadRead(artifact: Artifact, settings: Settings, expect: Type | undefin
   // Binding adds lambdas around arguments but no calls or variables, so the
   // digest is computed from the parsed tree as it is from the checked one:
   // different definitions are reported as such, before binding with them.
-  for (const name of treeNames(parsed).functions) {
+  const names = treeNames(parsed)
+  for (const name of names.functions) {
     if (lookup(name) === undefined)
       fail('function', `The artifact calls ${name}(), which this runtime does not define`)
+  }
+  // A strict checker refuses every undeclared variable, so a strict runtime
+  // refuses artifacts that read one rather than reading it from the context.
+  if (settings.strict) {
+    for (const name of names.variables) {
+      if (settings.variables === undefined || !Object.hasOwn(settings.variables, name))
+        fail('variable', `The artifact reads ${name}, which this strict runtime does not declare`)
+    }
   }
   const { digest, ...fields } = artifact
   if (artifactDigest(fields, parsed, lookup, settings.variables) !== digest)

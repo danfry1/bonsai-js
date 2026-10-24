@@ -409,7 +409,8 @@ export class BonsaiTranslationError extends BonsaiError {
  * Why `bonsai-js/runtime` refused an artifact. `digest`: it was made for other
  * definitions (a fresh artifact from the producer may load). `version`,
  * `syntax`, `function`, `limit`: this runtime cannot run what the producer
- * made, so only a newer runtime or a full compile of the source can. `shape`,
+ * made, so only a newer runtime or a full compile of the source can.
+ * `variable`: it reads a variable this strict runtime does not declare. `shape`,
  * `binding`, `plan`, `expect`: the artifact is malformed or does not match the
  * expected type the host passed.
  */
@@ -420,6 +421,7 @@ export type ArtifactProblem =
   | 'syntax'
   | 'binding'
   | 'function'
+  | 'variable'
   | 'digest'
   | 'plan'
   | 'expect'

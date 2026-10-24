@@ -62,7 +62,7 @@ The source stays the record: it is the rule as written, and a full environment c
 
 ## runtime(options)
 
-`runtime()` takes the options of `bonsai()` that affect evaluation: `variables`, `functions`, `libraries`, `limits`, `clock`, `validateContext`, and `cacheSize`. `strict` is a `TypeError`, since it only affects checking. `fn`, `withContext`, and `t` are exported from `bonsai-js/runtime` too.
+`runtime()` takes the same options as `bonsai()`: `variables`, `functions`, `libraries`, `limits`, `clock`, `validateContext`, `cacheSize`, and `strict`. `strict` has the same default (true when `variables` is declared) and should match the producing environment's: a strict runtime refuses an artifact that reads a variable it does not declare, as a strict checker refuses the source, so a forged artifact cannot read context keys beyond the declared ones. `fn`, `withContext`, and `t` are exported from `bonsai-js/runtime` too.
 
 <!-- no-run -->
 ```ts
@@ -81,7 +81,7 @@ interface RuntimeProgram<Context, Result> {
 }
 ```
 
-`load()` returns a program that evaluates as `Program` does: the same per-evaluation options, limits, and errors. The one difference comes from passing `expect` (below): checking every result costs steps that the compiled program spends only where the checker could not prove the type, so leave a little headroom in `maxSteps`. Load an artifact once and keep the program. `rt.evaluate(artifact, ...)` and `rt.evaluateSync(artifact, ...)` load through a cache keyed by every field of the artifact (`cacheSize` entries, as in `bonsai()`), for code that only has the artifact at hand.
+`load()` returns a program that evaluates as `Program` does: the same per-evaluation options, limits, and errors. The one difference comes from passing `expect` (below): every result is checked against it. That costs steps the compiled program spends only where the checker could not prove the type, so leave a little headroom in `maxSteps`. It also means a context that does not match the declared types (with `validateContext` off) can make the loaded program throw `TYPE_ERROR` where the compiled program returns a result of the wrong type. Load an artifact once and keep the program. `rt.evaluate(artifact, ...)` and `rt.evaluateSync(artifact, ...)` load through a cache keyed by every field of the artifact (`cacheSize` entries, as in `bonsai()`), for code that only has the artifact at hand.
 
 There is no `compile(source)` in the runtime: without the checker it could not make the checker's overload choices, so it would give different results from `env.compile(source)` under the same name.
 
@@ -98,7 +98,7 @@ Without `expect`, the result type is `unknown`, and the artifact's own run-time 
 
 ## When an artifact is refused
 
-`load()` throws a `BonsaiArtifactError` (code `ARTIFACT`) whose `reason` says what can help, and a `TypeError` when the value is not an artifact at all. Loading reads each property of the artifact exactly once and runs no getter. A Proxy's traps do run, once per property, and anything they throw becomes a `TypeError` with the thrown value as its `cause`. The artifact is checked against the runtime's limits before anything is parsed.
+`load()` throws a `BonsaiArtifactError` (code `ARTIFACT`) whose `reason` says what can help, and a `TypeError` when the value is not an artifact at all. Loading reads each property of the artifact once and runs no getter. A Proxy's traps do run, once per property, and anything they throw becomes a `TypeError` with the thrown value as its `cause`. The artifact is checked against the runtime's limits before anything is parsed.
 
 | `reason` | Meaning | What helps |
 | --- | --- | --- |
@@ -106,8 +106,9 @@ Without `expect`, the result type is `unknown`, and the artifact's own run-time 
 | `version` | A format version, or a field, this runtime does not know. | A newer runtime. |
 | `syntax` | The source uses syntax this runtime does not know. | A newer runtime. |
 | `function` | The expression calls a function this runtime does not define. | Defining it here, or a newer runtime for a new built-in. |
-| `limit` | The source, its plans, or its expected type exceed this runtime's limits. | Higher limits here. |
-| `shape`, `binding`, `plan` | The artifact is malformed. | A fresh artifact. |
+| `variable` | The expression reads a variable this strict runtime does not declare. | Declaring it here, or `strict: false` if the producer was not strict. |
+| `limit` | The source or its plans exceed this runtime's limits, or its expected type exceeds 100,000 type nodes. | Higher limits here, or a smaller expected type. |
+| `shape`, `binding`, `plan` | The artifact is malformed, including an expected type nested more than 64 deep. | A fresh artifact. |
 | `expect` | It was not compiled for the expected type passed to `load()`. | Compiling with that type. |
 
 ## Deploying artifacts

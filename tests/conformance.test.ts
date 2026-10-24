@@ -60,8 +60,7 @@ async function runAll(c: Case): Promise<Outcome[]> {
   }
   try {
     const artifact = JSON.parse(JSON.stringify(toArtifact(env.compile(c.source))))
-    const { strict: _, ...options } = c.options ?? {}
-    out.push({ value: normalize(runtime(options).load(artifact).evaluateSync(c.context)) })
+    out.push({ value: normalize(runtime(c.options).load(artifact).evaluateSync(c.context)) })
   } catch (e) {
     out.push(fail(e))
   }

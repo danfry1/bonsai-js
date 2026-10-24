@@ -12,6 +12,7 @@ import {
   type Args,
   type ContextFor,
   type EnvironmentOptions,
+  type Extended,
   type Library,
   type NoVariables,
   type Settings,
@@ -19,11 +20,15 @@ import {
 import { artifactKey, loadArtifact, loadedRunner, readArtifact } from '../load.js'
 import type { AnyType, Infer, Type } from '../types.js'
 
-/** The options of `runtime()`: those of `bonsai()` that affect evaluation. */
+/**
+ * The options of `runtime()`: those of `bonsai()` that affect evaluation.
+ * `strict` has bonsai()'s default and must match the producer's: a strict
+ * runtime refuses artifacts that read undeclared variables.
+ */
 export type RuntimeOptions<
   V extends Readonly<Record<string, Type>> = Readonly<Record<string, Type>>,
   L extends readonly Library[] = readonly Library[],
-> = Omit<EnvironmentOptions<V, L>, 'strict'>
+> = EnvironmentOptions<V, L>
 
 /** A loaded artifact: evaluates as the program it was made from does. Immutable. */
 // oxlint-disable-next-line typescript/no-explicit-any -- the erased context, as for Program
@@ -60,9 +65,13 @@ export interface Runtime<Ctx = any> {
   /** Loads (cached) and evaluates synchronously. */
   evaluateSync: <R = unknown>(artifact: Artifact, ...args: Args<Ctx>) => R
   /** A runtime with more or replaced definitions; see `bonsai().extend`. */
-  extend: <V2 extends Readonly<Record<string, Type>>, L2 extends readonly Library[]>(
-    options: RuntimeOptions<V2, L2>,
-  ) => Runtime<Ctx & ContextFor<V2, L2>>
+  extend: <
+    const V2 extends Readonly<Record<string, Type>> = NoVariables,
+    const L2 extends readonly Library[] = [],
+    const S2 extends boolean | undefined = undefined,
+  >(
+    options: RuntimeOptions<V2, L2> & { readonly strict?: S2 },
+  ) => Runtime<Extended<Ctx, V2, L2, S2>>
 }
 
 const RUNTIME_KEYS = [
@@ -73,29 +82,22 @@ const RUNTIME_KEYS = [
   'cacheSize',
   'clock',
   'validateContext',
+  'strict',
 ]
 
-/**
- * The runtime takes bonsai()'s options except `strict`, which only affects
- * checking. An explicit `strict: undefined` is allowed, so options shared with
- * an environment can be spread in.
- */
+/** The runtime takes bonsai()'s options. */
 function assertRuntimeOptions(options: unknown): void {
   if (typeof options !== 'object' || options === null) return
   let keys: string[]
   try {
-    keys = Object.keys(options).filter(
-      (key) => key !== 'strict' || (options as { strict?: unknown }).strict !== undefined,
-    )
+    keys = Object.keys(options)
   } catch (error) {
     throw new TypeError('Runtime options could not be read', { cause: error })
   }
   for (const key of keys) {
     if (!RUNTIME_KEYS.includes(key))
       throw new TypeError(
-        key === 'strict'
-          ? 'Unknown runtime option key "strict" (it only affects checking, which the runtime does not do)'
-          : `Unknown runtime option key "${key}" (expected one of: ${RUNTIME_KEYS.join(', ')})`,
+        `Unknown runtime option key "${key}" (expected one of: ${RUNTIME_KEYS.join(', ')})`,
       )
   }
 }
@@ -162,9 +164,10 @@ function createRuntime<Ctx>(settings: Settings): Runtime<Ctx> {
 export function runtime<
   const V extends Readonly<Record<string, Type>> = NoVariables,
   const L extends readonly Library[] = [],
->(options: RuntimeOptions<V, L> = {}): Runtime<ContextFor<V, L>> {
+  const S extends boolean | undefined = undefined,
+>(options: RuntimeOptions<V, L> & { readonly strict?: S } = {}): Runtime<ContextFor<V, L, S>> {
   assertRuntimeOptions(options)
-  return createRuntime<ContextFor<V, L>>(settingsFrom(undefined, options))
+  return createRuntime<ContextFor<V, L, S>>(settingsFrom(undefined, options))
 }
 
 export { fn, withContext } from '../environment.js'
