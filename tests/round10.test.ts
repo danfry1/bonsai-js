@@ -98,7 +98,9 @@ describe('serializing an explanation', () => {
     const after = env.explainSync('m != null && x == 1', { m: big, x: 1 })
     JSON.stringify(after)
     expect(String(after)).toBe(fresh)
-  })
+    // Four explanations of a 600,000-key map take about a second alone, and
+    // more under a full parallel run.
+  }, 30_000)
 })
 
 describe('toSQL and toMongo', () => {
