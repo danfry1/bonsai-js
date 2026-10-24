@@ -59,7 +59,8 @@ export interface Overload {
 
 export interface FunctionDef {
   readonly name: string
-  readonly description: string
+  /** A host function's description; built-ins' are in descriptions.ts (see descriptionOf). */
+  readonly description?: string
   readonly overloads: readonly Overload[]
   /** Host functions: returns a promise and must be awaited. */
   readonly async?: boolean
@@ -324,12 +325,9 @@ export function overload(
   return Object.freeze({ params: Object.freeze([...params]), result, run, ...options })
 }
 
-export function define(
-  name: string,
-  description: string,
-  overloads: readonly Overload[],
-): FunctionDef {
-  return Object.freeze({ name, description, overloads: Object.freeze([...overloads]) })
+/** A built-in; its description is in descriptions.ts. */
+export function define(name: string, overloads: readonly Overload[]): FunctionDef {
+  return Object.freeze({ name, overloads: Object.freeze([...overloads]) })
 }
 
 // === validation of host-supplied declarations ===

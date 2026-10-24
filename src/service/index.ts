@@ -2,6 +2,7 @@ import { acceptsArgument, analyze, type Analysis } from '../check/checker.js'
 import { internalsOf, type Environment, type LiteEnvironment } from '../environment.js'
 import { BonsaiError, BonsaiSyntaxError, locate, type Diagnostic } from '../errors.js'
 import { assertType, signatureText, type FunctionDef } from '../functions/define.js'
+import { descriptionOf } from '../functions/descriptions.js'
 import { forEachChild, type Node } from '../syntax/ast.js'
 import { parse } from '../syntax/parser.js'
 import {
@@ -414,7 +415,7 @@ export function createLanguageService(
         label: name,
         kind: 'method',
         detail: applicable.map((o) => signatureText(name, o)).join('\n'),
-        documentation: def.description,
+        documentation: descriptionOf(def),
         insertText: `${name}(${takesMore(def) ? '' : ')'}`,
       })
     }
@@ -445,7 +446,7 @@ export function createLanguageService(
         label: name,
         kind: 'function',
         detail: def.overloads.map((o) => signatureText(name, o)).join('\n'),
-        documentation: def.description,
+        documentation: descriptionOf(def),
         insertText: `${name}(`,
       })
     }
@@ -489,7 +490,7 @@ export function createLanguageService(
           start: node.nameStart,
           end: node.nameEnd,
           detail: def.overloads.map((o) => signatureText(def.name, o)).join('\n'),
-          documentation: def.description,
+          documentation: descriptionOf(def),
         }
       }
     }

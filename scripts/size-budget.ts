@@ -81,10 +81,11 @@ const cases: SizeCase[] = [
     // Evaluating artifacts without the checker: the parser, binding, compiler,
     // built-ins, loader, and t for the declared variables. 44.2 KB when set
     // (2026-10-23): 35% under the main entry and 21% under lite. The built-ins
-    // (27 KB minified) are most of it.
+    // (27 KB minified) are most of it. 42.6 KB once built-in descriptions moved
+    // to functions/descriptions.ts, which only the checker side imports.
     name: 'runtime: runtime().load(artifact).evaluateSync()',
     source: `import { runtime, t } from ${runtimeEntry}\nconsole.log(runtime({ variables: { user: t.object({ age: t.number() }) } }).load(${artifact}).evaluateSync({ user: { age: 30 } }))`,
-    maxGzipBytes: 45_000,
+    maxGzipBytes: 43_000,
   },
 ]
 
