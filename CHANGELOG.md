@@ -7,6 +7,15 @@ From 1.0.0, entries are generated at release time from the bump files in
 [`.bumpy/`](./.bumpy/); entries up to 0.5.0 follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+
+## 1.1.0
+<sub>2026-10-24</sub>
+
+- *(minor)*
+  Add `bonsai-js/runtime` and `toArtifact()`: check and compile rules where the full toolchain runs, and evaluate them in the browser without the checker (about 44 KB minified and gzipped), with exactly the results the compiled programs give. A runtime whose definitions differ refuses an artifact with `BonsaiArtifactError` (code `ARTIFACT`) and a `reason`.
+- *(patch)*
+  Charge the step budget for each union member tried when a result is checked against its expected type or a host function's declared type. A list result checked against a large enum could previously run far past `maxSteps` and `timeout`.
+
 ## 1.0.0
 <sub>2026-10-19</sub>
 
