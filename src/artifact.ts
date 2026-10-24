@@ -161,7 +161,7 @@ function makeArtifact({ source, analysis, expect, lookup, variables }: CompiledF
     by: VERSION,
     source,
     plans,
-    // A copy, so freezing the artifact leaves the caller's type alone.
+    // Frozen plain data, as the artifact must be; a type built by t already is.
     ...(expect === undefined ? {} : { expect: typeData(expect) }),
     guard: expect !== undefined && analysis.checkResult,
     async: analysis.async,

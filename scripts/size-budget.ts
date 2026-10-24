@@ -46,7 +46,7 @@ const cases: SizeCase[] = [
     // (error ownership per evaluation, bounded explanation rendering); 68.0 KB
     // for round ten (hostile thrown values, deterministic rendering, checked
     // unknown paths).
-    maxGzipBytes: 68_000,
+    maxGzipBytes: 68_500,
   },
   {
     // The lite entry: checking and evaluating, without explaining and partial
@@ -75,7 +75,7 @@ const cases: SizeCase[] = [
     // The editor entry on its own: the checker without the compiler or runtime.
     name: 'language service only',
     source: `import { createLanguageService } from ${serviceEntry}\nconsole.log(createLanguageService)`,
-    maxGzipBytes: 46_000,
+    maxGzipBytes: 46_500,
   },
   {
     // Evaluating artifacts without the checker: the parser, binding, compiler,

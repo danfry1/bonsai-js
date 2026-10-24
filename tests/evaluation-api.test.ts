@@ -1,5 +1,13 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import { BonsaiCheckError, BonsaiLimitError, bonsai, fn, t, type LimitName } from '../src/index.js'
+import {
+  BonsaiCheckError,
+  BonsaiLimitError,
+  bonsai,
+  fn,
+  t,
+  toArtifact,
+  type LimitName,
+} from '../src/index.js'
 
 const fixed = new Date('2026-01-01T00:00:00Z')
 
@@ -52,6 +60,15 @@ describe('compile caching', () => {
       'does not match the expected type number',
     )
     expect(env.compile('x', { expect: mutable as never }).evaluateSync({ x: 'b' })).toBe('b')
+  })
+
+  it('uses a type built with t as given, and copies others', () => {
+    const type = t.object({ a: t.list(t.enum('x', 'y')), b: t.optional(t.record(t.number())) })
+    expect(toArtifact(bonsai().compile('x', { expect: type })).expect).toBe(type)
+    const loose = t.list({ kind: 'number' } as never)
+    const copied = toArtifact(bonsai().compile('[]', { expect: loose })).expect
+    expect(copied).not.toBe(loose)
+    expect(copied).toEqual(loose)
   })
 
   it('keeps caching off when cacheSize is 0', () => {

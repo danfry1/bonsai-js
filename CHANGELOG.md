@@ -16,7 +16,7 @@ From 1.0.0, entries are generated at release time from the bump files in
 - *(patch)*
   Charge the step budget for each union member tried when a result is checked against its expected type or a host function's declared type. A list result checked against a large enum could previously run far past `maxSteps` and `timeout`.
 - *(patch)*
-  Check and cache a program against a private copy of its `expect` type. A type object with a `toJSON` method could previously be served a cached program checked against a different type, and a type object changed after compiling changed what the program's results were checked against.
+  Check and cache a program against a private copy of its `expect` type. A type object with a `toJSON` method could previously be served a cached program checked against a different type, and a type object changed after compiling changed what the program's results were checked against. The language service's `expect` option is kept the same way. Types built with `t` are used as given.
 
 ## 1.0.0
 <sub>2026-10-19</sub>

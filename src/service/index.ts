@@ -10,6 +10,7 @@ import {
   isExact,
   nonNull,
   t,
+  typeData,
   unionMembers,
   unionOf,
   widen,
@@ -108,8 +109,12 @@ function serviceExpect(options: unknown): Type | undefined {
       throw new TypeError(`Unknown language service option key "${key}" (expected one of: expect)`)
   }
   const expect = (options as { expect?: unknown }).expect
-  if (expect !== undefined) assertType(expect, 'Language service option "expect"')
-  return expect
+  if (expect === undefined) return undefined
+  // Kept as a private copy, like compile()'s, so later changes do not reach it.
+  assertType(expect, 'Language service option "expect"')
+  const own = typeData(expect)
+  if (own !== expect) assertType(own, 'Language service option "expect"')
+  return own
 }
 
 /**

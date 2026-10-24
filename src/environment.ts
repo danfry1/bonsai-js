@@ -1108,7 +1108,7 @@ export function expectOption(options: unknown, what: 'Compile' | 'Load'): Type |
   // one private copy, so no getter, toJSON, or later change can split them.
   assertType(expect, `${what} option "expect"`)
   const own = typeData(expect)
-  assertType(own, `${what} option "expect"`)
+  if (own !== expect) assertType(own, `${what} option "expect"`)
   return own
 }
 
