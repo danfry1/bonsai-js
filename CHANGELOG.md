@@ -15,6 +15,8 @@ From 1.0.0, entries are generated at release time from the bump files in
   Add `bonsai-js/runtime` and `toArtifact()`: check and compile rules where the full toolchain runs, and evaluate them in the browser without the checker (about 44 KB minified and gzipped), with exactly the results the compiled programs give. A runtime whose definitions differ refuses an artifact with `BonsaiArtifactError` (code `ARTIFACT`) and a `reason`.
 - *(patch)*
   Charge the step budget for each union member tried when a result is checked against its expected type or a host function's declared type. A list result checked against a large enum could previously run far past `maxSteps` and `timeout`.
+- *(patch)*
+  Check and cache a program against a private copy of its `expect` type. A type object with a `toJSON` method could previously be served a cached program checked against a different type, and a type object changed after compiling changed what the program's results were checked against.
 
 ## 1.0.0
 <sub>2026-10-19</sub>

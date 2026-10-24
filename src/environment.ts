@@ -40,6 +40,7 @@ import { DEFAULT_PARSE_LIMITS, MAX_DEPTH_LIMIT, parse, type ParseLimits } from '
 import {
   isExact,
   isNullable,
+  typeData,
   type AnyType,
   type Infer,
   type InferVariables,
@@ -1084,7 +1085,7 @@ function holdsExact(type: Type): boolean {
   return false
 }
 
-/** Reads compile(), check(), and the runtime's load() options: only `expect`, which must be a type built with t. */
+/** Reads compile(), check(), and the runtime's load() options: only `expect`, which must be a type built with t. Returns a frozen copy of it. */
 export function expectOption(options: unknown, what: 'Compile' | 'Load'): Type | undefined {
   if (options === undefined) return undefined
   if (typeof options !== 'object' || options === null || Array.isArray(options))
@@ -1102,8 +1103,13 @@ export function expectOption(options: unknown, what: 'Compile' | 'Load'): Type |
     if (error instanceof TypeError) throw error
     throw new TypeError(`${what} options could not be read`, { cause: error })
   }
-  if (expect !== undefined) assertType(expect, `${what} option "expect"`)
-  return expect
+  if (expect === undefined) return undefined
+  // Checked, copied, and the copy checked: the program and its cache key use
+  // one private copy, so no getter, toJSON, or later change can split them.
+  assertType(expect, `${what} option "expect"`)
+  const own = typeData(expect)
+  assertType(own, `${what} option "expect"`)
+  return own
 }
 
 function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
@@ -1255,7 +1261,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
 
   /**
    * compile(), through the program cache: programs are immutable, so the same
-   * source with an equal expected type (types are plain JSON data) shares one.
+   * source with an equal expected type shares one. `expect` is expectOption's
+   * plain copy, so its JSON is the type the program is checked against.
    */
   function cachedCompile<R>(source: string, expect: Type | undefined): Program<Ctx, R> {
     if (typeof source !== 'string') throw new TypeError('An expression must be a string')

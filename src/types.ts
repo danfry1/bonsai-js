@@ -335,6 +335,53 @@ export function isExact(type: Type): boolean {
   return EXACT.has(type)
 }
 
+/**
+ * A type as frozen plain data: only its kind and that kind's own fields, read
+ * directly (never through toJSON), keeping exactness. Taken once from a
+ * caller's type, it is what a program is checked, cached, and recorded with,
+ * whatever later happens to the caller's object.
+ */
+export function typeData(type: Type): Type {
+  switch (type.kind) {
+    case 'list':
+      return Object.freeze({ kind: 'list', element: typeData(type.element) })
+    case 'union':
+      return Object.freeze({ kind: 'union', types: Object.freeze(type.types.map(typeData)) })
+    case 'map': {
+      const fields: Record<string, Type> = {}
+      for (const key of Object.keys(type.fields))
+        Object.defineProperty(fields, key, {
+          value: typeData(type.fields[key]),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        })
+      if (isExact(type) && type.rest === undefined) return exactObject(fields)
+      return Object.freeze({
+        kind: 'map',
+        fields: Object.freeze(fields),
+        ...(type.rest === undefined ? {} : { rest: typeData(type.rest) }),
+      })
+    }
+    case 'literal':
+      return Object.freeze({ kind: 'literal', value: type.value })
+    case 'opaque':
+      return Object.freeze({ kind: 'opaque', name: type.name })
+    case 'any':
+    case 'boolean':
+    case 'duration':
+    case 'function':
+    case 'never':
+    case 'null':
+    case 'number':
+    case 'string':
+    case 'timestamp':
+    case 'var':
+    default:
+      return Object.freeze({ kind: type.kind } as Type)
+  }
+}
+
 /** A copy of a map type with new fields, keeping its exactness. */
 export function withFields(type: MapType, fields: Readonly<Record<string, Type>>): MapType {
   if (isExact(type) && type.rest === undefined) return exactObject(fields)

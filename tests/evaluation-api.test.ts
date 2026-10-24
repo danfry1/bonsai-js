@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import { BonsaiLimitError, bonsai, fn, t, type LimitName } from '../src/index.js'
+import { BonsaiCheckError, BonsaiLimitError, bonsai, fn, t, type LimitName } from '../src/index.js'
 
 const fixed = new Date('2026-01-01T00:00:00Z')
 
@@ -35,6 +35,23 @@ describe('compile caching', () => {
     expect(env.compile('a > 1')).not.toBe(first)
     expect(env.compile('a > 1')).toBe(env.compile('a > 1'))
     expect(env.compile('a > 1', { expect: t.any() })).not.toBe(first)
+  })
+
+  it('keys on the type it checks against, not its JSON or later changes to it', () => {
+    const env = bonsai()
+    env.compile('"a"', { expect: t.string() })
+    // toJSON would make this number type look like the cached string type.
+    const disguised = { kind: 'number', toJSON: () => ({ kind: 'string' }) }
+    expect(() => env.compile('"a"', { expect: disguised as never })).toThrow(BonsaiCheckError)
+
+    // An untyped result is checked at run time against the type as compiled.
+    const mutable: { kind: string } = { kind: 'number' }
+    const program = env.compile('x', { expect: mutable as never })
+    mutable.kind = 'string'
+    expect(() => program.evaluateSync({ x: 'b' })).toThrow(
+      'does not match the expected type number',
+    )
+    expect(env.compile('x', { expect: mutable as never }).evaluateSync({ x: 'b' })).toBe('b')
   })
 
   it('keeps caching off when cacheSize is 0', () => {

@@ -2,7 +2,7 @@ import { compiledFacts, type CompiledFacts } from './declared.js'
 import { encodeFunction, encodeType, hash64, lengthPrefixed } from './digest.js'
 import type { FunctionDef } from './functions/define.js'
 import { forEachChild, type Node } from './syntax/ast.js'
-import type { Type } from './types.js'
+import { typeData, type Type } from './types.js'
 import { VERSION } from './version.js'
 
 /** The artifact format this release writes and reads. */
@@ -168,51 +168,6 @@ function makeArtifact({ source, analysis, expect, lookup, variables }: CompiledF
   }
   const digest = artifactDigest(fields, analysis.root, lookup, variables)
   return deepFreeze({ ...fields, digest })
-}
-
-/**
- * A type as plain data: only its kind and that kind's own fields, read
- * directly (never through toJSON), so the artifact records exactly the type
- * the program was checked against, in the shape the runtime reads.
- */
-function typeData(type: Type): Type {
-  switch (type.kind) {
-    case 'list':
-      return { kind: 'list', element: typeData(type.element) }
-    case 'union':
-      return { kind: 'union', types: type.types.map(typeData) }
-    case 'map': {
-      const fields: Record<string, Type> = {}
-      for (const key of Object.keys(type.fields))
-        Object.defineProperty(fields, key, {
-          value: typeData(type.fields[key]),
-          enumerable: true,
-          writable: true,
-          configurable: true,
-        })
-      return {
-        kind: 'map',
-        fields,
-        ...(type.rest === undefined ? {} : { rest: typeData(type.rest) }),
-      }
-    }
-    case 'literal':
-      return { kind: 'literal', value: type.value }
-    case 'opaque':
-      return { kind: 'opaque', name: type.name }
-    case 'any':
-    case 'boolean':
-    case 'duration':
-    case 'function':
-    case 'never':
-    case 'null':
-    case 'number':
-    case 'string':
-    case 'timestamp':
-    case 'var':
-    default:
-      return { kind: type.kind } as Type
-  }
 }
 
 function deepFreeze<T>(value: T): T {
