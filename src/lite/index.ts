@@ -37,6 +37,7 @@ export function bonsai<
 export { fn, withContext } from '../environment.js'
 export type {
   AbortSignalLike,
+  Builtin,
   CompileOptions,
   EnvironmentOptions,
   EvaluateOptions,

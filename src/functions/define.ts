@@ -69,6 +69,17 @@ export interface FunctionDef {
   readonly host?: boolean
   /** Host functions: steps charged per call (default 32). */
   readonly cost?: number
+  /**
+   * Built-ins with a time zone parameter: its position, and the function that
+   * loads a zone's data, so compiling warms the zones a call names. Kept on the
+   * definition so bundles without such a built-in leave the zone code out.
+   */
+  readonly zone?: ZoneParameter
+}
+
+export interface ZoneParameter {
+  readonly at: number
+  readonly warm: (zone: string | undefined) => void
 }
 
 export const T: TypeVar = Object.freeze({ kind: 'var', name: 'T' })
@@ -326,8 +337,64 @@ export function overload(
 }
 
 /** A built-in; its description is in descriptions.ts. */
-export function define(name: string, overloads: readonly Overload[]): FunctionDef {
-  return Object.freeze({ name, overloads: Object.freeze([...overloads]) })
+export function define(
+  name: string,
+  overloads: readonly Overload[],
+  zone?: ZoneParameter,
+): FunctionDef {
+  const def: FunctionDef = {
+    name,
+    overloads: Object.freeze([...overloads]),
+    ...(zone === undefined ? {} : { zone }),
+  }
+  // Not enumerable, so a copy made by spreading a built-in does not carry it.
+  Object.defineProperty(def, BUILTIN_BRAND, { value: true })
+  DEFINED.add(Object.freeze(def))
+  return def
+}
+
+/** The built-ins this copy of the package defined (the `builtins` option takes only these). */
+const DEFINED = new WeakSet<FunctionDef>()
+/** Marks a built-in of any copy of the package, so one from another copy is named as such. */
+const BUILTIN_BRAND = Symbol.for('bonsai-js.builtin')
+
+/**
+ * Reads the `builtins` option: built-ins from bonsai-js/builtins, added to
+ * `base` (an extended environment's or runtime's own).
+ */
+export function builtinsOption(
+  value: unknown,
+  base: ReadonlyMap<string, FunctionDef>,
+): ReadonlyMap<string, FunctionDef> {
+  if (value === undefined) return base
+  if (!Array.isArray(value))
+    throw new TypeError('builtins must be an array of built-ins from bonsai-js/builtins')
+  let items: unknown[]
+  try {
+    // By index, so a replaced iterator is never run.
+    items = Array.prototype.slice.call(value) as unknown[]
+  } catch (error) {
+    throw new TypeError('builtins could not be read', { cause: error })
+  }
+  const out = new Map(base)
+  for (const item of items) {
+    if (DEFINED.has(item as FunctionDef)) {
+      out.set((item as FunctionDef).name, item as FunctionDef)
+      continue
+    }
+    let branded = false
+    try {
+      branded = typeof item === 'object' && item !== null && Object.hasOwn(item, BUILTIN_BRAND)
+    } catch {
+      // A value that cannot be read is not a built-in either.
+    }
+    throw new TypeError(
+      branded
+        ? 'builtins holds a built-in that is not from this copy of bonsai-js (another installed copy, or a wrapper of one); import built-ins from the copy that runs them'
+        : 'builtins must hold built-ins from bonsai-js/builtins',
+    )
+  }
+  return out
 }
 
 // === validation of host-supplied declarations ===

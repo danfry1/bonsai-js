@@ -240,6 +240,8 @@ function redirectImports(code: string): string {
     .replaceAll("from 'bonsai-js/service'", `from ${JSON.stringify(join(srcDir, 'service/index.ts'))}`)
     .replaceAll("from 'bonsai-js/query'", `from ${JSON.stringify(join(srcDir, 'query/index.ts'))}`)
     .replaceAll("from 'bonsai-js/runtime'", `from ${JSON.stringify(join(srcDir, 'runtime/index.ts'))}`)
+    .replaceAll("from 'bonsai-js/runtime/core'", `from ${JSON.stringify(join(srcDir, 'runtime/core.ts'))}`)
+    .replaceAll("from 'bonsai-js/builtins'", `from ${JSON.stringify(join(srcDir, 'builtins/index.ts'))}`)
     .replaceAll("from 'bonsai-js'", `from ${JSON.stringify(join(srcDir, 'index.ts'))}`)
     .replaceAll("from './bonsai-language'", `from ${JSON.stringify(codemirrorModule)}`)
 }

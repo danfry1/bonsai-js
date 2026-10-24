@@ -4,9 +4,10 @@
 
 | Entry | Browser size (min+gzip) |
 | --- | --- |
-| `bonsai-js` | about 68 KB |
-| `bonsai-js/lite` | about 56 KB |
-| `bonsai-js/runtime` | about 44 KB |
+| `bonsai-js` | about 69 KB |
+| `bonsai-js/lite` | about 57 KB |
+| `bonsai-js/runtime` | about 43 KB |
+| `bonsai-js/runtime/core` | about 30 KB, with only the built-ins your rules call ([below](#only-the-built-ins-your-rules-call)) |
 
 ## Example
 
@@ -64,6 +65,36 @@ The source stays the record: it is the rule as written, and a full environment c
 
 `runtime()` takes the same options as `bonsai()`: `variables`, `functions`, `libraries`, `limits`, `clock`, `validateContext`, `cacheSize`, and `strict`. `strict` has the same default (true when `variables` is declared) and should match the producing environment's: a strict runtime refuses an artifact that reads a variable it does not declare, as a strict checker refuses the source, so a forged artifact cannot read context keys beyond the declared ones. `fn`, `withContext`, and `t` are exported from `bonsai-js/runtime` too.
 
+## Only the built-ins your rules call
+
+`bonsai-js/runtime` carries every built-in function. `bonsai-js/runtime/core` is the same runtime with only the built-ins you pass in `builtins`, so a browser bundle carries just the functions its rules call:
+
+<!-- no-run -->
+```ts
+// definitions.ts, shared by the server and the browser
+import * as b from 'bonsai-js/builtins'
+export const builtins = [b.includes, b.toLowerCase, b.some, b.now, b.days]
+
+// server
+const env = bonsai({ variables, builtins })
+
+// browser
+import { runtime } from 'bonsai-js/runtime/core'
+const rt = runtime({ variables, builtins })
+```
+
+| Bundle (minified and gzipped) | Size |
+| --- | --- |
+| `bonsai-js/runtime/core`, a rule that calls no function | about 30 KB |
+| `bonsai-js/runtime/core` with the five built-ins above | about 30 KB |
+| `bonsai-js/runtime/core` with every built-in, or `bonsai-js/runtime` | about 44 KB |
+
+- `bonsai-js/builtins` exports each built-in under its name. Import it as a namespace (`import * as b`), so names such as `map`, `keys`, and `round` do not clash with your own; bundlers keep only the members you use. Choosing them by a computed name (`b[name]`) keeps them all.
+- `runtime/core` has no built-ins unless you pass them. An artifact that calls one it lacks is refused with reason `function`.
+- Pass the same list to the `bonsai()` that checks the rules. A rule that calls a built-in left out is then a `CHECK` error when it is saved (`trim is a built-in this environment does not include`), not a refusal in a browser later.
+- `extend({ builtins })` adds to a runtime's or an environment's built-ins.
+- `builtins` takes only values from `bonsai-js/builtins`, from the same copy of the package as the runtime. A host function of a built-in's name still replaces it.
+
 <!-- no-run -->
 ```ts
 interface Runtime<Context> {
@@ -105,7 +136,7 @@ Without `expect`, the result type is `unknown`, and the artifact's own run-time 
 | `digest` | The artifact was made with different definitions: a changed host function or variable type, an override of a built-in on one side only, a different release with a changed built-in signature, or an edited field. | A fresh artifact from definitions that match this runtime. |
 | `version` | A format version, or a field, this runtime does not know. | A newer runtime. |
 | `syntax` | The source uses syntax this runtime does not know. | A newer runtime. |
-| `function` | The expression calls a function this runtime does not define. | Defining it here, or a newer runtime for a new built-in. |
+| `function` | The expression calls a function this runtime does not define. | Defining it here (in `functions`, or in `builtins` for `bonsai-js/runtime/core`), or a newer runtime for a new built-in. |
 | `variable` | The expression reads a variable this strict runtime does not declare. | Declaring it here, or `strict: false` if the producer was not strict. |
 | `limit` | The source or its plans exceed this runtime's limits, or its expected type exceeds 100,000 type nodes. | Higher limits here, or a smaller expected type. |
 | `shape`, `binding`, `plan` | The artifact is malformed, including an expected type nested more than 64 deep. | A fresh artifact. |

@@ -1,10 +1,12 @@
 # Stability Policy
 
-Bonsai follows Semantic Versioning for its five package entrypoints:
+Bonsai follows Semantic Versioning for its seven package entrypoints:
 
 - `bonsai-js`
 - `bonsai-js/lite`
 - `bonsai-js/runtime`
+- `bonsai-js/runtime/core`
+- `bonsai-js/builtins` (one export per built-in function; a new built-in is a minor release)
 - `bonsai-js/service`
 - `bonsai-js/query`
 

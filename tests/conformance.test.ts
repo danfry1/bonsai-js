@@ -1,11 +1,13 @@
 // Conformance corpus for the Bonsai expression language, derived only from
-// docs/language.md. Every case runs four ways (evaluateSync, evaluate,
+// docs/language.md. Every case runs five ways (evaluateSync, evaluate,
 // compile().evaluateSync, and the artifact of the compiled program, through
-// JSON, loaded by bonsai-js/runtime) and all four must agree with the expected
-// outcome.
+// JSON, loaded by bonsai-js/runtime and by bonsai-js/runtime/core given every
+// built-in) and all five must agree with the expected outcome.
 import { describe, it, expect } from 'vitest'
 import { bonsai, fn, t, toArtifact } from '../src/index.js'
-import { runtime } from '../src/runtime/index.js'
+import * as builtins from '../src/builtins/index.js'
+import { runtime as coreRuntime } from '../src/runtime/core.js'
+import { runtime, type RuntimeOptions } from '../src/runtime/index.js'
 
 type Code = string
 interface Case {
@@ -60,14 +62,33 @@ async function runAll(c: Case): Promise<Outcome[]> {
   }
   try {
     const artifact = JSON.parse(JSON.stringify(toArtifact(env.compile(c.source))))
-    out.push({ value: normalize(runtime(c.options).load(artifact).evaluateSync(c.context)) })
+    out.push({
+      value: normalize(
+        runtime(c.options as RuntimeOptions)
+          .load(artifact)
+          .evaluateSync(c.context),
+      ),
+    })
+  } catch (e) {
+    out.push(fail(e))
+  }
+  try {
+    const artifact = JSON.parse(JSON.stringify(toArtifact(env.compile(c.source))))
+    const core = coreRuntime({ ...c.options, builtins: Object.values(builtins) })
+    out.push({ value: normalize(core.load(artifact).evaluateSync(c.context)) })
   } catch (e) {
     out.push(fail(e))
   }
   return out
 }
 
-const MODES = ['evaluateSync', 'evaluate', 'compile().evaluateSync', 'runtime().load(toArtifact())']
+const MODES = [
+  'evaluateSync',
+  'evaluate',
+  'compile().evaluateSync',
+  'runtime().load(toArtifact())',
+  'runtime/core with every built-in',
+]
 
 function runCases(cases: Case[]) {
   for (const c of cases) {
