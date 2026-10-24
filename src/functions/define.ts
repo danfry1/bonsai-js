@@ -342,13 +342,14 @@ export function define(
   overloads: readonly Overload[],
   zone?: ZoneParameter,
 ): FunctionDef {
-  const def: FunctionDef = Object.freeze({
+  const def: FunctionDef = {
     name,
     overloads: Object.freeze([...overloads]),
     ...(zone === undefined ? {} : { zone }),
-    [BUILTIN_BRAND]: true,
-  })
-  DEFINED.add(def)
+  }
+  // Not enumerable, so a copy made by spreading a built-in does not carry it.
+  Object.defineProperty(def, BUILTIN_BRAND, { value: true })
+  DEFINED.add(Object.freeze(def))
   return def
 }
 
@@ -368,17 +369,30 @@ export function builtinsOption(
   if (value === undefined) return base
   if (!Array.isArray(value))
     throw new TypeError('builtins must be an array of built-ins from bonsai-js/builtins')
+  let items: unknown[]
+  try {
+    // By index, so a replaced iterator is never run.
+    items = Array.prototype.slice.call(value) as unknown[]
+  } catch (error) {
+    throw new TypeError('builtins could not be read', { cause: error })
+  }
   const out = new Map(base)
-  for (const item of value as unknown[]) {
-    if (!DEFINED.has(item as FunctionDef)) {
-      const other = typeof item === 'object' && item !== null && Object.hasOwn(item, BUILTIN_BRAND)
-      throw new TypeError(
-        other
-          ? `builtins holds ${(item as FunctionDef).name} from another copy of bonsai-js; import built-ins from the copy that runs them`
-          : 'builtins must hold built-ins from bonsai-js/builtins',
-      )
+  for (const item of items) {
+    if (DEFINED.has(item as FunctionDef)) {
+      out.set((item as FunctionDef).name, item as FunctionDef)
+      continue
     }
-    out.set((item as FunctionDef).name, item as FunctionDef)
+    let branded = false
+    try {
+      branded = typeof item === 'object' && item !== null && Object.hasOwn(item, BUILTIN_BRAND)
+    } catch {
+      // A value that cannot be read is not a built-in either.
+    }
+    throw new TypeError(
+      branded
+        ? 'builtins holds a built-in that is not from this copy of bonsai-js (another installed copy, or a wrapper of one); import built-ins from the copy that runs them'
+        : 'builtins must hold built-ins from bonsai-js/builtins',
+    )
   }
   return out
 }

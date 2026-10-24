@@ -32,7 +32,11 @@ export function runtime<
   options: CoreRuntimeOptions<V, L> & { readonly strict?: S } = {},
 ): CoreRuntime<ContextFor<V, L, S>> {
   assertRuntimeOptions(options, true)
-  return createRuntime<ContextFor<V, L, S>>(settingsFrom(undefined, options), true)
+  // createRuntime builds both kinds; with `core`, its extend takes `builtins`.
+  return createRuntime<ContextFor<V, L, S>>(
+    settingsFrom(undefined, options),
+    true,
+  ) as unknown as CoreRuntime<ContextFor<V, L, S>>
 }
 
 export type { CoreRuntime, CoreRuntimeOptions } from './create.js'

@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest'
 import { bonsai, fn, t, toArtifact } from '../src/index.js'
 import * as builtins from '../src/builtins/index.js'
 import { runtime as coreRuntime } from '../src/runtime/core.js'
-import { runtime } from '../src/runtime/index.js'
+import { runtime, type RuntimeOptions } from '../src/runtime/index.js'
 
 type Code = string
 interface Case {
@@ -62,7 +62,13 @@ async function runAll(c: Case): Promise<Outcome[]> {
   }
   try {
     const artifact = JSON.parse(JSON.stringify(toArtifact(env.compile(c.source))))
-    out.push({ value: normalize(runtime(c.options).load(artifact).evaluateSync(c.context)) })
+    out.push({
+      value: normalize(
+        runtime(c.options as RuntimeOptions)
+          .load(artifact)
+          .evaluateSync(c.context),
+      ),
+    })
   } catch (e) {
     out.push(fail(e))
   }

@@ -9,8 +9,8 @@
  * const builtins = [b.includes, b.some, b.now, b.days]
  * ```
  *
- * The list is generated from src/functions/builtins.ts; tests/builtins-entry.test.ts
- * checks that it names every built-in.
+ * It lists every built-in in src/functions/builtins.ts; tests/runtime-core.test.ts
+ * checks that it names each one.
  */
 import type { Builtin } from '../environment.js'
 import * as defs from '../functions/builtins.js'

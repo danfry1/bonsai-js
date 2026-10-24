@@ -227,7 +227,7 @@ The declared variables (or `undefined` for an open environment) and the strict f
 
 ## The lite entry point
 
-`bonsai-js/lite` exports the same `bonsai()` without explaining and partial evaluation, for browser bundles that only check and evaluate expressions: about 56 KB minified and gzipped instead of about 68 KB. Its environments and programs have every method on this page except `explain`, `explainSync`, and `partial`, and behave identically, step counts included. It also exports `t`, `fn`, `withContext`, the error classes, `parse`, `print`, and the types; not `BonsaiTranslationError` or the explanation and partial evaluation types. The language service accepts its environments.
+`bonsai-js/lite` exports the same `bonsai()` without explaining and partial evaluation, for browser bundles that only check and evaluate expressions: about 57 KB minified and gzipped instead of about 69 KB. Its environments and programs have every method on this page except `explain`, `explainSync`, and `partial`, and behave identically, step counts included. It also exports `t`, `fn`, `withContext`, the error classes, `parse`, `print`, and the types; not `BonsaiTranslationError` or the explanation and partial evaluation types. The language service accepts its environments.
 
 ```ts
 import { bonsai, t } from 'bonsai-js/lite'

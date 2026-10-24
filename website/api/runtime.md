@@ -4,9 +4,10 @@
 
 | Entry | Browser size (min+gzip) |
 | --- | --- |
-| `bonsai-js` | about 68 KB |
-| `bonsai-js/lite` | about 56 KB |
-| `bonsai-js/runtime` | about 44 KB |
+| `bonsai-js` | about 69 KB |
+| `bonsai-js/lite` | about 57 KB |
+| `bonsai-js/runtime` | about 43 KB |
+| `bonsai-js/runtime/core` | about 30 KB, with only the built-ins your rules call ([below](#only-the-built-ins-your-rules-call)) |
 
 ## Example
 

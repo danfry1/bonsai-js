@@ -27,7 +27,10 @@ import type { AnyType, Infer, Type } from '../types.js'
 export type RuntimeOptions<
   V extends Readonly<Record<string, Type>> = Readonly<Record<string, Type>>,
   L extends readonly Library[] = readonly Library[],
-> = Omit<EnvironmentOptions<V, L>, 'builtins'>
+> = Omit<EnvironmentOptions<V, L>, 'builtins'> & {
+  /** Not an option here: bonsai-js/runtime has every built-in (see bonsai-js/runtime/core). */
+  readonly builtins?: never
+}
 
 /**
  * The options of bonsai-js/runtime/core's `runtime()`: those of

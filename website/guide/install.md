@@ -45,7 +45,7 @@ Upgrading from 0.x? The [migration guide](/guide/migrating) covers every change.
 
 ## Bundle size
 
-In a browser bundle, an app that evaluates expressions adds about 68 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. From `bonsai-js/lite`, which leaves those two out, it adds about 56 KB, and from `bonsai-js/runtime`, which evaluates rules checked and compiled elsewhere and so leaves out the checker too, about 44 KB. `bonsai-js/runtime/core` carries only the built-in functions your rules call: about 30 KB for typical rules. The `query` and `service` entry points are separate; the language service on its own is about 46 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets.
+In a browser bundle, an app that evaluates expressions adds about 69 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. From `bonsai-js/lite`, which leaves those two out, it adds about 57 KB, and from `bonsai-js/runtime`, which evaluates rules checked and compiled elsewhere and so leaves out the checker too, about 43 KB. `bonsai-js/runtime/core` carries only the built-in functions your rules call: about 30 KB for typical rules. The `query` and `service` entry points are separate; the language service on its own is about 47 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets.
 
 ## First evaluation
 

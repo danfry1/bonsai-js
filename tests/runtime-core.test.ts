@@ -3,7 +3,7 @@ import * as b from '../src/builtins/index.js'
 import { BUILTINS } from '../src/functions/builtins.js'
 import { BonsaiArtifactError, bonsai, fn, t, toArtifact } from '../src/index.js'
 import { runtime as fullRuntime } from '../src/runtime/index.js'
-import { runtime } from '../src/runtime/core.js'
+import { runtime, type CoreRuntime } from '../src/runtime/core.js'
 
 const variables = { user: t.object({ name: t.string(), tags: t.list(t.string()) }) }
 const user = { name: 'Ada', tags: ['beta', 'admin'] }
@@ -71,10 +71,28 @@ describe('bonsai-js/runtime/core', () => {
     )
     const copy = { name: 'trim', [Symbol.for('bonsai-js.builtin')]: true }
     expect(() => runtime({ builtins: [copy] as never })).toThrow(
-      'builtins holds trim from another copy of bonsai-js',
+      'builtins holds a built-in that is not from this copy of bonsai-js',
     )
+    // A spread copy does not carry the brand, and a getter that throws is a TypeError.
+    expect(() => runtime({ builtins: [{ ...b.trim }] as never })).toThrow(
+      'builtins must hold built-ins from bonsai-js/builtins',
+    )
+    const hostile = Object.defineProperty([], 0, {
+      get: () => {
+        throw new Error('boom')
+      },
+    })
+    expect(() => runtime({ builtins: hostile })).toThrow('builtins could not be read')
     // bonsai-js/runtime has every built-in and does not take the option.
     expect(() => fullRuntime({ builtins: [b.trim] } as never)).toThrow('bonsai-js/runtime/core')
+  })
+})
+
+describe('the types of the two runtimes', () => {
+  it('do not let a bonsai-js/runtime stand in for a core one', () => {
+    // @ts-expect-error bonsai-js/runtime's extend() does not take builtins.
+    const rt: CoreRuntime = fullRuntime({})
+    expect(() => rt.extend({ builtins: [b.trim] })).toThrow(TypeError)
   })
 })
 
@@ -90,10 +108,16 @@ describe('the builtins option of bonsai()', () => {
 
   it('suggests only functions the environment has', () => {
     const contains = (env: {
-      check: (source: string) => { diagnostics: readonly { suggestion?: string }[] }
+      check: (source: string) => {
+        diagnostics: readonly { message: string; suggestion?: string }[]
+      }
     }) => env.check('user.name.contains("a")').diagnostics[0]
     expect(contains(bonsai({ variables }))?.suggestion).toBe('includes')
-    expect(contains(bonsai({ variables, builtins: [b.trim] }))?.suggestion).not.toBe('includes')
+    const restricted = contains(bonsai({ variables, builtins: [b.trim] }))
+    expect(restricted?.suggestion).toBeUndefined()
+    expect(restricted?.message).toBe(
+      'Unknown function "contains"; the built-in for this is includes, which this environment does not include (add it to builtins)',
+    )
   })
 
   it('adds to the base on extend', () => {
