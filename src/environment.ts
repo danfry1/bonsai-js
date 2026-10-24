@@ -14,6 +14,7 @@ import { descriptionOf } from './functions/descriptions.js'
 import {
   assertHostSpec,
   assertType,
+  builtinsOption,
   isRecord,
   overload,
   type FunctionDef,
@@ -327,6 +328,21 @@ export interface EnvironmentOptions<
    * naming the first mismatching path. Default: false.
    */
   readonly validateContext?: boolean | undefined
+  /**
+   * The built-ins available, from bonsai-js/builtins. Default: all of them
+   * (none in bonsai-js/runtime/core). Calling one left out is a CHECK error, so
+   * an environment that checks rules for bonsai-js/runtime/core passes the same
+   * list as the runtime. On extend(), these are added to the base's.
+   */
+  readonly builtins?: readonly Builtin[] | undefined
+}
+
+declare const builtinBrand: unique symbol
+
+/** A built-in function from bonsai-js/builtins, for the `builtins` option. */
+export interface Builtin {
+  readonly name: string
+  readonly [builtinBrand]: true
 }
 
 /**
@@ -632,6 +648,8 @@ export interface Settings {
   readonly strictOption: boolean | undefined
   readonly strict: boolean
   readonly host: ReadonlyMap<string, FunctionDef>
+  /** The built-ins available (host functions of the same name replace them). */
+  readonly builtins: ReadonlyMap<string, FunctionDef>
   readonly parseLimits: ParseLimits
   readonly runtimeLimits: RuntimeLimits
   readonly timeout: number
@@ -818,6 +836,7 @@ const OPTION_KEYS = new Set([
   'cacheSize',
   'clock',
   'validateContext',
+  'builtins',
 ])
 const LIMIT_KEYS: ReadonlySet<string> = new Set([
   ...Object.keys(DEFAULT_PARSE_LIMITS),
@@ -894,7 +913,15 @@ const DEPTH_CAPS: Readonly<Record<string, number>> = {
   maxValueDepth: MAX_VALUE_DEPTH_LIMIT,
 }
 
-export function settingsFrom(base: Settings | undefined, options: unknown): Settings {
+/**
+ * Settings from options, over a base (extend) or, for a new environment or
+ * runtime, over the entry point's built-ins.
+ */
+export function settingsFrom(
+  base: Settings | undefined,
+  options: unknown,
+  builtins: ReadonlyMap<string, FunctionDef> = new Map(),
+): Settings {
   assertOptions(options)
   const limits = (options.limits ?? {}) as Readonly<Record<string, unknown>>
   const variables = mergeVariables(base?.variables, options)
@@ -904,6 +931,10 @@ export function settingsFrom(base: Settings | undefined, options: unknown): Sett
     strictOption,
     strict: strictOption ?? variables !== undefined,
     host: mergeFunctions(base?.host ?? new Map(), options),
+    builtins: builtinsOption(
+      options.builtins,
+      base?.builtins ?? (options.builtins === undefined ? builtins : new Map()),
+    ),
     parseLimits: pickLimits(
       DEFAULT_PARSE_LIMITS,
       base?.parseLimits ?? DEFAULT_PARSE_LIMITS,
@@ -1117,10 +1148,10 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
   const checkEnv: CheckEnv = {
     variables: settings.variables,
     strict: settings.strict,
-    lookup: (name) => settings.host.get(name) ?? BUILTINS.get(name),
+    lookup: (name) => settings.host.get(name) ?? settings.builtins.get(name),
     *functionNames() {
       yield* settings.host.keys()
-      for (const name of BUILTINS.keys()) if (!settings.host.has(name)) yield name
+      for (const name of settings.builtins.keys()) if (!settings.host.has(name)) yield name
     },
   }
   // Each entry records the source and expected type it was compiled for: a key
@@ -1410,5 +1441,5 @@ export function environmentWith<Ctx>(
   features: Features | undefined,
   options: unknown,
 ): Environment<Ctx> {
-  return createEnvironment<Ctx>({ ...settingsFrom(undefined, options), features })
+  return createEnvironment<Ctx>({ ...settingsFrom(undefined, options, BUILTINS), features })
 }

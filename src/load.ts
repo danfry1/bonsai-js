@@ -11,7 +11,6 @@ import type { CallPlan } from './check/checker.js'
 import { encodeType, lengthPrefixed } from './digest.js'
 import type { Settings } from './environment.js'
 import { BonsaiArtifactError, BonsaiError, type ArtifactProblem } from './errors.js'
-import { BUILTINS } from './functions/builtins.js'
 import { assertType, type FunctionDef } from './functions/define.js'
 import { programRunner, warmZones, type ProgramAnalysis } from './program.js'
 import { forEachChild, type CallNode, type Node } from './syntax/ast.js'
@@ -307,7 +306,7 @@ function loadRead(artifact: Artifact, settings: Settings, expect: Type | undefin
     )
   }
   const lookup = (name: string): FunctionDef | undefined =>
-    settings.host.get(name) ?? BUILTINS.get(name)
+    settings.host.get(name) ?? settings.builtins.get(name)
   // Binding adds lambdas around arguments but no calls or variables, so the
   // digest is computed from the parsed tree as it is from the checked one:
   // different definitions are reported as such, before binding with them.

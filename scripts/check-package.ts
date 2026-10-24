@@ -3,6 +3,9 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BUILTINS } from '../src/functions/builtins.js'
+
+const BUILTIN_NAMES = [...BUILTINS.keys()]
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const root = resolve(scriptDir, '..')
@@ -55,6 +58,10 @@ try {
     'package/dist/query/index.d.mts',
     'package/dist/runtime/index.mjs',
     'package/dist/runtime/index.d.mts',
+    'package/dist/runtime/core.mjs',
+    'package/dist/runtime/core.d.mts',
+    'package/dist/builtins/index.mjs',
+    'package/dist/builtins/index.d.mts',
     'package/README.md',
     'package/LICENSE',
     'package/CHANGELOG.md',
@@ -90,6 +97,8 @@ try {
     ['./lite', './dist/lite/index.mjs'],
     ['./service', './dist/service/index.mjs'],
     ['./runtime', './dist/runtime/index.mjs'],
+    ['./runtime/core', './dist/runtime/core.mjs'],
+    ['./builtins', './dist/builtins/index.mjs'],
   ] as const) {
     const conditions = packedPkg.exports?.[subpath]
     // `default` lets require() load the ES module (Node 22.12+).
@@ -105,7 +114,7 @@ try {
   const publicExports: Record<string, readonly string[]> = {
     'index.d.mts': [
       ...['AbortSignalLike', 'AnyType', 'BinaryNode', 'BinaryOperator', 'BonsaiCheckError'],
-      ...['Artifact', 'ArtifactProblem', 'BonsaiArtifactError', 'Plan', 'toArtifact'],
+      ...['Artifact', 'ArtifactProblem', 'BonsaiArtifactError', 'Builtin', 'Plan', 'toArtifact'],
       ...['BonsaiError', 'BonsaiErrorJSON', 'BonsaiErrorName'],
       ...['BonsaiLimitError', 'BonsaiRuntimeError', 'BonsaiSyntaxError', 'BonsaiTranslationError'],
       'BooleanType',
@@ -142,7 +151,7 @@ try {
     // The main entry without explaining and partial evaluation.
     'lite/index.d.mts': [
       ...['AbortSignalLike', 'AnyType', 'BinaryNode', 'BinaryOperator', 'BonsaiCheckError'],
-      ...['Artifact', 'ArtifactProblem', 'BonsaiArtifactError', 'Plan', 'toArtifact'],
+      ...['Artifact', 'ArtifactProblem', 'BonsaiArtifactError', 'Builtin', 'Plan', 'toArtifact'],
       ...['BonsaiError', 'BonsaiErrorJSON', 'BonsaiErrorName'],
       ...['BonsaiLimitError', 'BonsaiRuntimeError', 'BonsaiSyntaxError', 'BooleanType'],
       ...['CallNode', 'CallStyle', 'CompileOptions', 'ConditionalNode'],
@@ -188,12 +197,25 @@ try {
       ...['RuntimeOptions', 'RuntimeProgram', 'Span', 'Type', 'fn', 'formatType', 'isBonsaiError'],
       ...['runtime', 't', 'withContext'],
     ],
+    // The runtime with only the built-ins passed in `builtins`.
+    'runtime/core.d.mts': [
+      ...['AbortSignalLike', 'Artifact', 'ArtifactProblem', 'BonsaiArtifactError', 'BonsaiError'],
+      ...['BonsaiErrorJSON', 'BonsaiErrorName', 'BonsaiLimitError', 'BonsaiRuntimeError'],
+      ...['Builtin', 'CoreRuntime', 'CoreRuntimeOptions', 'Duration', 'ErrorCode'],
+      ...['EvaluateOptions', 'FnSpec', 'HostCall', 'HostFunction', 'Infer', 'InferVariables'],
+      ...['Library', 'Limits', 'LoadOptions', 'Plan', 'RuntimeProgram', 'Span', 'Type', 'fn'],
+      ...['formatType', 'isBonsaiError', 'runtime', 't', 'withContext'],
+    ],
+    // One export per built-in (generated from BUILTINS), and their type.
+    'builtins/index.d.mts': ['Builtin', ...BUILTIN_NAMES],
   }
   for (const [file, expected] of Object.entries(publicExports)) {
     const declarations = readFileSync(join(extractDir, 'package', 'dist', file), 'utf8')
-    // Exports appear in a trailing `export { ... }` list, inline
+    // Exports appear in trailing `export { ... }` or `export type { ... }` lists, inline
     // (`export interface X`, `export declare function f`), or both.
-    const list = /^export \{(?<names>[^}]*)\};\s*$/mu.exec(declarations)?.groups?.names ?? ''
+    const list = [...declarations.matchAll(/^export (?:type )?\{(?<names>[^}]*)\};\s*$/gmu)]
+      .map((match) => match.groups?.names ?? '')
+      .join(',')
     const inline = [
       ...declarations.matchAll(
         /^export (?:declare )?(?:function|const|class|interface|type|enum) (?<name>\w+)/gmu,
@@ -215,7 +237,7 @@ try {
     throw new Error('Packed query export does not point to ./dist/query/index.mjs')
   }
   const exportKeys = [...Object.keys(packedPkg.exports ?? {})].sort()
-  if (exportKeys.join(',') !== '.,./lite,./query,./runtime,./service') {
+  if (exportKeys.join(',') !== '.,./builtins,./lite,./query,./runtime,./runtime/core,./service') {
     throw new Error(`Packed package exports unexpected subpaths: ${exportKeys.join(', ')}`)
   }
 
@@ -234,6 +256,8 @@ try {
       "import { bonsai as liteBonsai } from 'bonsai-js/lite'",
       "import { toArtifact } from 'bonsai-js'",
       "import { runtime } from 'bonsai-js/runtime'",
+      "import { runtime as coreRuntime } from 'bonsai-js/runtime/core'",
+      "import * as builtins from 'bonsai-js/builtins'",
       '',
       'const env = bonsai({',
       '  variables: { user: t.object({ name: t.string(), age: t.number() }), items: t.list(t.number()) },',
@@ -276,6 +300,9 @@ try {
       'const shipped = JSON.parse(JSON.stringify(toArtifact(adult)))',
       'const rt = runtime({ variables: { user: t.object({ name: t.string(), age: t.number() }), items: t.list(t.number()) } })',
       "if (rt.load(shipped, { expect: t.boolean() }).evaluateSync(ctx) !== true) throw new Error('Runtime subpath evaluation failed')",
+      'const core = coreRuntime({ variables: { user: t.object({ name: t.string(), age: t.number() }), items: t.list(t.number()) }, builtins: [builtins.toUpperCase] })',
+      "if (core.load(shipped, { expect: t.boolean() }).evaluateSync(ctx) !== true) throw new Error('Runtime core subpath evaluation failed')",
+      "if (core.load(JSON.parse(JSON.stringify(toArtifact(env.compile('user.name.toUpperCase()'))))).evaluateSync(ctx) !== 'ADA') throw new Error('Runtime core built-in failed')",
       '',
       "console.log('packed package smoke test passed')",
       '',
@@ -289,10 +316,13 @@ try {
       "const { createLanguageService } = require('bonsai-js/service')",
       "const lite = require('bonsai-js/lite')",
       "const { runtime } = require('bonsai-js/runtime')",
+      "const core = require('bonsai-js/runtime/core')",
+      "const { trim } = require('bonsai-js/builtins')",
       "if (bonsai().evaluateSync('1 + 2') !== 3) throw new Error('require() of the package failed')",
       "if (lite.bonsai().evaluateSync('1 + 2') !== 3) throw new Error('require() of the lite entry failed')",
       "if (typeof createLanguageService !== 'function') throw new Error('require() of the service failed')",
       "if (runtime().load(JSON.parse(JSON.stringify(require('bonsai-js').toArtifact(bonsai().compile('1 + 2'))))).evaluateSync() !== 3) throw new Error('require() of the runtime failed')",
+      "if (core.runtime({ builtins: [trim] }).load(JSON.parse(JSON.stringify(require('bonsai-js').toArtifact(bonsai().compile('trim(\\' a \\')'))))).evaluateSync() !== 'a') throw new Error('require() of the runtime core failed')",
       "console.log('require() smoke test passed')",
       '',
     ].join('\n'),

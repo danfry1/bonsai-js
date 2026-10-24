@@ -26,6 +26,8 @@ Upgrading from 0.x? The [migration guide](/guide/migrating) covers every change.
 | `bonsai-js` | `bonsai()`, `fn()`, the type builders `t`, error classes, and types |
 | `bonsai-js/lite` | The same, without explaining and partial evaluation, for smaller browser bundles (see [the lite entry point](/api/environment#the-lite-entry-point)) |
 | `bonsai-js/runtime` | `runtime()`, which loads and evaluates rules compiled elsewhere with `toArtifact()`, without the type checker (see [Runtime](/api/runtime)) |
+| `bonsai-js/runtime/core` | The same `runtime()` with only the built-in functions you pass, for the smallest browser bundles |
+| `bonsai-js/builtins` | Each built-in function as its own export, for `runtime/core` and the `builtins` option |
 | `bonsai-js/service` | `createLanguageService()` for editor completions, hover, and diagnostics |
 | `bonsai-js/query` | `toSQL()` and `toMongo()`, which translate a filter to a SQL `WHERE` clause or a MongoDB filter |
 
@@ -38,12 +40,12 @@ Upgrading from 0.x? The [migration guide](/guide/migrating) covers every change.
 ### TypeScript settings
 
 - The type declarations use `const` type parameters (TypeScript 5.0 or newer) and are tested with TypeScript 5.9 and 7.0.
-- They resolve under every `moduleResolution` setting, including the legacy `node` (node10) for the `bonsai-js/lite`, `bonsai-js/runtime`, `bonsai-js/service`, and `bonsai-js/query` entry points.
+- They resolve under every `moduleResolution` setting, including the legacy `node` (node10) for the `bonsai-js/lite`, `bonsai-js/runtime`, `bonsai-js/runtime/core`, `bonsai-js/builtins`, `bonsai-js/service`, and `bonsai-js/query` entry points.
 - Projects compiling to CommonJS should use `"module": "node20"` or `"nodenext"`. The older `"node16"` setting does not know `require()` can load ES modules and reports TS1479; use `await import('bonsai-js')` there.
 
 ## Bundle size
 
-In a browser bundle, an app that evaluates expressions adds about 68 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. From `bonsai-js/lite`, which leaves those two out, it adds about 56 KB, and from `bonsai-js/runtime`, which evaluates rules checked and compiled elsewhere and so leaves out the checker too, about 44 KB. The `query` and `service` entry points are separate; the language service on its own is about 46 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets.
+In a browser bundle, an app that evaluates expressions adds about 68 KB minified and gzipped: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. From `bonsai-js/lite`, which leaves those two out, it adds about 56 KB, and from `bonsai-js/runtime`, which evaluates rules checked and compiled elsewhere and so leaves out the checker too, about 44 KB. `bonsai-js/runtime/core` carries only the built-in functions your rules call: about 30 KB for typical rules. The `query` and `service` entry points are separate; the language service on its own is about 46 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets.
 
 ## First evaluation
 

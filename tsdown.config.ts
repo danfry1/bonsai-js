@@ -11,6 +11,8 @@ export default defineConfig({
     'src/service/index.ts',
     'src/query/index.ts',
     'src/runtime/index.ts',
+    'src/runtime/core.ts',
+    'src/builtins/index.ts',
   ],
   format: 'esm',
   // One output file per source module, so `sideEffects: false` lets bundlers

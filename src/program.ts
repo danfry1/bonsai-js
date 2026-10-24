@@ -2,7 +2,6 @@ import type { Analysis } from './check/checker.js'
 import { compileProgram, type CompiledProgram } from './compile/compiler.js'
 import type { EvaluateOptions, ResidualOf, Settings } from './environment.js'
 import { BonsaiLimitError, BonsaiRuntimeError, type BonsaiError } from './errors.js'
-import { zoneParameter } from './functions/builtins.js'
 import {
   conforms,
   describeMismatch,
@@ -13,7 +12,6 @@ import {
 import { escaping, isOwn, raised } from './runtime/attribution.js'
 import { isStackOverflow, tooDeep } from './runtime/overflow.js'
 import { State } from './runtime/state.js'
-import { warmZone } from './runtime/time.js'
 import { errorText, isMap } from './runtime/values.js'
 import { formatType, type Type } from './types.js'
 
@@ -302,13 +300,13 @@ const WARMED_ZONES = 16
 export function warmZones(analysis: Pick<Analysis, 'calls'>): void {
   const seen = new Set<string | undefined>()
   for (const [call, plan] of analysis.calls) {
-    const index = zoneParameter(plan.def)
-    const arg = index === undefined ? undefined : call.args[index]
+    const zone = plan.def.zone
+    const arg = zone === undefined ? undefined : call.args[zone.at]
     if (arg === undefined) continue
-    const zone = arg.type === 'Literal' ? arg.value : undefined
-    if ((zone !== undefined && typeof zone !== 'string') || seen.has(zone)) continue
-    seen.add(zone)
-    warmZone(zone)
+    const name = arg.type === 'Literal' ? arg.value : undefined
+    if ((name !== undefined && typeof name !== 'string') || seen.has(name)) continue
+    seen.add(name)
+    zone?.warm(name)
     if (seen.size >= WARMED_ZONES) return
   }
 }

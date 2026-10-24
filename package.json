@@ -19,6 +19,12 @@
       ],
       "runtime": [
         "./dist/runtime/index.d.mts"
+      ],
+      "runtime/core": [
+        "./dist/runtime/core.d.mts"
+      ],
+      "builtins": [
+        "./dist/builtins/index.d.mts"
       ]
     }
   },
@@ -47,6 +53,16 @@
       "types": "./dist/runtime/index.d.mts",
       "import": "./dist/runtime/index.mjs",
       "default": "./dist/runtime/index.mjs"
+    },
+    "./runtime/core": {
+      "types": "./dist/runtime/core.d.mts",
+      "import": "./dist/runtime/core.mjs",
+      "default": "./dist/runtime/core.mjs"
+    },
+    "./builtins": {
+      "types": "./dist/builtins/index.d.mts",
+      "import": "./dist/builtins/index.mjs",
+      "default": "./dist/builtins/index.mjs"
     }
   },
   "files": [

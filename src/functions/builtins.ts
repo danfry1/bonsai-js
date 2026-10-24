@@ -15,6 +15,7 @@ import {
   parseTimestamp,
   checked,
   wallClock,
+  warmZone,
   type WallClock,
 } from '../runtime/time.js'
 import {
@@ -61,6 +62,7 @@ import {
   type FunctionDef,
   type Lambda,
   type Overload,
+  type ZoneParameter,
 } from './define.js'
 
 /** What toNumber accepts: an optional sign, digits with an optional fraction, and an optional exponent. */
@@ -1578,41 +1580,43 @@ export const type: FunctionDef = /* @__PURE__ */ define('type', [
 
 const optZone = /* @__PURE__ */ t.optional(str)
 
-/** The position of a built-in's time zone parameter, if it takes one. */
-export function zoneParameter(def: FunctionDef): number | undefined {
-  for (const candidate of def.overloads) {
-    const index = candidate.params.indexOf(optZone)
-    if (index >= 0) return index
-  }
-  return undefined
-}
+/** Where a built-in's time zone parameter is (see FunctionDef.zone). */
+const zoneAt = (position: number): ZoneParameter => ({ at: position, warm: warmZone })
 
 function zoneArg(value: unknown): string | null {
   return value === undefined || value === null ? null : (value as string)
 }
 
 function field(name: string, pick: (clock: WallClock) => number): FunctionDef {
-  return define(name, [
-    overload([ts, optZone], num, ([d, z], site) => pick(wallClock(d as Date, zoneArg(z), site)), {
-      required: 1,
-    }),
-  ])
+  return define(
+    name,
+    [
+      overload([ts, optZone], num, ([d, z], site) => pick(wallClock(d as Date, zoneArg(z), site)), {
+        required: 1,
+      }),
+    ],
+    zoneAt(1),
+  )
 }
 
 /** Midnight at the start of the day, with `reset` fields of the wall clock set too. */
 function startOf(name: string, reset: Partial<WallClock>): FunctionDef {
-  return define(name, [
-    overload(
-      [ts, optZone],
-      ts,
-      ([d, z], site) => {
-        const clock = wallClock(d as Date, zoneArg(z), site)
-        const midnight = { ...clock, ...reset, hour: 0, minute: 0, second: 0, millisecond: 0 }
-        return fromWallClock(midnight, zoneArg(z), site)
-      },
-      { required: 1 },
-    ),
-  ])
+  return define(
+    name,
+    [
+      overload(
+        [ts, optZone],
+        ts,
+        ([d, z], site) => {
+          const clock = wallClock(d as Date, zoneArg(z), site)
+          const midnight = { ...clock, ...reset, hour: 0, minute: 0, second: 0, millisecond: 0 }
+          return fromWallClock(midnight, zoneArg(z), site)
+        },
+        { required: 1 },
+      ),
+    ],
+    zoneAt(1),
+  )
 }
 
 /** Longest duration text duration() reads; longer text is never a valid duration in range. */
@@ -1737,50 +1741,66 @@ export const startOfMonth: FunctionDef = /* @__PURE__ */ startOf('startOfMonth',
 
 export const startOfYear: FunctionDef = /* @__PURE__ */ startOf('startOfYear', { month: 1, day: 1 })
 
-export const addDays: FunctionDef = /* @__PURE__ */ define('addDays', [
-  /* @__PURE__ */ overload(
-    [ts, num, optZone],
-    ts,
-    ([d, n, z], site) => addDaysIn(d as Date, n as number, zoneArg(z), site),
-    { required: 2 },
-  ),
-])
+export const addDays: FunctionDef = /* @__PURE__ */ define(
+  'addDays',
+  [
+    /* @__PURE__ */ overload(
+      [ts, num, optZone],
+      ts,
+      ([d, n, z], site) => addDaysIn(d as Date, n as number, zoneArg(z), site),
+      { required: 2 },
+    ),
+  ],
+  /* @__PURE__ */ zoneAt(2),
+)
 
-export const addMonths: FunctionDef = /* @__PURE__ */ define('addMonths', [
-  /* @__PURE__ */ overload(
-    [ts, num, optZone],
-    ts,
-    ([d, n, z], site) => addMonthsIn(d as Date, n as number, zoneArg(z), site),
-    { required: 2 },
-  ),
-])
+export const addMonths: FunctionDef = /* @__PURE__ */ define(
+  'addMonths',
+  [
+    /* @__PURE__ */ overload(
+      [ts, num, optZone],
+      ts,
+      ([d, n, z], site) => addMonthsIn(d as Date, n as number, zoneArg(z), site),
+      { required: 2 },
+    ),
+  ],
+  /* @__PURE__ */ zoneAt(2),
+)
 
-export const addYears: FunctionDef = /* @__PURE__ */ define('addYears', [
-  /* @__PURE__ */ overload(
-    [ts, num, optZone],
-    ts,
-    ([d, n, z], site) =>
-      addMonthsIn(d as Date, integer(n, 'Years', site) * MONTHS_PER_YEAR, zoneArg(z), site),
-    { required: 2 },
-  ),
-])
+export const addYears: FunctionDef = /* @__PURE__ */ define(
+  'addYears',
+  [
+    /* @__PURE__ */ overload(
+      [ts, num, optZone],
+      ts,
+      ([d, n, z], site) =>
+        addMonthsIn(d as Date, integer(n, 'Years', site) * MONTHS_PER_YEAR, zoneArg(z), site),
+      { required: 2 },
+    ),
+  ],
+  /* @__PURE__ */ zoneAt(2),
+)
 
-export const formatDate: FunctionDef = /* @__PURE__ */ define('formatDate', [
-  /* @__PURE__ */ overload(
-    [ts, str, optZone],
-    str,
-    ([d, p, z], site) => {
-      const text = formatTimestamp(d as Date, p as string, zoneArg(z), site)
-      site.state.stringLimit(text.length, site.span)
-      return text
-    },
-    {
-      required: 2,
-      literals: ([, pattern]) =>
-        typeof pattern === 'string' ? checkDatePattern(pattern) : undefined,
-    },
-  ),
-])
+export const formatDate: FunctionDef = /* @__PURE__ */ define(
+  'formatDate',
+  [
+    /* @__PURE__ */ overload(
+      [ts, str, optZone],
+      str,
+      ([d, p, z], site) => {
+        const text = formatTimestamp(d as Date, p as string, zoneArg(z), site)
+        site.state.stringLimit(text.length, site.span)
+        return text
+      },
+      {
+        required: 2,
+        literals: ([, pattern]) =>
+          typeof pattern === 'string' ? checkDatePattern(pattern) : undefined,
+      },
+    ),
+  ],
+  /* @__PURE__ */ zoneAt(2),
+)
 
 /** Result types that depend on argument types beyond simple type variables. */
 export const RESULT_REFINERS: Readonly<

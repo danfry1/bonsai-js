@@ -2,6 +2,7 @@ export { bonsai } from './bonsai.js'
 export { fn, withContext } from './environment.js'
 export type {
   AbortSignalLike,
+  Builtin,
   CheckResult,
   CompileOptions,
   Environment,
