@@ -5,6 +5,8 @@
  */
 import { analyze, type Analysis, type CallPlan } from './check/checker.js'
 import { compileProgram, type CompiledProgram } from './compile/compiler.js'
+import { tracing } from './compile/trace.js'
+import { makeResidual } from './residual.js'
 import { escaping, isOwn, raised } from './runtime/attribution.js'
 import { BonsaiRuntimeError, type BonsaiError } from './errors.js'
 import { describeMismatch, type Out, type ValidationBudget } from './functions/define.js'
@@ -347,7 +349,7 @@ function programFeatures<Ctx, R>(core: ProgramCore<R>): ProgramFeatures<Ctx, R> 
     }
     const code = (traceSync ??= compileProgram(analysis, 'sync', {
       ...compileOptions,
-      trace: true,
+      trace: tracing,
     }))
     const limits = evaluationLimits(explain.evaluate, settings)
     const ctx = contextOf(context)
@@ -379,7 +381,7 @@ function programFeatures<Ctx, R>(core: ProgramCore<R>): ProgramFeatures<Ctx, R> 
     const explain = explainSettings(options)
     const code = (traceAsync ??= compileProgram(analysis, 'async', {
       ...compileOptions,
-      trace: true,
+      trace: tracing,
     }))
     const limits = evaluationLimits(explain.evaluate, settings)
     const ctx = contextOf(context)
@@ -578,14 +580,16 @@ function programFeatures<Ctx, R>(core: ProgramCore<R>): ProgramFeatures<Ctx, R> 
               // The plans go on the calls of the tree that is compiled: the
               // analysis root, where implicit lambdas are explicit nodes.
               { ...reanalyzed, calls: originalPlans(reanalyzed.root, reanalyzed.calls) },
-              new Map(Object.entries(bindings)),
-              {
-                source: residualSource,
+              makeResidual({
+                source,
+                settings,
+                residualSource,
+                bindings: new Map(Object.entries(bindings)),
                 readsContext,
                 knownRoots,
                 dependsOn,
                 shapes: state.shapes,
-              },
+              }),
             )
           },
         },
