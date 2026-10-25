@@ -153,7 +153,7 @@ export function evaluationLimits(options: unknown, settings: Settings): Evaluati
   }
 }
 
-interface ValidationLimits {
+export interface ValidationLimits {
   readonly maxDepth: number
   readonly maxSteps: number
   readonly timeout: number
@@ -195,7 +195,7 @@ export function invalidContext(problem: string | undefined, source: string): voi
   }
 }
 
-function validateContext(
+export function validateContext(
   ctx: Record<string, unknown>,
   variables: Readonly<Record<string, Type>>,
   source: string,
@@ -208,64 +208,12 @@ function validateContext(
   }
 }
 
-/**
- * Why the value read along `segments` (from index `at`) does not conform, or
- * undefined. Each step is judged by its own declared type: an absent or null
- * value is fine only where that type is nullable; a declared field is followed
- * (a missing required one fails); an undeclared key of an object (objects are
- * open) or an absent record entry ends the check; past a type that is not a
- * map, and at the end of the path, the value is checked whole, as a context is.
- * Fields the path does not name are not checked.
- */
-function describeAlong(
-  value: unknown,
-  type: Type,
-  segments: readonly string[],
-  at: number,
-  path: string,
-  budget: ValidationBudget,
-): string | undefined {
-  if (at === segments.length) return describeMismatch(value, type, path, budget)
-  if (--budget.remaining < 0) budget.onExhausted('steps')
-  if (type.kind === 'union') {
-    let first: string | undefined
-    for (const member of type.types) {
-      const problem = describeAlong(value, member, segments, at, path, budget)
-      if (problem === undefined) return undefined
-      first ??= problem
-    }
-    return first
-  }
-  const actual = value === undefined ? null : value
-  if (type.kind !== 'map' || !isMap(actual)) return describeMismatch(value, type, path, budget)
-  const key = segments[at]
-  const field = Object.hasOwn(actual, key) ? actual[key] : undefined
-  if (Object.hasOwn(type.fields, key))
-    return describeAlong(field, type.fields[key], segments, at + 1, `${path}.${key}`, budget)
-  if (type.rest === undefined || field === undefined) return undefined
-  return describeAlong(field, type.rest, segments, at + 1, `${path}.${key}`, budget)
-}
-
-/**
- * Validates the values a residual reads: each path in `dependsOn`, step by
- * step against the types declared along it (see describeAlong), so a context
- * holding exactly those paths passes and invalid data on them fails as it
- * would for the program.
- */
-function validatePaths(
-  ctx: Record<string, unknown>,
-  variables: Readonly<Record<string, Type>>,
-  paths: readonly string[],
-  source: string,
-  limits: ValidationLimits,
-): void {
-  const budget = validationBudget(source, limits)
-  for (const path of paths) {
-    const segments = path.split('.')
-    const name = segments[0]
-    if (!Object.hasOwn(variables, name)) continue
-    const value = Object.hasOwn(ctx, name) ? ctx[name] : undefined
-    invalidContext(describeAlong(value, variables[name], segments, 1, name, budget), source)
+/** The budget validating a context gets: the evaluation's steps and time, and the value depth limit. */
+export function validationLimits(settings: Settings, limits: EvaluationLimits): ValidationLimits {
+  return {
+    maxDepth: settings.runtimeLimits.maxValueDepth,
+    maxSteps: limits.maxSteps,
+    timeout: limits.timeout,
   }
 }
 
@@ -333,7 +281,6 @@ export interface RunnerInput {
   /** The type the result is checked against at run time, when the checker could not prove it. */
   readonly guard: Type | undefined
   readonly settings: Settings
-  readonly constants?: ReadonlyMap<string, unknown> | undefined
   readonly residualOf?: ResidualOf | undefined
 }
 
@@ -343,14 +290,7 @@ export interface RunnerInput {
  * Shared by environments and by anything else that builds programs, so every
  * program evaluates the same way.
  */
-export function programRunner<R>({
-  source,
-  analysis,
-  guard,
-  settings,
-  constants,
-  residualOf,
-}: RunnerInput) {
+export function programRunner<R>({ source, analysis, guard, settings, residualOf }: RunnerInput) {
   const checked = (result: unknown, state: State): void => {
     if (guard !== undefined && !conforms(result, guard, state)) {
       throw raised(
@@ -371,7 +311,7 @@ export function programRunner<R>({
   let pooled: State | undefined
   let pooledInUse = false
 
-  const compileOptions = constants === undefined ? {} : { constants, shapes: residualOf?.shapes }
+  const compileOptions = residualOf === undefined ? {} : { constant: residualOf.constant }
   const syncProgram = (): CompiledProgram =>
     (syncCode ??= compileProgram(analysis, 'sync', compileOptions))
   const asyncProgram = (): CompiledProgram =>
@@ -390,44 +330,11 @@ export function programRunner<R>({
   ): void {
     state.reset(ctx, source, locals, limits.maxSteps, limits.timeout, limits.signal)
     if (limits.now !== undefined) state.nowValue = limits.now
-    const residual = residualOf
-    if (residual !== undefined && residual.readsContext) {
-      // call: true functions read the whole context, which must then hold
-      // the variables partial() knew, as the program's context would.
-      const roots = residual.knownRoots
-      state.charge(roots.length)
-      // In a strict environment, a known key that is not a declared variable is
-      // not part of any context the program accepts, so it is not required.
-      const declared = settings.strict ? settings.variables : undefined
-      // Decided from the property itself, never running a getter: an accessor is
-      // present, and so is a data property unless it holds undefined.
-      const missing = roots.find((name) => {
-        if (declared !== undefined && !Object.hasOwn(declared, name)) return false
-        const descriptor = Object.getOwnPropertyDescriptor(ctx, name)
-        return descriptor === undefined || ('value' in descriptor && descriptor.value === undefined)
-      })
-      if (missing !== undefined) {
-        throw raised(
-          new BonsaiRuntimeError(
-            'INVALID_CONTEXT',
-            `Invalid context: ${missing} is missing; this residual calls a call: true host function, so pass the full context, as for the program`,
-            { source },
-          ),
-        )
-      }
-    }
     const validation =
       (limits.validateContext ?? settings.validateContext) ? settings.variables : undefined
-    if (validation !== undefined) {
-      const validationLimits = {
-        maxDepth: settings.runtimeLimits.maxValueDepth,
-        maxSteps: limits.maxSteps,
-        timeout: limits.timeout,
-      }
-      if (residual === undefined || residual.readsContext)
-        validateContext(ctx, validation, source, validationLimits)
-      else validatePaths(ctx, validation, residual.dependsOn, source, validationLimits)
-    }
+    if (residualOf !== undefined) residualOf.prepare(state, ctx, validation, limits)
+    else if (validation !== undefined)
+      validateContext(ctx, validation, source, validationLimits(settings, limits))
   }
 
   function runSync(context: unknown, options: EvaluateOptions | undefined): R {

@@ -683,11 +683,7 @@ export interface ProgramCore<R> {
   checked: (result: unknown, state: State) => void
   settle: (result: R) => R
   /** Compiles a residual of this program and returns how it runs. */
-  residual: (
-    analysis: Analysis,
-    constants: ReadonlyMap<string, unknown>,
-    residualOf: ResidualOf,
-  ) => ResidualRunner
+  residual: (analysis: Analysis, residualOf: ResidualOf) => ResidualRunner
 }
 
 /** The program methods a feature set provides (not public API). */
@@ -710,18 +706,26 @@ export interface Features {
   program: <Ctx, R>(core: ProgramCore<R>) => ProgramFeatures<Ctx, R>
 }
 
-/** What a residual keeps from its partial evaluation. */
+/**
+ * What a residual keeps from its partial evaluation. Built by the features,
+ * so a bundle without partial() carries none of how residuals run.
+ */
 export interface ResidualOf {
   /** Its printed source: the text of its explanations. */
   readonly source: string
-  /** Whether `call: true` host functions read the context it is given. */
-  readonly readsContext: boolean
-  /** The variables known to partial(), which a context read whole must hold. */
-  readonly knownRoots: readonly string[]
-  /** The context paths it reads: all a context it does not read whole needs. */
-  readonly dependsOn: readonly string[]
-  /** Size and depth of the lists and maps partial() built into its bindings. */
-  readonly shapes: WeakMap<object, number> | undefined
+  /** How it reads its bindings: see `CompileOptions.constant`. */
+  readonly constant: NonNullable<CompilerOptions['constant']>
+  /**
+   * Checks the caller's context before a run: present where `call: true`
+   * host functions read it whole, and valid against `variables` (when
+   * validating) on the paths the residual reads.
+   */
+  readonly prepare: (
+    state: State,
+    ctx: Record<string, unknown>,
+    variables: Readonly<Record<string, Type>> | undefined,
+    limits: EvaluationLimits,
+  ) => void
 }
 
 /** How a partial-evaluation residual runs and explains, with the caller's context. */
@@ -1189,14 +1193,12 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     source: string,
     analysis: Analysis,
     expect: Type | undefined,
-    constants: ReadonlyMap<string, unknown>,
     residualOf: ResidualOf,
   ): ResidualRunner
   function makeProgram<R>(
     source: string,
     analysis: Analysis,
     expect?: Type,
-    constants?: ReadonlyMap<string, unknown>,
     residualOf?: ResidualOf,
   ): Program<Ctx, R> | ResidualRunner {
     // Residuals are not warmed: partial() runs often, and a zone it writes into
@@ -1211,7 +1213,6 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       analysis,
       guard,
       settings,
-      constants,
       residualOf,
     })
 
@@ -1226,8 +1227,8 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       prepare,
       checked,
       settle,
-      residual: (residualAnalysis, residualConstants, residualFrom) =>
-        makeProgram(source, residualAnalysis, expect, residualConstants, residualFrom),
+      residual: (residualAnalysis, residualFrom) =>
+        makeProgram(source, residualAnalysis, expect, residualFrom),
     })
 
     if (residualOf !== undefined) {

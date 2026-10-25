@@ -54,10 +54,12 @@ const cases: SizeCase[] = [
   {
     // The lite entry: checking and evaluating, without explaining and partial
     // evaluation. 55.8 KB when set (2026-10-14), 11.9 KB under the main entry;
-    // 57.3 KB with the builtins option (2026-10-24).
+    // 57.3 KB with the builtins option (2026-10-24); 56.5 KB once explain
+    // tracing and residual handling moved out of the compiler and runner
+    // (2026-10-25).
     name: "lite: bonsai().evaluateSync('1 + 2')",
     source: `import { bonsai } from ${liteEntry}\nconsole.log(bonsai().evaluateSync('1 + 2'))`,
-    maxGzipBytes: 57_700,
+    maxGzipBytes: 56_900,
   },
   {
     name: 't only',
@@ -87,29 +89,31 @@ const cases: SizeCase[] = [
     // (2026-10-23): 35% under the main entry and 21% under lite. The built-ins
     // (27 KB minified) are most of it. 42.6 KB once built-in descriptions moved
     // to functions/descriptions.ts, which only the checker side imports; 43.3 KB
-    // once each built-in became its own export (2026-10-24).
+    // once each built-in became its own export (2026-10-24); 42.6 KB once explain
+    // and partial code left the compiler and runner (2026-10-25).
     name: 'runtime: runtime().load(artifact).evaluateSync()',
     source: `import { runtime, t } from ${runtimeEntry}\nconsole.log(runtime({ variables: { user: t.object({ age: t.number() }) } }).load(${artifact}).evaluateSync({ user: { age: 30 } }))`,
-    maxGzipBytes: 43_700,
+    maxGzipBytes: 42_900,
   },
   {
     // bonsai-js/runtime/core with no built-ins: a rule that calls no function.
-    // 29.6 KB when set (2026-10-24), 13.7 KB under bonsai-js/runtime.
+    // 29.6 KB when set (2026-10-24), 13.7 KB under bonsai-js/runtime; 28.9 KB
+    // once explain and partial code left the compiler and runner (2026-10-25).
     name: 'runtime/core, no built-ins',
     source: `import { runtime, t } from ${coreEntry}\nconsole.log(runtime({ variables: { user: t.object({ age: t.number() }) } }).load(${artifact}).evaluateSync({ user: { age: 30 } }))`,
-    maxGzipBytes: 30_000,
+    maxGzipBytes: 29_200,
   },
   {
     // A typical rule's built-ins, through a namespace import: only those are kept.
     name: 'runtime/core, includes, toLowerCase, some, now, days',
     source: `import { runtime, t } from ${coreEntry}\nimport * as b from ${builtinsEntry}\nconsole.log(runtime({ variables: { user: t.object({ age: t.number() }) }, builtins: [b.includes, b.toLowerCase, b.some, b.now, b.days] }).load(${artifact}).evaluateSync({ user: { age: 30 } }))`,
-    maxGzipBytes: 31_000,
+    maxGzipBytes: 30_200,
   },
   {
     // Every built-in: what bonsai-js/runtime carries, and at most about 1 KB more.
     name: 'runtime/core, every built-in',
     source: `import { runtime, t } from ${coreEntry}\nimport * as b from ${builtinsEntry}\nconsole.log(runtime({ variables: { user: t.object({ age: t.number() }) }, builtins: Object.values(b) }).load(${artifact}).evaluateSync({ user: { age: 30 } }))`,
-    maxGzipBytes: 44_700,
+    maxGzipBytes: 43_800,
   },
   {
     // One built-in keeps only itself: each is a pure, separately exported definition.
