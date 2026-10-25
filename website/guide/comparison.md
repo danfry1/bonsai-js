@@ -2,13 +2,14 @@
 
 Several JavaScript libraries evaluate rules or expressions written outside your codebase. They make different trade-offs, and for many projects one of them is a better fit than Bonsai. This page compares them on facts measured on one machine or taken from each library's own documentation, so you can choose.
 
-Everything here was measured on 2026-10-14 with the versions listed under [Methodology](#methodology). Libraries change; if a row is out of date, please open an issue.
+Everything here was measured on 2026-10-14 with the versions listed under [Methodology](#methodology), except Bonsai's sizes, which were measured again for 1.2.0 on 2026-10-25. Libraries change; if a row is out of date, please open an issue.
 
 ## At a glance
 
 | Library | Rules are | Min / gzip (browser) | Static check against a schema | Explains results | Evaluation budget (as documented) |
 | --- | --- | --- | --- | --- | --- |
-| bonsai-js | text, JS-like | 200.9 KB / 67.6 KB | Yes, with suggestions | Yes | Yes, on by default |
+| bonsai-js/runtime/core 1.2.0, rules checked on a server | text, JS-like | 89.0 KB / 29.7 KB | Yes, where rules are saved | Yes, where rules are saved | Yes, on by default |
+| bonsai-js 1.2.0, checking in the browser | text, JS-like | 205.4 KB / 68.9 KB | Yes, with suggestions | Yes | Yes, on by default |
 | @marcbachmann/cel-js 8.0.0 | text, CEL | 84.0 KB / 24.3 KB | Yes | No | Parse-time limits |
 | @gorules/zen-engine 2.1.2 | text expressions, JSON decisions | Node native addon; WASM build below | Yes (see notes) | Partial | Graph depth and function-node timeout |
 | json-rules-engine 7.3.1 | JSON | 83.5 KB / 24.3 KB | No | Yes | No |
@@ -23,7 +24,7 @@ Everything here was measured on 2026-10-14 with the versions listed under [Metho
 
 ## Where each one is the better choice
 
-- **json-logic-js** is the smallest by far (2.0 KB gzipped, under 3% of Bonsai) and its rules are plain JSON, which suits a visual rule builder that emits JSON and a backend that stores it.
+- **json-logic-js** is the smallest by far (2.0 KB gzipped, about 7% of Bonsai's browser runtime) and its rules are plain JSON, which suits a visual rule builder that emits JSON and a backend that stores it.
 - **json-rules-engine** is a rules engine rather than an expression language: rules with events and asynchronous facts, stored as JSON, and every condition's fact value and result is reported back. Choose it when the problem is "fire events when conditions hold" and rules are edited as structured forms.
 - **@marcbachmann/cel-js** implements the [Common Expression Language](https://github.com/google/cel-spec), a specification with implementations in other languages (its README links the Go implementation). Choose it when the same expressions must also run in Go, Java, or C++ services, or when CEL is already used in your stack (for example in policy systems). It type-checks against declared types, is about a third of Bonsai's browser size, and is fast.
 - **@gorules/zen-engine** is a full business rules engine with decision tables, decision graphs, policy documents, a visual editor, and bindings for Node.js, Python, Go, Java, Kotlin, and .NET (per its README). Choose it when business users should edit decision tables, when the same rules must run on several platforms, or when you want a hosted rules platform. On Node.js it is a native addon (the darwin-arm64 binary is 21 MB on disk); in the browser it needs a 470 KB gzipped WebAssembly file.
@@ -32,9 +33,22 @@ Everything here was measured on 2026-10-14 with the versions listed under [Metho
 - **jexl** is small (6.1 KB) with JavaScript-like syntax and asynchronous transforms. Its last npm release was in 2020.
 - **expr-eval** and **expr-eval-fork** suit math formulas and offer partial evaluation through `simplify()`.
 
-**Bonsai's weaknesses.** It has the largest browser bundle of the libraries measured (67.6 KB gzipped, about 2.8 times cel-js and json-rules-engine; `bonsai-js/lite`, without explaining and partial evaluation, is about 56 KB). It is new. It runs only in JavaScript, so a Go or Python service cannot evaluate the same rules. It needs Node.js 22 or newer and is ESM-only. It has no decision tables or visual rule editor of its own (it provides a syntax tree, a printer, and a language service to build one). And it is not a standard: CEL expressions are portable to other CEL implementations, Bonsai expressions are not.
+**Bonsai's weaknesses.** It is not the smallest. Rules checked on a server and evaluated in the browser with `bonsai-js/runtime/core` take 29.7 KB gzipped, about 1.2 times cel-js and json-rules-engine and 1.1 times jsonata; checking rules in the browser takes 68.9 KB (57.4 KB from `bonsai-js/lite`, without explaining and partial evaluation). jexl, expr-eval, filtrex, and json-logic-js are 2 to 8 KB. It is new. It runs only in JavaScript, so a Go or Python service cannot evaluate the same rules. It needs Node.js 22 or newer and is ESM-only. It has no decision tables or visual rule editor of its own (it provides a syntax tree, a printer, and a language service to build one). And it is not a standard: CEL expressions are portable to other CEL implementations, Bonsai expressions are not.
 
 **Where Bonsai fits.** Bonsai is for text expressions written by people other than your developers, where you want to reject a broken rule when it is saved (with "did you mean" suggestions and exact ranges), show the author why a rule passed or failed, bound every evaluation deterministically, and optionally run the same filter in SQL or MongoDB. It is the only library measured here that does all of these in one package.
+
+## What Bonsai's size buys
+
+Size matters in the browser; on a server, none of these sizes is noticeable. Each row is the difference between two measured Bonsai 1.2.0 bundles (gzipped), so the costs add up to the entry sizes above.
+
+| Part | Cost | Where it runs | What jexl or expr-eval do instead |
+| --- | --- | --- | --- |
+| Core: parser, compiler, values (dates, durations), the step budget and size limits, blocked names, run-time type guards, artifact validation, async host calls with timeouts and abort | 29.7 KB | Browser (`runtime/core`) and server | No documented evaluation budget; a large input or host transform runs as long as it takes |
+| Built-in functions, only those a rule calls: 87 for text, lists, maps, numbers, dates and time zones, and a linear-time regex engine | up to 14.6 KB (0.6 KB for five common ones) | Browser and server | jexl ships no functions (only transforms you write); expr-eval ships math functions |
+| Type checker with "did you mean" suggestions | about 13 KB | Server, or a browser editor | A misspelled field (`user.agee >= 18`) silently returns `false` |
+| Explanations and partial evaluation | about 11.5 KB | Server, or the browser (`bonsai-js`) | No explanation of a result; expr-eval has partial evaluation (`simplify()`) |
+
+cel-js fits a type checker and evaluator in 24.3 KB, so a smaller design is possible; it has no evaluation budget, explanations, or SQL translation, and its rules are CEL rather than JavaScript-like. See [Runtime](/api/runtime#only-the-built-ins-your-rules-call) for choosing built-ins.
 
 ## Authoring features
 
@@ -108,7 +122,7 @@ For the other libraries, the "Evaluation budget" column above records what each 
 
 | Package | Version used (published) | Newest on 2026-10-14 |
 | --- | --- | --- |
-| bonsai-js | built from commit `e2d89dc` | |
+| bonsai-js | 1.2.0 (2026-10-25), sizes only; features and throughput from commit `e2d89dc` | |
 | @marcbachmann/cel-js | 8.0.0 (2026-07-07) | 8.0.0 |
 | @gorules/zen-engine | 2.1.2 (2026-10-02) | 2.1.7 |
 | json-rules-engine | 7.3.1 (2025-02-20) | 7.3.1 |
@@ -123,7 +137,7 @@ For the other libraries, the "Evaluation budget" column above records what each 
 
 - **Date and machine.** 2026-10-14, Apple M5 (10 cores, 24 GB), macOS (Darwin 25.5.0), Node.js 24.13.0, Bun 1.3.14, npm 11.19.0. The machine was shared; the 1-minute load average was between 3 and 8 during measurements.
 - **Versions.** For each library, the newest version published at least 7 days before the measurement date, installed with `npm install --ignore-scripts --save-exact <pkg>@<version>` into its own directory. `@gorules/zen-engine` 2.1.7 was newer but under 7 days old, so 2.1.2 was used. Bonsai was built from commit `e2d89dc` (`bun install --frozen-lockfile --ignore-scripts`, `bun run build`, `npm pack`) and installed from the tarball.
-- **Bundle size.** A minimal consumer per library evaluates the rule above, bundled with `bun build <entry> --minify --target=browser` and compressed with gzip level 9, the method of Bonsai's `scripts/size-budget.ts`. Each bundle was also run in Node.js and returned `true`; none was run in a browser. No library needed polyfills to bundle. The zen WebAssembly file is loaded with `new URL(..., import.meta.url)` and was measured separately.
+- **Bundle size.** A minimal consumer per library evaluates the rule above (for `bonsai-js/runtime/core`, the rule's artifact, compiled on the server and embedded as JSON; the rule calls no built-in function), bundled with `bun build <entry> --minify --target=browser` and compressed with gzip level 9, the method of Bonsai's `scripts/size-budget.ts`. Each bundle was also run in Node.js and returned `true`; none was run in a browser. No library needed polyfills to bundle. The zen WebAssembly file is loaded with `new URL(..., import.meta.url)` and was measured separately.
 - **Features.** Each "Yes" or "No" comes from a script that calls the library, except where a note says "per docs" or cites the README or type declarations. "No" for features such as partial evaluation or SQL means no such API appears in the package's README or type declarations; companion packages from other authors were not evaluated.
 - **eval.** The shipped JavaScript of each package and its installed dependencies was searched for `new Function(` and `eval(`, and every match was read.
 - **Bonsai probes.** Each probe ran as `perl -e 'alarm 10; exec @ARGV' node probe.mjs <name>`.
