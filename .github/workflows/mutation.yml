@@ -6,6 +6,12 @@ name: Mutation
 # queue. Each mutated file is its own job, so the largest (the checker, about
 # 3,300 mutants) fits in one runner's time, and each keeps an incremental
 # result between runs, so later runs only test mutants in changed code.
+#
+# Each file has a floor 5 points under the lowest score measured for it
+# (2026-10-25: values 79.5, state 69.9 on a fast machine and 86.0 on CI,
+# compiler 84.0, builtins 82.4, checker 78.7). Mutants that slow state.ts down
+# without breaking it time out on slower runners and survive on faster ones,
+# so its floor follows the lower score. Raise floors as tests improve.
 on:
   schedule:
     - cron: '0 6 * * 1' # Mondays 06:00 UTC
@@ -23,14 +29,19 @@ jobs:
       matrix:
         include:
           - cohort: values
+            floor: 75
             file: src/runtime/values.ts
           - cohort: state
+            floor: 65
             file: src/runtime/state.ts
           - cohort: compiler
+            floor: 79
             file: src/compile/compiler.ts
           - cohort: builtins
+            floor: 77
             file: src/functions/builtins.ts
           - cohort: checker
+            floor: 74
             file: src/check/checker.ts
 
     steps:
@@ -65,6 +76,11 @@ jobs:
           --mutate "$FILE"
           --incremental --incrementalFile "reports/incremental/$COHORT.json"
           --reporters clear-text,html,json
+
+      - name: Check the floor
+        env:
+          FLOOR: ${{ matrix.floor }}
+        run: bun run scripts/mutation-floor.ts reports/mutation/mutation.json "$FLOOR"
 
       - name: Upload mutation report
         if: ${{ !cancelled() }}
