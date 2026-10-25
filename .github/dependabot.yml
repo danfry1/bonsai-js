@@ -16,6 +16,11 @@ updates:
       # major would let the type-checker accept Node APIs newer than our floor.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # npm publishes releases (npm pack, npm stage publish in release.yml), and a
+      # staged publish cannot be rehearsed without releasing. Take its majors
+      # deliberately, alongside a release, rather than from a weekly update.
+      - dependency-name: "npm"
+        update-types: ["version-update:semver-major"]
     groups:
       dev-dependencies:
         dependency-type: development

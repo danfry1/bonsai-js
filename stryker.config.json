@@ -2,11 +2,11 @@
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
   "testRunner": "vitest",
   "coverageAnalysis": "perTest",
-  "tsconfigFile": "tsconfig.json",
+  "tsconfigFile": "",
   "reporters": ["html", "clear-text", "progress"],
   "htmlReporter": { "fileName": "reports/mutation/index.html" },
   "clearTextReporter": { "maxTestsToLog": 3 },
-  "_comment": "Mutation testing measures whether the suite kills injected faults in the runtime, compiler, built-in functions, and checker, not just whether those lines run.",
+  "_comment": "Mutation testing measures whether the suite kills injected faults in the runtime, compiler, built-in functions, and checker, not just whether those lines run. tsconfigFile is empty because the sandbox copy needs no tsconfig rewrite (it has no extends or references), and the rewrite calls TypeScript's JavaScript API, which TypeScript 7 does not have.",
   "mutate": [
     "src/runtime/values.ts",
     "src/runtime/state.ts",

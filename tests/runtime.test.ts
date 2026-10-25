@@ -432,10 +432,19 @@ describe('round 3 regressions', () => {
 
   it('refuses an oversized plans array without reading its elements', () => {
     const base = shipped(toArtifact(bonsai().compile('1')))
-    const plans = new Array<unknown>(1_000_000).fill([0, 'x', 0])
-    const started = performance.now()
+    let elementReads = 0
+    const plans = new Proxy(new Array<unknown>(1_000_000).fill([0, 'x', 0]), {
+      getOwnPropertyDescriptor(target, key) {
+        if (key !== 'length') elementReads++
+        return Reflect.getOwnPropertyDescriptor(target, key)
+      },
+      get(target, key, receiver) {
+        if (typeof key === 'string' && key !== 'length') elementReads++
+        return Reflect.get(target, key, receiver) as unknown
+      },
+    })
     expect(reasonOf(() => runtime().load({ ...base, plans } as never))).toBe('limit')
-    expect(performance.now() - started).toBeLessThan(100)
+    expect(elementReads).toBe(0)
   })
 
   it('reports different definitions as a digest mismatch, even when they would bind differently', () => {
@@ -497,7 +506,9 @@ describe('round 4 regressions', () => {
     const artifact = structuredClone({ ...base, expect: union })
     const started = performance.now()
     expect(reasonOf(() => runtime().load(artifact as never))).toBe('limit')
-    expect(performance.now() - started).toBeLessThan(150)
+    // Without the node cap the copy walks 100,000 members at each of 64 levels,
+    // which takes seconds; the bound leaves room for coverage and a loaded machine.
+    expect(performance.now() - started).toBeLessThan(1000)
   })
 
   it('passes through only its own errors while reading an artifact', () => {
