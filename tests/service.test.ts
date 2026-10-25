@@ -115,3 +115,15 @@ describe('hover and diagnostics', () => {
     expect(service.diagnostics('1 +').map((d) => d.code)).toEqual(['SYNTAX'])
   })
 })
+
+describe('the expect option', () => {
+  it('keeps the type as it was when the service was made', () => {
+    const type: { kind: string } = { kind: 'boolean' }
+    const typed = createLanguageService(bonsai({ variables: { a: t.number() } }), {
+      expect: type as never,
+    })
+    expect(typed.diagnostics('a').map((d) => d.code)).toEqual(['EXPECTED_TYPE'])
+    type.kind = 'number'
+    expect(typed.diagnostics('a').map((d) => d.code)).toEqual(['EXPECTED_TYPE'])
+  })
+})

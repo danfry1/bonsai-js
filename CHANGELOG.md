@@ -7,6 +7,26 @@ From 1.0.0, entries are generated at release time from the bump files in
 [`.bumpy/`](./.bumpy/); entries up to 0.5.0 follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+
+
+## 1.2.0
+<sub>2026-10-25</sub>
+
+- *(minor)*
+  Add `bonsai-js/runtime/core` and `bonsai-js/builtins`: a runtime with only the built-in functions passed in `builtins`, so a browser bundle carries just what its rules call (about 30 KB gzipped for typical rules, against 43 KB for `bonsai-js/runtime`). `bonsai()` takes the same `builtins` option, and a call to a built-in left out is a CHECK error, so rules are checked against what the browser can run.
+- *(patch)*
+  Built-in function descriptions, which only `describeFunction()`, `listFunctions()`, and the language service read, are no longer bundled with `bonsai-js/runtime`, which is about 1.2 KB smaller gzipped (43 KB). Making each built-in separately removable adds about 0.8 KB to `bonsai-js` (69 KB), `bonsai-js/lite` (57 KB), and the language service (47 KB).
+
+## 1.1.0
+<sub>2026-10-24</sub>
+
+- *(minor)*
+  Add `bonsai-js/runtime` and `toArtifact()`: check and compile rules where the full toolchain runs, and evaluate them in the browser without the checker (about 44 KB minified and gzipped), with exactly the results the compiled programs give. A runtime whose definitions differ refuses an artifact with `BonsaiArtifactError` (code `ARTIFACT`) and a `reason`.
+- *(patch)*
+  Charge the step budget for each union member tried when a result is checked against its expected type or a host function's declared type. A list result checked against a large enum could previously run far past `maxSteps` and `timeout`.
+- *(patch)*
+  Check and cache a program against a private copy of its `expect` type. A type object with a `toJSON` method could previously be served a cached program checked against a different type, and a type object changed after compiling changed what the program's results were checked against. The language service's `expect` option is kept the same way. Types built with `t` are used as given.
+
 ## 1.0.0
 <sub>2026-10-19</sub>
 

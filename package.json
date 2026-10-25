@@ -1,6 +1,6 @@
 {
   "name": "bonsai-js",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "A safe, zero-dependency expression language for rules, filters, and templates",
   "type": "module",
   "sideEffects": false,
@@ -16,6 +16,15 @@
       ],
       "query": [
         "./dist/query/index.d.mts"
+      ],
+      "runtime": [
+        "./dist/runtime/index.d.mts"
+      ],
+      "runtime/core": [
+        "./dist/runtime/core.d.mts"
+      ],
+      "builtins": [
+        "./dist/builtins/index.d.mts"
       ]
     }
   },
@@ -39,6 +48,21 @@
       "types": "./dist/query/index.d.mts",
       "import": "./dist/query/index.mjs",
       "default": "./dist/query/index.mjs"
+    },
+    "./runtime": {
+      "types": "./dist/runtime/index.d.mts",
+      "import": "./dist/runtime/index.mjs",
+      "default": "./dist/runtime/index.mjs"
+    },
+    "./runtime/core": {
+      "types": "./dist/runtime/core.d.mts",
+      "import": "./dist/runtime/core.mjs",
+      "default": "./dist/runtime/core.mjs"
+    },
+    "./builtins": {
+      "types": "./dist/builtins/index.d.mts",
+      "import": "./dist/builtins/index.mjs",
+      "default": "./dist/builtins/index.mjs"
     }
   },
   "files": [

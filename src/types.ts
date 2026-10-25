@@ -99,6 +99,15 @@ const STRING: StringType = Object.freeze({ kind: 'string' })
 const TIMESTAMP: TimestampType = Object.freeze({ kind: 'timestamp' })
 const DURATION: DurationType = Object.freeze({ kind: 'duration' })
 
+// Types built by t from types built by t: frozen plain data all the way down,
+// with no toJSON, so they cannot change and need no copy (see typeData).
+const BUILT = new WeakSet<Type>([ANY, NEVER, NULL, BOOLEAN, NUMBER, STRING, TIMESTAMP, DURATION])
+
+function built<T extends Type>(type: T, parts: readonly Type[] = []): T {
+  if (parts.every((part) => BUILT.has(part))) BUILT.add(type)
+  return type
+}
+
 /**
  * Union members with nested unions flattened (and repeats of one object
  * dropped), so `t.optional(t.enum('a', 'b'))` lists "a", "b", and null.
@@ -139,38 +148,46 @@ export const t = Object.freeze({
   timestamp: (): TimestampType => TIMESTAMP,
   duration: (): DurationType => DURATION,
   literal: <const V extends string | number | boolean>(value: V): LiteralType<V> =>
-    Object.freeze({ kind: 'literal', value: literalValue(value) }),
+    built(Object.freeze({ kind: 'literal', value: literalValue(value) })),
   /** A union of literals: `t.enum('free', 'pro')`. */
   enum: <const V extends readonly (string | number | boolean)[]>(
     ...values: V
   ): UnionType<{ [K in keyof V]: LiteralType<V[K]> }> =>
-    Object.freeze({
-      kind: 'union',
-      types: Object.freeze(
-        values.map((value) => Object.freeze({ kind: 'literal', value: literalValue(value) })),
-      ),
-    }) as unknown as UnionType<{ [K in keyof V]: LiteralType<V[K]> }>,
-  list: <E extends Type>(element: E): ListType<E> => Object.freeze({ kind: 'list', element }),
+    built(
+      Object.freeze({
+        kind: 'union',
+        types: Object.freeze(
+          values.map((value) => Object.freeze({ kind: 'literal', value: literalValue(value) })),
+        ),
+      }),
+    ) as unknown as UnionType<{ [K in keyof V]: LiteralType<V[K]> }>,
+  list: <E extends Type>(element: E): ListType<E> =>
+    built(Object.freeze({ kind: 'list', element }), [element]),
   /** A closed record with known fields. */
-  object: <const F extends Readonly<Record<string, Type>>>(fields: F): MapType<F, undefined> =>
-    Object.freeze({ kind: 'map', fields: Object.freeze({ ...fields }) }),
+  object: <const F extends Readonly<Record<string, Type>>>(fields: F): MapType<F, undefined> => {
+    const own = Object.freeze({ ...fields })
+    return built(Object.freeze({ kind: 'map', fields: own }), Object.values(own))
+  },
   /** An open record: every key has type `value`. */
   // oxlint-disable-next-line typescript/no-generated-empty-object-type -- no declared fields
   record: <V extends Type>(value: V): MapType<Record<never, never>, V> =>
-    Object.freeze({ kind: 'map', fields: Object.freeze({}), rest: value }),
-  union: <const M extends readonly Type[]>(...types: M): UnionType<M> =>
-    Object.freeze({
-      kind: 'union',
-      types: Object.freeze(flattenMembers(types)),
-    }) as unknown as UnionType<M>,
+    built(Object.freeze({ kind: 'map', fields: Object.freeze({}), rest: value }), [value]),
+  union: <const M extends readonly Type[]>(...types: M): UnionType<M> => {
+    const members = Object.freeze(flattenMembers(types))
+    return built(
+      Object.freeze({ kind: 'union', types: members }),
+      members,
+    ) as unknown as UnionType<M>
+  },
   /** `T | null`. Absent keys read as null, so this also marks a field optional. */
-  optional: <T extends Type>(type: T): UnionType<readonly [T, NullType]> =>
-    Object.freeze({
-      kind: 'union',
-      types: Object.freeze(flattenMembers([type, NULL])),
-    }) as unknown as UnionType<readonly [T, NullType]>,
+  optional: <T extends Type>(type: T): UnionType<readonly [T, NullType]> => {
+    const members = Object.freeze(flattenMembers([type, NULL]))
+    return built(Object.freeze({ kind: 'union', types: members }), members) as unknown as UnionType<
+      readonly [T, NullType]
+    >
+  },
   opaque: <const N extends string>(name: N): OpaqueType<N> =>
-    Object.freeze({ kind: 'opaque', name }),
+    built(Object.freeze({ kind: 'opaque', name })),
 })
 
 // === TypeScript inference from schemas ===
@@ -333,6 +350,55 @@ export function exactObject(fields: Readonly<Record<string, Type>>): MapType {
 /** Whether a map type is known to hold no keys beyond its fields. */
 export function isExact(type: Type): boolean {
   return EXACT.has(type)
+}
+
+/**
+ * A type as frozen plain data: only its kind and that kind's own fields, read
+ * directly (never through toJSON), keeping exactness. Taken once from a
+ * caller's type, it is what a program is checked, cached, and recorded with,
+ * whatever later happens to the caller's object. A type built by t is already
+ * that, and is returned as it is, so the checker's caches keyed on it stay warm.
+ */
+export function typeData(type: Type): Type {
+  if (BUILT.has(type)) return type
+  switch (type.kind) {
+    case 'list':
+      return Object.freeze({ kind: 'list', element: typeData(type.element) })
+    case 'union':
+      return Object.freeze({ kind: 'union', types: Object.freeze(type.types.map(typeData)) })
+    case 'map': {
+      const fields: Record<string, Type> = {}
+      for (const key of Object.keys(type.fields))
+        Object.defineProperty(fields, key, {
+          value: typeData(type.fields[key]),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        })
+      if (isExact(type) && type.rest === undefined) return exactObject(fields)
+      return Object.freeze({
+        kind: 'map',
+        fields: Object.freeze(fields),
+        ...(type.rest === undefined ? {} : { rest: typeData(type.rest) }),
+      })
+    }
+    case 'literal':
+      return Object.freeze({ kind: 'literal', value: type.value })
+    case 'opaque':
+      return Object.freeze({ kind: 'opaque', name: type.name })
+    case 'any':
+    case 'boolean':
+    case 'duration':
+    case 'function':
+    case 'never':
+    case 'null':
+    case 'number':
+    case 'string':
+    case 'timestamp':
+    case 'var':
+    default:
+      return Object.freeze({ kind: type.kind } as Type)
+  }
 }
 
 /** A copy of a map type with new fields, keeping its exactness. */

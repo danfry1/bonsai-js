@@ -59,7 +59,8 @@ export interface Overload {
 
 export interface FunctionDef {
   readonly name: string
-  readonly description: string
+  /** A host function's description; built-ins' are in descriptions.ts (see descriptionOf). */
+  readonly description?: string
   readonly overloads: readonly Overload[]
   /** Host functions: returns a promise and must be awaited. */
   readonly async?: boolean
@@ -68,6 +69,17 @@ export interface FunctionDef {
   readonly host?: boolean
   /** Host functions: steps charged per call (default 32). */
   readonly cost?: number
+  /**
+   * Built-ins with a time zone parameter: its position, and the function that
+   * loads a zone's data, so compiling warms the zones a call names. Kept on the
+   * definition so bundles without such a built-in leave the zone code out.
+   */
+  readonly zone?: ZoneParameter
+}
+
+export interface ZoneParameter {
+  readonly at: number
+  readonly warm: (zone: string | undefined) => void
 }
 
 export const T: TypeVar = Object.freeze({ kind: 'var', name: 'T' })
@@ -191,6 +203,8 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
       return true
     }
     case 'union':
+      // Each member may be tried: a union of thousands of literals is real work.
+      state.charge(type.types.length)
       return type.types.some((member) => conforms(value, member, state, depth))
     case 'timestamp':
       // An invalid Date is an opaque host value, not a timestamp.
@@ -322,12 +336,65 @@ export function overload(
   return Object.freeze({ params: Object.freeze([...params]), result, run, ...options })
 }
 
+/** A built-in; its description is in descriptions.ts. */
 export function define(
   name: string,
-  description: string,
   overloads: readonly Overload[],
+  zone?: ZoneParameter,
 ): FunctionDef {
-  return Object.freeze({ name, description, overloads: Object.freeze([...overloads]) })
+  const def: FunctionDef = {
+    name,
+    overloads: Object.freeze([...overloads]),
+    ...(zone === undefined ? {} : { zone }),
+  }
+  // Not enumerable, so a copy made by spreading a built-in does not carry it.
+  Object.defineProperty(def, BUILTIN_BRAND, { value: true })
+  DEFINED.add(Object.freeze(def))
+  return def
+}
+
+/** The built-ins this copy of the package defined (the `builtins` option takes only these). */
+const DEFINED = new WeakSet<FunctionDef>()
+/** Marks a built-in of any copy of the package, so one from another copy is named as such. */
+const BUILTIN_BRAND = Symbol.for('bonsai-js.builtin')
+
+/**
+ * Reads the `builtins` option: built-ins from bonsai-js/builtins, added to
+ * `base` (an extended environment's or runtime's own).
+ */
+export function builtinsOption(
+  value: unknown,
+  base: ReadonlyMap<string, FunctionDef>,
+): ReadonlyMap<string, FunctionDef> {
+  if (value === undefined) return base
+  if (!Array.isArray(value))
+    throw new TypeError('builtins must be an array of built-ins from bonsai-js/builtins')
+  let items: unknown[]
+  try {
+    // By index, so a replaced iterator is never run.
+    items = Array.prototype.slice.call(value) as unknown[]
+  } catch (error) {
+    throw new TypeError('builtins could not be read', { cause: error })
+  }
+  const out = new Map(base)
+  for (const item of items) {
+    if (DEFINED.has(item as FunctionDef)) {
+      out.set((item as FunctionDef).name, item as FunctionDef)
+      continue
+    }
+    let branded = false
+    try {
+      branded = typeof item === 'object' && item !== null && Object.hasOwn(item, BUILTIN_BRAND)
+    } catch {
+      // A value that cannot be read is not a built-in either.
+    }
+    throw new TypeError(
+      branded
+        ? 'builtins holds a built-in that is not from this copy of bonsai-js (another installed copy, or a wrapper of one); import built-ins from the copy that runs them'
+        : 'builtins must hold built-ins from bonsai-js/builtins',
+    )
+  }
+  return out
 }
 
 // === validation of host-supplied declarations ===
@@ -382,9 +449,9 @@ export function assertType(value: unknown, path: string, depth = 0): asserts val
       return
     case 'union':
       if (!Array.isArray(value.types)) throw new TypeError(`${path}.types must be an array`)
-      value.types.forEach((member: unknown, i: number) => {
-        assertType(member, `${path}.types[${i}]`, depth + 1)
-      })
+      // By index, so a hole (which forEach would skip) is refused like any non-type.
+      for (let i = 0; i < value.types.length; i++)
+        assertType(value.types[i], `${path}.types[${i}]`, depth + 1)
       return
     case 'opaque':
       if (typeof value.name !== 'string')

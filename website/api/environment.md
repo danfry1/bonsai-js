@@ -21,6 +21,7 @@ const env = bonsai(options?)
 | `cacheSize` | `number` | `256` | Compiled programs kept for `env.evaluate*(source)`, by source text. `0` disables the cache. The cache also holds at most 256K characters of source in total and never caches a source longer than 16K characters, so its memory stays bounded. |
 | `clock` | `() => Date` | system clock | The source of `now()`, read once per evaluation. A result that is not a valid `Date` fails the evaluation with `HOST_CONTRACT`; a clock that throws gives `HOST_ERROR`. |
 | `validateContext` | `boolean` | `false` | Check the context against the declared variable types before every evaluation. |
+| `builtins` | `Builtin[]` | every built-in | The built-in functions available, from `bonsai-js/builtins`. A call to one left out is a `CHECK` error. Pass the list a [`bonsai-js/runtime/core`](/api/runtime#only-the-built-ins-your-rules-call) runtime has, so rules are checked against what the browser can run. On `extend()`, these are added. |
 
 Without `variables` an environment is **open**: every identifier reads the context and is typed `any`. With `variables` (even `variables: {}`), or with a library that declares at least one variable, the environment is **strict** (a library with an empty `variables: {}` declares nothing and leaves it open): the checker knows the declared types and rejects any other name. A library that adds a variable therefore changes what its users may write, so adding one is a breaking change for that library. Set `strict: false` to declare some variables and still let undeclared names read the context as `any`. Variable names must be identifiers other than the keywords `true`, `false`, `null`, `let`, `in`, and `not`, and other than `__proto__`, `constructor`, and `prototype`; declaring the same variable in two libraries, or in a library and `variables`, throws a `TypeError`, as does listing a library twice.
 
@@ -226,7 +227,7 @@ The declared variables (or `undefined` for an open environment) and the strict f
 
 ## The lite entry point
 
-`bonsai-js/lite` exports the same `bonsai()` without explaining and partial evaluation, for browser bundles that only check and evaluate expressions: about 56 KB minified and gzipped instead of about 68 KB. Its environments and programs have every method on this page except `explain`, `explainSync`, and `partial`, and behave identically, step counts included. It also exports `t`, `fn`, `withContext`, the error classes, `parse`, `print`, and the types; not `BonsaiTranslationError` or the explanation and partial evaluation types. The language service accepts its environments.
+`bonsai-js/lite` exports the same `bonsai()` without explaining and partial evaluation, for browser bundles that only check and evaluate expressions: about 57 KB minified and gzipped instead of about 69 KB. Its environments and programs have every method on this page except `explain`, `explainSync`, and `partial`, and behave identically, step counts included. It also exports `t`, `fn`, `withContext`, the error classes, `parse`, `print`, and the types; not `BonsaiTranslationError` or the explanation and partial evaluation types. The language service accepts its environments.
 
 ```ts
 import { bonsai, t } from 'bonsai-js/lite'

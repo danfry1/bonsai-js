@@ -101,7 +101,7 @@ Version and changelog are derived from the [bump files](.bumpy/) that PRs accumu
 bun run bump:version
 ```
 
-This consumes `.bumpy/*.md`, bumps `version` in `package.json`, and updates `CHANGELOG.md`. Open the result as a PR titled `chore: release X.Y.Z` and merge it to `main`. Then tag that commit and push the tag:
+This consumes `.bumpy/*.md`, bumps `version` in `package.json`, and updates `CHANGELOG.md`. Set `VERSION` in `src/version.ts` to the same version (artifacts record it; `tests/artifact.test.ts` fails until the two match). Open the result as a PR titled `chore: release X.Y.Z` and merge it to `main`. Then tag that commit and push the tag:
 
 ```bash
 git tag vX.Y.Z
@@ -148,10 +148,26 @@ src/
   compile/compiler.ts   # Closure compiler (sync and async-where-needed)
   runtime/              # Value semantics, per-run state and limits, time zones
   functions/            # Function/overload model and the built-in library
+  builtins/index.ts     # bonsai-js/builtins: one export per built-in
   service/              # Language service: completions, hover, diagnostics
 tests/                  # Test files (conformance.test.ts pins the language)
 docs/language.md        # The language reference
 ```
+
+### Adding a built-in function
+
+Each built-in is its own export so bundles keep only the ones they use. A new one needs:
+
+1. `export const name: FunctionDef = /* @__PURE__ */ define('name', [...])` in
+   `src/functions/builtins.ts`, with `/* @__PURE__ */` on every call in its
+   arguments that runs when it is defined (not inside its functions), and no
+   spread (`...`) in its overload list. Add it to the `BUILTINS` list.
+2. Its description in `src/functions/descriptions.ts`, at the same position.
+3. Its export in `src/builtins/index.ts`.
+
+`tests/descriptions.test.ts` and `tests/runtime-core.test.ts` fail if 2 or 3 is
+missing, and the "one built-in only" size budget fails if a definition is not
+pure.
 
 ## Stability Policy
 

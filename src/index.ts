@@ -2,6 +2,7 @@ export { bonsai } from './bonsai.js'
 export { fn, withContext } from './environment.js'
 export type {
   AbortSignalLike,
+  Builtin,
   CheckResult,
   CompileOptions,
   Environment,
@@ -45,10 +46,12 @@ export {
   BonsaiCheckError,
   BonsaiLimitError,
   BonsaiRuntimeError,
+  BonsaiArtifactError,
   BonsaiTranslationError,
   isBonsaiError,
 } from './errors.js'
 export type {
+  ArtifactProblem,
   BonsaiErrorJSON,
   BonsaiErrorName,
   Diagnostic,
@@ -84,6 +87,7 @@ export type {
   UnaryOperator,
   VariableNode,
 } from './syntax/ast.js'
+export { toArtifact, type Artifact, type Plan } from './artifact.js'
 export { parse, type ParseOptions } from './parse.js'
 export { print } from './syntax/printer.js'
 export type { PartialData, PartialOptions, PartialResult, ResidualResult } from './partial.js'

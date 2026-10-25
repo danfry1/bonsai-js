@@ -7,14 +7,15 @@ import {
 } from '../runtime/regex.js'
 import {
   checkDatePattern,
-  addDays,
-  addMonths,
+  addDays as addDaysIn,
+  addMonths as addMonthsIn,
   formatTimestamp,
   fromWallClock,
   isoWeekday,
   parseTimestamp,
   checked,
   wallClock,
+  warmZone,
   type WallClock,
 } from '../runtime/time.js'
 import {
@@ -61,6 +62,7 @@ import {
   type FunctionDef,
   type Lambda,
   type Overload,
+  type ZoneParameter,
 } from './define.js'
 
 /** What toNumber accepts: an optional sign, digits with an optional fraction, and an optional exponent. */
@@ -73,17 +75,17 @@ const MAX_EXACT_INTEGER = Number.MAX_SAFE_INTEGER + 1
 const FIXED_NOTATION_LIMIT = 1e21
 const MONTHS_PER_YEAR = 12
 
-const any = t.any()
-const num = t.number()
-const str = t.string()
-const bool = t.boolean()
-const ts = t.timestamp()
-const dur = t.duration()
-const listT = t.list(T)
-const optT = t.optional(T)
-const optStr = t.optional(str)
-const predicate = fnType([T, num], bool)
-const primitiveText = t.union(str, num, bool, t.null())
+const any = /* @__PURE__ */ t.any()
+const num = /* @__PURE__ */ t.number()
+const str = /* @__PURE__ */ t.string()
+const bool = /* @__PURE__ */ t.boolean()
+const ts = /* @__PURE__ */ t.timestamp()
+const dur = /* @__PURE__ */ t.duration()
+const listT = /* @__PURE__ */ t.list(T)
+const optT = /* @__PURE__ */ t.optional(T)
+const optStr = /* @__PURE__ */ t.optional(str)
+const predicate = /* @__PURE__ */ fnType([T, num], bool)
+const primitiveText = /* @__PURE__ */ t.union(str, num, bool, t.null())
 
 // === argument helpers ===
 
@@ -269,14 +271,14 @@ const PARSE_COST = 16
  * saves time: it never changes step counts, and evicting never costs a
  * running evaluation uncharged work.
  */
-const regexCache = new Map<string, RegexProgram>()
+const regexCache = /* @__PURE__ */ new Map<string, RegexProgram>()
 let regexCacheSize = 0
 /**
  * Why a pattern does not compile, remembered so a repeated bad pattern is
  * parsed once. Bounded by count and by total characters (pattern and message),
  * as the compiled cache is by size.
  */
-const badPatterns = new Map<string, string>()
+const badPatterns = /* @__PURE__ */ new Map<string, string>()
 let badPatternChars = 0
 /** Characters of bad patterns and their messages kept at most. */
 const BAD_PATTERN_BUDGET = 100_000
@@ -347,7 +349,7 @@ function regexFor(pattern: string, site: CallSite): RegexProgram {
 }
 
 /** Number formatters shared by every environment (charged per evaluation, as patterns are). */
-const numberFormats = new Map<string, Intl.NumberFormat>()
+const numberFormats = /* @__PURE__ */ new Map<string, Intl.NumberFormat>()
 
 /**
  * Longest locale tag accepted. Real tags, even with Unicode extensions
@@ -371,7 +373,7 @@ function currencyProblem(code: string): string | undefined {
 }
 
 /** What checking found for each literal locale and currency (bounded like the format cache). */
-const formatProblems = new Map<string, string | null>()
+const formatProblems = /* @__PURE__ */ new Map<string, string | null>()
 
 /**
  * Why a literal locale or currency would fail formatNumber or formatCurrency
@@ -810,13 +812,18 @@ function extreme(items: readonly unknown[], sign: 1 | -1, site: CallSite): unkno
 }
 
 /**
- * min and max of their arguments, one overload per kind a list can order, so
- * `max(a, b)` takes what `[a, b].max()` does (and, unlike the list, no nulls).
+ * The overloads of min and max: of a list, then of their arguments, one
+ * overload per kind a list can order, so `max(a, b)` takes what `[a, b].max()`
+ * does (and, unlike the list, no nulls). Built in one call, not spread into a
+ * literal, so an unused min or max stays a pure call that bundlers drop.
  */
-function spreadExtremes(sign: 1 | -1): Overload[] {
-  return [num, str, ts, dur].map((kind) =>
-    overload([kind], kind, (args, site) => extreme(args, sign, site), { rest: kind }),
-  )
+function extremes(sign: 1 | -1): Overload[] {
+  return [
+    overload([listT], optT, ([l], site) => extreme(list(l), sign, site), { ordered: ['T'] }),
+    ...[num, str, ts, dur].map((kind) =>
+      overload([kind], kind, (args, site) => extreme(args, sign, site), { rest: kind }),
+    ),
+  ]
 }
 
 function entryList(map: Record<string, unknown>, site: CallSite): string[] {
@@ -839,355 +846,376 @@ function valueTypeOf(type: Type | undefined): Type {
 
 // === definitions ===
 
-const STRING_FUNCTIONS: FunctionDef[] = [
-  define('toUpperCase', 'Upper-cases text.', [
-    overload([str], str, ([s]) => (s as string).toUpperCase()),
-  ]),
-  define('toLowerCase', 'Lower-cases text.', [
-    overload([str], str, ([s]) => (s as string).toLowerCase()),
-  ]),
-  define('trim', 'Removes leading and trailing whitespace.', [
-    overload([str], str, ([s]) => (s as string).trim()),
-  ]),
-  define('trimStart', 'Removes leading whitespace.', [
-    overload([str], str, ([s]) => (s as string).trimStart()),
-  ]),
-  define('trimEnd', 'Removes trailing whitespace.', [
-    overload([str], str, ([s]) => (s as string).trimEnd()),
-  ]),
-  define('startsWith', 'Whether text starts with a prefix.', [
-    overload([str, str], bool, ([s, p]) => (s as string).startsWith(p as string)),
-  ]),
-  define('endsWith', 'Whether text ends with a suffix.', [
-    overload([str, str], bool, ([s, p]) => (s as string).endsWith(p as string)),
-  ]),
-  define('includes', 'Whether text contains a substring, or a list contains a value.', [
-    overload([str, str], bool, ([s, p], site) => {
-      chargeSearch(site.state, (s as string).length, (p as string).length)
-      return (s as string).includes(p as string)
-    }),
-    overload([listT, any], bool, ([l, v], site) => contains(l, v, site.state, site.span)),
-  ]),
-  define('indexOf', 'Position of the first match, or -1.', [
-    overload([str, str], num, ([s, p], site) => {
-      chargeSearch(site.state, (s as string).length, (p as string).length)
-      return (s as string).indexOf(p as string)
-    }),
-    overload([listT, any], num, ([l, v], site) => {
-      const items = list(l)
-      site.state.charge(items.length)
-      for (let i = 0; i < items.length; i++)
-        if (equals(items[i], v, site.state, 0, site.span)) return i
-      return -1
-    }),
-  ]),
-  define('lastIndexOf', 'Position of the last match, or -1.', [
-    overload([str, str], num, ([s, p], site) => {
-      chargeSearch(site.state, (s as string).length, (p as string).length)
-      return (s as string).lastIndexOf(p as string)
-    }),
-    overload([listT, any], num, ([l, v], site) => {
-      const items = list(l)
-      site.state.charge(items.length)
-      for (let i = items.length - 1; i >= 0; i--)
-        if (equals(items[i], v, site.state, 0, site.span)) return i
-      return -1
-    }),
-  ]),
-  define('slice', 'A section of text or a list; negative positions count from the end.', [
-    overload(
-      [str, num, num],
-      str,
-      ([s, a, b], site) =>
-        (s as string).slice(
-          integer(a, 'Start', site),
-          b === undefined || b === null ? undefined : integer(b, 'End', site),
-        ),
-      { required: 2 },
-    ),
-    overload(
-      [listT, num, num],
-      listT,
-      ([l, a, b], site) => {
-        const items = list(l)
-        const [from, to] = slicePositions(
-          items.length,
-          integer(a, 'Start', site),
-          b === undefined || b === null ? undefined : integer(b, 'End', site),
-        )
-        site.state.charge(to - from)
-        site.state.listLimit(to - from, site.span)
-        return made(copyOf(items, from, to), site)
-      },
-      { required: 2 },
-    ),
-  ]),
-  define('split', 'Splits text on a separator.', [
-    overload(
-      [str, str, num],
-      t.list(str),
-      ([s, sep, limit], site) => {
-        const text = s as string
-        site.state.charge(1 + (text.length >>> 4))
-        chargeSearch(site.state, text.length, (sep as string).length)
-        const max =
-          limit === undefined || limit === null
-            ? undefined
-            : nonNegativeInteger(limit, 'Limit', site)
-        // Never materialize more parts than the list limit allows.
-        const cap = site.state.limits.maxListLength + 1
-        const parts = text.split(sep as string, max === undefined ? cap : Math.min(max, cap))
-        site.state.listLimit(parts.length, site.span)
-        site.state.charge(parts.length)
-        return parts
-      },
-      { required: 2 },
-    ),
-  ]),
-  define('replace', 'Replaces the first occurrence of some text (no patterns).', [
-    overload([str, str, str], str, ([s, f, r], site) =>
-      replaceText(s as string, f as string, r as string, false, site),
-    ),
-  ]),
-  define('replaceAll', 'Replaces every occurrence of some text (no patterns).', [
-    overload([str, str, str], str, ([s, f, r], site) =>
-      replaceText(s as string, f as string, r as string, true, site),
-    ),
-  ]),
-  define('padStart', 'Pads text at the start to a length.', [
-    overload([str, num, str], str, ([s, n, f], site) => pad(s as string, n, f, true, site), {
-      required: 2,
-    }),
-  ]),
-  define('padEnd', 'Pads text at the end to a length.', [
-    overload([str, num, str], str, ([s, n, f], site) => pad(s as string, n, f, false, site), {
-      required: 2,
-    }),
-  ]),
-  define('repeat', 'Repeats text a number of times.', [
-    overload([str, num], str, ([s, n], site) => {
-      const count = nonNegativeInteger(n, 'Count', site)
-      const text = s as string
-      site.state.stringLimit(text.length * count, site.span)
-      site.state.charge(1 + ((text.length * count) >>> SCAN_SHIFT))
-      return text.repeat(count)
-    }),
-  ]),
-  define('at', 'The item or character at a position; negative positions count from the end.', [
-    overload(
-      [str, num],
-      optStr,
-      ([s, i], site) => (s as string).at(integer(i, 'Index', site)) ?? null,
-    ),
-    overload([listT, num], optT, ([l, i], site) => {
-      const items = list(l)
-      const index = integer(i, 'Index', site)
-      const position = index < 0 ? items.length + index : index
-      return position < 0 || position >= items.length ? null : (items[position] ?? null)
-    }),
-  ]),
-  define(
-    'matches',
-    'Whether text contains a match for a regular expression (JavaScript syntax without backreferences or lookaround, linear time; anchor with ^ and $; prefix (?i) to ignore case).',
-    [
-      overload(
-        [str, str],
-        bool,
-        ([s, p], site) => {
-          const program = regexFor(p as string, site)
-          return searchRegex(program, s as string, (n) => {
-            site.state.charge(n)
-          })
-        },
-        {
-          literals: ([, pattern]) => {
-            if (typeof pattern !== 'string') return undefined
-            try {
-              cachedRegex(pattern)
-              return undefined
-            } catch (error) {
-              return error instanceof Error ? error.message : String(error)
-            }
-          },
-        },
+export const toUpperCase: FunctionDef = /* @__PURE__ */ define('toUpperCase', [
+  /* @__PURE__ */ overload([str], str, ([s]) => (s as string).toUpperCase()),
+])
+
+export const toLowerCase: FunctionDef = /* @__PURE__ */ define('toLowerCase', [
+  /* @__PURE__ */ overload([str], str, ([s]) => (s as string).toLowerCase()),
+])
+
+export const trim: FunctionDef = /* @__PURE__ */ define('trim', [
+  /* @__PURE__ */ overload([str], str, ([s]) => (s as string).trim()),
+])
+
+export const trimStart: FunctionDef = /* @__PURE__ */ define('trimStart', [
+  /* @__PURE__ */ overload([str], str, ([s]) => (s as string).trimStart()),
+])
+
+export const trimEnd: FunctionDef = /* @__PURE__ */ define('trimEnd', [
+  /* @__PURE__ */ overload([str], str, ([s]) => (s as string).trimEnd()),
+])
+
+export const startsWith: FunctionDef = /* @__PURE__ */ define('startsWith', [
+  /* @__PURE__ */ overload([str, str], bool, ([s, p]) => (s as string).startsWith(p as string)),
+])
+
+export const endsWith: FunctionDef = /* @__PURE__ */ define('endsWith', [
+  /* @__PURE__ */ overload([str, str], bool, ([s, p]) => (s as string).endsWith(p as string)),
+])
+
+export const includes: FunctionDef = /* @__PURE__ */ define('includes', [
+  /* @__PURE__ */ overload([str, str], bool, ([s, p], site) => {
+    chargeSearch(site.state, (s as string).length, (p as string).length)
+    return (s as string).includes(p as string)
+  }),
+  /* @__PURE__ */ overload([listT, any], bool, ([l, v], site) =>
+    contains(l, v, site.state, site.span),
+  ),
+])
+
+export const indexOf: FunctionDef = /* @__PURE__ */ define('indexOf', [
+  /* @__PURE__ */ overload([str, str], num, ([s, p], site) => {
+    chargeSearch(site.state, (s as string).length, (p as string).length)
+    return (s as string).indexOf(p as string)
+  }),
+  /* @__PURE__ */ overload([listT, any], num, ([l, v], site) => {
+    const items = list(l)
+    site.state.charge(items.length)
+    for (let i = 0; i < items.length; i++)
+      if (equals(items[i], v, site.state, 0, site.span)) return i
+    return -1
+  }),
+])
+
+export const lastIndexOf: FunctionDef = /* @__PURE__ */ define('lastIndexOf', [
+  /* @__PURE__ */ overload([str, str], num, ([s, p], site) => {
+    chargeSearch(site.state, (s as string).length, (p as string).length)
+    return (s as string).lastIndexOf(p as string)
+  }),
+  /* @__PURE__ */ overload([listT, any], num, ([l, v], site) => {
+    const items = list(l)
+    site.state.charge(items.length)
+    for (let i = items.length - 1; i >= 0; i--)
+      if (equals(items[i], v, site.state, 0, site.span)) return i
+    return -1
+  }),
+])
+
+export const slice: FunctionDef = /* @__PURE__ */ define('slice', [
+  /* @__PURE__ */ overload(
+    [str, num, num],
+    str,
+    ([s, a, b], site) =>
+      (s as string).slice(
+        integer(a, 'Start', site),
+        b === undefined || b === null ? undefined : integer(b, 'End', site),
       ),
-    ],
+    { required: 2 },
   ),
-  define('toString', 'Renders a value as text, as a template would.', [
-    overload([t.union(primitiveText, ts, dur)], str, ([v], site) => textOf(v, site)),
-  ]),
-  define(
-    'toNumber',
-    'Parses decimal text as a number, e.g. "-12.5" or "1e3" (surrounding whitespace is ignored; 0x and other bases are not accepted).',
-    [
-      overload([t.union(str, num)], num, ([v], site) => {
-        if (typeof v === 'number') return v
-        const text = (v as string).trim()
-        // Decimal only: user data such as "0x10" is not read as hexadecimal.
-        const value = DECIMAL_TEXT.test(text) ? Number(text) : Number.NaN
-        if (!Number.isFinite(value)) {
-          throw site.state.error(
-            'INVALID_ARGUMENT',
-            `Cannot convert ${shown(v as string)} to a number`,
-            site.span,
-          )
+  /* @__PURE__ */ overload(
+    [listT, num, num],
+    listT,
+    ([l, a, b], site) => {
+      const items = list(l)
+      const [from, to] = slicePositions(
+        items.length,
+        integer(a, 'Start', site),
+        b === undefined || b === null ? undefined : integer(b, 'End', site),
+      )
+      site.state.charge(to - from)
+      site.state.listLimit(to - from, site.span)
+      return made(copyOf(items, from, to), site)
+    },
+    { required: 2 },
+  ),
+])
+
+export const split: FunctionDef = /* @__PURE__ */ define('split', [
+  /* @__PURE__ */ overload(
+    [str, str, num],
+    /* @__PURE__ */ t.list(str),
+    ([s, sep, limit], site) => {
+      const text = s as string
+      site.state.charge(1 + (text.length >>> 4))
+      chargeSearch(site.state, text.length, (sep as string).length)
+      const max =
+        limit === undefined || limit === null ? undefined : nonNegativeInteger(limit, 'Limit', site)
+      // Never materialize more parts than the list limit allows.
+      const cap = site.state.limits.maxListLength + 1
+      const parts = text.split(sep as string, max === undefined ? cap : Math.min(max, cap))
+      site.state.listLimit(parts.length, site.span)
+      site.state.charge(parts.length)
+      return parts
+    },
+    { required: 2 },
+  ),
+])
+
+export const replace: FunctionDef = /* @__PURE__ */ define('replace', [
+  /* @__PURE__ */ overload([str, str, str], str, ([s, f, r], site) =>
+    replaceText(s as string, f as string, r as string, false, site),
+  ),
+])
+
+export const replaceAll: FunctionDef = /* @__PURE__ */ define('replaceAll', [
+  /* @__PURE__ */ overload([str, str, str], str, ([s, f, r], site) =>
+    replaceText(s as string, f as string, r as string, true, site),
+  ),
+])
+
+export const padStart: FunctionDef = /* @__PURE__ */ define('padStart', [
+  /* @__PURE__ */ overload(
+    [str, num, str],
+    str,
+    ([s, n, f], site) => pad(s as string, n, f, true, site),
+    {
+      required: 2,
+    },
+  ),
+])
+
+export const padEnd: FunctionDef = /* @__PURE__ */ define('padEnd', [
+  /* @__PURE__ */ overload(
+    [str, num, str],
+    str,
+    ([s, n, f], site) => pad(s as string, n, f, false, site),
+    {
+      required: 2,
+    },
+  ),
+])
+
+export const repeat: FunctionDef = /* @__PURE__ */ define('repeat', [
+  /* @__PURE__ */ overload([str, num], str, ([s, n], site) => {
+    const count = nonNegativeInteger(n, 'Count', site)
+    const text = s as string
+    site.state.stringLimit(text.length * count, site.span)
+    site.state.charge(1 + ((text.length * count) >>> SCAN_SHIFT))
+    return text.repeat(count)
+  }),
+])
+
+export const at: FunctionDef = /* @__PURE__ */ define('at', [
+  /* @__PURE__ */ overload(
+    [str, num],
+    optStr,
+    ([s, i], site) => (s as string).at(integer(i, 'Index', site)) ?? null,
+  ),
+  /* @__PURE__ */ overload([listT, num], optT, ([l, i], site) => {
+    const items = list(l)
+    const index = integer(i, 'Index', site)
+    const position = index < 0 ? items.length + index : index
+    return position < 0 || position >= items.length ? null : (items[position] ?? null)
+  }),
+])
+
+export const matches: FunctionDef = /* @__PURE__ */ define('matches', [
+  /* @__PURE__ */ overload(
+    [str, str],
+    bool,
+    ([s, p], site) => {
+      const program = regexFor(p as string, site)
+      return searchRegex(program, s as string, (n) => {
+        site.state.charge(n)
+      })
+    },
+    {
+      literals: ([, pattern]) => {
+        if (typeof pattern !== 'string') return undefined
+        try {
+          cachedRegex(pattern)
+          return undefined
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error)
         }
-        return value
-      }),
-    ],
+      },
+    },
   ),
-]
+])
+
+export const toString: FunctionDef = /* @__PURE__ */ define('toString', [
+  /* @__PURE__ */ overload([/* @__PURE__ */ t.union(primitiveText, ts, dur)], str, ([v], site) =>
+    textOf(v, site),
+  ),
+])
+
+export const toNumber: FunctionDef = /* @__PURE__ */ define('toNumber', [
+  /* @__PURE__ */ overload([/* @__PURE__ */ t.union(str, num)], num, ([v], site) => {
+    if (typeof v === 'number') return v
+    const text = (v as string).trim()
+    // Decimal only: user data such as "0x10" is not read as hexadecimal.
+    const value = DECIMAL_TEXT.test(text) ? Number(text) : Number.NaN
+    if (!Number.isFinite(value)) {
+      throw site.state.error(
+        'INVALID_ARGUMENT',
+        `Cannot convert ${shown(v as string)} to a number`,
+        site.span,
+      )
+    }
+    return value
+  }),
+])
 
 /** A built-in applying a number function whose result must be finite. */
-function math(name: string, description: string, apply: (n: number) => number): FunctionDef {
-  return define(name, description, [
-    overload([num], num, ([n], site) => finite(apply(n as number), site)),
-  ])
+function math(name: string, apply: (n: number) => number): FunctionDef {
+  return define(name, [overload([num], num, ([n], site) => finite(apply(n as number), site))])
 }
 
-const NUMBER_FUNCTIONS: FunctionDef[] = [
-  define('round', 'Rounds half away from zero, optionally to a number of decimal digits.', [
-    overload(
-      [num, num],
-      num,
-      ([n, d], site) =>
-        roundTo(n as number, d === undefined || d === null ? 0 : (d as number), site),
-      { required: 1 },
-    ),
-  ]),
-  math('floor', 'Rounds down.', Math.floor),
-  math('ceil', 'Rounds up.', Math.ceil),
-  math('trunc', 'Drops the fractional part.', Math.trunc),
-  define('abs', 'Absolute value.', [
-    overload([num], num, ([n], site) => finite(Math.abs(n as number), site)),
-    overload([dur], dur, ([d]) => new Duration(Math.abs((d as Duration).ms))),
-  ]),
-  math('sqrt', 'Square root.', Math.sqrt),
-  define('clamp', 'Limits a number to a range.', [
-    overload([num, num, num], num, ([n, lo, hi], site) => {
-      if ((lo as number) > (hi as number))
-        throw site.state.error('INVALID_ARGUMENT', 'clamp: min is greater than max', site.span)
+export const round: FunctionDef = /* @__PURE__ */ define('round', [
+  /* @__PURE__ */ overload(
+    [num, num],
+    num,
+    ([n, d], site) => roundTo(n as number, d === undefined || d === null ? 0 : (d as number), site),
+    { required: 1 },
+  ),
+])
+
+export const floor: FunctionDef = /* @__PURE__ */ math('floor', Math.floor)
+
+export const ceil: FunctionDef = /* @__PURE__ */ math('ceil', Math.ceil)
+
+export const trunc: FunctionDef = /* @__PURE__ */ math('trunc', Math.trunc)
+
+export const abs: FunctionDef = /* @__PURE__ */ define('abs', [
+  /* @__PURE__ */ overload([num], num, ([n], site) => finite(Math.abs(n as number), site)),
+  /* @__PURE__ */ overload([dur], dur, ([d]) => new Duration(Math.abs((d as Duration).ms))),
+])
+
+export const sqrt: FunctionDef = /* @__PURE__ */ math('sqrt', Math.sqrt)
+
+export const clamp: FunctionDef = /* @__PURE__ */ define('clamp', [
+  /* @__PURE__ */ overload([num, num, num], num, ([n, lo, hi], site) => {
+    if ((lo as number) > (hi as number))
+      throw site.state.error('INVALID_ARGUMENT', 'clamp: min is greater than max', site.span)
+    finite(n as number, site)
+    finite(lo as number, site)
+    finite(hi as number, site)
+    return finite(Math.min(Math.max(n as number, lo as number), hi as number), site)
+  }),
+])
+
+export const toFixed: FunctionDef = /* @__PURE__ */ define('toFixed', [
+  /* @__PURE__ */ overload([num, num], str, ([n, d], site) => {
+    const digits = nonNegativeInteger(d, 'Digits', site)
+    if (digits > MAX_FIXED_DIGITS)
+      throw site.state.error('INVALID_ARGUMENT', 'Digits must be at most 100', site.span)
+    site.state.charge(digits >>> 2)
+    // Round half away from zero first, so toFixed(1.005, 2) agrees with round(1.005, 2).
+    finite(n as number, site)
+    const value = digits <= MAX_ROUND_DIGITS ? roundTo(n as number, digits, site) : (n as number)
+    // JavaScript writes 1e21 and beyond in exponent form; such a number is
+    // whole, so write its exact digits instead.
+    if (Math.abs(value) >= FIXED_NOTATION_LIMIT)
+      return `${BigInt(value).toString()}${digits > 0 ? `.${'0'.repeat(digits)}` : ''}`
+    return value.toFixed(digits)
+  }),
+])
+
+export const formatNumber: FunctionDef = /* @__PURE__ */ define('formatNumber', [
+  /* @__PURE__ */ overload(
+    [num, /* @__PURE__ */ t.optional(num), /* @__PURE__ */ t.optional(str)],
+    str,
+    ([n, d, locale], site) => {
+      const digits =
+        d === undefined || d === null ? undefined : nonNegativeInteger(d, 'Decimals', site)
+      if (digits !== undefined && digits > MAX_INTL_DIGITS) {
+        throw site.state.error(
+          'INVALID_ARGUMENT',
+          `Decimals must be at most ${MAX_INTL_DIGITS}`,
+          site.span,
+        )
+      }
+      const options: Intl.NumberFormatOptions =
+        digits === undefined
+          ? { maximumFractionDigits: MAX_INTL_DIGITS }
+          : { minimumFractionDigits: digits, maximumFractionDigits: digits }
       finite(n as number, site)
-      finite(lo as number, site)
-      finite(hi as number, site)
-      return finite(Math.min(Math.max(n as number, lo as number), hi as number), site)
-    }),
-  ]),
-  define('toFixed', 'Formats a number with a fixed number of decimals.', [
-    overload([num, num], str, ([n, d], site) => {
-      const digits = nonNegativeInteger(d, 'Digits', site)
-      if (digits > MAX_FIXED_DIGITS)
-        throw site.state.error('INVALID_ARGUMENT', 'Digits must be at most 100', site.span)
-      site.state.charge(digits >>> 2)
-      // Round half away from zero first, so toFixed(1.005, 2) agrees with round(1.005, 2).
-      finite(n as number, site)
-      const value = digits <= MAX_ROUND_DIGITS ? roundTo(n as number, digits, site) : (n as number)
-      // JavaScript writes 1e21 and beyond in exponent form; such a number is
-      // whole, so write its exact digits instead.
-      if (Math.abs(value) >= FIXED_NOTATION_LIMIT)
-        return `${BigInt(value).toString()}${digits > 0 ? `.${'0'.repeat(digits)}` : ''}`
-      return value.toFixed(digits)
-    }),
-  ]),
-  define(
-    'formatNumber',
-    'Formats a number with grouping, e.g. 1,234.5, with optional decimals and locale (default "en-US"; an unsupported locale is an error).',
-    [
-      overload(
-        [num, t.optional(num), t.optional(str)],
-        str,
-        ([n, d, locale], site) => {
-          const digits =
-            d === undefined || d === null ? undefined : nonNegativeInteger(d, 'Decimals', site)
-          if (digits !== undefined && digits > MAX_INTL_DIGITS) {
-            throw site.state.error(
-              'INVALID_ARGUMENT',
-              `Decimals must be at most ${MAX_INTL_DIGITS}`,
-              site.span,
-            )
-          }
-          const options: Intl.NumberFormatOptions =
-            digits === undefined
-              ? { maximumFractionDigits: MAX_INTL_DIGITS }
-              : { minimumFractionDigits: digits, maximumFractionDigits: digits }
-          finite(n as number, site)
-          const value =
-            digits === undefined || digits > MAX_ROUND_DIGITS
-              ? (n as number)
-              : roundTo(n as number, digits, site)
-          return numberFormat(typeof locale === 'string' ? locale : 'en-US', options, site).format(
-            value,
-          )
-        },
-        { required: 1, literals: ([, , locale]) => formatProblem(locale, undefined) },
-      ),
-    ],
+      const value =
+        digits === undefined || digits > MAX_ROUND_DIGITS
+          ? (n as number)
+          : roundTo(n as number, digits, site)
+      return numberFormat(typeof locale === 'string' ? locale : 'en-US', options, site).format(
+        value,
+      )
+    },
+    { required: 1, literals: ([, , locale]) => formatProblem(locale, undefined) },
   ),
-  define(
-    'formatCurrency',
-    'Formats an amount in a currency (ISO 4217 code such as "EUR"; a code without a known symbol prints as the code), with an optional locale (default "en-US"; an unsupported locale is an error).',
-    [
-      overload(
-        [num, str, t.optional(str)],
-        str,
-        ([n, currency, locale], site) =>
-          numberFormat(
-            typeof locale === 'string' ? locale : 'en-US',
-            { style: 'currency', currency: currency as string },
-            site,
-          ).format(finite(n as number, site)),
-        { required: 2, literals: ([, currency, locale]) => formatProblem(locale, currency) },
-      ),
-    ],
+])
+
+export const formatCurrency: FunctionDef = /* @__PURE__ */ define('formatCurrency', [
+  /* @__PURE__ */ overload(
+    [num, str, /* @__PURE__ */ t.optional(str)],
+    str,
+    ([n, currency, locale], site) =>
+      numberFormat(
+        typeof locale === 'string' ? locale : 'en-US',
+        { style: 'currency', currency: currency as string },
+        site,
+      ).format(finite(n as number, site)),
+    { required: 2, literals: ([, currency, locale]) => formatProblem(locale, currency) },
   ),
-  define('min', 'The smallest value (nulls are skipped); null for an empty list.', [
-    overload([listT], optT, ([l], site) => extreme(list(l), -1, site), { ordered: ['T'] }),
-    ...spreadExtremes(-1),
-  ]),
-  define('max', 'The largest value (nulls are skipped); null for an empty list.', [
-    overload([listT], optT, ([l], site) => extreme(list(l), 1, site), { ordered: ['T'] }),
-    ...spreadExtremes(1),
-  ]),
-  define(
-    'sum',
-    'The sum of the numbers in a list (nulls are skipped), added left to right as a + b + c is.',
-    [
-      overload([t.list(t.optional(num))], num, ([l], site) => {
-        const items = list(l)
-        // A list whose type is unknown statically reaches this overload; its
-        // items decide (a list of durations sums as durations).
-        if (isValidDuration(firstPresent(items))) return sumDurations(items, site)
-        let total = 0
-        for (const n of numbersOf(items, 'sum', site)) total += n
-        return finite(total, site)
-      }),
-      overload([t.list(t.optional(dur))], dur, ([l], site) => sumDurations(list(l), site)),
-    ],
+])
+
+export const min: FunctionDef = /* @__PURE__ */ define('min', /* @__PURE__ */ extremes(-1))
+
+export const max: FunctionDef = /* @__PURE__ */ define('max', /* @__PURE__ */ extremes(1))
+
+export const sum: FunctionDef = /* @__PURE__ */ define('sum', [
+  /* @__PURE__ */ overload(
+    [/* @__PURE__ */ t.list(/* @__PURE__ */ t.optional(num))],
+    num,
+    ([l], site) => {
+      const items = list(l)
+      // A list whose type is unknown statically reaches this overload; its
+      // items decide (a list of durations sums as durations).
+      if (isValidDuration(firstPresent(items))) return sumDurations(items, site)
+      let total = 0
+      for (const n of numbersOf(items, 'sum', site)) total += n
+      return finite(total, site)
+    },
   ),
-  define(
-    'avg',
-    'The mean of the numbers or durations in a list (nulls are skipped, summed as sum does); null for an empty list.',
-    [
-      overload([t.list(t.optional(num))], t.optional(num), ([l], site) => {
-        const items = list(l)
-        // As in sum, a list whose type is unknown statically is decided by its items.
-        if (isValidDuration(firstPresent(items))) return averageDuration(items, site)
-        const values = numbersOf(items, 'avg', site)
-        if (values.length === 0) return null
-        let total = 0
-        for (const n of values) total += n
-        return finite(total / values.length, site)
-      }),
-      overload([t.list(t.optional(dur))], t.optional(dur), ([l], site) =>
-        averageDuration(list(l), site),
-      ),
-    ],
+  /* @__PURE__ */ overload(
+    [/* @__PURE__ */ t.list(/* @__PURE__ */ t.optional(dur))],
+    dur,
+    ([l], site) => sumDurations(list(l), site),
   ),
-]
+])
+
+export const avg: FunctionDef = /* @__PURE__ */ define('avg', [
+  /* @__PURE__ */ overload(
+    [/* @__PURE__ */ t.list(/* @__PURE__ */ t.optional(num))],
+    /* @__PURE__ */ t.optional(num),
+    ([l], site) => {
+      const items = list(l)
+      // As in sum, a list whose type is unknown statically is decided by its items.
+      if (isValidDuration(firstPresent(items))) return averageDuration(items, site)
+      const values = numbersOf(items, 'avg', site)
+      if (values.length === 0) return null
+      let total = 0
+      for (const n of values) total += n
+      return finite(total / values.length, site)
+    },
+  ),
+  /* @__PURE__ */ overload(
+    [/* @__PURE__ */ t.list(/* @__PURE__ */ t.optional(dur))],
+    /* @__PURE__ */ t.optional(dur),
+    ([l], site) => averageDuration(list(l), site),
+  ),
+])
 
 function hof(
   name: string,
-  description: string,
   result: Type,
   run: (items: readonly unknown[], fn: Lambda, site: CallSite, extra: unknown[]) => unknown,
   runAsync: (
@@ -1206,7 +1234,7 @@ function hof(
     readonly ordered?: readonly string[]
   } = {},
 ): FunctionDef {
-  return define(name, description, [
+  return define(name, [
     overload(
       [listT, lambda, ...extraParams],
       result,
@@ -1220,348 +1248,375 @@ function hof(
   ])
 }
 
-const LIST_FUNCTIONS: FunctionDef[] = [
-  hof(
-    'map',
-    'Transforms each item.',
-    t.list(U),
-    (items, fn, site) => {
-      const out = newList(items.length, site)
-      for (let i = 0; i < items.length; i++) out[i] = fn(items[i], i)
-      return made(out, site)
-    },
-    async (items, fn, site) => {
-      const out = newList(items.length, site)
-      for (let i = 0; i < items.length; i++) out[i] = ran(await fn(items[i], i))
-      return new Out(made(out, site))
-    },
-    { lambda: fnType([T, num], U) },
-  ),
-  hof(
-    'filter',
-    'Keeps the items for which the lambda is true.',
-    listT,
-    (items, fn, site) => {
-      const out: unknown[] = []
-      for (let i = 0; i < items.length; i++)
-        if (truthy(fn(items[i], i), site)) push(out, items[i], site)
-      return made(out, site)
-    },
-    async (items, fn, site) => {
-      const out: unknown[] = []
-      for (let i = 0; i < items.length; i++)
-        if (truthy(ran(await fn(items[i], i)), site)) push(out, items[i], site)
-      return new Out(made(out, site))
-    },
-  ),
-  hof(
-    'find',
-    'The first item for which the lambda is true, or null.',
-    optT,
-    (items, fn, site) => {
-      for (let i = 0; i < items.length; i++)
-        if (truthy(fn(items[i], i), site)) return items[i] ?? null
-      return null
-    },
-    async (items, fn, site) => {
-      for (let i = 0; i < items.length; i++)
-        if (truthy(ran(await fn(items[i], i)), site)) return new Out(items[i] ?? null)
-      return new Out(null)
-    },
-  ),
-  hof(
-    'findIndex',
-    'The position of the first item for which the lambda is true, or -1.',
+export const map: FunctionDef = /* @__PURE__ */ hof(
+  'map',
+  /* @__PURE__ */ t.list(U),
+  (items, fn, site) => {
+    const out = newList(items.length, site)
+    for (let i = 0; i < items.length; i++) out[i] = fn(items[i], i)
+    return made(out, site)
+  },
+  async (items, fn, site) => {
+    const out = newList(items.length, site)
+    for (let i = 0; i < items.length; i++) out[i] = ran(await fn(items[i], i))
+    return new Out(made(out, site))
+  },
+  { lambda: /* @__PURE__ */ fnType([T, num], U) },
+)
+
+export const filter: FunctionDef = /* @__PURE__ */ hof(
+  'filter',
+  listT,
+  (items, fn, site) => {
+    const out: unknown[] = []
+    for (let i = 0; i < items.length; i++)
+      if (truthy(fn(items[i], i), site)) push(out, items[i], site)
+    return made(out, site)
+  },
+  async (items, fn, site) => {
+    const out: unknown[] = []
+    for (let i = 0; i < items.length; i++)
+      if (truthy(ran(await fn(items[i], i)), site)) push(out, items[i], site)
+    return new Out(made(out, site))
+  },
+)
+
+export const find: FunctionDef = /* @__PURE__ */ hof(
+  'find',
+  optT,
+  (items, fn, site) => {
+    for (let i = 0; i < items.length; i++)
+      if (truthy(fn(items[i], i), site)) return items[i] ?? null
+    return null
+  },
+  async (items, fn, site) => {
+    for (let i = 0; i < items.length; i++)
+      if (truthy(ran(await fn(items[i], i)), site)) return new Out(items[i] ?? null)
+    return new Out(null)
+  },
+)
+
+export const findIndex: FunctionDef = /* @__PURE__ */ hof(
+  'findIndex',
+  num,
+  (items, fn, site) => {
+    for (let i = 0; i < items.length; i++) if (truthy(fn(items[i], i), site)) return i
+    return -1
+  },
+  async (items, fn, site) => {
+    for (let i = 0; i < items.length; i++)
+      if (truthy(ran(await fn(items[i], i)), site)) return new Out(i)
+    return new Out(-1)
+  },
+)
+
+export const some: FunctionDef = /* @__PURE__ */ hof(
+  'some',
+  bool,
+  (items, fn, site) => {
+    for (let i = 0; i < items.length; i++) if (truthy(fn(items[i], i), site)) return true
+    return false
+  },
+  async (items, fn, site) => {
+    for (let i = 0; i < items.length; i++)
+      if (truthy(ran(await fn(items[i], i)), site)) return new Out(true)
+    return new Out(false)
+  },
+)
+
+export const every: FunctionDef = /* @__PURE__ */ hof(
+  'every',
+  bool,
+  (items, fn, site) => {
+    for (let i = 0; i < items.length; i++) if (!truthy(fn(items[i], i), site)) return false
+    return true
+  },
+  async (items, fn, site) => {
+    for (let i = 0; i < items.length; i++)
+      if (!truthy(ran(await fn(items[i], i)), site)) return new Out(false)
+    return new Out(true)
+  },
+)
+
+export const none: FunctionDef = /* @__PURE__ */ hof(
+  'none',
+  bool,
+  (items, fn, site) => {
+    for (let i = 0; i < items.length; i++) if (truthy(fn(items[i], i), site)) return false
+    return true
+  },
+  async (items, fn, site) => {
+    for (let i = 0; i < items.length; i++)
+      if (truthy(ran(await fn(items[i], i)), site)) return new Out(false)
+    return new Out(true)
+  },
+)
+
+export const flatMap: FunctionDef = /* @__PURE__ */ hof(
+  'flatMap',
+  /* @__PURE__ */ t.list(U),
+  (items, fn, site) => {
+    const out: unknown[] = []
+    for (let i = 0; i < items.length; i++) {
+      appendFlat(out, fn(items[i], i), site)
+    }
+    return made(out, site)
+  },
+  async (items, fn, site) => {
+    const out: unknown[] = []
+    for (let i = 0; i < items.length; i++) {
+      appendFlat(out, ran(await fn(items[i], i)), site)
+    }
+    return new Out(made(out, site))
+  },
+  {
+    lambda: /* @__PURE__ */ fnType([T, num], /* @__PURE__ */ t.union(/* @__PURE__ */ t.list(U), U)),
+  },
+)
+
+export const sortBy: FunctionDef = /* @__PURE__ */ hof(
+  'sortBy',
+  listT,
+  (items, fn, site, [direction]) => {
+    const keys = newList(items.length, site)
+    for (let i = 0; i < items.length; i++) keys[i] = fn(items[i], i)
+    return sortKeyed(items, keys, direction, site)
+  },
+  async (items, fn, site, [direction]) => {
+    const keys = newList(items.length, site)
+    for (let i = 0; i < items.length; i++) keys[i] = ran(await fn(items[i], i))
+    return new Out(sortKeyed(items, keys, direction, site))
+  },
+  {
+    lambda: /* @__PURE__ */ fnType([T, num], K),
+    extraParams: [/* @__PURE__ */ t.enum('asc', 'desc')],
+    ordered: ['K'],
+  },
+)
+
+export const groupBy: FunctionDef = /* @__PURE__ */ hof(
+  'groupBy',
+  /* @__PURE__ */ t.record(listT),
+  (items, fn, site) => {
+    const out: Record<string, unknown[]> = {}
+    for (let i = 0; i < items.length; i++)
+      push(bucket(out, groupKey(fn(items[i], i), site)), items[i], site)
+    return madeGroups(out, site)
+  },
+  async (items, fn, site) => {
+    const out: Record<string, unknown[]> = {}
+    for (let i = 0; i < items.length; i++)
+      push(bucket(out, groupKey(ran(await fn(items[i], i)), site)), items[i], site)
+    return new Out(madeGroups(out, site))
+  },
+  { lambda: /* @__PURE__ */ fnType([T, num], /* @__PURE__ */ t.union(str, num, bool)) },
+)
+
+export const count: FunctionDef = /* @__PURE__ */ define('count', [
+  /* @__PURE__ */ overload([listT], num, ([l]) => list(l).length),
+  /* @__PURE__ */ overload(
+    [listT, predicate],
     num,
-    (items, fn, site) => {
-      for (let i = 0; i < items.length; i++) if (truthy(fn(items[i], i), site)) return i
-      return -1
+    ([l, f], site) => {
+      const items = list(l)
+      const fn = asLambda(f)
+      let n = 0
+      for (let i = 0; i < items.length; i++) if (truthy(fn(items[i], i), site)) n++
+      return n
     },
-    async (items, fn, site) => {
-      for (let i = 0; i < items.length; i++)
-        if (truthy(ran(await fn(items[i], i)), site)) return new Out(i)
-      return new Out(-1)
-    },
-  ),
-  hof(
-    'some',
-    'Whether the lambda is true for at least one item.',
-    bool,
-    (items, fn, site) => {
-      for (let i = 0; i < items.length; i++) if (truthy(fn(items[i], i), site)) return true
-      return false
-    },
-    async (items, fn, site) => {
-      for (let i = 0; i < items.length; i++)
-        if (truthy(ran(await fn(items[i], i)), site)) return new Out(true)
-      return new Out(false)
-    },
-  ),
-  hof(
-    'every',
-    'Whether the lambda is true for every item.',
-    bool,
-    (items, fn, site) => {
-      for (let i = 0; i < items.length; i++) if (!truthy(fn(items[i], i), site)) return false
-      return true
-    },
-    async (items, fn, site) => {
-      for (let i = 0; i < items.length; i++)
-        if (!truthy(ran(await fn(items[i], i)), site)) return new Out(false)
-      return new Out(true)
-    },
-  ),
-  hof(
-    'none',
-    'Whether the lambda is false for every item.',
-    bool,
-    (items, fn, site) => {
-      for (let i = 0; i < items.length; i++) if (truthy(fn(items[i], i), site)) return false
-      return true
-    },
-    async (items, fn, site) => {
-      for (let i = 0; i < items.length; i++)
-        if (truthy(ran(await fn(items[i], i)), site)) return new Out(false)
-      return new Out(true)
-    },
-  ),
-  hof(
-    'flatMap',
-    'Transforms each item and flattens list results one level.',
-    t.list(U),
-    (items, fn, site) => {
-      const out: unknown[] = []
-      for (let i = 0; i < items.length; i++) {
-        appendFlat(out, fn(items[i], i), site)
-      }
-      return made(out, site)
-    },
-    async (items, fn, site) => {
-      const out: unknown[] = []
-      for (let i = 0; i < items.length; i++) {
-        appendFlat(out, ran(await fn(items[i], i)), site)
-      }
-      return new Out(made(out, site))
-    },
-    { lambda: fnType([T, num], t.union(t.list(U), U)) },
-  ),
-  hof(
-    'sortBy',
-    'Sorts by a key; pass "desc" to reverse. Nulls sort first ("asc") or last ("desc").',
-    listT,
-    (items, fn, site, [direction]) => {
-      const keys = newList(items.length, site)
-      for (let i = 0; i < items.length; i++) keys[i] = fn(items[i], i)
-      return sortKeyed(items, keys, direction, site)
-    },
-    async (items, fn, site, [direction]) => {
-      const keys = newList(items.length, site)
-      for (let i = 0; i < items.length; i++) keys[i] = ran(await fn(items[i], i))
-      return new Out(sortKeyed(items, keys, direction, site))
-    },
-    { lambda: fnType([T, num], K), extraParams: [t.enum('asc', 'desc')], ordered: ['K'] },
-  ),
-  hof(
-    'groupBy',
-    'Groups items into a map of lists by a key. Map keys are text, so a key is its text form: 1 and "1", or true and "true", share a group. A key must be a string, number, or boolean (null is an error). Keys are listed integer-like first, ascending, then in first-seen order.',
-    t.record(listT),
-    (items, fn, site) => {
-      const out: Record<string, unknown[]> = {}
-      for (let i = 0; i < items.length; i++)
-        push(bucket(out, groupKey(fn(items[i], i), site)), items[i], site)
-      return madeGroups(out, site)
-    },
-    async (items, fn, site) => {
-      const out: Record<string, unknown[]> = {}
-      for (let i = 0; i < items.length; i++)
-        push(bucket(out, groupKey(ran(await fn(items[i], i)), site)), items[i], site)
-      return new Out(madeGroups(out, site))
-    },
-    { lambda: fnType([T, num], t.union(str, num, bool)) },
-  ),
-  define('count', 'The number of items, or of items for which the lambda is true.', [
-    overload([listT], num, ([l]) => list(l).length),
-    overload(
-      [listT, predicate],
-      num,
-      ([l, f], site) => {
+    {
+      runAsync: async ([l, f], site) => {
         const items = list(l)
         const fn = asLambda(f)
         let n = 0
-        for (let i = 0; i < items.length; i++) if (truthy(fn(items[i], i), site)) n++
-        return n
+        for (let i = 0; i < items.length; i++) if (truthy(ran(await fn(items[i], i)), site)) n++
+        return new Out(n)
       },
-      {
-        runAsync: async ([l, f], site) => {
-          const items = list(l)
-          const fn = asLambda(f)
-          let n = 0
-          for (let i = 0; i < items.length; i++) if (truthy(ran(await fn(items[i], i)), site)) n++
-          return new Out(n)
-        },
+    },
+  ),
+])
+
+export const reduce: FunctionDef = /* @__PURE__ */ define('reduce', [
+  /* @__PURE__ */ overload(
+    [listT, /* @__PURE__ */ fnType([U, T], U), U],
+    U,
+    ([l, f, initial]) => {
+      const items = list(l)
+      const fn = f as (acc: unknown, item: unknown, index: number) => unknown
+      let acc = initial
+      // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+      for (let i = 0; i < items.length; i++) acc = fn(acc, items[i], i)
+      return acc
+    },
+    {
+      runAsync: async ([l, f, initial]) => {
+        const items = list(l)
+        const fn = f as (acc: unknown, item: unknown, index: number) => unknown
+        let acc = initial
+        // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
+        for (let i = 0; i < items.length; i++) acc = ran(await fn(acc, items[i], i))
+        return new Out(acc)
       },
-    ),
-  ]),
-  define(
-    'reduce',
-    'Folds a list into one value: reduce(list, (acc, item) => ..., initial). Name both parameters; "." is not allowed, since the first one is the accumulator.',
+    },
+  ),
+])
+
+export const sort: FunctionDef = /* @__PURE__ */ define('sort', [
+  /* @__PURE__ */ overload(
+    [listT, /* @__PURE__ */ t.enum('asc', 'desc')],
+    listT,
+    ([l, d], site) => sortKeyed(list(l), list(l), d, site),
+    {
+      required: 1,
+      ordered: ['T'],
+    },
+  ),
+])
+
+export const reverse: FunctionDef = /* @__PURE__ */ define('reverse', [
+  /* @__PURE__ */ overload([listT], listT, ([l], site) => {
+    const items = list(l)
+    site.state.charge(items.length)
+    const out = newList(items.length, site)
+    for (let i = 0; i < items.length; i++) out[i] = items[items.length - 1 - i] ?? null
+    return made(out, site)
+  }),
+])
+
+export const unique: FunctionDef = /* @__PURE__ */ define('unique', [
+  /* @__PURE__ */ overload([listT], listT, ([l], site) => uniqueOf(list(l), site)),
+])
+
+export const flat: FunctionDef = /* @__PURE__ */ define('flat', [
+  /* @__PURE__ */ overload(
+    [/* @__PURE__ */ t.list(any)],
+    /* @__PURE__ */ t.list(any),
+    ([l], site) => flatten(list(l), site),
+  ),
+])
+
+export const first: FunctionDef = /* @__PURE__ */ define('first', [
+  /* @__PURE__ */ overload([listT], optT, ([l]) => list(l)[0] ?? null),
+])
+
+export const last: FunctionDef = /* @__PURE__ */ define('last', [
+  /* @__PURE__ */ overload([listT], optT, ([l]) => {
+    const items = list(l)
+    return items.length === 0 ? null : (items[items.length - 1] ?? null)
+  }),
+])
+
+export const join: FunctionDef = /* @__PURE__ */ define('join', [
+  /* @__PURE__ */ overload(
+    [/* @__PURE__ */ t.list(/* @__PURE__ */ t.union(primitiveText, ts, dur)), str],
+    str,
+    ([l, sep], site) => joinText(list(l), sep, site),
+    {
+      required: 1,
+    },
+  ),
+])
+
+export const isEmpty: FunctionDef = /* @__PURE__ */ define('isEmpty', [
+  /* @__PURE__ */ overload(
     [
-      overload(
-        [listT, fnType([U, T], U), U],
-        U,
-        ([l, f, initial]) => {
-          const items = list(l)
-          const fn = f as (acc: unknown, item: unknown, index: number) => unknown
-          let acc = initial
-          // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
-          for (let i = 0; i < items.length; i++) acc = fn(acc, items[i], i)
-          return acc
-        },
-        {
-          runAsync: async ([l, f, initial]) => {
-            const items = list(l)
-            const fn = f as (acc: unknown, item: unknown, index: number) => unknown
-            let acc = initial
-            // oxlint-disable-next-line typescript/prefer-for-of -- indexing never runs a host list's iterator
-            for (let i = 0; i < items.length; i++) acc = ran(await fn(acc, items[i], i))
-            return new Out(acc)
-          },
-        },
+      /* @__PURE__ */ t.union(
+        /* @__PURE__ */ t.list(any),
+        str,
+        /* @__PURE__ */ t.record(any),
+        /* @__PURE__ */ t.null(),
       ),
     ],
-  ),
-  define('sort', 'Sorts numbers, text, timestamps, or durations; pass "desc" to reverse.', [
-    overload(
-      [listT, t.enum('asc', 'desc')],
-      listT,
-      ([l, d], site) => sortKeyed(list(l), list(l), d, site),
-      {
-        required: 1,
-        ordered: ['T'],
-      },
-    ),
-  ]),
-  define('reverse', 'The items in reverse order.', [
-    overload([listT], listT, ([l], site) => {
-      const items = list(l)
-      site.state.charge(items.length)
-      const out = newList(items.length, site)
-      for (let i = 0; i < items.length; i++) out[i] = items[items.length - 1 - i] ?? null
-      return made(out, site)
-    }),
-  ]),
-  define('unique', 'The items without duplicates (by value), in first-seen order.', [
-    overload([listT], listT, ([l], site) => uniqueOf(list(l), site)),
-  ]),
-  define('flat', 'Flattens nested lists one level.', [
-    overload([t.list(any)], t.list(any), ([l], site) => flatten(list(l), site)),
-  ]),
-  define('first', 'The first item, or null.', [
-    overload([listT], optT, ([l]) => list(l)[0] ?? null),
-  ]),
-  define('last', 'The last item, or null.', [
-    overload([listT], optT, ([l]) => {
-      const items = list(l)
-      return items.length === 0 ? null : (items[items.length - 1] ?? null)
-    }),
-  ]),
-  define('join', 'Joins items into text with a separator (default ",").', [
-    overload(
-      [t.list(t.union(primitiveText, ts, dur)), str],
-      str,
-      ([l, sep], site) => joinText(list(l), sep, site),
-      {
-        required: 1,
-      },
-    ),
-  ]),
-  define('isEmpty', 'Whether a list, text, or map has no items; null is empty.', [
-    overload([t.union(t.list(any), str, t.record(any), t.null())], bool, ([v], site) => {
+    bool,
+    ([v], site) => {
       if (v === null || v === undefined) return true
       if (Array.isArray(v) || typeof v === 'string') return v.length === 0
       // Listing a map's keys is linear in how many it has.
-      const map = v as Record<string, unknown>
-      const keys = Object.keys(map)
-      site.state.charge(keyListCost(keys.length))
-      return !keys.some((key) => holdsKey(map, key))
-    }),
-  ]),
-]
+      const record = v as Record<string, unknown>
+      const names = Object.keys(record)
+      site.state.charge(keyListCost(names.length))
+      return !names.some((key) => holdsKey(record, key))
+    },
+  ),
+])
 
-const MAP_FUNCTIONS: FunctionDef[] = [
-  define('keys', 'The keys of a map.', [
-    overload([t.record(any)], t.list(str), ([m], site) =>
-      entryList(m as Record<string, unknown>, site),
-    ),
-  ]),
-  define('values', 'The values of a map.', [
-    overload([t.record(T)], listT, ([m], site) => {
-      const map = m as Record<string, unknown>
+export const keys: FunctionDef = /* @__PURE__ */ define('keys', [
+  /* @__PURE__ */ overload(
+    [/* @__PURE__ */ t.record(any)],
+    /* @__PURE__ */ t.list(str),
+    ([m], site) => entryList(m as Record<string, unknown>, site),
+  ),
+])
+
+export const values: FunctionDef = /* @__PURE__ */ define('values', [
+  /* @__PURE__ */ overload([/* @__PURE__ */ t.record(T)], listT, ([m], site) => {
+    const record = m as Record<string, unknown>
+    return made(
+      entryList(record, site).map((key) => record[key] ?? null),
+      site,
+    )
+  }),
+])
+
+export const entries: FunctionDef = /* @__PURE__ */ define('entries', [
+  /* @__PURE__ */ overload(
+    [/* @__PURE__ */ t.record(T)],
+    /* @__PURE__ */ t.list(/* @__PURE__ */ t.object({ key: str, value: T })),
+    ([m], site) => {
+      const record = m as Record<string, unknown>
+      const names = entryList(record, site)
+      site.state.charge(names.length)
       return made(
-        entryList(map, site).map((key) => map[key] ?? null),
+        names.map((key) => made({ key, value: record[key] ?? null }, site)),
         site,
       )
-    }),
-  ]),
-  define(
-    'entries',
-    'The entries of a map, as a list of { key, value } maps (not [key, value] pairs as in JavaScript), e.g. m.entries().map(.key + "=" + .value).',
-    [
-      overload([t.record(T)], t.list(t.object({ key: str, value: T })), ([m], site) => {
-        const map = m as Record<string, unknown>
-        const keys = entryList(map, site)
-        site.state.charge(keys.length)
-        return made(
-          keys.map((key) => made({ key, value: map[key] ?? null }, site)),
-          site,
-        )
-      }),
-    ],
+    },
   ),
-  define(
-    'type',
-    'The kind of a value: "null", "boolean", "number", "string", "list", "map", "timestamp", "duration", or "opaque".',
-    [overload([any], str, ([v]) => kindOf(v))],
-  ),
-]
+])
 
-const optZone = t.optional(str)
+export const type: FunctionDef = /* @__PURE__ */ define('type', [
+  /* @__PURE__ */ overload([any], str, ([v]) => kindOf(v)),
+])
 
-/** The position of a built-in's time zone parameter, if it takes one. */
-export function zoneParameter(def: FunctionDef): number | undefined {
-  for (const candidate of def.overloads) {
-    const index = candidate.params.indexOf(optZone)
-    if (index >= 0) return index
-  }
-  return undefined
-}
+const optZone = /* @__PURE__ */ t.optional(str)
+
+/** Where a built-in's time zone parameter is (see FunctionDef.zone). */
+const zoneAt = (position: number): ZoneParameter => ({ at: position, warm: warmZone })
 
 function zoneArg(value: unknown): string | null {
   return value === undefined || value === null ? null : (value as string)
 }
 
-function field(name: string, description: string, pick: (clock: WallClock) => number): FunctionDef {
-  return define(name, description, [
-    overload([ts, optZone], num, ([d, z], site) => pick(wallClock(d as Date, zoneArg(z), site)), {
-      required: 1,
-    }),
-  ])
+function field(name: string, pick: (clock: WallClock) => number): FunctionDef {
+  return define(
+    name,
+    [
+      overload([ts, optZone], num, ([d, z], site) => pick(wallClock(d as Date, zoneArg(z), site)), {
+        required: 1,
+      }),
+    ],
+    zoneAt(1),
+  )
 }
 
 /** Midnight at the start of the day, with `reset` fields of the wall clock set too. */
-function startOf(name: string, what: string, reset: Partial<WallClock>): FunctionDef {
-  return define(name, `${what}, in a time zone (default UTC).`, [
-    overload(
-      [ts, optZone],
-      ts,
-      ([d, z], site) => {
-        const clock = wallClock(d as Date, zoneArg(z), site)
-        const midnight = { ...clock, ...reset, hour: 0, minute: 0, second: 0, millisecond: 0 }
-        return fromWallClock(midnight, zoneArg(z), site)
-      },
-      { required: 1 },
-    ),
-  ])
+function startOf(name: string, reset: Partial<WallClock>): FunctionDef {
+  return define(
+    name,
+    [
+      overload(
+        [ts, optZone],
+        ts,
+        ([d, z], site) => {
+          const clock = wallClock(d as Date, zoneArg(z), site)
+          const midnight = { ...clock, ...reset, hour: 0, minute: 0, second: 0, millisecond: 0 }
+          return fromWallClock(midnight, zoneArg(z), site)
+        },
+        { required: 1 },
+      ),
+    ],
+    zoneAt(1),
+  )
 }
 
 /** Longest duration text duration() reads; longer text is never a valid duration in range. */
@@ -1597,134 +1652,155 @@ function isoDurationMs(text: string): number | string {
   return sign === '-' ? -ms : ms
 }
 
-function durationUnit(name: string, unitMs: number, description: string): FunctionDef {
-  return define(name, description, [
+function durationUnit(name: string, unitMs: number): FunctionDef {
+  return define(name, [
     overload([num], dur, ([n], site) => durationOf((n as number) * unitMs, site.state, site.span)),
   ])
 }
 
-function durationIn(name: string, unitMs: number, description: string): FunctionDef {
-  return define(name, description, [overload([dur], num, ([d]) => (d as Duration).ms / unitMs)])
+function durationIn(name: string, unitMs: number): FunctionDef {
+  return define(name, [overload([dur], num, ([d]) => (d as Duration).ms / unitMs)])
 }
 
-const TIME_FUNCTIONS: FunctionDef[] = [
-  define('now', 'The current time, fixed for one evaluation.', [
-    overload([], ts, (_, site) => site.state.now()),
-  ]),
-  define(
-    'timestamp',
-    'Parses ISO-8601 text (years 0000-9999, or six digits with a sign such as +012345, as a timestamp renders) or epoch milliseconds (a fraction is dropped toward zero, as Date does) into a timestamp.',
-    [
-      overload([str], ts, ([s], site) => {
-        site.state.charge(PARSE_COST)
-        return parseTimestamp(s as string, site)
-      }),
-      overload([num], ts, ([n], site) => checked(n as number, site)),
-      overload([ts], ts, ([d], site) => {
-        timeOf(d as Date, site.state, site.span)
-        return d
-      }),
-    ],
+export const now: FunctionDef = /* @__PURE__ */ define('now', [
+  /* @__PURE__ */ overload([], ts, (_, site) => site.state.now()),
+])
+
+export const timestamp: FunctionDef = /* @__PURE__ */ define('timestamp', [
+  /* @__PURE__ */ overload([str], ts, ([s], site) => {
+    site.state.charge(PARSE_COST)
+    return parseTimestamp(s as string, site)
+  }),
+  /* @__PURE__ */ overload([num], ts, ([n], site) => checked(n as number, site)),
+  /* @__PURE__ */ overload([ts], ts, ([d], site) => {
+    timeOf(d as Date, site.state, site.span)
+    return d
+  }),
+])
+
+export const duration: FunctionDef = /* @__PURE__ */ define('duration', [
+  /* @__PURE__ */ overload(
+    [str],
+    dur,
+    ([s], site) => {
+      site.state.charge(PARSE_COST)
+      const ms = isoDurationMs(s as string)
+      if (typeof ms === 'string') throw site.state.error('INVALID_ARGUMENT', ms, site.span)
+      return durationOf(ms, site.state, site.span)
+    },
+    {
+      literals: ([text]) => {
+        if (typeof text !== 'string') return undefined
+        const ms = isoDurationMs(text)
+        return typeof ms === 'string' ? ms : undefined
+      },
+    },
   ),
-  define(
-    'duration',
-    'Parses ISO-8601 duration text in weeks, days, hours, minutes, and seconds (e.g. "PT1H30M", "-P2DT0.5S"), the text a duration renders as.',
-    [
-      overload(
-        [str],
-        dur,
-        ([s], site) => {
-          site.state.charge(PARSE_COST)
-          const ms = isoDurationMs(s as string)
-          if (typeof ms === 'string') throw site.state.error('INVALID_ARGUMENT', ms, site.span)
-          return durationOf(ms, site.state, site.span)
-        },
-        {
-          literals: ([text]) => {
-            if (typeof text !== 'string') return undefined
-            const ms = isoDurationMs(text)
-            return typeof ms === 'string' ? ms : undefined
-          },
-        },
-      ),
-      overload([dur], dur, ([d]) => d),
-    ],
-  ),
-  durationUnit('weeks', MS_PER_WEEK, 'A duration of n weeks.'),
-  durationUnit('days', MS_PER_DAY, 'A duration of n days (24 hours each).'),
-  durationUnit('hours', MS_PER_HOUR, 'A duration of n hours.'),
-  durationUnit('minutes', MS_PER_MINUTE, 'A duration of n minutes.'),
-  durationUnit('seconds', MS_PER_SECOND, 'A duration of n seconds.'),
-  durationUnit(
-    'milliseconds',
-    1,
-    'A duration of n milliseconds. Durations are whole milliseconds: a fraction rounds to the nearest one, halves away from zero.',
-  ),
-  durationIn('inDays', MS_PER_DAY, 'A duration as a (fractional) number of days.'),
-  durationIn('inHours', MS_PER_HOUR, 'A duration as a number of hours.'),
-  durationIn('inMinutes', MS_PER_MINUTE, 'A duration as a number of minutes.'),
-  durationIn('inSeconds', MS_PER_SECOND, 'A duration as a number of seconds.'),
-  durationIn('inMilliseconds', 1, 'A duration as a number of milliseconds.'),
-  field('year', 'The calendar year, in a time zone (default UTC).', (c) => c.year),
-  field('month', 'The month 1-12, in a time zone (default UTC).', (c) => c.month),
-  field('day', 'The day of the month, in a time zone (default UTC).', (c) => c.day),
-  field('hour', 'The hour 0-23, in a time zone (default UTC).', (c) => c.hour),
-  field('minute', 'The minute, in a time zone (default UTC).', (c) => c.minute),
-  field('second', 'The second, in a time zone (default UTC).', (c) => c.second),
-  field(
-    'dayOfWeek',
-    'The ISO weekday (Monday 1 to Sunday 7), in a time zone (default UTC).',
-    isoWeekday,
-  ),
-  startOf('startOfDay', 'Midnight at the start of the day', {}),
-  startOf('startOfMonth', 'Midnight on the first of the month', { day: 1 }),
-  startOf('startOfYear', 'Midnight on January 1', { month: 1, day: 1 }),
-  define('addDays', 'Adds calendar days (keeps the wall-clock time across DST), in a time zone.', [
-    overload(
+  /* @__PURE__ */ overload([dur], dur, ([d]) => d),
+])
+
+export const weeks: FunctionDef = /* @__PURE__ */ durationUnit('weeks', MS_PER_WEEK)
+
+export const days: FunctionDef = /* @__PURE__ */ durationUnit('days', MS_PER_DAY)
+
+export const hours: FunctionDef = /* @__PURE__ */ durationUnit('hours', MS_PER_HOUR)
+
+export const minutes: FunctionDef = /* @__PURE__ */ durationUnit('minutes', MS_PER_MINUTE)
+
+export const seconds: FunctionDef = /* @__PURE__ */ durationUnit('seconds', MS_PER_SECOND)
+
+export const milliseconds: FunctionDef = /* @__PURE__ */ durationUnit('milliseconds', 1)
+
+export const inDays: FunctionDef = /* @__PURE__ */ durationIn('inDays', MS_PER_DAY)
+
+export const inHours: FunctionDef = /* @__PURE__ */ durationIn('inHours', MS_PER_HOUR)
+
+export const inMinutes: FunctionDef = /* @__PURE__ */ durationIn('inMinutes', MS_PER_MINUTE)
+
+export const inSeconds: FunctionDef = /* @__PURE__ */ durationIn('inSeconds', MS_PER_SECOND)
+
+export const inMilliseconds: FunctionDef = /* @__PURE__ */ durationIn('inMilliseconds', 1)
+
+export const year: FunctionDef = /* @__PURE__ */ field('year', (c) => c.year)
+
+export const month: FunctionDef = /* @__PURE__ */ field('month', (c) => c.month)
+
+export const day: FunctionDef = /* @__PURE__ */ field('day', (c) => c.day)
+
+export const hour: FunctionDef = /* @__PURE__ */ field('hour', (c) => c.hour)
+
+export const minute: FunctionDef = /* @__PURE__ */ field('minute', (c) => c.minute)
+
+export const second: FunctionDef = /* @__PURE__ */ field('second', (c) => c.second)
+
+export const dayOfWeek: FunctionDef = /* @__PURE__ */ field('dayOfWeek', isoWeekday)
+
+export const startOfDay: FunctionDef = /* @__PURE__ */ startOf('startOfDay', {})
+
+export const startOfMonth: FunctionDef = /* @__PURE__ */ startOf('startOfMonth', { day: 1 })
+
+export const startOfYear: FunctionDef = /* @__PURE__ */ startOf('startOfYear', { month: 1, day: 1 })
+
+export const addDays: FunctionDef = /* @__PURE__ */ define(
+  'addDays',
+  [
+    /* @__PURE__ */ overload(
       [ts, num, optZone],
       ts,
-      ([d, n, z], site) => addDays(d as Date, n as number, zoneArg(z), site),
+      ([d, n, z], site) => addDaysIn(d as Date, n as number, zoneArg(z), site),
       { required: 2 },
     ),
-  ]),
-  define('addMonths', 'Adds calendar months, clamping the day to the month length.', [
-    overload(
+  ],
+  /* @__PURE__ */ zoneAt(2),
+)
+
+export const addMonths: FunctionDef = /* @__PURE__ */ define(
+  'addMonths',
+  [
+    /* @__PURE__ */ overload(
       [ts, num, optZone],
       ts,
-      ([d, n, z], site) => addMonths(d as Date, n as number, zoneArg(z), site),
+      ([d, n, z], site) => addMonthsIn(d as Date, n as number, zoneArg(z), site),
       { required: 2 },
     ),
-  ]),
-  define('addYears', 'Adds calendar years (Feb 29 becomes Feb 28).', [
-    overload(
+  ],
+  /* @__PURE__ */ zoneAt(2),
+)
+
+export const addYears: FunctionDef = /* @__PURE__ */ define(
+  'addYears',
+  [
+    /* @__PURE__ */ overload(
       [ts, num, optZone],
       ts,
       ([d, n, z], site) =>
-        addMonths(d as Date, integer(n, 'Years', site) * MONTHS_PER_YEAR, zoneArg(z), site),
+        addMonthsIn(d as Date, integer(n, 'Years', site) * MONTHS_PER_YEAR, zoneArg(z), site),
       { required: 2 },
     ),
-  ]),
-  define(
-    'formatDate',
-    "Formats a timestamp in a time zone (default UTC). Tokens: yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS; quote literal text ('at'), and write '' for a quote ('it''s').",
-    [
-      overload(
-        [ts, str, optZone],
-        str,
-        ([d, p, z], site) => {
-          const text = formatTimestamp(d as Date, p as string, zoneArg(z), site)
-          site.state.stringLimit(text.length, site.span)
-          return text
-        },
-        {
-          required: 2,
-          literals: ([, pattern]) =>
-            typeof pattern === 'string' ? checkDatePattern(pattern) : undefined,
-        },
-      ),
-    ],
-  ),
-]
+  ],
+  /* @__PURE__ */ zoneAt(2),
+)
+
+export const formatDate: FunctionDef = /* @__PURE__ */ define(
+  'formatDate',
+  [
+    /* @__PURE__ */ overload(
+      [ts, str, optZone],
+      str,
+      ([d, p, z], site) => {
+        const text = formatTimestamp(d as Date, p as string, zoneArg(z), site)
+        site.state.stringLimit(text.length, site.span)
+        return text
+      },
+      {
+        required: 2,
+        literals: ([, pattern]) =>
+          typeof pattern === 'string' ? checkDatePattern(pattern) : undefined,
+      },
+    ),
+  ],
+  /* @__PURE__ */ zoneAt(2),
+)
 
 /** Result types that depend on argument types beyond simple type variables. */
 export const RESULT_REFINERS: Readonly<
@@ -1743,12 +1819,100 @@ export const RESULT_REFINERS: Readonly<
   },
 }
 
-export const BUILTINS: ReadonlyMap<string, FunctionDef> = new Map(
-  [
-    ...STRING_FUNCTIONS,
-    ...NUMBER_FUNCTIONS,
-    ...LIST_FUNCTIONS,
-    ...MAP_FUNCTIONS,
-    ...TIME_FUNCTIONS,
-  ].map((def) => [def.name, def]),
-)
+/**
+ * Every built-in by name, in the order descriptions.ts lists them. Each
+ * built-in is also its own export, so a bundle that never reads this map
+ * keeps only the built-ins it imports.
+ */
+export const BUILTINS: ReadonlyMap<string, FunctionDef> = /* @__PURE__ */ (() =>
+  new Map(
+    [
+      toUpperCase,
+      toLowerCase,
+      trim,
+      trimStart,
+      trimEnd,
+      startsWith,
+      endsWith,
+      includes,
+      indexOf,
+      lastIndexOf,
+      slice,
+      split,
+      replace,
+      replaceAll,
+      padStart,
+      padEnd,
+      repeat,
+      at,
+      matches,
+      toString,
+      toNumber,
+      round,
+      floor,
+      ceil,
+      trunc,
+      abs,
+      sqrt,
+      clamp,
+      toFixed,
+      formatNumber,
+      formatCurrency,
+      min,
+      max,
+      sum,
+      avg,
+      map,
+      filter,
+      find,
+      findIndex,
+      some,
+      every,
+      none,
+      flatMap,
+      sortBy,
+      groupBy,
+      count,
+      reduce,
+      sort,
+      reverse,
+      unique,
+      flat,
+      first,
+      last,
+      join,
+      isEmpty,
+      keys,
+      values,
+      entries,
+      type,
+      now,
+      timestamp,
+      duration,
+      weeks,
+      days,
+      hours,
+      minutes,
+      seconds,
+      milliseconds,
+      inDays,
+      inHours,
+      inMinutes,
+      inSeconds,
+      inMilliseconds,
+      year,
+      month,
+      day,
+      hour,
+      minute,
+      second,
+      dayOfWeek,
+      startOfDay,
+      startOfMonth,
+      startOfYear,
+      addDays,
+      addMonths,
+      addYears,
+      formatDate,
+    ].map((def) => [def.name, def]),
+  ))()

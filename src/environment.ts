@@ -10,9 +10,11 @@ import {
   type Diagnostic,
 } from './errors.js'
 import { BUILTINS } from './functions/builtins.js'
+import { descriptionOf } from './functions/descriptions.js'
 import {
   assertHostSpec,
   assertType,
+  builtinsOption,
   isRecord,
   overload,
   type FunctionDef,
@@ -24,7 +26,7 @@ import {
   type State,
   type RuntimeLimits,
 } from './runtime/state.js'
-import { recordDeclared } from './declared.js'
+import { recordCompiled, recordDeclared } from './declared.js'
 import {
   assertKeys,
   numberOption,
@@ -37,7 +39,15 @@ import type { ExplanationJSON, Trace } from './runtime/trace.js'
 import type { Node } from './syntax/ast.js'
 import { isName } from './syntax/lexer.js'
 import { DEFAULT_PARSE_LIMITS, MAX_DEPTH_LIMIT, parse, type ParseLimits } from './syntax/parser.js'
-import { isNullable, type AnyType, type Infer, type InferVariables, type Type } from './types.js'
+import {
+  isExact,
+  isNullable,
+  typeData,
+  type AnyType,
+  type Infer,
+  type InferVariables,
+  type Type,
+} from './types.js'
 
 // === public option types ===
 
@@ -318,6 +328,21 @@ export interface EnvironmentOptions<
    * naming the first mismatching path. Default: false.
    */
   readonly validateContext?: boolean | undefined
+  /**
+   * The built-ins available, from bonsai-js/builtins. Default: all of them
+   * (none in bonsai-js/runtime/core). Calling one left out is a CHECK error, so
+   * an environment that checks rules for bonsai-js/runtime/core passes the same
+   * list as the runtime. On extend(), these are added to the base's.
+   */
+  readonly builtins?: readonly Builtin[] | undefined
+}
+
+declare const builtinBrand: unique symbol
+
+/** A built-in function from bonsai-js/builtins, for the `builtins` option. */
+export interface Builtin {
+  readonly name: string
+  readonly [builtinBrand]: true
 }
 
 /**
@@ -355,7 +380,7 @@ type Checked<P> = (
   readonly typeOf: (node: Node) => Type | undefined
 }
 
-type Args<Ctx> =
+export type Args<Ctx> =
   Record<string, never> extends Ctx
     ? [context?: Ctx, options?: EvaluateOptions]
     : [context: Ctx, options?: EvaluateOptions]
@@ -623,6 +648,8 @@ export interface Settings {
   readonly strictOption: boolean | undefined
   readonly strict: boolean
   readonly host: ReadonlyMap<string, FunctionDef>
+  /** The built-ins available (host functions of the same name replace them). */
+  readonly builtins: ReadonlyMap<string, FunctionDef>
   readonly parseLimits: ParseLimits
   readonly runtimeLimits: RuntimeLimits
   readonly timeout: number
@@ -809,6 +836,7 @@ const OPTION_KEYS = new Set([
   'cacheSize',
   'clock',
   'validateContext',
+  'builtins',
 ])
 const LIMIT_KEYS: ReadonlySet<string> = new Set([
   ...Object.keys(DEFAULT_PARSE_LIMITS),
@@ -885,7 +913,15 @@ const DEPTH_CAPS: Readonly<Record<string, number>> = {
   maxValueDepth: MAX_VALUE_DEPTH_LIMIT,
 }
 
-function settingsFrom(base: Settings | undefined, options: unknown): Settings {
+/**
+ * Settings from options, over a base (extend) or, for a new environment or
+ * runtime, over the entry point's built-ins.
+ */
+export function settingsFrom(
+  base: Settings | undefined,
+  options: unknown,
+  builtins: ReadonlyMap<string, FunctionDef> = new Map(),
+): Settings {
   assertOptions(options)
   const limits = (options.limits ?? {}) as Readonly<Record<string, unknown>>
   const variables = mergeVariables(base?.variables, options)
@@ -895,6 +931,10 @@ function settingsFrom(base: Settings | undefined, options: unknown): Settings {
     strictOption,
     strict: strictOption ?? variables !== undefined,
     host: mergeFunctions(base?.host ?? new Map(), options),
+    builtins: builtinsOption(
+      options.builtins,
+      base?.builtins ?? (options.builtins === undefined ? builtins : new Map()),
+    ),
     parseLimits: pickLimits(
       DEFAULT_PARSE_LIMITS,
       base?.parseLimits ?? DEFAULT_PARSE_LIMITS,
@@ -932,7 +972,7 @@ const CACHE_MAX_SOURCE = 16_384
  * entry is evicted, unless it was used since it last reached the front (or is
  * the entry being added), in which case it moves to the back unmarked.
  */
-class ProgramCache<V> {
+export class ProgramCache<V> {
   private readonly map = new Map<string, { readonly value: V; used: boolean }>()
   private readonly size: number
   private chars = 0
@@ -1058,34 +1098,60 @@ function checkedClock(clock: () => Date): () => Date {
   }
 }
 
-/** Reads compile() and check() options: only `expect`, which must be a type built with t. */
-function compileExpect(options: unknown): Type | undefined {
+/** Whether a type has an exact map type anywhere in it. */
+function holdsExact(type: Type): boolean {
+  const stack: Type[] = [type]
+  const seen = new Set<Type>()
+  while (stack.length > 0) {
+    const next = stack.pop() as Type
+    if (seen.has(next)) continue
+    seen.add(next)
+    if (isExact(next)) return true
+    if (next.kind === 'list') stack.push(next.element)
+    else if (next.kind === 'union') stack.push(...next.types)
+    else if (next.kind === 'map') {
+      stack.push(...Object.values(next.fields))
+      if (next.rest !== undefined) stack.push(next.rest)
+    }
+  }
+  return false
+}
+
+/** Reads compile(), check(), and the runtime's load() options: only `expect`, which must be a type built with t. Returns a frozen copy of it. */
+export function expectOption(options: unknown, what: 'Compile' | 'Load'): Type | undefined {
   if (options === undefined) return undefined
   if (typeof options !== 'object' || options === null || Array.isArray(options))
-    throw new TypeError('Compile options must be an object')
+    throw new TypeError(`${what} options must be an object`)
   let expect: unknown
   try {
     for (const key of Object.keys(options)) {
       if (key !== 'expect')
-        throw new TypeError(`Unknown compile option key "${key}" (expected one of: expect)`)
+        throw new TypeError(
+          `Unknown ${what.toLowerCase()} option key "${key}" (expected one of: expect)`,
+        )
     }
     expect = (options as { expect?: unknown }).expect
   } catch (error) {
     if (error instanceof TypeError) throw error
-    throw new TypeError('Compile options could not be read', { cause: error })
+    throw new TypeError(`${what} options could not be read`, { cause: error })
   }
-  if (expect !== undefined) assertType(expect, 'Compile option "expect"')
-  return expect
+  if (expect === undefined) return undefined
+  // Checked, copied, and the copy checked: the program and its cache key use
+  // one private copy, so no getter, toJSON, or later change can split them.
+  assertType(expect, `${what} option "expect"`)
+  const own = typeData(expect)
+  if (own !== expect) assertType(own, `${what} option "expect"`)
+  return own
 }
 
 function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
   const checkEnv: CheckEnv = {
     variables: settings.variables,
     strict: settings.strict,
-    lookup: (name) => settings.host.get(name) ?? BUILTINS.get(name),
+    lookup: (name) => settings.host.get(name) ?? settings.builtins.get(name),
     *functionNames() {
       yield* settings.host.keys()
-      for (const name of BUILTINS.keys()) if (!settings.host.has(name)) yield name
+      for (const name of settings.builtins.keys()) if (!settings.host.has(name)) yield name
     },
   }
   // Each entry records the source and expected type it was compiled for: a key
@@ -1208,6 +1274,13 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       evaluateSync: (...args: Args<Ctx>) => runSync(args[0], args[1]),
     })
     recordDeclared(program, settings.variables)
+    recordCompiled(program, {
+      source,
+      analysis,
+      expect,
+      lookup: checkEnv.lookup,
+      variables: settings.variables,
+    })
     return program as Program<Ctx, R>
   }
 
@@ -1220,10 +1293,14 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
 
   /**
    * compile(), through the program cache: programs are immutable, so the same
-   * source with an equal expected type (types are plain JSON data) shares one.
+   * source with an equal expected type shares one. `expect` is expectOption's
+   * plain copy, so its JSON is the type the program is checked against.
    */
   function cachedCompile<R>(source: string, expect: Type | undefined): Program<Ctx, R> {
     if (typeof source !== 'string') throw new TypeError('An expression must be a string')
+    // An exact map type (a checked program's inferred type passed back as
+    // `expect`) checks differently from a declared one with the same JSON.
+    if (expect !== undefined && holdsExact(expect)) return compile<R>(source, expect)
     const expectKey = expect === undefined ? undefined : JSON.stringify(expect)
     const key = expectKey === undefined ? source : `${source}\u0000${expectKey}`
     const entry = cache.get(key)
@@ -1241,7 +1318,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
   function info(def: FunctionDef): FunctionInfo {
     return {
       name: def.name,
-      description: def.description,
+      description: descriptionOf(def),
       host: def.host === true,
       async: def.async === true,
       call: def.call === true,
@@ -1264,7 +1341,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       source: string,
       options?: CompileOptions<E>,
     ): CheckResult<Ctx, Infer<E>> {
-      const expect = compileExpect(options)
+      const expect = expectOption(options, 'Compile')
       let analysis: Analysis
       try {
         analysis = analyzeSource(source, expect)
@@ -1303,7 +1380,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       ) as CheckResult<Ctx, Infer<E>>
     },
     compile: <E extends Type = AnyType>(source: string, options?: CompileOptions<E>) =>
-      cachedCompile<Infer<E>>(source, compileExpect(options)),
+      cachedCompile<Infer<E>>(source, expectOption(options, 'Compile')),
     // Without features (bonsai-js/lite), an environment has no partial or explain.
     ...(settings.features === undefined
       ? {}
@@ -1364,5 +1441,5 @@ export function environmentWith<Ctx>(
   features: Features | undefined,
   options: unknown,
 ): Environment<Ctx> {
-  return createEnvironment<Ctx>({ ...settingsFrom(undefined, options), features })
+  return createEnvironment<Ctx>({ ...settingsFrom(undefined, options, BUILTINS), features })
 }

@@ -1,6 +1,6 @@
 import { bindImplicit } from './bind.js'
 import { BonsaiLimitError, type DiagnosticCode, type Finding } from '../errors.js'
-import { RESULT_REFINERS } from '../functions/builtins.js'
+import { BUILTINS, RESULT_REFINERS } from '../functions/builtins.js'
 import { isStackOverflow, tooDeep } from '../runtime/overflow.js'
 import { closest, didYouMean } from '../suggest.js'
 import { BLOCKED_NAMES } from '../syntax/lexer.js'
@@ -1400,15 +1400,35 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       return argType
     })
     if (def === undefined) {
-      const alias = Object.hasOwn(FUNCTION_ALIASES, node.name)
-        ? FUNCTION_ALIASES[node.name]
-        : undefined
-      // An alias hint names its replacement in quotes ('did you mean "includes"?').
-      const suggestion =
-        alias === undefined
-          ? suggest(node.name, () => env.functionNames())
-          : /"(?<name>[^"]+)"/u.exec(alias)?.groups?.name
-      const hint = alias === undefined ? didYouMean(suggestion) : `; ${alias}`
+      // A built-in the environment's `builtins` option leaves out.
+      const excluded = BUILTINS.has(node.name)
+      let alias =
+        !excluded && Object.hasOwn(FUNCTION_ALIASES, node.name)
+          ? FUNCTION_ALIASES[node.name]
+          : undefined
+      // An alias hint names its replacement in quotes ('did you mean "includes"?'),
+      // which must itself be available.
+      const replacement =
+        alias === undefined ? undefined : /"(?<name>[^"]+)"/u.exec(alias)?.groups?.name
+      // A replacement left out by `builtins` is named as such, without a quick-fix.
+      let leftOut: string | undefined
+      if (replacement !== undefined && env.lookup(replacement) === undefined) {
+        alias = undefined
+        if (BUILTINS.has(replacement)) leftOut = replacement
+      }
+      let suggestion: string | undefined
+      let hint: string
+      if (excluded) {
+        hint = `; ${node.name} is a built-in this environment does not include (add it to builtins)`
+      } else if (leftOut !== undefined) {
+        hint = `; the built-in for this is ${leftOut}, which this environment does not include (add it to builtins)`
+      } else if (alias === undefined) {
+        suggestion = suggest(node.name, () => env.functionNames())
+        hint = didYouMean(suggestion)
+      } else {
+        suggestion = replacement
+        hint = `; ${alias}`
+      }
       report(
         'UNKNOWN_FUNCTION',
         `Unknown function "${node.name}"${hint}`,

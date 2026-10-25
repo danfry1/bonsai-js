@@ -2,6 +2,7 @@ import { acceptsArgument, analyze, type Analysis } from '../check/checker.js'
 import { internalsOf, type Environment, type LiteEnvironment } from '../environment.js'
 import { BonsaiError, BonsaiSyntaxError, locate, type Diagnostic } from '../errors.js'
 import { assertType, signatureText, type FunctionDef } from '../functions/define.js'
+import { descriptionOf } from '../functions/descriptions.js'
 import { forEachChild, type Node } from '../syntax/ast.js'
 import { parse } from '../syntax/parser.js'
 import {
@@ -10,6 +11,7 @@ import {
   isExact,
   nonNull,
   t,
+  typeData,
   unionMembers,
   unionOf,
   widen,
@@ -108,8 +110,12 @@ function serviceExpect(options: unknown): Type | undefined {
       throw new TypeError(`Unknown language service option key "${key}" (expected one of: expect)`)
   }
   const expect = (options as { expect?: unknown }).expect
-  if (expect !== undefined) assertType(expect, 'Language service option "expect"')
-  return expect
+  if (expect === undefined) return undefined
+  // Kept as a private copy, like compile()'s, so later changes do not reach it.
+  assertType(expect, 'Language service option "expect"')
+  const own = typeData(expect)
+  if (own !== expect) assertType(own, 'Language service option "expect"')
+  return own
 }
 
 /**
@@ -409,7 +415,7 @@ export function createLanguageService(
         label: name,
         kind: 'method',
         detail: applicable.map((o) => signatureText(name, o)).join('\n'),
-        documentation: def.description,
+        documentation: descriptionOf(def),
         insertText: `${name}(${takesMore(def) ? '' : ')'}`,
       })
     }
@@ -440,7 +446,7 @@ export function createLanguageService(
         label: name,
         kind: 'function',
         detail: def.overloads.map((o) => signatureText(name, o)).join('\n'),
-        documentation: def.description,
+        documentation: descriptionOf(def),
         insertText: `${name}(`,
       })
     }
@@ -484,7 +490,7 @@ export function createLanguageService(
           start: node.nameStart,
           end: node.nameEnd,
           detail: def.overloads.map((o) => signatureText(def.name, o)).join('\n'),
-          documentation: def.description,
+          documentation: descriptionOf(def),
         }
       }
     }

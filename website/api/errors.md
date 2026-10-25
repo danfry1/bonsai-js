@@ -85,7 +85,7 @@ The error classes are for `instanceof` checks and reading fields. Their construc
 
 ## Classes and codes
 
-Every class is exported from `bonsai-js`; `BonsaiTranslationError` is also exported from `bonsai-js/query`, as the same class.
+Every class is exported from `bonsai-js`; `BonsaiTranslationError` is also exported from `bonsai-js/query`, and `BonsaiArtifactError` from `bonsai-js/runtime`, as the same classes.
 
 | Class | Code | Meaning |
 | --- | --- | --- |
@@ -114,6 +114,7 @@ Every class is exported from `bonsai-js`; `BonsaiTranslationError` is also expor
 | | `HOST_CONTRACT` | Host code broke its contract: a host function returned a value that does not match `returns` (checked deeply) or a promise without `async: true`, or the `clock` returned something other than a valid `Date`. |
 | | `INVALID_CONTEXT` | With `validateContext`, the context does not match the declared variable types. |
 | `BonsaiTranslationError` | `UNTRANSLATABLE` | Thrown by `toSQL` and `toMongo`: part of a filter has no exact SQL or MongoDB equivalent. See [Database Filters](./query). |
+| `BonsaiArtifactError` | `ARTIFACT` | Thrown by `bonsai-js/runtime` when it refuses an artifact; `reason` says why (and its JSON form includes it). See [Runtime](./runtime#when-an-artifact-is-refused). |
 
 `try(expr, fallback)` in an expression catches `BonsaiRuntimeError`s except `HOST_CONTRACT`, which is a bug in host code rather than a condition an expression should recover from. It never catches syntax, check, or limit errors.
 
