@@ -37,8 +37,12 @@ try {
   mkdirSync(smokeDir, { recursive: true })
   const packOutput = JSON.parse(
     run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', packDir]),
-  )
-  const filename = packOutput[0]?.filename as string | undefined
+  ) as unknown
+  // npm 11 prints an array of packed packages, npm 12 an object keyed by name.
+  const packed = (
+    Array.isArray(packOutput) ? packOutput : Object.values(packOutput as Record<string, unknown>)
+  ) as { filename?: string }[]
+  const filename = packed[0]?.filename
   if (filename === undefined || filename === '') {
     throw new Error('npm pack did not return a tarball filename')
   }
