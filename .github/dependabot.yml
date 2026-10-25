@@ -21,6 +21,13 @@ updates:
       # deliberately, alongside a release, rather than from a weekly update.
       - dependency-name: "npm"
         update-types: ["version-update:semver-major"]
+      # Vitest 5 skips tests inside describe blocks during Stryker's mutant runs
+      # (stryker-js#6265), so every mutant survives. Remove these once
+      # @stryker-mutator/vitest-runner 10.1.1 or later is adopted with vitest 5.
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitest/coverage-v8"
+        update-types: ["version-update:semver-major"]
     groups:
       dev-dependencies:
         dependency-type: development

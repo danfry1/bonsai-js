@@ -3,10 +3,18 @@
   "testRunner": "vitest",
   "coverageAnalysis": "perTest",
   "tsconfigFile": "",
-  "reporters": ["html", "clear-text", "progress"],
-  "htmlReporter": { "fileName": "reports/mutation/index.html" },
-  "clearTextReporter": { "maxTestsToLog": 3 },
-  "_comment": "Mutation testing measures whether the suite kills injected faults in the runtime, compiler, built-in functions, and checker, not just whether those lines run. tsconfigFile is empty because the sandbox copy needs no tsconfig rewrite (it has no extends or references), and the rewrite calls TypeScript's JavaScript API, which TypeScript 7 does not have.",
+  "reporters": [
+    "html",
+    "clear-text",
+    "progress"
+  ],
+  "htmlReporter": {
+    "fileName": "reports/mutation/index.html"
+  },
+  "clearTextReporter": {
+    "maxTestsToLog": 3
+  },
+  "_comment": "Mutation testing measures whether the suite kills injected faults in the runtime, compiler, built-in functions, and checker, not just whether those lines run. tsconfigFile is empty because the sandbox copy needs no tsconfig rewrite (it has no extends or references), and the rewrite calls TypeScript's JavaScript API, which TypeScript 7 does not have. break is off until each file has a measured baseline; no run completed between the 1.0 rewrite and the move to one job per file.",
   "mutate": [
     "src/runtime/values.ts",
     "src/runtime/state.ts",
@@ -14,5 +22,9 @@
     "src/functions/builtins.ts",
     "src/check/checker.ts"
   ],
-  "thresholds": { "high": 95, "low": 87, "break": 87 }
+  "thresholds": {
+    "high": 95,
+    "low": 87,
+    "break": null
+  }
 }
