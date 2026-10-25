@@ -2,7 +2,7 @@
 
 Bonsai is a small, total expression language: every expression terminates, and there are no loops, recursion, or assignment. An expression reaches host code only through functions the host declared and through data the host put in the context.
 
-These pages describe the language. The normative reference is [docs/language.md at v1.2.0](https://github.com/danfry1/bonsai-js/blob/v1.2.0/docs/language.md), backed by an executable conformance suite (the [latest version](https://github.com/danfry1/bonsai-js/blob/main/docs/language.md) may describe unreleased changes).
+These pages describe the language. The normative reference is [docs/language.md at v1.2.1](https://github.com/danfry1/bonsai-js/blob/v1.2.1/docs/language.md), backed by an executable conformance suite (the [latest version](https://github.com/danfry1/bonsai-js/blob/main/docs/language.md) may describe unreleased changes).
 
 ## The language in one screen
 

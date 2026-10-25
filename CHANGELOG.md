@@ -9,6 +9,13 @@ From 1.0.0, entries are generated at release time from the bump files in
 
 
 
+
+## 1.2.1
+<sub>2026-10-25</sub>
+
+- *(patch)*
+  Smaller browser bundles for `bonsai-js/runtime`, `bonsai-js/runtime/core`, and `bonsai-js/lite` (about 0.85 KB gzipped each): explain tracing and partial-evaluation residual handling now live with the main entry's explain and partial features instead of the shared compiler and runner. No change in behavior.
+
 ## 1.2.0
 <sub>2026-10-25</sub>
 
