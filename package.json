@@ -155,7 +155,7 @@
     "@types/node": "22.20.5",
     "@types/pg": "8.23.1",
     "@varlock/bumpy": "1.18.1",
-    "@vitest/coverage-v8": "5.0.5",
+    "@vitest/coverage-v8": "4.1.11",
     "fast-check": "4.10.2",
     "knip": "6.41.0",
     "lefthook": "2.2.2",
@@ -170,7 +170,7 @@
     "tsdown": "0.23.1",
     "typescript": "7.0.2",
     "vitepress": "1.6.4",
-    "vitest": "5.0.5"
+    "vitest": "4.1.11"
   },
   "overrides": {
     "brace-expansion": "5.0.12",
