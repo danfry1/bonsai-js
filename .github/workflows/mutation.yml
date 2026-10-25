@@ -8,10 +8,10 @@ name: Mutation
 # result between runs, so later runs only test mutants in changed code.
 #
 # Each file has a floor 5 points under the lowest score measured for it
-# (2026-10-25: values 79.5, state 69.9 on a fast machine and 86.0 on CI,
-# compiler 84.0, builtins 82.4, checker 78.7). Mutants that slow state.ts down
-# without breaking it time out on slower runners and survive on faster ones,
-# so its floor follows the lower score. Raise floors as tests improve.
+# (2026-10-25: values 79.5, state 92.3 on a fast machine once its gaps were
+# tested, compiler 84.0, builtins 82.4, checker 78.7). Mutants that slow code
+# down without breaking it time out on slower runners and survive on faster
+# ones, so a floor follows the lower score. Raise floors as tests improve.
 on:
   schedule:
     - cron: '0 6 * * 1' # Mondays 06:00 UTC
@@ -32,7 +32,7 @@ jobs:
             floor: 75
             file: src/runtime/values.ts
           - cohort: state
-            floor: 65
+            floor: 87
             file: src/runtime/state.ts
           - cohort: compiler
             floor: 79
