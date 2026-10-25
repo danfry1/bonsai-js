@@ -56,7 +56,7 @@ Try it in the [Playground](https://danfry1.github.io/bonsai-js/playground).
 | | Bonsai | cel-js | zen-engine | json-rules-engine | json-logic-js | jsonata | jexl |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Rules are | text, JS-like | text, CEL | text and JSON decisions | JSON | JSON | text | text, JS-like |
-| Browser size (min+gzip) | 29.7 KB for rules checked on a server; 68.9 KB checking in the browser | 24.3 KB | 4.1 KB JS + 470 KB WASM | 24.3 KB | 2.0 KB | 26.5 KB | 6.1 KB |
+| Browser size (min+gzip) | 28.9 KB for rules checked on a server; 68.9 KB checking in the browser | 24.3 KB | 4.1 KB JS + 470 KB WASM | 24.3 KB | 2.0 KB | 26.5 KB | 6.1 KB |
 | Type check against a schema | Yes, with suggestions | Yes | Yes | No | No | No | No |
 | Explains results | Yes | No | Per decision node | Per condition | No | No | No |
 | Evaluation budget for untrusted input (as documented) | Yes, on by default | Parse-time limits only | No expression budget | No | No | No | No |
@@ -74,7 +74,7 @@ Upgrading from 0.x? The [migration guide](https://danfry1.github.io/bonsai-js/gu
 
 Requires Node.js 22 or newer, current Bun, or a modern browser. The package is ESM; `require('bonsai-js')` works where Node can load ES modules synchronously (22.12 and newer); for the TypeScript settings that allow it, see [Install](https://danfry1.github.io/bonsai-js/guide/install#typescript-settings).
 
-In a browser bundle, evaluating rules that were checked and compiled on a server adds about 30 KB minified and gzipped, from `bonsai-js/runtime/core` with only the built-in functions your rules call (`bonsai-js/runtime`, with all of them, is about 43 KB). Checking rules in the browser too adds about 69 KB: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included; `bonsai-js/lite` leaves those two out, for about 57 KB. `bonsai-js/query` and `bonsai-js/service` are separate entry points; the language service on its own is about 47 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets (`bun run check:size`).
+In a browser bundle, evaluating rules that were checked and compiled on a server adds about 29 KB minified and gzipped, from `bonsai-js/runtime/core` with only the built-in functions your rules call (`bonsai-js/runtime`, with all of them, is about 43 KB). Checking rules in the browser too adds about 69 KB: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included; `bonsai-js/lite` leaves those two out, for about 57 KB. `bonsai-js/query` and `bonsai-js/service` are separate entry points; the language service on its own is about 47 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets (`bun run check:size`).
 
 ## The language in one screen
 
@@ -94,7 +94,7 @@ startOfDay(order.placedAt, "Europe/Berlin")             // calendar math in time
 // comments work too
 ```
 
-The full reference is [docs/language.md](https://github.com/danfry1/bonsai-js/blob/v1.2.0/docs/language.md). The rules that matter most:
+The full reference is [docs/language.md](https://github.com/danfry1/bonsai-js/blob/v1.2.1/docs/language.md). The rules that matter most:
 
 - There is one absent value, `null`. Missing properties and host `undefined` read as `null`, so `x == null` means "missing or null". A key holding `undefined` is absent everywhere: `{ a: 1, b: undefined }` equals `{ a: 1 }`, and `"b" in` it is false.
 - `==` compares by value (lists and maps deeply). There is no type coercion: `1 == "1"` is `false` and `"a" + 1` is an error.
@@ -201,7 +201,7 @@ Every limit except `timeout` is on by default; `limits` changes the budget. `0` 
 | `maxPatternLength` | 4,096 | regular expression patterns passed to `matches` |
 | `timeout` | none | wall-clock milliseconds per evaluation |
 
-The step budget is deterministic: the same expression over the same data uses the same steps on every machine, and at the default budget any expression finishes or fails within about 100 ms on Node (about 150 ms for the slowest shapes we have found). Host functions are trusted code: limits cannot interrupt a synchronous host function that is already running, and a getter or Proxy you put in the context runs when it is read. Set a `timeout` when expressions call slow host functions. See [SECURITY.md](https://github.com/danfry1/bonsai-js/blob/main/SECURITY.md) and [docs/threat-model.md](https://github.com/danfry1/bonsai-js/blob/v1.2.0/docs/threat-model.md).
+The step budget is deterministic: the same expression over the same data uses the same steps on every machine, and at the default budget any expression finishes or fails within about 100 ms on Node (about 150 ms for the slowest shapes we have found). Host functions are trusted code: limits cannot interrupt a synchronous host function that is already running, and a getter or Proxy you put in the context runs when it is read. Set a `timeout` when expressions call slow host functions. See [SECURITY.md](https://github.com/danfry1/bonsai-js/blob/main/SECURITY.md) and [docs/threat-model.md](https://github.com/danfry1/bonsai-js/blob/v1.2.1/docs/threat-model.md).
 
 ## Built-in functions
 
