@@ -136,6 +136,27 @@ function mayBeNull(type: Type): boolean {
   return type.kind === 'null' || (type.kind === 'union' && type.types.some(mayBeNull))
 }
 
+/** Whether every value of a type, other than null, is a number or a string. */
+function isNumberOrString(type: Type): boolean {
+  const members = unionMembers(type).filter((m) => m.kind !== 'null')
+  return (
+    members.length > 0 &&
+    members.every(
+      (m) =>
+        m.kind === 'number' ||
+        m.kind === 'string' ||
+        (m.kind === 'literal' && (typeof m.value === 'number' || typeof m.value === 'string')),
+    )
+  )
+}
+
+/** How to fix a non-boolean operand of logic: `??` for a nullable fallback, else an explicit comparison. */
+function logicHint(type: Type, fallback: boolean): string {
+  if (fallback && mayBeNull(type)) return '; for a fallback when it is null, use ?? instead of ||'
+  if (isNumberOrString(type)) return '; compare explicitly, e.g. x != 0 or x != ""'
+  return ''
+}
+
 /** The node whose value is the result (the body of lets, the last expression). */
 function resultSpan(node: Node): Node {
   return node.type === 'Let' ? resultSpan(node.body) : node
@@ -942,9 +963,19 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     }
   }
 
-  function expectLogic(actual: Type, at: Node, what: string): void {
+  /**
+   * Checks an operand of a condition, `!`, `&&` or `||`. `fallback` marks the
+   * left side of `||`, where a value that may be null is usually meant as
+   * `a ?? b`; a number or a string gets the explicit comparison the runtime
+   * error suggests.
+   */
+  function expectLogic(actual: Type, at: Node, what: string, fallback = false): void {
     if (!isAssignable(actual, OPTIONAL_BOOLEAN)) {
-      report('TYPE_ERROR', `${what} expects a boolean but got ${typeText(actual)}`, at)
+      report(
+        'TYPE_ERROR',
+        `${what} expects a boolean but got ${typeText(actual)}${logicHint(actual, fallback)}`,
+        at,
+      )
     } else if (mayBeNull(actual)) {
       // Null counts as false here, which ! turns into true: say which one is meant.
       report(
@@ -1089,10 +1120,14 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     const op = node.operator
     switch (op) {
       case '&&':
-      case '||':
-        expectLogic(left, node.left, `"${op}"`)
-        expectLogic(right, node.right, `"${op}"`)
+      case '||': {
+        // `a || b` with `a` possibly null is a fallback written the JavaScript way:
+        // one problem, on `a`, rather than a second one for the fallback value.
+        const fallback = op === '||' && !isAssignable(left, OPTIONAL_BOOLEAN) && mayBeNull(left)
+        expectLogic(left, node.left, `"${op}"`, op === '||')
+        if (!fallback) expectLogic(right, node.right, `"${op}"`)
         return BOOLEAN
+      }
       case '??':
         if (!isNullable(left))
           report('NEVER_NULL', 'The left side of "??" is never null', node.left, 'warning')

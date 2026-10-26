@@ -103,6 +103,26 @@ describe('diagnostics', () => {
     expect(errors('orders.filter(o => orders.some(.id == o.id))')).toEqual([])
   })
 
+  it('reads a nullable value before || as a fallback: one problem, pointing to ??', () => {
+    const { diagnostics } = env.check('user.nick || "anon"')
+    expect(diagnostics).toHaveLength(1)
+    expect(diagnostics[0]).toMatchObject({ code: 'TYPE_ERROR', start: 0, end: 9 })
+    expect(diagnostics[0]?.message).toContain('use ?? instead of ||')
+    expect(errors('user.nick ?? "anon"')).toEqual([])
+  })
+
+  it('suggests an explicit comparison for a number or string used as a condition', () => {
+    for (const source of ['user.age && true', '!user.name', 'user.age ? 1 : 2', 'true || 10']) {
+      const messages = env.check(source).diagnostics.map((d) => d.message)
+      expect(messages, source).toEqual([expect.stringContaining('compare explicitly, e.g. x != 0')])
+    }
+  })
+
+  it('adds no hint where neither fix applies', () => {
+    const [diagnostic] = env.check('user.tags && true').diagnostics
+    expect(diagnostic?.message).toBe('"&&" expects a boolean but got string[]')
+  })
+
   it('points diagnostics at the offending span', () => {
     const [diagnostic] = env.check('user.age + user.agee').diagnostics
     expect(diagnostic).toMatchObject({ code: 'UNKNOWN_PROPERTY', start: 16, end: 20 })

@@ -126,11 +126,12 @@ user.plan == "pro" ? "Pro" : "Free" // => "Pro"
 qty && true // error: TYPE_ERROR
 ```
 
-`a ?? b` evaluates `b` only when `a` is `null`:
+`a ?? b` evaluates `b` only when `a` is `null`. It is the default JavaScript often writes with `||`, which here takes only booleans:
 
 ```bonsai
 discount ?? 0 // => 0
 false ?? true // => false
+discount || 0 // error: TYPE_ERROR
 ```
 
 ## Membership
