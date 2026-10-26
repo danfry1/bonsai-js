@@ -22,7 +22,8 @@ export interface StandardJSONSchema<Output = unknown> {
 }
 
 /** A JSON Schema document: draft-07, draft 2020-12, or an OpenAPI 3.0 schema object. */
-export type JSONSchema = boolean | Readonly<Record<string, unknown>>
+// `object`, not a record, so a schema typed by an interface (JSONSchema7, an OpenAPI SchemaObject) fits.
+export type JSONSchema = boolean | object
 
 type OutputOf<S> = S extends { readonly '~standard': { readonly types?: infer T } }
   ? NonNullable<T> extends { readonly output: infer O }
@@ -70,13 +71,45 @@ export function fromSchema(schema: unknown, options: FromSchemaOptions = {}): Ty
   const root = standardJSON(schema, options.libraryOptions) ?? schema
   if (typeof root !== 'boolean' && !isRecord(root))
     throw new TypeError('fromSchema expects a schema object or a JSON Schema')
-  if (isRecord(root) && typeof root.kind === 'string' && !('type' in root))
+  if (isBonsaiType(root))
     throw new TypeError('fromSchema was given a Bonsai type, which needs no converting')
   budgetLeft = BUDGET
-  const type = new Converter(root, overrides).convert(root, '')
-  assertType(type, 'fromSchema result')
+  const converter = new Converter(root, overrides)
+  const type = converter.convert(root, '')
+  const unused = Object.keys(overrides).filter((pointer) => !converter.used.has(pointer))
+  if (unused.length > 0)
+    throw new TypeError(
+      `fromSchema option types names ${unused.map((pointer) => `"${pointer}"`).join(', ')}, which the schema does not have (inside a $ref, use the definition's path)`,
+    )
+  try {
+    assertType(type, 'fromSchema result')
+  } catch {
+    throw new TypeError('The schema nests deeper than a Bonsai type can')
+  }
   return type
 }
+
+const BONSAI_KINDS = new Set(['any', 'never', 'literal', 'list', 'map', 'union', 'opaque'])
+
+/** Whether a value is a Bonsai type rather than a JSON Schema: a `kind` and no schema keywords. */
+function isBonsaiType(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.kind !== 'string') return false
+  if (!BONSAI_KINDS.has(value.kind) && !PRIMITIVE_KINDS.has(value.kind)) return false
+  return !SCHEMA_KEYWORDS.some((key) => key in value)
+}
+
+const PRIMITIVE_KINDS = new Set(['null', 'boolean', 'number', 'string', 'timestamp', 'duration'])
+const SCHEMA_KEYWORDS = [
+  'type',
+  'properties',
+  '$ref',
+  'anyOf',
+  'oneOf',
+  'allOf',
+  'enum',
+  'const',
+  'items',
+]
 
 /** The JSON Schema a Standard JSON Schema writes, or undefined for a plain JSON Schema. */
 function standardJSON(
@@ -112,7 +145,7 @@ function standardJSON(
   )
 }
 
-/** Kinds of value Bonsai holds but cannot look inside. */
+/** Kinds of value Bonsai holds but cannot look inside, by one name whichever library names them. */
 const OPAQUE = new Set([
   'map',
   'set',
@@ -128,18 +161,61 @@ const OPAQUE = new Set([
 /** The mark for a schema library's kind JSON Schema cannot state, or undefined for any other. */
 function markOf(kind: string): string | undefined {
   if (kind === 'date') return 'timestamp'
-  if (OPAQUE.has(kind)) return `opaque:${kind}`
-  if (kind === 'transform' || kind === 'custom') return `unsupported:${kind}`
+  if (OPAQUE.has(kind)) return `${OPAQUE_MARK}${kind}`
+  if (kind === 'transform' || kind === 'custom') return `${UNSUPPORTED_MARK}${kind}`
   return undefined
+}
+
+/** An opaque mark for a class (ArkType names `Map`, Zod and Valibot `map`). */
+function opaqueMark(name: string | undefined): string {
+  const lower = name?.toLowerCase()
+  if (lower !== undefined && OPAQUE.has(lower)) return `${OPAQUE_MARK}${lower}`
+  return `${OPAQUE_MARK}${name === undefined || name === '' ? 'instance' : name}`
+}
+
+/** Valibot schema kinds whose value may be undefined, which JSON Schema states only for object keys. */
+const VALIBOT_OPTIONAL = new Set(['optional', 'undefinedable', 'nullish', 'exact_optional'])
+
+/** Valibot transformations that keep the type of the value they change. */
+const VALIBOT_SAME_TYPE = new Set([
+  'brand',
+  'flavor',
+  'readonly',
+  'guard',
+  'trim',
+  'trim_start',
+  'trim_end',
+  'normalize',
+  'to_lower_case',
+  'to_upper_case',
+  'to_camel_case',
+  'to_kebab_case',
+  'to_pascal_case',
+  'to_snake_case',
+  'to_min_value',
+  'to_max_value',
+  'filter_items',
+  'sort_items',
+])
+
+/** Valibot transformations to a type Bonsai can state. */
+const VALIBOT_TO: Readonly<Record<string, Record<string, unknown>>> = {
+  to_number: { type: 'number' },
+  to_string: { type: 'string' },
+  to_boolean: { type: 'boolean' },
+  parse_boolean: { type: 'boolean' },
+  to_date: { 'x-bonsai-type': 'timestamp' },
+  to_bigint: { 'x-bonsai-type': 'opaque:bigint' },
 }
 
 type Hook = (ctx: never) => unknown
 
 /**
  * Each library writes `{}` for, or throws on, the kinds JSON Schema cannot
- * state (dates, maps, transforms). Its own hook marks them instead, so a date
- * becomes a timestamp and a transform is reported rather than read as any
- * value. A hook the caller passes runs too.
+ * state (dates, maps, transforms, a value that may be undefined). Its own hook
+ * marks them instead, so a date becomes a timestamp and a transform is
+ * reported rather than read as the type before it. A hook the caller passes
+ * runs too.
  */
 const VENDORS: Readonly<
   Record<string, (options: Record<string, unknown>) => Record<string, unknown>>
@@ -148,48 +224,62 @@ const VENDORS: Readonly<
     unrepresentable: 'any',
     ...options,
     override: (ctx: {
-      zodSchema: { _zod: { def: { type: string } } }
+      zodSchema: { _zod: { def: { type: string; values?: unknown[] } } }
       jsonSchema: Record<string, unknown>
     }) => {
       // oxlint-disable-next-line eslint/no-underscore-dangle -- Zod's own name for a schema's internals
-      const mark = markOf(ctx.zodSchema._zod.def.type)
+      const { def } = ctx.zodSchema._zod
+      let mark = markOf(def.type)
+      // `z.literal(1n)` writes `{ const: 1 }`.
+      if (def.type === 'literal' && def.values?.some((value) => typeof value === 'bigint') === true)
+        mark = def.values.every((value) => typeof value === 'bigint') ? 'opaque:bigint' : 'any'
       if (mark !== undefined) ctx.jsonSchema[MARK] = mark
+      if (def.type === 'optional') ctx.jsonSchema[OPTIONAL] = true
       if (typeof options.override === 'function') (options.override as Hook)(ctx as never)
     },
   }),
   valibot: (options) => ({
     errorMode: 'ignore',
     ...options,
-    overrideSchema: (ctx: { valibotSchema: { type: string } }) => {
+    overrideSchema: (ctx: { valibotSchema: { type: string }; jsonSchema: object }) => {
       const theirs =
         typeof options.overrideSchema === 'function'
           ? (options.overrideSchema as Hook)(ctx as never)
           : undefined
-      const mark = markOf(ctx.valibotSchema.type)
-      return theirs ?? (mark === undefined ? undefined : { [MARK]: mark })
+      if (theirs !== undefined) return theirs
+      const { type } = ctx.valibotSchema
+      if (VALIBOT_OPTIONAL.has(type)) return { ...ctx.jsonSchema, [OPTIONAL]: true }
+      const mark = markOf(type)
+      return mark === undefined ? undefined : { [MARK]: mark }
     },
-    overrideAction: (ctx: { valibotAction: { type: string } }) => {
+    overrideAction: (ctx: { valibotAction: { kind: string; type: string } }) => {
       const theirs =
         typeof options.overrideAction === 'function'
           ? (options.overrideAction as Hook)(ctx as never)
           : undefined
-      return (
-        theirs ??
-        (ctx.valibotAction.type === 'transform' ? { [MARK]: 'unsupported:transform' } : undefined)
-      )
+      if (theirs !== undefined) return theirs
+      const { kind, type } = ctx.valibotAction
+      if (kind !== 'transformation' || VALIBOT_SAME_TYPE.has(type)) return undefined
+      return Object.hasOwn(VALIBOT_TO, type)
+        ? VALIBOT_TO[type]
+        : { [MARK]: `${UNSUPPORTED_MARK}transform` }
     },
   }),
   arktype: (options) => ({
     ...options,
     fallback: {
       date: () => ({ [MARK]: 'timestamp' }),
-      morph: () => ({ [MARK]: 'unsupported:transform' }),
-      domain: (ctx: { domain: string }) => ({ [MARK]: `opaque:${ctx.domain}` }),
-      proto: (ctx: { proto: { name?: string } }) => ({
-        [MARK]: `opaque:${ctx.proto.name ?? 'instance'}`,
-      }),
-      // A narrowing (`.narrow()`) only refines its base.
-      default: (ctx: { base: unknown }) => ctx.base,
+      morph: () => ({ [MARK]: `${UNSUPPORTED_MARK}transform` }),
+      domain: (ctx: { domain: string }) => ({ [MARK]: opaqueMark(ctx.domain) }),
+      proto: (ctx: { proto: { name?: string } }) => ({ [MARK]: opaqueMark(ctx.proto.name) }),
+      // These only refine their base, or add what an expression cannot read (symbol keys).
+      predicate: (ctx: { base: unknown }) => ctx.base,
+      patternIntersection: (ctx: { base: unknown }) => ctx.base,
+      defaultValue: (ctx: { base: unknown }) => ctx.base,
+      symbolKey: (ctx: { base: unknown }) => ctx.base,
+      // Anything else (a postfix tuple, a unit like undefined) is any value.
+      default: () => ({}),
+      ...(typeof options.fallback === 'function' ? { default: options.fallback } : {}),
       ...(isRecord(options.fallback) ? options.fallback : {}),
     },
   }),
@@ -199,6 +289,11 @@ const VENDORS: Readonly<
 const MARK = 'x-bonsai-type'
 const OPAQUE_MARK = 'opaque:'
 const UNSUPPORTED_MARK = 'unsupported:'
+/**
+ * Marks a value that may be undefined (read as null): JSON Schema can say so
+ * only for an object key, through `required`. Written by the library hooks.
+ */
+const OPTIONAL = 'x-bonsai-optional'
 
 /**
  * Parts one conversion may build: schema nodes expanded (each `$ref` use
@@ -232,19 +327,24 @@ class Converter {
   private readonly legacy: boolean
   private readonly root: JSONSchema
   private readonly overrides: Readonly<Record<string, Type>>
+  /** The `types` pointers the schema has. */
+  readonly used = new Set<string>()
 
   constructor(root: JSONSchema, overrides: Readonly<Record<string, Type>>) {
     this.root = root
     this.overrides = overrides
     const draft = isRecord(root) ? root.$schema : undefined
-    // Before 2019-09, keywords beside $ref are ignored and `items` may be a tuple.
+    // Before 2019-09, keywords beside $ref are ignored.
     this.legacy = typeof draft === 'string' && /draft-0[4-7]/u.test(draft)
     // The root is being expanded, so `{ $ref: '#' }` (a Zod z.lazy) is a cycle.
     this.active.add('#')
   }
 
   convert(node: unknown, at: string, depth = 0): Type {
-    if (Object.hasOwn(this.overrides, at)) return this.overrides[at]
+    if (Object.hasOwn(this.overrides, at)) {
+      this.used.add(at)
+      return this.overrides[at]
+    }
     spend(1, at)
     if (depth > DEPTH_LIMIT)
       throw new TypeError(`The schema nests deeper than ${DEPTH_LIMIT} (at "${at}")`)
@@ -252,9 +352,9 @@ class Converter {
     if (node === false) return t.never()
     if (!isRecord(node)) throw new TypeError(`The schema at "${at}" is not a schema object`)
     const type = this.shape(node, at, depth)
-    return node.nullable === true && !(Array.isArray(node.enum) && !node.enum.includes(null))
-      ? maybe(type)
-      : type
+    const openAPINull =
+      node.nullable === true && !(Array.isArray(node.enum) && !node.enum.includes(null))
+    return openAPINull || node[OPTIONAL] === true ? maybe(type) : type
   }
 
   private shape(node: Record<string, unknown>, at: string, depth: number): Type {
@@ -316,7 +416,8 @@ class Converter {
 
   private array(node: Record<string, unknown>, at: string, depth: number): Type {
     // A tuple is a list of any of its members: Bonsai lists have one element type.
-    const tuple = this.legacy && Array.isArray(node.items) ? 'items' : 'prefixItems'
+    // An array of `items` is a draft-07 tuple, which 2020-12 never writes.
+    const tuple = Array.isArray(node.items) ? 'items' : 'prefixItems'
     const rest = tuple === 'items' ? 'additionalItems' : 'items'
     const members: Type[] = []
     const prefix = node[tuple]
@@ -352,9 +453,11 @@ class Converter {
 
     // Every value type a key outside `properties` may have.
     const rest: Type[] = []
-    const extra = node.additionalProperties ?? node.unevaluatedProperties
+    const restKey =
+      node.additionalProperties === undefined ? 'unevaluatedProperties' : 'additionalProperties'
+    const extra = node[restKey]
     if (extra !== undefined && extra !== false)
-      rest.push(this.convert(extra, `${at}/additionalProperties`, depth + 1))
+      rest.push(this.convert(extra, `${at}/${restKey}`, depth + 1))
     if (isRecord(node.patternProperties))
       for (const [pattern, schema] of Object.entries(node.patternProperties))
         rest.push(this.convert(schema, `${at}/patternProperties/${pointerKey(pattern)}`, depth + 1))
@@ -367,7 +470,9 @@ class Converter {
       return t.object(fields)
     }
 
-    // Properties that a condition adds are optional fields.
+    // Properties that a condition adds are optional fields; the condition only
+    // narrows properties the object already has, so those keep their types.
+    const own = new Set(Object.keys(fields))
     const conditional: [string, unknown][] = []
     for (const key of ['then', 'else'] as const)
       if (node[key] !== undefined) conditional.push([key, node[key]])
@@ -378,8 +483,10 @@ class Converter {
       const type = this.convert(schema, `${at}/${path}`, depth + 1)
       for (const member of unionMembers(type)) {
         if (member.kind !== 'map') continue
-        for (const [key, value] of Object.entries(member.fields))
+        for (const [key, value] of Object.entries(member.fields)) {
+          if (own.has(key)) continue
           field(key, Object.hasOwn(fields, key) ? union([fields[key], value]) : value, true)
+        }
       }
     }
 
@@ -430,7 +537,7 @@ function marked(mark: unknown, at: string): Type {
   if (mark === 'timestamp') return t.timestamp()
   if (mark === 'duration') return t.duration()
   if (mark === 'any') return t.any()
-  if (typeof mark === 'string' && mark.startsWith(OPAQUE_MARK))
+  if (typeof mark === 'string' && mark.startsWith(OPAQUE_MARK) && mark.length > OPAQUE_MARK.length)
     return t.opaque(mark.slice(OPAQUE_MARK.length))
   if (typeof mark === 'string' && mark.startsWith(UNSUPPORTED_MARK))
     throw new TypeError(

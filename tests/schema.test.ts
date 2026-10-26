@@ -3,7 +3,7 @@ import { type as ark } from 'arktype'
 import * as v from 'valibot'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { z } from 'zod'
-import { bonsai, fn, formatType, fromSchema, t, type JSONSchema } from '../src/index.js'
+import { bonsai, fn, formatType, fromSchema, t, type JSONSchema, type Type } from '../src/index.js'
 import { fromSchema as liteFromSchema } from '../src/lite/index.js'
 
 const shape = (schema: JSONSchema): string => formatType(fromSchema(schema))
@@ -325,6 +325,110 @@ describe('fromSchema with JSON Schema', () => {
 
   it('is exported from the lite entry', () => {
     expect(liteFromSchema).toBe(fromSchema)
+  })
+})
+
+/** Whether a context `{ v: value }` passes validation against `type` (absent when undefined). */
+function accepts(type: Type, value: unknown): boolean {
+  const env = bonsai({ variables: { v: type }, validateContext: true })
+  const context: Record<string, unknown> = value === undefined ? {} : { v: value }
+  return env.evaluateSync('v == null || v != null', context) === true
+}
+
+describe('fromSchema accepts what each library parses', () => {
+  it('Zod: optional values outside objects, bigint literals', () => {
+    const List = z.array(z.string().optional())
+    expect(accepts(fromSchema(List), List.parse(['x', undefined]))).toBe(true)
+    const Pair = z.tuple([z.string(), z.number().optional()])
+    expect(accepts(fromSchema(Pair), Pair.parse(['a']))).toBe(true)
+    expect(accepts(fromSchema(z.string().optional()), undefined)).toBe(true)
+    const Big = z.object({ a: z.literal(1n) })
+    expect(formatType(fromSchema(Big))).toBe('{ a: bigint }')
+    expect(accepts(fromSchema(Big), Big.parse({ a: 1n }))).toBe(true)
+  })
+
+  it('Valibot: transformations, undefinedable, and optional items', () => {
+    const Order = v.object({
+      n: v.pipe(v.string(), v.toNumber()),
+      at: v.pipe(v.string(), v.toDate()),
+      name: v.pipe(v.string(), v.trim()),
+      maybe: v.undefinedable(v.string()),
+      list: v.array(v.optional(v.string())),
+    })
+    const type = fromSchema(toStandardJsonSchema(Order))
+    expect(formatType(type)).toBe(
+      '{ n: number, at: timestamp, name: string, maybe: string | null, list: (string | null)[] }',
+    )
+    const parsed = v.parse(Order, {
+      n: '3',
+      at: '2026-01-01',
+      name: ' a ',
+      maybe: undefined,
+      list: ['x', undefined],
+    })
+    expect(accepts(type, parsed)).toBe(true)
+    const Lengths = v.pipe(
+      v.array(v.string()),
+      v.mapItems((s) => s.length),
+    )
+    expect(() => fromSchema(toStandardJsonSchema(Lengths))).toThrow('is a transform')
+  })
+
+  it('ArkType: postfix tuples, Map instances', () => {
+    const Tuple = ark(['...', 'number[]', 'string'])
+    expect(accepts(fromSchema(Tuple), Tuple.assert([1, 'a']))).toBe(true)
+    expect(formatType(fromSchema(ark({ m: ark.instanceOf(Map) })))).toBe('{ m: map }')
+  })
+})
+
+describe('fromSchema input checks', () => {
+  it('reads a tuple written as an items array without $schema', () => {
+    expect(shape({ type: 'array', items: [{ type: 'string' }], additionalItems: false })).toBe(
+      'string[]',
+    )
+  })
+
+  it('refuses types pointers the schema does not have', () => {
+    const schema = { type: 'object', properties: { a: { type: 'string' } } }
+    expect(() => fromSchema(schema, { types: { '/properties/b': t.number() } })).toThrow(
+      '"/properties/b", which the schema does not have',
+    )
+  })
+
+  it('names unevaluatedProperties by its own pointer', () => {
+    const type = fromSchema(
+      { type: 'object', unevaluatedProperties: { type: 'string' } },
+      { types: { '/unevaluatedProperties': t.number() } },
+    )
+    expect(formatType(type)).toBe('{ [key: string]: number }')
+  })
+
+  it('keeps a required field required when a condition narrows it', () => {
+    expect(
+      shape({
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        required: ['a'],
+        then: { properties: { a: { const: 'x' }, b: { type: 'number' } } },
+      }),
+    ).toBe('{ a: string, b: number | null }')
+  })
+
+  it('reports nesting deeper than a Bonsai type', () => {
+    let schema: JSONSchema = { type: 'string' }
+    for (let i = 0; i < 40; i++) schema = { type: 'object', properties: { a: schema } }
+    expect(() => fromSchema(schema)).toThrow('nests deeper than a Bonsai type can')
+  })
+
+  it('accepts a schema typed by an interface, and a kind property in a JSON Schema', () => {
+    interface SchemaObject {
+      type?: string
+      properties?: Record<string, SchemaObject>
+    }
+    const schema: SchemaObject = { type: 'object', properties: { kind: { type: 'string' } } }
+    expect(formatType(fromSchema(schema))).toBe('{ kind: string | null }')
+    expect(shape({ kind: 'x', properties: { a: { type: 'string' } } })).toBe('{ a: string | null }')
+    expect(() => shape({ 'x-bonsai-type': 'opaque:' })).toThrow('must be "timestamp"')
   })
 })
 
