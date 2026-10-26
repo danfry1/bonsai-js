@@ -65,6 +65,15 @@ describe('inference', () => {
     expect(result.type).toEqual(expected)
   })
 
+  it('types a blocked name as null, as it reads, whatever the object declares', () => {
+    const blocked = bonsai({ variables: { o: t.object({ constructor: t.number() }) } })
+    expect(blocked.check('o["constructor"]').type).toEqual(t.null())
+    expect(blocked.check('o["constructor"] ?? "fallback"').type).toEqual(t.string())
+    expect(blocked.evaluateSync('o["constructor"] ?? "fallback"', { o: { constructor: 5 } })).toBe(
+      'fallback',
+    )
+  })
+
   it('warns that the right side of a never-null ?? is never used, and meets a boolean expect', () => {
     const result = env.check('(user.age > 18) ?? 12', { expect: t.boolean() })
     expect(result.ok).toBe(true)

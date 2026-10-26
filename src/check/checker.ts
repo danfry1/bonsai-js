@@ -1063,6 +1063,8 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       )
     }
     if (objectType.kind === 'map') {
+      // __proto__, constructor, and prototype read as null whatever the object declares.
+      if (BLOCKED_NAMES.has(name)) return NULL
       const field = fieldOf(objectType, name)
       if (field !== undefined) return field
       if (objectType.rest !== undefined) return t.optional(objectType.rest)
