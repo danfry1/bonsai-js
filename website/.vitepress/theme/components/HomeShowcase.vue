@@ -18,14 +18,14 @@ async function copyInstall() {
   }
 }
 
-// From guide/comparison.md (measured 2026-10-14; Bonsai's sizes for 1.2.1 on 2026-10-25); keep the two in step.
+// From guide/comparison.md (measured 2026-10-14; Bonsai's sizes for 1.2.2 on 2026-10-26); keep the two in step.
 const compared = [
   {
     name: 'bonsai-js',
     syntax: 'Text, JS-like',
     features: [true, true, true, true],
     size: '28.9 KB',
-    sizeNote: '68.9 KB checking in the browser',
+    sizeNote: '69.2 KB checking in the browser',
   },
   { name: 'cel-js', syntax: 'Text, CEL', features: [true, false, false, false], size: '24.3 KB' },
   { name: 'json-logic-js', syntax: 'JSON', features: [false, false, false, false], size: '2.0 KB' },
