@@ -137,7 +137,21 @@ describe('diagnostics', () => {
 
     it('stands for its value where it is used, so nothing cascades', () => {
       expect(only('(user.nick || "anon").toUpperCase()').start).toBe(1)
-      expect(only('(user.nick || "anon") && true').start).toBe(1)
+      expect(only('user.nick || (user.nick || "anon")').start).toBe(14)
+    })
+
+    it('is a test, not a default, where a boolean is wanted, so ?? is not suggested', () => {
+      const advice = (source: string, expect_?: Type) =>
+        env
+          .check(source, expect_ ? { expect: expect_ } : {})
+          .diagnostics.map((d) => d.message.split('; ')[1])
+      const present = 'to test that it is set, write x != null'
+      expect(advice('(user.nick || "anon") && true')).toEqual([present, undefined])
+      expect(advice('!(user.nick || "anon")')).toEqual([present, undefined])
+      expect(advice('(user.nick || "anon") ? 1 : 2')).toEqual([present, undefined])
+      expect(advice('user.nick || "anon"', t.boolean())).toContain(present)
+      // A boolean on the right: the left is a test too (user.nick != null || ...).
+      expect(advice('user.nick || user.age > 1')).toEqual([present])
     })
 
     it('still checks the fallback itself', () => {

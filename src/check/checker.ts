@@ -552,6 +552,15 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
    * the value it stands for isn't reported again where it is used.
    */
   const defaults = new Set<Node>()
+  /** Operands used as conditions (of `!`, `?:`, `&&`), where an `a || b` is a test, not a default. */
+  const tests = new WeakSet<Node>()
+  const asTest = (n: Node): void => {
+    tests.add(n)
+    if (n.type === 'Binary' && n.operator === '||') {
+      asTest(n.left)
+      asTest(n.right)
+    }
+  }
   const reported = new Set<string>()
   const report = (
     code: DiagnosticCode,
@@ -760,7 +769,10 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       case 'Call':
         return checkCall(node, scope, expected)
       case 'Unary': {
-        if (node.operator === '!') nullFalseMatters(node.operand)
+        if (node.operator === '!') {
+          nullFalseMatters(node.operand)
+          asTest(node.operand)
+        }
         const operand = check(node.operand, scope)
         markAsync(node, node.operand)
         if (node.operator === '!') {
@@ -781,6 +793,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         return checkBinary(node, scope, expected)
       case 'Conditional': {
         nullFalseMatters(node.test)
+        asTest(node.test)
         const test = check(node.test, scope)
         expectLogic(test, node.test, 'A condition')
         const a = check(node.then, withFacts(scope, nonNullFacts(node.test, true)), expected)
@@ -968,22 +981,25 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
   }
 
   /**
-   * Checks `a || b` where a side is not a boolean. When `a` may be missing
-   * (null, or an untyped value) it is a default: one problem, pointing to
-   * `??`, on the side that is not a boolean. When neither side is a boolean,
-   * one problem on `a`. Either way the result takes the type `??` would give,
-   * so the rest of the expression is checked as the author meant it.
-   * Undefined when it is an ordinary `||`, checked operand by operand.
+   * Checks `a || b` as a default written the JavaScript way: `b` is not a
+   * boolean and `a` may be missing (null, nullable, or untyped). One problem,
+   * pointing to `??`, on the side that is not a boolean; the result takes the
+   * type `??` would give, so the rest of the expression is checked as the
+   * author meant it. Not a default where a boolean is wanted (a condition,
+   * `!`, `&&`, an expected boolean): there `??` would not fix it. Undefined
+   * when it is an ordinary `||`, checked operand by operand.
    */
   function checkDefault(
     node: Extract<Node, { type: 'Binary' }>,
     left: Type,
     right: Type,
+    expected: Type | undefined,
   ): Type | undefined {
+    if (tests.has(node) || expected?.kind === 'boolean' || isAssignable(right, OPTIONAL_BOOLEAN))
+      return undefined
     const leftLogic = isAssignable(left, OPTIONAL_BOOLEAN)
-    if (leftLogic && isAssignable(right, OPTIONAL_BOOLEAN)) return undefined
-    // In a chain (a || b || c) the default on the left was already reported.
-    const chain = defaults.has(node.left)
+    // In a chain (a || b || c, or a || (b || c)) the default inside was already reported.
+    const chain = defaults.has(node.left) || defaults.has(node.right)
     if (!chain && !(left.kind === 'any' || left.kind === 'null' || (!leftLogic && mayBeNull(left))))
       return undefined
     if (!chain)
@@ -1124,6 +1140,10 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     expected: Type | undefined,
   ): Type {
     const nullish = node.operator === '??'
+    if (node.operator === '&&') {
+      asTest(node.left)
+      asTest(node.right)
+    }
     // x == false (or != true) reads a null comparison's false as a verdict.
     if (node.operator === '==' || node.operator === '!=') {
       const negates = node.operator === '!='
@@ -1153,7 +1173,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     switch (op) {
       case '&&':
       case '||': {
-        const fallback = op === '||' ? checkDefault(node, left, right) : undefined
+        const fallback = op === '||' ? checkDefault(node, left, right, expected) : undefined
         if (fallback) return fallback
         expectLogic(left, node.left, `"${op}"`)
         expectLogic(right, node.right, `"${op}"`)
