@@ -254,16 +254,20 @@ describe('fromSchema with JSON Schema', () => {
   })
 
   it('folds properties a condition adds in as optional fields', () => {
-    expect(
-      shape({
-        type: 'object',
-        properties: { country: { type: 'string' } },
-        required: ['country'],
-        if: { properties: { country: { const: 'US' } } },
-        then: { properties: { state: { type: 'string' } }, required: ['state'] },
-        else: { properties: { region: { type: 'string' } } },
-      }),
-    ).toBe('{ country: string, state: string | null, region: string | null }')
+    const conditional = {
+      type: 'object',
+      properties: { country: { type: 'string' } },
+      required: ['country'],
+      if: { properties: { country: { const: 'US' } } },
+      then: { properties: { state: { type: 'string' } }, required: ['state'] },
+      else: { properties: { region: { type: 'string' } } },
+    }
+    // Where the condition does not hold, an open object's other keys hold anything.
+    expect(shape(conditional)).toBe('{ country: string, state: any, region: any }')
+    expect(accepts(fromSchema(conditional), { country: 'NZ', state: 5 })).toBe(true)
+    expect(shape({ ...conditional, additionalProperties: false })).toBe(
+      '{ country: string, state: string | null, region: string | null }',
+    )
   })
 
   it('reads draft-07 tuples and empty arrays', () => {
@@ -384,7 +388,7 @@ describe('fromSchema with JSON Schema', () => {
         properties: { a: { type: 'string' } },
         dependencies: { a: { properties: { b: { type: 'number' } } }, c: ['a'] },
       }),
-    ).toBe('{ a: string | null, b: number | null }')
+    ).toBe('{ a: string | null, b: any }')
   })
 
   it('refuses a malformed Standard JSON Schema', () => {
@@ -546,7 +550,7 @@ describe('fromSchema input checks', () => {
         required: ['a'],
         then: { properties: { a: { const: 'x' }, b: { type: 'number' } } },
       }),
-    ).toBe('{ a: string, b: number | null }')
+    ).toBe('{ a: string, b: any }')
   })
 
   it('reports nesting deeper than a Bonsai type', () => {
@@ -578,8 +582,21 @@ describe('schema objects passed where a type goes', () => {
     expect(() => bonsai({ variables: { user: v.string() as never } })).toThrow('fromSchema()')
   })
 
-  it('gives Infer the schema output', () => {
+  it('leaves Infer as it is for t types and unknown for converted types', () => {
     const User = fromSchema(z.object({ age: z.number() }))
-    expectTypeOf<Infer<typeof User>>().toEqualTypeOf<{ age: number }>()
+    expectTypeOf<Infer<typeof User>>().toBeUnknown()
+    expectTypeOf<Infer<ReturnType<typeof t.optional<ReturnType<typeof t.number>>>>>().toEqualTypeOf<
+      number | null
+    >()
+  })
+
+  it('keeps generic wrappers that return Infer<E> compiling', () => {
+    const env = bonsai({ variables: { a: t.number() } })
+    const compileAs = <E extends Type>(source: string, expected: E) => {
+      const program: ReturnType<typeof env.compile<E>> = env.compile(source, { expect: expected })
+      const result: Infer<E> = program.evaluateSync({ a: 1 })
+      return result
+    }
+    expect(compileAs('a + 1', t.number())).toBe(2)
   })
 })

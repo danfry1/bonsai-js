@@ -252,15 +252,13 @@ type InferAs<T, Host extends boolean> = [Type] extends [T]
               ? PrimitiveTypes[K]
               : unknown
 
-/** The TypeScript type of values described by a Bonsai type; for a `fromSchema` type, the schema's output. */
-export type Infer<T> = InferAs<T, true>
-
 /**
- * The TypeScript type of values Bonsai produces for a type: a host function's
- * arguments, a program's result. Those were checked against the converted
- * type, not the schema, so a `fromSchema` type gives `unknown`.
+ * The TypeScript type of values described by a Bonsai type. A `fromSchema`
+ * type gives `unknown`: values Bonsai produces for it (a host function's
+ * arguments, a program's result) were checked against the converted type, not
+ * the schema. Use the library's own type (`z.output<typeof User>`) instead.
  */
-export type InferChecked<T> = InferAs<T, false>
+export type Infer<T> = InferAs<T, false>
 
 /** The context type of a variable declaration record. */
 export type InferVariables<V> = Simplify<

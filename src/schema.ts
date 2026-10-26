@@ -394,6 +394,7 @@ class Converter {
   /** Refs being expanded: a ref back to one of them is a cycle. */
   private readonly active = new Set<string>()
   private readonly legacy: boolean
+  private readonly modern: boolean
   private readonly root: JSONSchema
   private readonly overrides: Readonly<Record<string, Type>>
   /** The `types` pointers the schema has. */
@@ -409,6 +410,8 @@ class Converter {
     const draft = isRecord(root) ? root.$schema : undefined
     // Before 2019-09, keywords beside $ref are ignored.
     this.legacy = typeof draft === 'string' && /draft-0[4-7]/u.test(draft)
+    // A schema that names 2019-09 or later; one that names no draft may be either.
+    this.modern = typeof draft === 'string' && !this.legacy
     // The root is being expanded, so `{ $ref: '#' }` (a Zod z.lazy) is a cycle.
     this.active.add('#')
   }
@@ -550,12 +553,18 @@ class Converter {
 
     // Properties that a condition adds are optional fields; the condition only
     // narrows properties the object already has, so those keep their types.
+    // When the condition does not hold, such a key is like any other key: it
+    // holds what other keys may (anything, unless additionalProperties says).
     const own = new Set(Object.keys(fields))
+    const otherwise = rest.length > 0 ? rest : [extra === false ? t.never() : t.any()]
     const conditional: [string, unknown][] = []
     for (const key of ['then', 'else'] as const)
       if (node[key] !== undefined) conditional.push([key, node[key]])
     // draft-07 `dependencies` holds both required lists and schemas; only schemas add keys.
-    for (const keyword of ['dependentSchemas', 'dependencies'] as const) {
+    // 2019-09 and later split it into dependentSchemas and dependentRequired.
+    for (const keyword of this.modern
+      ? ['dependentSchemas']
+      : ['dependentSchemas', 'dependencies']) {
       const entries = node[keyword]
       if (!isRecord(entries)) continue
       for (const [key, schema] of Object.entries(entries))
@@ -567,7 +576,8 @@ class Converter {
         if (member.kind !== 'map') continue
         for (const [key, value] of Object.entries(member.fields)) {
           if (own.has(key)) continue
-          field(key, Object.hasOwn(fields, key) ? union([fields[key], value]) : value, true)
+          const before = Object.hasOwn(fields, key) ? [fields[key]] : otherwise
+          field(key, union([...before, value]), true)
         }
       }
     }

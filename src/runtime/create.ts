@@ -16,7 +16,7 @@ import {
   type Settings,
 } from '../environment.js'
 import { artifactKey, loadArtifact, loadedRunner, readArtifact } from '../load.js'
-import type { AnyType, InferChecked, Type } from '../types.js'
+import type { AnyType, Infer, Type } from '../types.js'
 
 /**
  * The options of `runtime()`: those of `bonsai()` that affect evaluation.
@@ -95,7 +95,7 @@ interface Loader<Ctx = any> {
   load: <E extends Type = AnyType>(
     artifact: Artifact,
     options?: LoadOptions<E>,
-  ) => RuntimeProgram<Ctx, InferChecked<E>>
+  ) => RuntimeProgram<Ctx, Infer<E>>
   /** Loads (cached) and evaluates. `R` is an unchecked type, as for `env.evaluate`. */
   evaluate: <R = unknown>(artifact: Artifact, ...args: Args<Ctx>) => Promise<R>
   /** Loads (cached) and evaluates synchronously. */
@@ -161,7 +161,7 @@ export function createRuntime<Ctx>(settings: Settings, core: boolean): Runtime<C
     load: <E extends Type = AnyType>(artifact: Artifact, options?: LoadOptions<E>) => {
       const expect = expectOption(options, 'Load')
       if (expect !== undefined) assertExpectSize(expect, 'Load option "expect"')
-      return load<InferChecked<E>>(readArtifact(artifact, settings), expect)
+      return load<Infer<E>>(readArtifact(artifact, settings), expect)
     },
     evaluate<R>(artifact: Artifact, ...args: Args<Ctx>): Promise<R> {
       try {
