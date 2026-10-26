@@ -44,6 +44,9 @@ describe('inference', () => {
       t.record(t.list(t.object({ id: t.string(), total: t.number(), paid: t.boolean() }))),
     ],
     ['user.nick ?? user.name', t.string()],
+    // A left side that is never null is the result; the right side never runs.
+    ['(user.age > 18) ?? 12', t.boolean()],
+    ['user.name ?? 0', t.string()],
     ['now() - user.created', t.duration()],
     ['user.created + days(1)', t.timestamp()],
     ['prefs.theme', t.optional(t.string())],
@@ -60,6 +63,27 @@ describe('inference', () => {
     const result = env.check(source)
     expect(result.diagnostics.filter((d) => d.severity === 'error')).toEqual([])
     expect(result.type).toEqual(expected)
+  })
+
+  it('types a blocked name as null, as it reads, whatever the object declares', () => {
+    const blocked = bonsai({ variables: { o: t.object({ constructor: t.number() }) } })
+    expect(blocked.check('o["constructor"]').type).toEqual(t.null())
+    expect(blocked.check('o["constructor"] ?? "fallback"').type).toEqual(t.string())
+    expect(blocked.evaluateSync('o["constructor"] ?? "fallback"', { o: { constructor: 5 } })).toBe(
+      'fallback',
+    )
+  })
+
+  it('warns that the right side of a never-null ?? is never used, and meets a boolean expect', () => {
+    const result = env.check('(user.age > 18) ?? 12', { expect: t.boolean() })
+    expect(result.ok).toBe(true)
+    expect(result.diagnostics).toMatchObject([
+      {
+        code: 'NEVER_NULL',
+        severity: 'warning',
+        message: 'The left side of "??" is never null, so the right side is never used',
+      },
+    ])
   })
 })
 

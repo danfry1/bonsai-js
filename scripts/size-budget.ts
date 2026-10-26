@@ -79,7 +79,7 @@ const cases: SizeCase[] = [
   {
     name: "bonsai({ variables: { a: fromSchema(...) } }).evaluateSync('1 + 2')",
     source: `import { bonsai, fromSchema } from ${entry}\nconsole.log(bonsai({ variables: { a: fromSchema({ type: 'string' }) } }).evaluateSync('1 + 2'))`,
-    maxGzipBytes: 73_800,
+    maxGzipBytes: 73_900,
   },
   {
     name: 'error helpers only',
@@ -94,9 +94,11 @@ const cases: SizeCase[] = [
   },
   {
     // The editor entry on its own: the checker without the compiler or runtime.
+    // 47.4 KB once a never-null ?? took its left side's type and blocked names
+    // checked as null (2026-10-26).
     name: 'language service only',
     source: `import { createLanguageService } from ${serviceEntry}\nconsole.log(createLanguageService)`,
-    maxGzipBytes: 47_300,
+    maxGzipBytes: 47_400,
   },
   {
     // Evaluating artifacts without the checker: the parser, binding, compiler,

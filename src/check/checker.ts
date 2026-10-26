@@ -1063,6 +1063,8 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       )
     }
     if (objectType.kind === 'map') {
+      // __proto__, constructor, and prototype read as null whatever the object declares.
+      if (BLOCKED_NAMES.has(name)) return NULL
       const field = fieldOf(objectType, name)
       if (field !== undefined) return field
       if (objectType.rest !== undefined) return t.optional(objectType.rest)
@@ -1184,8 +1186,16 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         return BOOLEAN
       }
       case '??':
-        if (!isNullable(left))
-          report('NEVER_NULL', 'The left side of "??" is never null', node.left, 'warning')
+        // The right side runs only when the left is null, so without null it adds nothing.
+        if (!isNullable(left)) {
+          report(
+            'NEVER_NULL',
+            'The left side of "??" is never null, so the right side is never used',
+            node.left,
+            'warning',
+          )
+          return left
+        }
         return unionOf([nonNull(left), right])
       case '==':
       case '!=':
