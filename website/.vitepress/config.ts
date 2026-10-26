@@ -1,5 +1,6 @@
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vitepress'
+import { bonsaiDark, bonsaiLight } from './shiki-themes'
 
 const src = (path: string) => fileURLToPath(new URL(`../../src/${path}`, import.meta.url))
 
@@ -15,6 +16,7 @@ export default defineConfig({
   markdown: {
     // Bonsai syntax is a subset of JavaScript expression syntax.
     languageAlias: { bonsai: 'js' },
+    theme: { light: bonsaiLight, dark: bonsaiDark },
     // Wrap every table so a wide one scrolls inside the content column
     // instead of running under the page outline (custom.css styles the wrapper).
     config(md) {
@@ -41,10 +43,13 @@ export default defineConfig({
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'Bonsai' }],
     ['meta', { property: 'og:image', content: 'https://bonsai.danfry.dev/og-card.png' }],
+    ['meta', { property: 'og:image:width', content: '1200' }],
+    ['meta', { property: 'og:image:height', content: '630' }],
+    ['meta', { property: 'og:image:alt', content: 'Bonsai: safe, typed expressions for JavaScript' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
     ['meta', { name: 'twitter:image', content: 'https://bonsai.danfry.dev/og-card.png' }],
-    ['meta', { property: 'og:title', content: 'Bonsai: safe, typed expressions for rules, filters, and templates' }],
-    ['meta', { name: 'twitter:title', content: 'Bonsai: safe, typed expressions for rules, filters, and templates' }],
+    ['meta', { property: 'og:title', content: 'Bonsai: safe, typed expressions for JavaScript' }],
+    ['meta', { name: 'twitter:title', content: 'Bonsai: safe, typed expressions for JavaScript' }],
   ],
   themeConfig: {
     logo: { light: '/logo.svg', dark: '/logo-dark.svg', alt: '' },
