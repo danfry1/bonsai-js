@@ -63,7 +63,7 @@ export const examples: Example[] = [
       { title: 'Guide', tags: ['tutorial', 'guide'] },
     ],
   }),
-  example('Lists', 'nested-lambdas', 'Nested lambdas', 'orders.filter(o => o.lines.some(.sku == o.promoSku)).map(.id)', {
+  example('Lists', 'nested-lambdas', 'Nested lambdas', 'orders\n  .filter(o => o.lines.some(.sku == o.promoSku))\n  .map(.id)', {
     orders: [
       { id: 'A1', promoSku: 'X', lines: [{ sku: 'X' }, { sku: 'Y' }] },
       { id: 'B2', promoSku: 'Z', lines: [{ sku: 'Y' }] },

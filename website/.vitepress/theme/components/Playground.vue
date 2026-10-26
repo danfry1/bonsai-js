@@ -354,10 +354,20 @@ async function share() {
         <section class="pane input">
           <div class="head">
             <h2>Expression</h2>
+            <!-- What the checker says, kept beside the text it is about. -->
+            <p v-if="settled.source.trim() !== ''" class="status" :class="{ bad: errors.length, stale: typing }">
+              <template v-if="errors.length">
+                {{ errors.length === 1 ? '1 problem' : `${errors.length} problems` }}
+              </template>
+              <template v-else-if="type">
+                <span class="tick" aria-hidden="true">✓</span> gives <code>{{ type }}</code>
+              </template>
+            </p>
           </div>
           <div ref="exprHost" class="editor expr">
             <pre class="fallback">{{ source }}</pre>
           </div>
+          <p class="hint">Ctrl Space suggests names and values. Hover a name to see its type.</p>
 
           <div class="head data-head">
             <h2>Data</h2>
@@ -383,7 +393,6 @@ async function share() {
               {{ v.label }}
             </button>
             <span class="meta">
-              <code v-if="type">{{ type }}</code>
               <span v-if="run && 'ms' in run && run.ms !== undefined">{{ run.ms < 0.1 ? '<0.1' : run.ms.toFixed(1) }} ms</span>
             </span>
           </div>
@@ -601,7 +610,8 @@ async function share() {
 .grid {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* The input gets the larger share, so expressions wrap less. */
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
   gap: 20px;
   min-height: 0;
 }
@@ -660,8 +670,10 @@ async function share() {
   box-shadow: 0 0 0 3px var(--vp-c-brand-soft);
 }
 
+/* The expression is what the page is about: on the card's own white, sized to its text. */
 .editor.expr {
-  min-height: 112px;
+  border-color: var(--vp-c-border);
+  background: var(--bonsai-card);
 }
 
 .editor.data {
@@ -683,7 +695,59 @@ async function share() {
 
 .editor.expr .fallback,
 .editor.expr :deep(.cm-content) {
-  font-size: 16px;
+  padding: 16px 12px;
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.editor.expr .fallback {
+  padding: 16px 18px;
+}
+
+/* A line too long for the box continues indented, so the wrap reads as a continuation. */
+.editor.expr :deep(.cm-line) {
+  padding-left: calc(6px + 2ch);
+  text-indent: -2ch;
+}
+
+.hint {
+  margin: 8px 2px 0;
+  color: var(--vp-c-text-3);
+  font-size: 12.5px;
+}
+
+/* ✓ gives string[], or how many problems the checker found. */
+.status {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 0 0 auto;
+  color: var(--vp-c-text-2);
+  font-size: 13px;
+  transition: opacity 0.15s;
+}
+
+.status code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--vp-font-family-mono);
+  color: var(--vp-c-text-1);
+}
+
+.status .tick {
+  color: var(--vp-c-brand-1);
+  font-weight: 700;
+}
+
+.status.bad {
+  color: var(--bonsai-error);
+  font-weight: 600;
+}
+
+.status.stale {
+  opacity: 0.5;
 }
 
 .fallback {
