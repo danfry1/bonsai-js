@@ -1,6 +1,6 @@
 {
   "name": "bonsai-js",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "A safe, zero-dependency expression language for rules, filters, and templates",
   "type": "module",
   "sideEffects": false,

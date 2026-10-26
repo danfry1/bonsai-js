@@ -18,7 +18,7 @@ async function copyInstall() {
   }
 }
 
-// From guide/comparison.md (measured 2026-10-14; Bonsai's sizes for 1.3.0 on 2026-10-26); keep the two in step.
+// From guide/comparison.md (measured 2026-10-14; Bonsai's sizes for 1.3.1 on 2026-10-26); keep the two in step.
 const compared = [
   {
     name: 'bonsai-js',

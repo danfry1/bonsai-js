@@ -2,14 +2,14 @@
 
 Several JavaScript libraries evaluate rules or expressions written outside your codebase. They make different trade-offs, and for many projects one of them is a better fit than Bonsai. This page compares them on facts measured on one machine or taken from each library's own documentation, so you can choose.
 
-Everything here was measured on 2026-10-14 with the versions listed under [Methodology](#methodology), except Bonsai's sizes, which were measured again for 1.3.0 on 2026-10-26. Libraries change; if a row is out of date, please open an issue.
+Everything here was measured on 2026-10-14 with the versions listed under [Methodology](#methodology), except Bonsai's sizes, which were measured again for 1.3.1 on 2026-10-26. Libraries change; if a row is out of date, please open an issue.
 
 ## At a glance
 
 | Library | Rules are | Min / gzip (browser) | Static check against a schema | Explains results | Evaluation budget (as documented) |
 | --- | --- | --- | --- | --- | --- |
-| bonsai-js/runtime/core 1.3.0, rules checked on a server | text, JS-like | 86.6 KB / 29.0 KB | Yes, where rules are saved | Yes, where rules are saved | Yes, on by default |
-| bonsai-js 1.3.0, checking in the browser | text, JS-like | 206.7 KB / 69.2 KB | Yes, with suggestions | Yes | Yes, on by default |
+| bonsai-js/runtime/core 1.3.1, rules checked on a server | text, JS-like | 86.6 KB / 29.0 KB | Yes, where rules are saved | Yes, where rules are saved | Yes, on by default |
+| bonsai-js 1.3.1, checking in the browser | text, JS-like | 206.7 KB / 69.2 KB | Yes, with suggestions | Yes | Yes, on by default |
 | @marcbachmann/cel-js 8.0.0 | text, CEL | 84.0 KB / 24.3 KB | Yes | No | Parse-time limits |
 | @gorules/zen-engine 2.1.2 | text expressions, JSON decisions | Node native addon; WASM build below | Yes (see notes) | Partial | Graph depth and function-node timeout |
 | json-rules-engine 7.3.1 | JSON | 83.5 KB / 24.3 KB | No | Yes | No |
@@ -39,7 +39,7 @@ Everything here was measured on 2026-10-14 with the versions listed under [Metho
 
 ## What Bonsai's size buys
 
-Size matters in the browser; on a server, none of these sizes is noticeable. Each row is the difference between two measured Bonsai 1.3.0 bundles (gzipped), so the costs add up to the entry sizes above.
+Size matters in the browser; on a server, none of these sizes is noticeable. Each row is the difference between two measured Bonsai 1.3.1 bundles (gzipped), so the costs add up to the entry sizes above.
 
 | Part | Cost | Where it runs | What jexl or expr-eval do instead |
 | --- | --- | --- | --- |
@@ -122,7 +122,7 @@ For the other libraries, the "Evaluation budget" column above records what each 
 
 | Package | Version used (published) | Newest on 2026-10-14 |
 | --- | --- | --- |
-| bonsai-js | 1.3.0 (2026-10-26), sizes only; features and throughput from commit `e2d89dc` | |
+| bonsai-js | 1.3.1 (2026-10-26), sizes only; features and throughput from commit `e2d89dc` | |
 | @marcbachmann/cel-js | 8.0.0 (2026-07-07) | 8.0.0 |
 | @gorules/zen-engine | 2.1.2 (2026-10-02) | 2.1.7 |
 | json-rules-engine | 7.3.1 (2025-02-20) | 7.3.1 |
