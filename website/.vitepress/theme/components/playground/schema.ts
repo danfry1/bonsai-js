@@ -1,34 +1,26 @@
-// Turns the playground's context rows (name + JSON text) into an evaluation
-// context and a variable schema, so the playground can type-check, complete,
-// and hover against the data the user typed.
+// Turns the playground's data (one JSON object, each key a variable) into an
+// evaluation context and a variable schema, so the playground can type-check,
+// complete, and hover against the data the user typed.
 import { t, type Type } from '../../../../../src/index.ts'
-
-export interface ContextRow {
-  name: string
-  value: string
-}
 
 const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/u
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/u
 // Keys Bonsai never reads; skipping them also keeps plain-object assignment safe.
 const BLOCKED = new Set(['__proto__', 'constructor', 'prototype'])
 
-/** Strict JSON first, then a relaxed form (single quotes, unquoted keys), then raw text. */
-export function parseValue(raw: string): unknown {
-  const text = raw.trim()
-  if (text === '') return null
+/** Strict JSON, else a relaxed form (single quotes, unquoted keys); throws strict JSON's error. */
+function parseJSON(text: string): unknown {
   try {
     return JSON.parse(text)
-  } catch {
-    // fall through
-  }
-  try {
+  } catch (error) {
     const normalized = text
       .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/gu, '"$1"')
       .replace(/(?<=[{,]\s*)([A-Za-z_$][\w$]*)\s*:/gu, '"$1":')
-    return JSON.parse(normalized)
-  } catch {
-    return raw
+    try {
+      return JSON.parse(normalized)
+    } catch {
+      throw error
+    }
   }
 }
 
@@ -86,18 +78,40 @@ function merge(a: Type, b: Type): Type {
   return t.any()
 }
 
-export function buildContext(rows: readonly ContextRow[]): {
-  context: Record<string, unknown>
-  variables: Record<string, Type>
-} {
+export type Data =
+  | { ok: true; context: Record<string, unknown>; variables: Record<string, Type> }
+  | { ok: false; message: string }
+
+/** The data as typed: a JSON object whose keys are the variables. Keys that aren't names are skipped. */
+export function parseData(text: string): Data {
+  let value: unknown
+  try {
+    value = text.trim() === '' ? {} : parseJSON(text)
+  } catch (error) {
+    return { ok: false, message: (error as Error).message }
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, message: 'The data must be a JSON object; each key is a variable.' }
+  }
   const context: Record<string, unknown> = {}
   const variables: Record<string, Type> = {}
-  for (const row of rows) {
-    const name = row.name.trim()
+  for (const [name, item] of Object.entries(value)) {
     if (!IDENTIFIER.test(name) || BLOCKED.has(name)) continue
-    const value = revive(parseValue(row.value))
-    context[name] = value
-    variables[name] = typeOf(value)
+    context[name] = revive(item)
+    variables[name] = typeOf(context[name])
   }
-  return { context, variables }
+  return { ok: true, context, variables }
+}
+
+/** One JSON object from the name and value text of each variable, as older share links store them. */
+export function fromRows(rows: Readonly<Record<string, string>>): string {
+  const out: Record<string, unknown> = {}
+  for (const [name, raw] of Object.entries(rows)) {
+    try {
+      out[name] = raw.trim() === '' ? null : parseJSON(raw)
+    } catch {
+      out[name] = raw
+    }
+  }
+  return JSON.stringify(out, null, 2)
 }

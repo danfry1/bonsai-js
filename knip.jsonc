@@ -15,9 +15,9 @@
   // npm is consumed by the release workflow, which knip does not trace. It
   // remains a devDependency so CI executes a lockfile-pinned, integrity-checked
   // binary instead of a registry fallback (OSSF Scorecard Pinned-Dependencies).
-  // The heading font is imported only by the website theme, which knip does not
-  // scan (see the entry note above).
-  "ignoreDependencies": ["npm", "@fontsource-variable/bricolage-grotesque"],
+  // The heading font and the playground's editor commands are imported only by
+  // the website theme, which knip does not scan (see the entry note above).
+  "ignoreDependencies": ["npm", "@fontsource-variable/bricolage-grotesque", "@codemirror/commands"],
   "rules": {
     // Unused *value* exports are real dead code and fail the gate. Unused *type*
     // exports are not: for a parser library the exported AST/error interfaces are

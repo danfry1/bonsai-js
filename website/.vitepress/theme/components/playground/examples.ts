@@ -1,218 +1,115 @@
 // Playground examples. `website/scripts/check-components.ts` evaluates every
 // example the way the playground does, so these stay valid.
-
-export interface ExampleVar {
-  name: string
-  value: string
-}
+import { prettyJSON } from './pretty'
 
 export interface Example {
   id: string
   group: string
   title: string
   expression: string
-  vars: ExampleVar[]
+  /** The data as JSON text: each key is a variable. */
+  data: string
   /** Examples that demonstrate a check error set this. */
   expectError?: string
 }
 
+const example = (
+  group: string,
+  id: string,
+  title: string,
+  expression: string,
+  data: Record<string, unknown>,
+  expectError?: string,
+): Example => ({ id, group, title, expression, data: prettyJSON(data, 56), ...(expectError ? { expectError } : {}) })
+
 export const examples: Example[] = [
-  {
-    id: 'free-shipping',
-    group: 'Common Rules',
-    title: 'Free Shipping Rule',
-    expression: 'customer.tier == "gold" || cart.items.map(.price * .qty).sum() >= 50',
-    vars: [
-      { name: 'customer', value: '{ "name": "Ada", "tier": "standard" }' },
-      { name: 'cart', value: '{\n  "items": [\n    { "sku": "TEA-01", "price": 18, "qty": 2 },\n    { "sku": "POT-07", "price": 22, "qty": 1 }\n  ]\n}' },
+  example(
+    'Rules',
+    'free-shipping',
+    'Free shipping',
+    'order.total >= 50 && (customer.tier == "gold" || order.country == "NZ")',
+    { order: { total: 84.5, country: 'NZ' }, customer: { name: 'Ada', tier: 'basic' } },
+  ),
+  example('Rules', 'can-edit', 'Who can edit', 'user.role in ["admin", "editor"] && !user.suspended', {
+    user: { name: 'Grace', role: 'editor', suspended: false },
+  }),
+  example('Rules', 'feature-flag', 'Feature flag', 'user.country in ["NZ", "AU"] && user.signupDays < 30', {
+    user: { country: 'AU', signupDays: 12, betaOptIn: true },
+  }),
+  example('Lists', 'saved-filter', 'Open tickets', 'tickets.filter(.status == "open" && .priority >= 2).map(.id)', {
+    tickets: [
+      { id: 101, status: 'open', priority: 3 },
+      { id: 102, status: 'closed', priority: 3 },
+      { id: 103, status: 'open', priority: 1 },
     ],
-  },
-  {
-    id: 'saved-filter',
-    group: 'Common Rules',
-    title: 'Saved Filter',
-    expression: 'tickets.filter(.status == "open" && .priority >= 2).map(.id)',
-    vars: [
-      {
-        name: 'tickets',
-        value:
-          '[\n  { "id": 101, "status": "open", "priority": 3 },\n  { "id": 102, "status": "closed", "priority": 3 },\n  { "id": 103, "status": "open", "priority": 1 }\n]',
-      },
+  }),
+  example('Lists', 'cart-total', 'Cart total', 'let total = cart.map(.price * .qty).sum();\ntotal > 100 ? total * 0.9 : total', {
+    cart: [
+      { sku: 'TEA-01', price: 40, qty: 2 },
+      { sku: 'POT-07', price: 25, qty: 1 },
     ],
-  },
-  {
-    id: 'notification',
-    group: 'Common Rules',
-    title: 'Notification Template',
-    expression: '`Hi ${user.firstName}, ${order.items.length} items in order ${order.id} have shipped.`',
-    vars: [
-      { name: 'user', value: '{ "firstName": "Ada" }' },
-      { name: 'order', value: '{ "id": "A1001", "items": ["TEA-01", "POT-07"] }' },
+  }),
+  example('Lists', 'sorting', 'Top two', 'players.sortBy(.score, "desc").map(.name).slice(0, 2)', {
+    players: [
+      { name: 'Ann', score: 42 },
+      { name: 'Ben', score: 87 },
+      { name: 'Cat', score: 61 },
     ],
-  },
-  { id: 'hello', group: 'Basics', title: 'Hello World', expression: '"hello".toUpperCase()', vars: [] },
-  {
-    id: 'templates',
-    group: 'Basics',
-    title: 'Template Literals',
-    expression: '`Hello ${name}!`',
-    vars: [{ name: 'name', value: '"world"' }],
-  },
-  {
-    id: 'ternary',
-    group: 'Basics',
-    title: 'Conditionals',
-    expression: 'age >= 18 ? "adult" : "minor"',
-    vars: [{ name: 'age', value: '21' }],
-  },
-  {
-    id: 'in-operator',
-    group: 'Basics',
-    title: 'Membership',
-    expression: 'role in ["admin", "editor"] ? "Can edit" : "Read only"',
-    vars: [{ name: 'role', value: '"editor"' }],
-  },
-  {
-    id: 'let',
-    group: 'Basics',
-    title: 'let Bindings',
-    expression: 'let total = cart.map(.price * .qty).sum();\ntotal > 100 ? total * 0.9 : total',
-    vars: [{ name: 'cart', value: '[\n  { "price": 40, "qty": 2 },\n  { "price": 25, "qty": 1 }\n]' }],
-  },
-  {
-    id: 'methods',
-    group: 'Text',
-    title: 'Method Chains',
-    expression: '"hello world".slice(0, 5).toUpperCase()',
-    vars: [],
-  },
-  {
-    id: 'string-format',
-    group: 'Text',
-    title: 'Formatting',
-    expression:
-      '`${name.toUpperCase()} scored ${score}%: ${score >= 90 ? "excellent" : score >= 70 ? "good" : "needs work"}`',
-    vars: [
-      { name: 'name', value: '"alice"' },
-      { name: 'score', value: '85' },
+  }),
+  example('Lists', 'unique-tags', 'Every tag once', 'posts.flatMap(.tags).unique().sort()', {
+    posts: [
+      { title: 'Intro', tags: ['js', 'tutorial'] },
+      { title: 'Advanced', tags: ['js', 'deep-dive'] },
+      { title: 'Guide', tags: ['tutorial', 'guide'] },
     ],
-  },
-  {
-    id: 'filtering',
-    group: 'Lists',
-    title: 'Filter and Map',
-    expression: 'users.filter(.age >= 18).map(.name)',
-    vars: [{ name: 'users', value: '[\n  { "name": "Alice", "age": 25 },\n  { "name": "Bob", "age": 15 }\n]' }],
-  },
-  {
-    id: 'sorting',
-    group: 'Lists',
-    title: 'Sorting',
-    expression: 'players.sortBy(.score, "desc").map(.name).slice(0, 2)',
-    vars: [
-      {
-        name: 'players',
-        value: '[\n  { "name": "Ann", "score": 42 },\n  { "name": "Ben", "score": 87 },\n  { "name": "Cat", "score": 61 }\n]',
-      },
+  }),
+  example('Lists', 'nested-lambdas', 'Nested lambdas', 'orders.filter(o => o.lines.some(.sku == o.promoSku)).map(.id)', {
+    orders: [
+      { id: 'A1', promoSku: 'X', lines: [{ sku: 'X' }, { sku: 'Y' }] },
+      { id: 'B2', promoSku: 'Z', lines: [{ sku: 'Y' }] },
     ],
-  },
-  {
-    id: 'unique-tags',
-    group: 'Lists',
-    title: 'Flatten and Unique',
-    expression: 'posts.flatMap(.tags).unique().sort()',
-    vars: [
-      {
-        name: 'posts',
-        value:
-          '[\n  { "title": "Intro", "tags": ["js", "tutorial"] },\n  { "title": "Advanced", "tags": ["js", "deep-dive"] },\n  { "title": "Guide", "tags": ["tutorial", "guide"] }\n]',
-      },
+  }),
+  example('Lists', 'group-by', 'Group by', 'tickets.groupBy(.status)', {
+    tickets: [
+      { id: 1, status: 'open' },
+      { id: 2, status: 'closed' },
+      { id: 3, status: 'open' },
     ],
-  },
-  {
-    id: 'nested-lambdas',
-    group: 'Lists',
-    title: 'Nested Lambdas',
-    expression: 'orders.filter(o => o.lines.some(.sku == o.promoSku)).map(.id)',
-    vars: [
-      {
-        name: 'orders',
-        value:
-          '[\n  { "id": "A1", "promoSku": "X", "lines": [{ "sku": "X" }, { "sku": "Y" }] },\n  { "id": "B2", "promoSku": "Z", "lines": [{ "sku": "Y" }] }\n]',
-      },
-    ],
-  },
-  {
-    id: 'group-by',
-    group: 'Lists',
-    title: 'Group By',
-    expression: 'tickets.groupBy(.status)',
-    vars: [
-      {
-        name: 'tickets',
-        value: '[\n  { "id": 1, "status": "open" },\n  { "id": 2, "status": "closed" },\n  { "id": 3, "status": "open" }\n]',
-      },
-    ],
-  },
-  { id: 'math', group: 'Numbers', title: 'Sum', expression: '[10, 20, 30].sum()', vars: [] },
-  {
-    id: 'grade-calc',
-    group: 'Numbers',
-    title: 'Average and Round',
-    expression: '(scores.avg() ?? 0).clamp(0, 100).round(1)',
-    vars: [{ name: 'scores', value: '[88, 92, 76, 95, 81]' }],
-  },
-  {
-    id: 'try',
-    group: 'Numbers',
-    title: 'Recovering with try',
-    expression: 'try(stats.visits / stats.days, 0)',
-    vars: [{ name: 'stats', value: '{ "visits": 120, "days": 0 }' }],
-  },
-  {
-    id: 'null-safety',
-    group: 'Null Safety',
-    title: 'Defaults',
-    expression: 'user.profile.avatar ?? "default.png"',
-    vars: [{ name: 'user', value: '{ "name": "Ada", "profile": null }' }],
-  },
-  {
-    id: 'optional-call',
-    group: 'Null Safety',
-    title: 'Optional Calls',
-    expression: 'user.nickname?.toUpperCase() ?? user.name',
-    vars: [{ name: 'user', value: '{ "name": "Ada", "nickname": null }' }],
-  },
-  {
-    id: 'account-age',
-    group: 'Time',
-    title: 'Durations',
-    expression: 'let age = now() - user.createdAt;\n`${floor(inDays(age))} days, older than 30: ${age > days(30)}`',
-    vars: [{ name: 'user', value: '{ "createdAt": "2025-06-01T09:00:00Z" }' }],
-  },
-  {
-    id: 'time-zones',
-    group: 'Time',
-    title: 'Time Zones',
-    expression: 'formatDate(order.placedAt, "dd/MM/yyyy HH:mm", "Asia/Tokyo")',
-    vars: [{ name: 'order', value: '{ "placedAt": "2026-01-14T23:30:00Z" }' }],
-  },
-  {
-    id: 'typo',
-    group: 'Checking',
-    title: 'Typos',
-    expression: 'user.agee >= 18',
-    vars: [{ name: 'user', value: '{ "name": "Ada", "age": 36 }' }],
-    expectError: 'UNKNOWN_PROPERTY',
-  },
-  {
-    id: 'strict-booleans',
-    group: 'Checking',
-    title: 'Strict Booleans',
-    expression: 'items.length && items[0] == "a"',
-    vars: [{ name: 'items', value: '["a"]' }],
-    expectError: 'TYPE_ERROR',
-  },
+  }),
+  example('Text', 'message', 'Message template', '`Hi ${user.firstName}, ${order.items.length} items in order ${order.id} have shipped.`', {
+    user: { firstName: 'Ada' },
+    order: { id: 'A1001', items: ['TEA-01', 'POT-07'] },
+  }),
+  example(
+    'Text',
+    'formatting',
+    'Formatting',
+    '`${name.toUpperCase()} scored ${score}%: ${score >= 90 ? "excellent" : score >= 70 ? "good" : "needs work"}`',
+    { name: 'alice', score: 85 },
+  ),
+  example('Text', 'methods', 'Text methods', 'title.trim().slice(0, 11).toUpperCase()', { title: '  hello world, again  ' }),
+  example('Numbers', 'average', 'Average and round', '(scores.avg() ?? 0).clamp(0, 100).round(1)', {
+    scores: [88, 92, 76, 95, 81],
+  }),
+  example('Numbers', 'try', 'Recover with try', 'try(stats.visits / stats.days, 0)', { stats: { visits: 120, days: 0 } }),
+  example('Missing values', 'defaults', 'Defaults', 'user.profile.avatar ?? "default.png"', {
+    user: { name: 'Ada', profile: null },
+  }),
+  example('Missing values', 'optional-call', 'Optional calls', 'user.nickname?.toUpperCase() ?? user.name', {
+    user: { name: 'Ada', nickname: null },
+  }),
+  example(
+    'Time',
+    'account-age',
+    'Durations',
+    'let age = now() - user.createdAt;\n`${floor(inDays(age))} days, older than 30: ${age > days(30)}`',
+    { user: { createdAt: '2025-06-01T09:00:00Z' } },
+  ),
+  example('Time', 'time-zones', 'Time zones', 'formatDate(order.placedAt, "dd/MM/yyyy HH:mm", "Asia/Tokyo")', {
+    order: { placedAt: '2026-01-14T23:30:00Z' },
+  }),
+  example('Mistakes', 'typo', 'A typo', 'user.agee >= 18', { user: { name: 'Ada', age: 36 } }, 'UNKNOWN_PROPERTY'),
+  example('Mistakes', 'strict-booleans', 'Not a boolean', 'items.length && items[0] == "a"', { items: ['a'] }, 'TYPE_ERROR'),
 ]
 
 export const defaultExample = examples[0]
