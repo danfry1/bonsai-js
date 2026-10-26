@@ -19,12 +19,15 @@ export type {
   Program,
 } from './environment.js'
 export { t, formatType, isAssignable } from './types.js'
+export { fromSchema } from './schema.js'
+export type { FromSchemaOptions, JSONSchema, StandardJSONSchema } from './schema.js'
 export type {
   AnyType,
   BooleanType,
   DurationType,
   FunctionType,
   Infer,
+  SchemaType,
   InferVariables,
   ListType,
   LiteralType,

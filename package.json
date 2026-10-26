@@ -156,7 +156,9 @@
     "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "22.20.5",
     "@types/pg": "8.23.1",
+    "@valibot/to-json-schema": "1.8.0",
     "@varlock/bumpy": "1.18.1",
+    "arktype": "2.2.8",
     "@vitest/coverage-v8": "4.1.12",
     "fast-check": "4.10.2",
     "knip": "6.42.0",
@@ -171,8 +173,10 @@
     "postgres": "3.4.9",
     "tsdown": "0.23.1",
     "typescript": "7.0.2",
+    "valibot": "1.5.0",
     "vitepress": "1.6.4",
-    "vitest": "4.1.12"
+    "vitest": "4.1.12",
+    "zod": "4.6.7"
   },
   "overrides": {
     "brace-expansion": "5.0.12",

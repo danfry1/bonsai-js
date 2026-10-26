@@ -141,6 +141,8 @@ env.compile('user.age + 1', { expect: t.boolean() }) // throws: CHECK
 
 Types: `t.string()`, `t.number()`, `t.boolean()`, `t.null()`, `t.timestamp()`, `t.duration()`, `t.literal(v)`, `t.enum(...values)`, `t.list(T)`, `t.object({...})`, `t.record(V)`, `t.optional(T)`, `t.union(...)`, `t.any()`, `t.opaque(name)` (a host value expressions can hold but not read), `t.never()`. `Infer<typeof type>` gives the TypeScript type.
 
+Already have a Zod, Valibot, ArkType, or JSON Schema schema? `fromSchema(User)` converts it, and the context is typed as the schema's output. See [types from your schemas](https://bonsai.danfry.dev/api/types#types-from-your-schemas).
+
 ## Host functions
 
 ```ts

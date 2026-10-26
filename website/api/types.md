@@ -1,6 +1,6 @@
 # Types (t)
 
-The `t` builders describe the data expressions run against. They serve three purposes at once: the checker uses them to catch mistakes, `Infer` derives TypeScript types from them, and `validateContext` checks incoming data against them.
+The `t` builders describe the data expressions run against. They serve three purposes at once: the checker uses them to catch mistakes, `Infer` derives TypeScript types from them, and `validateContext` checks incoming data against them. If your data already has a Zod, Valibot, ArkType, or JSON Schema schema, [`fromSchema`](#types-from-your-schemas) converts it instead.
 
 ```ts
 import { bonsai, t, formatType, type Infer } from 'bonsai-js'
@@ -109,7 +109,7 @@ isAssignable(t.optional(t.number()), t.number()) // => false
 
 ## Types are data
 
-Types are plain, frozen, JSON-serializable objects, so a schema can be stored, sent to a browser-based editor, or generated from another schema language (a JSON Schema, a database schema, or a form definition):
+Types are plain, frozen, JSON-serializable objects, so a schema can be stored, sent to a browser-based editor, or generated from another schema language (a database schema or a form definition; for Zod or JSON Schema, see [below](#types-from-your-schemas)):
 
 <!-- continue -->
 ```ts
@@ -117,3 +117,46 @@ JSON.stringify(t.optional(t.number())) // => '{"kind":"union","types":[{"kind":"
 ```
 
 The `kind` values are `any`, `never`, `null`, `boolean`, `number`, `string`, `timestamp`, `duration`, `literal`, `list`, `map`, `union`, and `opaque`, plus `function` and `var`, which appear only in built-in signatures. New kinds may be added in minor releases.
+
+## Types from your schemas
+
+If your app already describes its data with Zod, Valibot, ArkType, or JSON Schema, `fromSchema` turns that schema into a Bonsai type, so you don't write it twice:
+
+```ts
+import { z } from 'zod'
+import { bonsai, formatType, fromSchema } from 'bonsai-js'
+
+const User = z.object({
+  age: z.number(),
+  plan: z.enum(['free', 'pro']),
+  nickname: z.string().optional(),
+  joined: z.date(),
+})
+
+const env = bonsai({ variables: { user: fromSchema(User) } })
+const user = User.parse({ age: 30, plan: 'pro', joined: new Date('2026-01-05') })
+env.evaluateSync('user.age >= 18 && user.plan == "pro"', { user }) // => true
+formatType(fromSchema(User)) // => '{ age: number, plan: "free" | "pro", nickname: string | null, joined: timestamp }'
+```
+
+The type describes what the schema's `parse` returns, and the context is typed as that output (`z.output<typeof User>` here). Elsewhere, such as a host function's parameters or a program's result, the value was only checked against the converted type, so it is `unknown`, and so is `Infer` of a converted type. Parse it there (`User.parse(user)`) to get the library's type. `fromSchema` accepts:
+
+- **Zod 4 and ArkType** schemas, as they are.
+- **Valibot** schemas wrapped with `toStandardJsonSchema` from `@valibot/to-json-schema`.
+- **JSON Schema** objects (draft-07, 2020-12, or an OpenAPI 3.0 schema), with local `$ref`s.
+
+Any library that implements [Standard JSON Schema](https://standardschema.dev) works the same way. Passing a schema straight into `variables` throws an error that says to use `fromSchema`.
+
+Some parts have no shape Bonsai can read:
+
+- **Transforms** (`.transform()`, a Valibot `transform`) throw an error that names their JSON pointer. Give those parts a type with the `types` option: `fromSchema(Order, { types: { '/properties/total': t.number() } })`. Inside a `$ref`, use the definition's pointer (`'/$defs/Money/properties/cents'`); a pointer the schema doesn't have is an error. Pointers follow the JSON Schema the library writes, which the error message names. Simple Valibot conversions such as `toNumber` and `toDate` are read as their result. ArkType doesn't report its morphs, so they convert to `t.any()`.
+- **Recursive schemas** stop at their first repeat, which converts to `t.any()`.
+- **Dates** from Zod, Valibot, and ArkType become `timestamp`. In a plain JSON Schema, a `format: "date-time"` string stays a `string`, because the data holds a string. Write `"x-bonsai-type": "timestamp"` in the schema when the value is a `Date`.
+- **Maps, sets, bigints, and promises** become opaque types.
+- **Tuples** become lists of any of their members: `[string, number]` is `(string | number)[]`.
+- **ArkType's `object` domain** includes arrays, but its JSON Schema says `type: "object"`. So an ArkType object type with no required keys (`{ 'nickname?': 'string' }`, `{ '[string]': 'number' }`) or a JSON keyword (`string.json.parse`) converts to an object, though ArkType also accepts a list there. Give it `t.any()` with the `types` option if it may hold a list.
+
+Objects stay closed even when the JSON Schema allows other keys, so a typo is still an error. A schema with `additionalProperties` or `patternProperties` gets those keys as an open record. Bonsai numbers are finite, so with `validateContext`, an `Infinity` that a schema allows is still rejected. A union of objects keeps each member's fields, but the checker doesn't narrow on a discriminant: in `shape.kind == "circle" ? shape.radius : 0`, `shape.radius` checks as `any`.
+
+`fromSchema` may accept more schemas in minor releases. For a schema it already accepts, the type it produces won't get narrower, except to fix a type that rejects data the schema allows.
+
