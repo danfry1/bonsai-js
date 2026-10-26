@@ -118,9 +118,14 @@ function standardJSON(
     hidden.value.vendor === 'zod'
   )
     return undefined
-  const standard = (schema as StandardJSONSchema)['~standard']
-  const { vendor } = standard
-  if (typeof standard.jsonSchema?.output !== 'function')
+  const standard: unknown = schema['~standard']
+  if (!isRecord(standard))
+    throw new TypeError('fromSchema was given a malformed ~standard property')
+  const vendor = String(standard.vendor)
+  const jsonSchema = standard.jsonSchema as
+    | StandardJSONSchema['~standard']['jsonSchema']
+    | undefined
+  if (typeof jsonSchema?.output !== 'function')
     throw new TypeError(
       `This ${vendor} schema cannot describe itself as JSON Schema (Standard JSON Schema), so fromSchema cannot read it${
         vendor === 'valibot'
@@ -133,11 +138,16 @@ function standardJSON(
     : libraryOptions
   let first: unknown
   for (const target of ['draft-2020-12', 'draft-07']) {
+    let json: unknown
     try {
-      return standard.jsonSchema.output({ target, libraryOptions: own })
+      json = jsonSchema.output({ target, libraryOptions: own })
     } catch (error) {
       first ??= error
+      continue
     }
+    if (!isRecord(json))
+      throw new TypeError(`The ${vendor} schema wrote JSON Schema that is not an object`)
+    return json
   }
   throw new TypeError(
     `The ${vendor} schema could not be written as JSON Schema: ${first instanceof Error ? first.message : String(first)}`,
@@ -188,7 +198,9 @@ const VALIBOT_OBJECTS = new Set(['object', 'loose_object', 'strict_object', 'obj
  * may itself return undefined, so only a default value counts.
  */
 function defaulted(schema: ValibotSchema): boolean {
-  return schema.default !== undefined && typeof schema.default !== 'function'
+  return (
+    schema.default !== undefined && schema.default !== null && typeof schema.default !== 'function'
+  )
 }
 
 /** Valibot's `{ anyOf: [T, { type: 'null' }] }` for a nullable as T; anything else as it is. */
@@ -531,7 +543,8 @@ class Converter {
     const names = isRecord(node.propertyNames) ? node.propertyNames.enum : undefined
     if (Array.isArray(names) && rest.length > 0) {
       for (const key of names)
-        if (typeof key === 'string') field(key, union(rest), !required.has(key))
+        if (typeof key === 'string' && !Object.hasOwn(fields, key))
+          field(key, union(rest), !required.has(key))
       return t.object(fields)
     }
 
@@ -541,9 +554,13 @@ class Converter {
     const conditional: [string, unknown][] = []
     for (const key of ['then', 'else'] as const)
       if (node[key] !== undefined) conditional.push([key, node[key]])
-    if (isRecord(node.dependentSchemas))
-      for (const [key, schema] of Object.entries(node.dependentSchemas))
-        conditional.push([`dependentSchemas/${pointerKey(key)}`, schema])
+    // draft-07 `dependencies` holds both required lists and schemas; only schemas add keys.
+    for (const keyword of ['dependentSchemas', 'dependencies'] as const) {
+      const entries = node[keyword]
+      if (!isRecord(entries)) continue
+      for (const [key, schema] of Object.entries(entries))
+        if (!Array.isArray(schema)) conditional.push([`${keyword}/${pointerKey(key)}`, schema])
+    }
     for (const [path, schema] of conditional) {
       const type = this.convert(schema, `${at}/${path}`, depth + 1)
       for (const member of unionMembers(type)) {

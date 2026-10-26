@@ -44,7 +44,7 @@ import {
   isNullable,
   typeData,
   type AnyType,
-  type Infer,
+  type InferChecked,
   type InferVariables,
   type Type,
 } from './types.js'
@@ -88,17 +88,18 @@ export interface EvaluateOptions {
 }
 
 type InferParams<P extends readonly Type[]> = Extract<
-  { -readonly [K in keyof P]: Infer<P[K]> },
+  { -readonly [K in keyof P]: InferChecked<P[K]> },
   unknown[]
 >
 
 /** The arguments `run` receives: the declared parameters, then any rest arguments. */
 type RunArgs<P extends readonly Type[], RT> = RT extends Type
-  ? [...InferParams<P>, ...Infer<RT>[]]
+  ? [...InferParams<P>, ...InferChecked<RT>[]]
   : InferParams<P>
 
 /** What `run` may return: a nullable result also accepts `undefined`, which reads as null. */
-type RunResult<R extends Type> = null extends Infer<R> ? Infer<R> | undefined : Infer<R>
+type RunResult<R extends Type> =
+  null extends InferChecked<R> ? InferChecked<R> | undefined : InferChecked<R>
 
 /**
  * The standard `AbortSignal` when the consumer's types declare one (DOM or
@@ -506,7 +507,7 @@ export interface Environment<Ctx = any> {
   check: <E extends Type = AnyType>(
     source: string,
     options?: CompileOptions<E>,
-  ) => CheckResult<Ctx, Infer<E>>
+  ) => CheckResult<Ctx, InferChecked<E>>
   /**
    * Parses, checks, and compiles. Throws BonsaiSyntaxError / BonsaiCheckError /
    * BonsaiLimitError. Cached: the same source and expected type return the same program.
@@ -514,7 +515,7 @@ export interface Environment<Ctx = any> {
   compile: <E extends Type = AnyType>(
     source: string,
     options?: CompileOptions<E>,
-  ) => Program<Ctx, Infer<E>>
+  ) => Program<Ctx, InferChecked<E>>
   /**
    * Compiles (cached) and partially evaluates; see Program.partial. Throws for
    * syntax, check, and limit errors, and a TypeError or RangeError for invalid options.
@@ -594,12 +595,12 @@ export interface LiteEnvironment<Ctx = any> extends Omit<
   check: <E extends Type = AnyType>(
     source: string,
     options?: CompileOptions<E>,
-  ) => LiteCheckResult<Ctx, Infer<E>>
+  ) => LiteCheckResult<Ctx, InferChecked<E>>
   /** See Environment.compile. */
   compile: <E extends Type = AnyType>(
     source: string,
     options?: CompileOptions<E>,
-  ) => LiteProgram<Ctx, Infer<E>>
+  ) => LiteProgram<Ctx, InferChecked<E>>
   /** See Environment.extend. */
   extend: <
     const V2 extends Readonly<Record<string, Type>> = NoVariables,
@@ -1341,7 +1342,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
     check<E extends Type = AnyType>(
       source: string,
       options?: CompileOptions<E>,
-    ): CheckResult<Ctx, Infer<E>> {
+    ): CheckResult<Ctx, InferChecked<E>> {
       const expect = expectOption(options, 'Compile')
       let analysis: Analysis
       try {
@@ -1359,7 +1360,7 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
         ])
         return Object.freeze(new CheckFailure(undefined, diagnostics, undefined)) as CheckResult<
           Ctx,
-          Infer<E>
+          InferChecked<E>
         >
       }
       const diagnostics =
@@ -1368,20 +1369,20 @@ function createEnvironment<Ctx>(settings: Settings): Environment<Ctx> {
       if (analysis.diagnostics.some((d) => d.severity === 'error'))
         return Object.freeze(new CheckFailure(type, diagnostics, analysis)) as CheckResult<
           Ctx,
-          Infer<E>
+          InferChecked<E>
         >
-      let program: Program<Ctx, Infer<E>> | undefined
+      let program: Program<Ctx, InferChecked<E>> | undefined
       return Object.freeze(
         new CheckSuccess(
           type,
           diagnostics,
           analysis,
-          () => (program ??= makeProgram<Infer<E>>(source, analysis, expect)),
+          () => (program ??= makeProgram<InferChecked<E>>(source, analysis, expect)),
         ),
-      ) as CheckResult<Ctx, Infer<E>>
+      ) as CheckResult<Ctx, InferChecked<E>>
     },
     compile: <E extends Type = AnyType>(source: string, options?: CompileOptions<E>) =>
-      cachedCompile<Infer<E>>(source, expectOption(options, 'Compile')),
+      cachedCompile<InferChecked<E>>(source, expectOption(options, 'Compile')),
     // Without features (bonsai-js/lite), an environment has no partial or explain.
     ...(settings.features === undefined
       ? {}

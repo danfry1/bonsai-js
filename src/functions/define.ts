@@ -416,14 +416,14 @@ const TYPE_DEPTH_LIMIT = 64
  */
 export function assertType(value: unknown, path: string, depth = 0): asserts value is Type {
   if (depth > TYPE_DEPTH_LIMIT) throw new TypeError(`${path} nests deeper than ${TYPE_DEPTH_LIMIT}`)
+  // A Zod, Valibot, or ArkType schema (ArkType's are functions; Valibot's have a kind).
+  if (
+    (typeof value === 'object' || typeof value === 'function') &&
+    value !== null &&
+    '~standard' in value
+  )
+    throw new TypeError(`${path} is a schema object; convert it with fromSchema() first`)
   if (!isRecord(value) || typeof value.kind !== 'string') {
-    // A Zod, Valibot, or ArkType schema (ArkType's are functions).
-    if (
-      (typeof value === 'object' || typeof value === 'function') &&
-      value !== null &&
-      '~standard' in value
-    )
-      throw new TypeError(`${path} is a schema object; convert it with fromSchema() first`)
     throw new TypeError(`${path} must be a type built with t (got ${describe(value)})`)
   }
   switch (value.kind) {

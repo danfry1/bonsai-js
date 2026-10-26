@@ -3,7 +3,16 @@ import { type as ark } from 'arktype'
 import * as v from 'valibot'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { z } from 'zod'
-import { bonsai, fn, formatType, fromSchema, t, type JSONSchema, type Type } from '../src/index.js'
+import {
+  bonsai,
+  fn,
+  formatType,
+  fromSchema,
+  t,
+  type Infer,
+  type JSONSchema,
+  type Type,
+} from '../src/index.js'
 import { fromSchema as liteFromSchema } from '../src/lite/index.js'
 
 const shape = (schema: JSONSchema): string => formatType(fromSchema(schema))
@@ -360,6 +369,30 @@ describe('fromSchema with JSON Schema', () => {
     expect(shape({ type: 'string', 'x-nullable': true })).toBe('string | null')
   })
 
+  it('keeps declared properties beside an enum of key names, and reads draft-07 dependencies', () => {
+    expect(
+      shape({
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        propertyNames: { enum: ['a', 'b'] },
+        additionalProperties: { type: 'number' },
+      }),
+    ).toBe('{ a: string | null, b: number | null }')
+    expect(
+      shape({
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        dependencies: { a: { properties: { b: { type: 'number' } } }, c: ['a'] },
+      }),
+    ).toBe('{ a: string | null, b: number | null }')
+  })
+
+  it('refuses a malformed Standard JSON Schema', () => {
+    expect(() => fromSchema({ '~standard': null } as never)).toThrow('malformed ~standard')
+    const empty = { '~standard': { version: 1, vendor: 'x', jsonSchema: { output: () => null } } }
+    expect(() => fromSchema(empty as never)).toThrow('not an object')
+  })
+
   it('makes OpenAPI readOnly and writeOnly keys optional', () => {
     expect(
       shape({
@@ -455,6 +488,14 @@ describe('fromSchema accepts what each library parses', () => {
     const defaulted = fromSchema(toStandardJsonSchema(Defaulted))
     expect(formatType(defaulted)).toBe('{ a: string, b: number, c: string | null }')
     expect(accepts(defaulted, v.parse(Defaulted, {}))).toBe(true)
+    // A null default keeps null.
+    const NullDefault = v.object({
+      a: v.nullable(v.string(), null),
+      b: v.nullish(v.string(), null),
+    })
+    expect(
+      accepts(fromSchema(toStandardJsonSchema(NullDefault)), v.parse(NullDefault, { a: null })),
+    ).toBe(true)
     const Lazy = v.optional(v.string(), () => undefined)
     expect(accepts(fromSchema(toStandardJsonSchema(Lazy)), v.parse(Lazy, undefined))).toBe(true)
     expect(formatType(fromSchema(toStandardJsonSchema(v.looseObject({ a: v.string() }))))).toBe(
@@ -534,5 +575,11 @@ describe('schema objects passed where a type goes', () => {
     expect(() => bonsai({ variables: { user: ark({ a: 'string' }) as never } })).toThrow(
       'fromSchema()',
     )
+    expect(() => bonsai({ variables: { user: v.string() as never } })).toThrow('fromSchema()')
+  })
+
+  it('gives Infer the schema output', () => {
+    const User = fromSchema(z.object({ age: z.number() }))
+    expectTypeOf<Infer<typeof User>>().toEqualTypeOf<{ age: number }>()
   })
 })

@@ -149,10 +149,11 @@ Any library that implements [Standard JSON Schema](https://standardschema.dev) w
 
 Some parts have no shape Bonsai can read:
 
-- **Transforms** (`.transform()`, a Valibot `transform`) throw an error that names their JSON pointer. Give those parts a type with the `types` option: `fromSchema(Order, { types: { '/properties/total': t.number() } })`. Inside a `$ref`, use the definition's pointer (`'/$defs/Money/properties/cents'`); a pointer the schema doesn't have is an error. Simple Valibot conversions such as `toNumber` and `toDate` are read as their result. ArkType doesn't report its morphs, so they convert to `t.any()`.
+- **Transforms** (`.transform()`, a Valibot `transform`) throw an error that names their JSON pointer. Give those parts a type with the `types` option: `fromSchema(Order, { types: { '/properties/total': t.number() } })`. Inside a `$ref`, use the definition's pointer (`'/$defs/Money/properties/cents'`); a pointer the schema doesn't have is an error. Pointers follow the JSON Schema the library writes, which the error message names. Simple Valibot conversions such as `toNumber` and `toDate` are read as their result. ArkType doesn't report its morphs, so they convert to `t.any()`.
 - **Recursive schemas** stop at their first repeat, which converts to `t.any()`.
 - **Dates** from Zod, Valibot, and ArkType become `timestamp`. In a plain JSON Schema, a `format: "date-time"` string stays a `string`, because the data holds a string. Write `"x-bonsai-type": "timestamp"` in the schema when the value is a `Date`.
 - **Maps, sets, bigints, and promises** become opaque types.
+- **Tuples** become lists of any of their members: `[string, number]` is `(string | number)[]`.
 
 Objects stay closed even when the JSON Schema allows other keys, so a typo is still an error. A schema with `additionalProperties` or `patternProperties` gets those keys as an open record. Bonsai numbers are finite, so with `validateContext`, an `Infinity` that a schema allows is still rejected. A union of objects keeps each member's fields, but the checker doesn't narrow on a discriminant: in `shape.kind == "circle" ? shape.radius : 0`, `shape.radius` checks as `any`.
 
