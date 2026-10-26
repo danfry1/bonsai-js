@@ -1184,8 +1184,16 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         return BOOLEAN
       }
       case '??':
-        if (!isNullable(left))
-          report('NEVER_NULL', 'The left side of "??" is never null', node.left, 'warning')
+        // The right side runs only when the left is null, so without null it adds nothing.
+        if (!isNullable(left)) {
+          report(
+            'NEVER_NULL',
+            'The left side of "??" is never null, so the right side is never used',
+            node.left,
+            'warning',
+          )
+          return left
+        }
         return unionOf([nonNull(left), right])
       case '==':
       case '!=':
