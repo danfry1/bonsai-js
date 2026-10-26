@@ -1,0 +1,340 @@
+import { toStandardJsonSchema } from '@valibot/to-json-schema'
+import { type as ark } from 'arktype'
+import * as v from 'valibot'
+import { describe, expect, expectTypeOf, it } from 'vitest'
+import { z } from 'zod'
+import { bonsai, fn, formatType, fromSchema, t, type JSONSchema } from '../src/index.js'
+import { fromSchema as liteFromSchema } from '../src/lite/index.js'
+
+const shape = (schema: JSONSchema): string => formatType(fromSchema(schema))
+
+describe('fromSchema with Zod', () => {
+  const User = z.object({
+    age: z.number().int(),
+    plan: z.enum(['free', 'pro']),
+    nick: z.string().optional(),
+    joined: z.date(),
+    tags: z.array(z.string()).default([]),
+  })
+
+  it('checks and evaluates against the converted type', () => {
+    const env = bonsai({ variables: { user: fromSchema(User) } })
+    expect(formatType(env.variables!.user)).toBe(
+      '{ age: number, plan: "free" | "pro", nick: string | null, joined: timestamp, tags: string[] }',
+    )
+    const user = User.parse({ age: 30, plan: 'pro', joined: new Date(0) })
+    expect(env.evaluateSync('user.age >= 18 && user.plan == "pro"', { user })).toBe(true)
+    expect(env.check('user.agee').diagnostics[0]).toMatchObject({ code: 'UNKNOWN_PROPERTY' })
+    expect(env.check('user.plan == "gold"').diagnostics[0]).toMatchObject({ code: 'ALWAYS_FALSE' })
+    expect(env.check('user.joined > 5').ok).toBe(false)
+  })
+
+  it('types the context as the schema output', () => {
+    const env = bonsai({ variables: { user: fromSchema(User) } })
+    type Context = Parameters<typeof env.evaluateSync>[1]
+    expectTypeOf<Context>().toEqualTypeOf<{ readonly user: z.output<typeof User> }>()
+    const nested = bonsai({ variables: { order: t.object({ by: fromSchema(User) }) } })
+    expectTypeOf<Parameters<typeof nested.evaluateSync>[1]>().toEqualTypeOf<{
+      readonly order: { readonly by: z.output<typeof User> }
+    }>()
+  })
+
+  it('makes a variable from an optional schema an optional key', () => {
+    const env = bonsai({ variables: { coupon: fromSchema(z.string().optional()) } })
+    // Every key optional, so the context may be left out too.
+    expectTypeOf<NonNullable<Parameters<typeof env.evaluateSync>[1]>>().toEqualTypeOf<{
+      readonly coupon?: string | undefined
+    }>()
+    expect(env.evaluateSync('coupon ?? "none"', {})).toBe('none')
+  })
+
+  it('gives host function parameters unknown, since only the converted type was checked', () => {
+    const lookup = fn({
+      params: [fromSchema(z.string().brand('Id'))],
+      returns: t.string(),
+      run: (id) => {
+        expectTypeOf(id).toBeUnknown()
+        return String(id)
+      },
+    })
+    expect(bonsai({ functions: { lookup } }).evaluateSync('lookup("a")')).toBe('a')
+  })
+
+  it('marks values JSON Schema cannot state', () => {
+    const type = fromSchema(
+      z.object({
+        when: z.date().nullable(),
+        dates: z.array(z.date()),
+        ids: z.set(z.string()),
+        big: z.bigint(),
+        pending: z.promise(z.string()),
+        meta: z.record(z.string(), z.unknown()),
+      }),
+    )
+    expect(formatType(type)).toBe(
+      '{ when: timestamp | null, dates: timestamp[], ids: set, big: bigint, pending: promise, meta: { [key: string]: any } }',
+    )
+  })
+
+  it('reports a transform by its pointer, and takes a type for it', () => {
+    const Order = z.object({ total: z.string().transform(Number) })
+    expect(() => fromSchema(Order)).toThrow('"/properties/total" is a transform')
+    expect(() => fromSchema(z.object({ x: z.custom<string>() }))).toThrow('is a custom')
+    const type = fromSchema(Order, { types: { '/properties/total': t.number() } })
+    expect(formatType(type)).toBe('{ total: number }')
+  })
+
+  it('stops a recursive schema at its first repeat', () => {
+    interface CategoryData {
+      name: string
+      children: CategoryData[]
+    }
+    const Category: z.ZodType<CategoryData> = z.object({
+      name: z.string(),
+      get children() {
+        return z.array(Category)
+      },
+    })
+    expect(formatType(fromSchema(Category))).toBe('{ name: string, children: any[] }')
+  })
+
+  it('reads records with enum keys, tuples, and discriminated unions', () => {
+    expect(formatType(fromSchema(z.record(z.enum(['a', 'b']), z.number())))).toBe(
+      '{ a: number, b: number }',
+    )
+    expect(formatType(fromSchema(z.tuple([z.string(), z.number()])))).toBe('(string | number)[]')
+    const Shape = z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('circle'), r: z.number() }),
+      z.object({ kind: z.literal('square'), side: z.number() }),
+    ])
+    expect(formatType(fromSchema(Shape))).toBe(
+      '{ kind: "circle", r: number } | { kind: "square", side: number }',
+    )
+  })
+
+  it('runs the caller’s hook after its own, so the hook can mark a part', () => {
+    const When = z.instanceof(Date)
+    const type = fromSchema(z.object({ at: When }), {
+      libraryOptions: {
+        override: (ctx: { zodSchema: unknown; jsonSchema: Record<string, unknown> }) => {
+          if (ctx.zodSchema === When) ctx.jsonSchema['x-bonsai-type'] = 'timestamp'
+        },
+      },
+    })
+    expect(formatType(type)).toBe('{ at: timestamp }')
+  })
+})
+
+describe('fromSchema with Valibot and ArkType', () => {
+  it('reads a Valibot schema wrapped as Standard JSON Schema', () => {
+    const Schema = v.object({ name: v.string(), age: v.optional(v.number()), joined: v.date() })
+    const User = toStandardJsonSchema(Schema)
+    expect(formatType(fromSchema(User))).toBe(
+      '{ name: string, age: number | null, joined: timestamp }',
+    )
+    const env = bonsai({ variables: { user: fromSchema(User) } })
+    expectTypeOf<Parameters<typeof env.evaluateSync>[1]>().toEqualTypeOf<{
+      readonly user: v.InferOutput<typeof Schema>
+    }>()
+  })
+
+  it('says how to wrap a bare Valibot schema', () => {
+    expect(() => fromSchema(v.string() as never)).toThrow('toStandardJsonSchema')
+  })
+
+  it('reads an ArkType type', () => {
+    const User = ark({ name: 'string', 'age?': 'number', joined: 'Date', plan: "'free' | 'pro'" })
+    expect(formatType(fromSchema(User))).toBe(
+      '{ joined: timestamp, name: string, plan: "free" | "pro", age: number | null }',
+    )
+  })
+})
+
+describe('fromSchema with JSON Schema', () => {
+  it('maps the core keywords', () => {
+    expect(
+      shape({
+        type: 'object',
+        properties: {
+          id: { type: 'integer' },
+          name: { type: ['string', 'null'] },
+          status: { enum: ['open', 'closed', null] },
+          kind: { type: 'string', const: 'order' },
+          lines: {
+            type: 'array',
+            items: { type: 'object', properties: { sku: { type: 'string' } }, required: ['sku'] },
+          },
+          at: { type: 'string', format: 'date-time' },
+        },
+        required: ['id', 'name', 'status', 'kind', 'lines', 'at'],
+      }),
+    ).toBe(
+      '{ id: number, name: string | null, status: "open" | "closed" | null, kind: "order", lines: { sku: string }[], at: string }',
+    )
+  })
+
+  it('keeps an object closed unless it states its other keys', () => {
+    expect(shape({ type: 'object', properties: { a: { type: 'string' } } })).toBe(
+      '{ a: string | null }',
+    )
+    expect(
+      shape({ properties: { a: { type: 'string' } }, additionalProperties: { type: 'number' } }),
+    ).toBe('{ a: string | null, [key: string]: number }')
+    expect(shape({ type: 'object', patternProperties: { '^x-': { type: 'string' } } })).toBe(
+      '{ [key: string]: string }',
+    )
+    // Free-form: nothing is known about its keys.
+    expect(shape({ type: 'object' })).toBe('any')
+    expect(shape({ type: 'object', additionalProperties: false })).toBe('{}')
+  })
+
+  it('follows refs, including JSON pointer escapes', () => {
+    expect(
+      shape({
+        $defs: {
+          'a/b': { type: 'number' },
+          Money: {
+            type: 'object',
+            properties: { cents: { $ref: '#/$defs/a~1b' } },
+            required: ['cents'],
+          },
+        },
+        type: 'object',
+        properties: { price: { $ref: '#/$defs/Money' } },
+        required: ['price'],
+      }),
+    ).toBe('{ price: { cents: number } }')
+  })
+
+  it('applies OpenAPI 3.0 nullable, also beside allOf', () => {
+    expect(
+      shape({
+        components: {
+          Address: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
+        },
+        allOf: [{ $ref: '#/components/Address' }],
+        nullable: true,
+      }),
+    ).toBe('{ city: string } | null')
+  })
+
+  it('merges allOf and applies keywords beside oneOf to each member', () => {
+    expect(
+      shape({
+        allOf: [
+          { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+          { type: 'object', properties: { name: { type: 'string' } } },
+          { description: 'only an annotation' },
+        ],
+      }),
+    ).toBe('{ id: string, name: string | null }')
+    expect(
+      shape({
+        type: 'object',
+        properties: { email: { type: 'string' }, phone: { type: 'string' } },
+        oneOf: [{ required: ['email'] }, { required: ['phone'] }],
+      }),
+    ).toBe('{ email: string | null, phone: string | null }')
+    expect(() => shape({ allOf: [{ type: 'string' }, { type: 'number' }] })).toThrow(
+      'no value can match',
+    )
+  })
+
+  it('folds properties a condition adds in as optional fields', () => {
+    expect(
+      shape({
+        type: 'object',
+        properties: { country: { type: 'string' } },
+        required: ['country'],
+        if: { properties: { country: { const: 'US' } } },
+        then: { properties: { state: { type: 'string' } }, required: ['state'] },
+        else: { properties: { region: { type: 'string' } } },
+      }),
+    ).toBe('{ country: string, state: string | null, region: string | null }')
+  })
+
+  it('reads draft-07 tuples and empty arrays', () => {
+    expect(
+      shape({
+        $schema: 'http://json-schema.org/draft-07/schema#',
+        type: 'array',
+        items: [{ type: 'string' }],
+        additionalItems: false,
+      }),
+    ).toBe('string[]')
+    expect(shape({ type: 'array', items: false })).toBe('never[]')
+    expect(shape({ type: 'array' })).toBe('any[]')
+  })
+
+  it('reads the x-bonsai-type keyword', () => {
+    expect(shape({ type: 'string', 'x-bonsai-type': 'timestamp' })).toBe('timestamp')
+    expect(shape({ 'x-bonsai-type': 'opaque:Money' })).toBe('Money')
+    expect(() => shape({ 'x-bonsai-type': 'date' })).toThrow('must be "timestamp"')
+  })
+
+  it('takes types for parts by JSON pointer, inside refs too', () => {
+    const type = fromSchema(
+      {
+        $defs: { When: { type: 'string' } },
+        type: 'object',
+        properties: { at: { $ref: '#/$defs/When' } },
+        required: ['at'],
+      },
+      { types: { '/$defs/When': t.timestamp() } },
+    )
+    expect(formatType(type)).toBe('{ at: timestamp }')
+  })
+
+  it('refuses what it cannot follow', () => {
+    expect(() => shape({ $ref: 'https://example.com/schema.json' })).toThrow(
+      'only refs inside the schema',
+    )
+    expect(() => shape({ $ref: '#/$defs/Missing' })).toThrow('does not contain')
+    expect(() => shape({ $ref: '#/constructor/prototype' })).toThrow('does not contain')
+    expect(() => shape({ type: 'date' })).toThrow('unknown type "date"')
+    expect(() => shape({ enum: [{ a: 1 }] })).toThrow('not a string, number, boolean, or null')
+    expect(() => fromSchema(t.string() as never)).toThrow('Bonsai type')
+    expect(() => fromSchema(42 as never)).toThrow('expects a schema')
+  })
+
+  it('leaves out fields that cannot be read', () => {
+    const type = fromSchema(
+      JSON.parse(
+        '{"type":"object","properties":{"__proto__":{"type":"string"},"ok":{"type":"string"}}}',
+      ) as JSONSchema,
+    )
+    expect(formatType(type)).toBe('{ ok: string | null }')
+    expect(Object.getPrototypeOf(type.kind === 'map' ? type.fields : null)).toBe(Object.prototype)
+  })
+
+  it('bounds how far refs expand', () => {
+    // Each definition uses the one before it twice: 2^40 parts if inlined.
+    const defs: Record<string, JSONSchema> = { d0: { type: 'string' } }
+    for (let i = 1; i <= 40; i++)
+      defs[`d${i}`] = {
+        type: 'object',
+        properties: { a: { $ref: `#/$defs/d${i - 1}` }, b: { $ref: `#/$defs/d${i - 1}` } },
+      }
+    const started = performance.now()
+    expect(() => fromSchema({ $defs: defs, $ref: '#/$defs/d40' })).toThrow('expands to more than')
+    expect(performance.now() - started).toBeLessThan(2000)
+    expect(() => fromSchema({ enum: Array.from({ length: 30_000 }, (_, i) => i) })).toThrow(
+      'expands to more than',
+    )
+  })
+
+  it('is exported from the lite entry', () => {
+    expect(liteFromSchema).toBe(fromSchema)
+  })
+})
+
+describe('schema objects passed where a type goes', () => {
+  it('says to convert them with fromSchema', () => {
+    expect(() => bonsai({ variables: { user: z.object({}) as never } })).toThrow(
+      'Variable "user" is a schema object; convert it with fromSchema() first',
+    )
+    expect(() => bonsai({ variables: { user: ark({ a: 'string' }) as never } })).toThrow(
+      'fromSchema()',
+    )
+  })
+})
