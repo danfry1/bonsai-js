@@ -70,16 +70,16 @@ const cases: SizeCase[] = [
     maxGzipBytes: 1000,
   },
   {
-    // Converting an app's own schemas: 7.0 KB alone, 3.6 KB over bonsai(), with
+    // Converting an app's own schemas: 7.2 KB alone, 3.9 KB over bonsai(), with
     // each library's hooks for dates, transforms, and undefined (2026-10-26).
     name: 'fromSchema only',
     source: `import { fromSchema } from ${entry}\nconsole.log(fromSchema({ type: 'string' }))`,
-    maxGzipBytes: 7_100,
+    maxGzipBytes: 7_400,
   },
   {
     name: "bonsai({ variables: { a: fromSchema(...) } }).evaluateSync('1 + 2')",
     source: `import { bonsai, fromSchema } from ${entry}\nconsole.log(bonsai({ variables: { a: fromSchema({ type: 'string' }) } }).evaluateSync('1 + 2'))`,
-    maxGzipBytes: 73_200,
+    maxGzipBytes: 73_500,
   },
   {
     name: 'error helpers only',

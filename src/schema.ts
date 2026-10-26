@@ -95,21 +95,11 @@ const BONSAI_KINDS = new Set(['any', 'never', 'literal', 'list', 'map', 'union',
 function isBonsaiType(value: unknown): boolean {
   if (!isRecord(value) || typeof value.kind !== 'string') return false
   if (!BONSAI_KINDS.has(value.kind) && !PRIMITIVE_KINDS.has(value.kind)) return false
-  return !SCHEMA_KEYWORDS.some((key) => key in value)
+  return ![...SCHEMA_KEYWORDS, ...OBJECT_KEYWORDS, ...ARRAY_KEYWORDS].some((key) => key in value)
 }
 
 const PRIMITIVE_KINDS = new Set(['null', 'boolean', 'number', 'string', 'timestamp', 'duration'])
-const SCHEMA_KEYWORDS = [
-  'type',
-  'properties',
-  '$ref',
-  'anyOf',
-  'oneOf',
-  'allOf',
-  'enum',
-  'const',
-  'items',
-]
+const SCHEMA_KEYWORDS = ['type', 'properties', '$ref', 'anyOf', 'oneOf', 'allOf', 'enum', 'const']
 
 /** The JSON Schema a Standard JSON Schema writes, or undefined for a plain JSON Schema. */
 function standardJSON(
@@ -119,6 +109,12 @@ function standardJSON(
   if ((typeof schema !== 'object' && typeof schema !== 'function') || schema === null)
     return undefined
   if (!('~standard' in schema)) return undefined
+  // `z.toJSONSchema` returns plain JSON with a hidden `~standard`: read the JSON as given.
+  if (
+    Object.getPrototypeOf(schema) === Object.prototype &&
+    Object.getOwnPropertyDescriptor(schema, '~standard')?.enumerable === false
+  )
+    return undefined
   const standard = (schema as StandardJSONSchema)['~standard']
   const { vendor } = standard
   if (typeof standard.jsonSchema?.output !== 'function')
@@ -182,6 +178,8 @@ const VALIBOT_SAME_TYPE = new Set([
   'flavor',
   'readonly',
   'guard',
+  'args',
+  'returns',
   'trim',
   'trim_start',
   'trim_end',
@@ -224,31 +222,42 @@ const VENDORS: Readonly<
     unrepresentable: 'any',
     ...options,
     override: (ctx: {
-      zodSchema: { _zod: { def: { type: string; values?: unknown[] } } }
+      zodSchema: { _zod: { def: { type: string; values?: unknown[] }; optout?: string } }
       jsonSchema: Record<string, unknown>
     }) => {
       // oxlint-disable-next-line eslint/no-underscore-dangle -- Zod's own name for a schema's internals
-      const { def } = ctx.zodSchema._zod
+      const { def, optout } = ctx.zodSchema._zod
       let mark = markOf(def.type)
       // `z.literal(1n)` writes `{ const: 1 }`.
       if (def.type === 'literal' && def.values?.some((value) => typeof value === 'bigint') === true)
         mark = def.values.every((value) => typeof value === 'bigint') ? 'opaque:bigint' : 'any'
       if (mark !== undefined) ctx.jsonSchema[MARK] = mark
-      if (def.type === 'optional') ctx.jsonSchema[OPTIONAL] = true
+      // Zod copies a child's JSON into wrappers like `.default()`, which take undefined away.
+      if (
+        def.type === 'optional' ||
+        (def.type === 'literal' && def.values?.includes(undefined) === true)
+      )
+        ctx.jsonSchema[OPTIONAL] = true
+      else if (optout !== 'optional') delete ctx.jsonSchema[OPTIONAL]
       if (typeof options.override === 'function') (options.override as Hook)(ctx as never)
     },
   }),
   valibot: (options) => ({
     errorMode: 'ignore',
     ...options,
-    overrideSchema: (ctx: { valibotSchema: { type: string }; jsonSchema: object }) => {
+    overrideSchema: (ctx: {
+      valibotSchema: { type: string; default?: unknown }
+      jsonSchema: object
+    }) => {
       const theirs =
         typeof options.overrideSchema === 'function'
           ? (options.overrideSchema as Hook)(ctx as never)
           : undefined
       if (theirs !== undefined) return theirs
       const { type } = ctx.valibotSchema
-      if (VALIBOT_OPTIONAL.has(type)) return { ...ctx.jsonSchema, [OPTIONAL]: true }
+      // With a default, parsing replaces undefined.
+      if (VALIBOT_OPTIONAL.has(type) && ctx.valibotSchema.default === undefined)
+        return { ...ctx.jsonSchema, [OPTIONAL]: true }
       const mark = markOf(type)
       return mark === undefined ? undefined : { [MARK]: mark }
     },
@@ -277,6 +286,8 @@ const VENDORS: Readonly<
       patternIntersection: (ctx: { base: unknown }) => ctx.base,
       defaultValue: (ctx: { base: unknown }) => ctx.base,
       symbolKey: (ctx: { base: unknown }) => ctx.base,
+      // `'string | undefined'`: undefined reads as null.
+      unit: (ctx: { unit: unknown }) => (ctx.unit === undefined ? { type: 'null' } : {}),
       // Anything else (a postfix tuple, a unit like undefined) is any value.
       default: () => ({}),
       ...(typeof options.fallback === 'function' ? { default: options.fallback } : {}),
@@ -299,7 +310,7 @@ const OPTIONAL = 'x-bonsai-optional'
  * Parts one conversion may build: schema nodes expanded (each `$ref` use
  * counts again), enum members, and pairs an intersection compares.
  */
-const BUDGET = 20_000
+const BUDGET = 100_000
 /** What the conversion in progress has left; conversions are synchronous, so one at a time. */
 let budgetLeft = 0
 
@@ -329,6 +340,10 @@ class Converter {
   private readonly overrides: Readonly<Record<string, Type>>
   /** The `types` pointers the schema has. */
   readonly used = new Set<string>()
+  /** Refs already converted, outside any cycle. */
+  private readonly refs = new Map<string, Type>()
+  /** Cycles cut so far, to tell whether a ref's type depends on the refs around it. */
+  private cuts = 0
 
   constructor(root: JSONSchema, overrides: Readonly<Record<string, Type>>) {
     this.root = root
@@ -352,9 +367,10 @@ class Converter {
     if (node === false) return t.never()
     if (!isRecord(node)) throw new TypeError(`The schema at "${at}" is not a schema object`)
     const type = this.shape(node, at, depth)
-    const openAPINull =
-      node.nullable === true && !(Array.isArray(node.enum) && !node.enum.includes(null))
-    return openAPINull || node[OPTIONAL] === true ? maybe(type) : type
+    // OpenAPI 3.0 `nullable` (Swagger 2 `x-nullable`) adds null, even beside an enum
+    // without null, which generators write for a nullable enum.
+    const nullable = node.nullable === true || node['x-nullable'] === true
+    return nullable || node[OPTIONAL] === true ? maybe(type) : type
   }
 
   private shape(node: Record<string, unknown>, at: string, depth: number): Type {
@@ -461,6 +477,8 @@ class Converter {
     if (isRecord(node.patternProperties))
       for (const [pattern, schema] of Object.entries(node.patternProperties))
         rest.push(this.convert(schema, `${at}/patternProperties/${pointerKey(pattern)}`, depth + 1))
+    // Keys no pattern matches may hold anything unless the schema says otherwise (`^x-` extensions).
+    if (isRecord(node.patternProperties) && extra === undefined) rest.push(t.any())
 
     // A record keyed by an enum (`z.record(z.enum(['a', 'b']), V)`) has exactly those keys.
     const names = isRecord(node.propertyNames) ? node.propertyNames.enum : undefined
@@ -503,7 +521,16 @@ class Converter {
         `The schema at "${at}" refers to "${ref}"; only refs inside the schema ("#/...") are followed`,
       )
     // A ref back into itself (a tree, a recursive Zod schema) stops there as any value.
-    if (this.active.has(ref)) return t.any()
+    if (this.active.has(ref)) {
+      this.cuts++
+      return t.any()
+    }
+    const known = this.refs.get(ref)
+    if (known !== undefined) {
+      // Reused, the type is still walked as a tree by everything that reads it.
+      spend(treeSize(known), at)
+      return known
+    }
     let node: unknown = this.root
     for (const raw of ref === '#' ? [] : ref.slice(2).split('/')) {
       const key = decodePointer(raw)
@@ -516,12 +543,33 @@ class Converter {
       node = (node as Record<string, unknown>)[key]
     }
     this.active.add(ref)
+    const cuts = this.cuts
     try {
-      return this.convert(node, ref.slice(1), depth + 1)
+      const type = this.convert(node, ref.slice(1), depth + 1)
+      // Without a cycle cut inside, the type does not depend on where the ref is used.
+      if (this.cuts === cuts) this.refs.set(ref, type)
+      return type
     } finally {
       this.active.delete(ref)
     }
   }
+}
+
+const sizes = new WeakMap<Type, number>()
+
+/** How many parts a type has, counting a shared part each time it appears. */
+function treeSize(type: Type): number {
+  const known = sizes.get(type)
+  if (known !== undefined) return known
+  let size = 1
+  if (type.kind === 'list') size += treeSize(type.element)
+  else if (type.kind === 'union') for (const member of type.types) size += treeSize(member)
+  else if (type.kind === 'map') {
+    for (const key of Object.keys(type.fields)) size += treeSize(type.fields[key])
+    if (type.rest !== undefined) size += treeSize(type.rest)
+  }
+  sizes.set(type, size)
+  return size
 }
 
 /** The kinds a node's `type` names; without one, the kind its keywords imply, if any. */

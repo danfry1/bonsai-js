@@ -154,7 +154,7 @@ Some parts have no shape Bonsai can read:
 - **Dates** from Zod, Valibot, and ArkType become `timestamp`. In a plain JSON Schema, a `format: "date-time"` string stays a `string`, because the data holds a string. Write `"x-bonsai-type": "timestamp"` in the schema when the value is a `Date`.
 - **Maps, sets, bigints, and promises** become opaque types.
 
-Objects stay closed even when the JSON Schema allows other keys, so a typo is still an error. A schema with `additionalProperties` gets those keys as an open record. A union of objects keeps each member's fields, but the checker doesn't narrow on a discriminant: in `shape.kind == "circle" ? shape.radius : 0`, `shape.radius` checks as `any`.
+Objects stay closed even when the JSON Schema allows other keys, so a typo is still an error. A schema with `additionalProperties` or `patternProperties` gets those keys as an open record. Bonsai numbers are finite, so with `validateContext`, an `Infinity` that a schema allows is still rejected. A union of objects keeps each member's fields, but the checker doesn't narrow on a discriminant: in `shape.kind == "circle" ? shape.radius : 0`, `shape.radius` checks as `any`.
 
 `fromSchema` may accept more schemas in minor releases. For a schema it already accepts, the type it produces won't get narrower, except to fix a type that rejects data the schema allows.
 

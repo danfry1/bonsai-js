@@ -180,9 +180,13 @@ describe('fromSchema with JSON Schema', () => {
     expect(
       shape({ properties: { a: { type: 'string' } }, additionalProperties: { type: 'number' } }),
     ).toBe('{ a: string | null, [key: string]: number }')
-    expect(shape({ type: 'object', patternProperties: { '^x-': { type: 'string' } } })).toBe(
-      '{ [key: string]: string }',
-    )
+    expect(
+      shape({
+        type: 'object',
+        patternProperties: { '^x-': { type: 'string' } },
+        additionalProperties: false,
+      }),
+    ).toBe('{ [key: string]: string }')
     // Free-form: nothing is known about its keys.
     expect(shape({ type: 'object' })).toBe('any')
     expect(shape({ type: 'object', additionalProperties: false })).toBe('{}')
@@ -318,9 +322,48 @@ describe('fromSchema with JSON Schema', () => {
     const started = performance.now()
     expect(() => fromSchema({ $defs: defs, $ref: '#/$defs/d40' })).toThrow('expands to more than')
     expect(performance.now() - started).toBeLessThan(2000)
-    expect(() => fromSchema({ enum: Array.from({ length: 30_000 }, (_, i) => i) })).toThrow(
+    expect(() => fromSchema({ enum: Array.from({ length: 150_000 }, (_, i) => i) })).toThrow(
       'expands to more than',
     )
+    // A code list of 25,000 values fits.
+    expect(fromSchema({ enum: Array.from({ length: 25_000 }, (_, i) => `c${i}`) }).kind).toBe(
+      'union',
+    )
+  })
+
+  it('converts a ref used many times once, and charges each use', () => {
+    const uses: Record<string, JSONSchema> = {}
+    for (let i = 0; i < 300; i++) uses[`u${i}`] = { $ref: '#/$defs/Money' }
+    const type = fromSchema({
+      $defs: {
+        Money: { type: 'object', properties: { cents: { type: 'number' } }, required: ['cents'] },
+      },
+      type: 'object',
+      properties: uses,
+      required: Object.keys(uses),
+    })
+    if (type.kind !== 'map') throw new Error('expected a map')
+    expect(type.fields.u0).toBe(type.fields.u299)
+  })
+
+  it('lets keys no pattern matches hold anything', () => {
+    const extensions = { type: 'object', patternProperties: { '^x-': { type: 'string' } } }
+    expect(shape(extensions)).toBe('{ [key: string]: any }')
+    expect(accepts(fromSchema(extensions), { 'x-a': 's', other: 1 })).toBe(true)
+    expect(shape({ ...extensions, additionalProperties: false })).toBe('{ [key: string]: string }')
+    const Loose = z.looseRecord(z.string().regex(/^x/u), z.number())
+    expect(accepts(fromSchema(Loose), Loose.parse({ x1: 1, other: 'str' }))).toBe(true)
+  })
+
+  it('adds null for OpenAPI nullable beside an enum, and for Swagger x-nullable', () => {
+    expect(shape({ type: 'string', enum: ['a', 'b'], nullable: true })).toBe('"a" | "b" | null')
+    expect(shape({ type: 'string', 'x-nullable': true })).toBe('string | null')
+  })
+
+  it('reads the JSON z.toJSONSchema returns as given', () => {
+    const json = z.toJSONSchema(z.object({ when: z.string() }), { target: 'draft-07' })
+    ;(json.properties!.when as Record<string, unknown>)['x-bonsai-type'] = 'timestamp'
+    expect(formatType(fromSchema(json))).toBe('{ when: timestamp }')
   })
 
   it('is exported from the lite entry', () => {
@@ -342,6 +385,13 @@ describe('fromSchema accepts what each library parses', () => {
     const Pair = z.tuple([z.string(), z.number().optional()])
     expect(accepts(fromSchema(Pair), Pair.parse(['a']))).toBe(true)
     expect(accepts(fromSchema(z.string().optional()), undefined)).toBe(true)
+    const Maybe = z.literal(['a', undefined])
+    expect(accepts(fromSchema(Maybe), Maybe.parse(undefined))).toBe(true)
+    // A default takes undefined away again.
+    expect(formatType(fromSchema(z.string().optional().default('y')))).toBe('string')
+    expect(formatType(fromSchema(z.object({ a: z.string().optional() }).required()))).toBe(
+      '{ a: string }',
+    )
     const Big = z.object({ a: z.literal(1n) })
     expect(formatType(fromSchema(Big))).toBe('{ a: bigint }')
     expect(accepts(fromSchema(Big), Big.parse({ a: 1n }))).toBe(true)
@@ -372,12 +422,18 @@ describe('fromSchema accepts what each library parses', () => {
       v.mapItems((s) => s.length),
     )
     expect(() => fromSchema(toStandardJsonSchema(Lengths))).toThrow('is a transform')
+    // A defaulted key: Valibot leaves it out of `required`, so it reads as optional (wider, still sound).
+    const Defaulted = v.object({ a: v.optional(v.string(), 'x') })
+    expect(accepts(fromSchema(toStandardJsonSchema(Defaulted)), v.parse(Defaulted, {}))).toBe(true)
   })
 
   it('ArkType: postfix tuples, Map instances', () => {
     const Tuple = ark(['...', 'number[]', 'string'])
     expect(accepts(fromSchema(Tuple), Tuple.assert([1, 'a']))).toBe(true)
     expect(formatType(fromSchema(ark({ m: ark.instanceOf(Map) })))).toBe('{ m: map }')
+    const Maybe = ark('string | undefined')
+    expect(formatType(fromSchema(Maybe))).toBe('string | null')
+    expect(accepts(fromSchema(Maybe), Maybe.assert(undefined))).toBe(true)
   })
 })
 
