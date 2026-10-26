@@ -23,8 +23,11 @@
   scrollbar-color: var(--scrollbar-thumb, var(--vp-c-divider)) transparent;
 }
 
-/* ── Theme variable mapping (fall back to VitePress tokens) ── */
-.pg-layout {
+/* ── Theme variable mapping (fall back to VitePress tokens) ──
+   The hover tooltip is appended to <body>, outside .pg-layout, so it needs
+   the same variables or it renders with no background. */
+.pg-layout,
+.pg-transform-tooltip {
   --bg-surface-alt: var(--vp-c-bg-soft);
   --bg-surface-raised: var(--vp-c-bg-elv);
   --bg-tooltip: var(--vp-c-bg-elv);
@@ -45,15 +48,16 @@
   --accent-border-strong: var(--vp-c-brand-1);
   --warning: var(--vp-c-warning-1, #fbbf24);
   --warning-bg: var(--vp-c-warning-soft, rgba(251, 191, 36, 0.1));
-  --error: var(--vp-c-danger-1, #f87171);
+  --error: var(--bonsai-error);
   --error-bg: var(--vp-c-danger-soft, rgba(248, 113, 113, 0.1));
-  --error-border: var(--vp-c-danger-1, #f87171);
+  --error-border: var(--bonsai-error);
   --shadow: rgba(0, 0, 0, 0.3);
-  --syntax-string: #34d399;
-  --syntax-number: #60a5fa;
-  --syntax-boolean: #c084fc;
-  --syntax-null: #888;
-  --syntax-key: #f472b6;
+  /* Result colours follow the site theme (custom.css). */
+  --syntax-string: var(--bonsai-syn-string);
+  --syntax-number: var(--bonsai-syn-literal);
+  --syntax-boolean: var(--bonsai-syn-literal);
+  --syntax-null: var(--vp-c-text-3);
+  --syntax-key: var(--bonsai-syn-prop);
   --syntax-punctuation: var(--vp-c-text-2);
 }
 
@@ -78,11 +82,9 @@
 
 .pg-sidebar-header {
   padding: 14px 16px;
-  font-size: 0.7rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
+  color: var(--text-primary);
   border-bottom: 1px solid var(--border);
 }
 
@@ -94,10 +96,8 @@
 
 .pg-group-label {
   padding: 10px 12px 4px;
-  font-size: 0.6rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
+  font-size: 0.74rem;
+  font-weight: 600;
   color: var(--text-dim);
   user-select: none;
 }
@@ -290,11 +290,9 @@
 }
 
 .pg-pane-label {
-  font-size: 0.68rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
+  color: var(--text-primary);
 }
 
 .pg-pane-hint {
@@ -343,12 +341,12 @@
 
 .pg-expr-highlight .hl-transform {
   color: transparent;
-  background: rgba(96, 165, 250, 0.10);
+  background: var(--accent-bg);
   border-radius: 3px;
   padding: 1px 0;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
-  border-bottom: 1px dashed rgba(96, 165, 250, 0.3);
+  border-bottom: 1px dashed var(--accent-border);
 }
 
 /* ── Transform tooltip ── */
@@ -361,7 +359,7 @@
   gap: 8px;
   padding: 6px 12px;
   background: var(--bg-tooltip);
-  border: 1px solid rgba(96, 165, 250, 0.2);
+  border: 1px solid var(--accent-border);
   border-radius: 8px;
   box-shadow: 0 8px 24px var(--shadow);
   white-space: nowrap;
@@ -387,10 +385,8 @@
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.58rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  background: rgba(96, 165, 250, 0.1);
-  color: #60a5fa;
+  background: var(--accent-bg);
+  color: var(--accent);
 }
 
 .pg-tt-desc {
@@ -546,8 +542,6 @@
   font-size: 0.58rem;
   font-family: 'JetBrains Mono', monospace;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   user-select: none;
 }
 
@@ -664,12 +658,12 @@
 }
 
 /* ── Type badge colors ── */
-.ctx-type-string  { background: rgba(52, 211, 153, 0.1); color: #34d399; }
-.ctx-type-number  { background: rgba(96, 165, 250, 0.1); color: #60a5fa; }
-.ctx-type-boolean { background: rgba(192, 132, 252, 0.1); color: #c084fc; }
-.ctx-type-array   { background: rgba(251, 191, 36, 0.1); color: #fbbf24; }
-.ctx-type-object  { background: rgba(244, 114, 182, 0.1); color: #f472b6; }
-.ctx-type-null    { background: rgba(255, 255, 255, 0.04); color: #888; }
+.ctx-type-string  { background: var(--bg-hover); color: var(--syntax-string); }
+.ctx-type-number  { background: var(--bg-hover); color: var(--syntax-number); }
+.ctx-type-boolean { background: var(--bg-hover); color: var(--syntax-boolean); }
+.ctx-type-array   { background: var(--accent-bg); color: var(--accent); }
+.ctx-type-object  { background: var(--accent-bg); color: var(--accent); }
+.ctx-type-null    { background: var(--bg-hover); color: var(--syntax-null); }
 
 /* ── Autocomplete dropdown ── */
 .pg-autocomplete {
@@ -730,16 +724,14 @@
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.55rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   background: var(--bg-hover);
   color: var(--text-muted);
   flex-shrink: 0;
 }
 
 .pg-ac-item.active .pg-ac-module {
-  background: rgba(96, 165, 250, 0.1);
-  color: #60a5fa;
+  background: var(--accent-bg);
+  color: var(--accent);
 }
 
 .pg-ac-desc {

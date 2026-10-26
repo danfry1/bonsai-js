@@ -28,8 +28,10 @@ export function bonsaiCompletions(service: LanguageService) {
     const typed = source.slice(result.start, context.pos)
     const before = source.slice(0, result.start)
     const afterDot = /\??\.\s*$/u.test(before) && !/\.\.\.\s*$/u.test(before)
-    // While typing, open only after `.` or once a name is started; Ctrl-Space always opens.
-    if (!context.explicit && typed === '' && !afterDot) return null
+    // While typing, open after `.`, once a name is started, or where only values fit
+    // (inside `order.country == "`); Ctrl-Space always opens.
+    const onlyValues = result.items.length > 0 && result.items.every((item) => item.kind === 'value')
+    if (!context.explicit && typed === '' && !afterDot && !onlyValues) return null
     const options = result.items
       .filter((item) => item.label !== '.')
       .map((item): Completion => ({
@@ -41,9 +43,15 @@ export function bonsaiCompletions(service: LanguageService) {
         apply: (view, _completion, from, to) => {
           const start = item.range?.start ?? from
           const end = item.range?.end ?? to
+          // A value picked inside quotes (`== "N`) closes the string if needed and puts the cursor after it.
+          const doc = view.state.doc
+          const before = doc.sliceString(start - 1, start)
+          const quote = item.kind === 'value' && (before === '"' || before === "'") ? before : ''
+          const closed = quote !== '' && doc.sliceString(end, end + 1) === quote
+          const insert = item.insertText + (quote && !closed ? quote : '')
           view.dispatch({
-            changes: { from: start, to: end, insert: item.insertText },
-            selection: { anchor: start + item.insertText.length },
+            changes: { from: start, to: end, insert },
+            selection: { anchor: start + insert.length + (closed ? 1 : 0) },
           })
         },
       }))

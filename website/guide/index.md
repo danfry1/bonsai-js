@@ -11,6 +11,23 @@ against data you pass in, without executing JavaScript. It is meant for logic th
 
 Throughout this site, `// => value` after an expression shows its result, and the **host** is your application: the data it passes in (the context) and the functions it adds (host functions).
 
+## Common tasks
+
+| Task | Where |
+| --- | --- |
+| Save a rule written by a user, safely | [A hardened setup](/guide/safety#a-hardened-setup) |
+| Show why a rule passed or failed | [Reasons](/api/explain#reasons) |
+| Autocomplete and diagnostics in an editor | [Editor Support](/guide/editor-support) |
+| Add Bonsai to a CodeMirror editor | [CodeMirror](/guide/codemirror) |
+| Run a filter in SQL or MongoDB | [Database Filters](/api/query) |
+| Add your own function | [Host Functions](/api/host-functions) |
+| Handle errors | [Errors](/api/errors) |
+| Set limits for untrusted input | [Limits](/api/limits) |
+| Upgrade from 0.x | [Migrating from 0.x](/guide/migrating) |
+| Build feature flag targeting | [Recipe: Feature Flag Targeting](/recipes/feature-flags) |
+| Let users filter a table in SQL | [Recipe: User-Defined Filters in SQL](/recipes/user-filters-sql) |
+| Explain eligibility decisions | [Recipe: Eligibility Rules with Reasons](/recipes/eligibility-rules) |
+
 ## What you get
 
 - **Familiar syntax.** JavaScript operators and names: `a.b`, `?.`, `??`, template literals, `filter`, `map`, `includes`, `toUpperCase`. Every function also works as a method, so `sum(xs)` and `xs.sum()` are the same call.
@@ -32,20 +49,3 @@ Bonsai is not a general-purpose language. There are no loops, no recursion, no a
 - Try expressions in the [Playground](/playground).
 - Choosing a library? See how Bonsai [compares with others](/guide/comparison), including where another library is the better fit.
 - Upgrading? See [Migrating from 0.x](/guide/migrating).
-
-## Common tasks
-
-| Task | Where |
-| --- | --- |
-| Save a rule written by a user, safely | [A hardened setup](/guide/safety#a-hardened-setup) |
-| Show why a rule passed or failed | [Reasons](/api/explain#reasons) |
-| Autocomplete and diagnostics in an editor | [Editor Support](/guide/editor-support) |
-| Add Bonsai to a CodeMirror editor | [CodeMirror](/guide/codemirror) |
-| Run a filter in SQL or MongoDB | [Database Filters](/api/query) |
-| Add your own function | [Host Functions](/api/host-functions) |
-| Handle errors | [Errors](/api/errors) |
-| Set limits for untrusted input | [Limits](/api/limits) |
-| Upgrade from 0.x | [Migrating from 0.x](/guide/migrating) |
-| Build feature flag targeting | [Recipe: Feature Flag Targeting](/recipes/feature-flags) |
-| Let users filter a table in SQL | [Recipe: User-Defined Filters in SQL](/recipes/user-filters-sql) |
-| Explain eligibility decisions | [Recipe: Eligibility Rules with Reasons](/recipes/eligibility-rules) |

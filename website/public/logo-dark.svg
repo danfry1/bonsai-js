@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="#8acfa2">
+  <!-- logo.svg for the site's dark theme. -->
+  <path d="M24 52C27.4 50.6 28.6 48.4 27.4 45.6 26 42.4 22.4 40.6 22.9 36.6 23.6 29.9 33.6 30.4 31.6 21.6L36.2 21C38.6 31.4 29 33.6 28.7 37.4 28.4 40.4 32.4 42.6 34 45.6 35.4 48.4 36.6 50.8 40 52Z"/>
+  <path d="M24.4 38.6 16 35.4M32.8 29.8 44.5 26.6" fill="none" stroke="#8acfa2" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="14" cy="34.5" r="6"/>
+  <circle cx="46.5" cy="25.5" r="7.5"/>
+  <circle cx="33" cy="13.5" r="9.5"/>
+  <path d="M9 52H55L51.5 59H12.5Z"/>
+  <rect x="15" y="59" width="5" height="2.5" rx="0.5"/>
+  <rect x="44" y="59" width="5" height="2.5" rx="0.5"/>
+</svg>

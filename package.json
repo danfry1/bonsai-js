@@ -78,7 +78,7 @@
     "type": "git",
     "url": "git+https://github.com/danfry1/bonsai-js.git"
   },
-  "homepage": "https://danfry1.github.io/bonsai-js/",
+  "homepage": "https://bonsai.danfry.dev/",
   "bugs": {
     "url": "https://github.com/danfry1/bonsai-js/issues"
   },
@@ -149,6 +149,7 @@
     "@codemirror/view": "6.43.14",
     "@electric-sql/pglite": "0.5.10",
     "@fast-check/vitest": "0.5.0",
+    "@fontsource-variable/bricolage-grotesque": "5.3.0",
     "@marcbachmann/cel-js": "8.0.0",
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/vitest-runner": "10.0.0",

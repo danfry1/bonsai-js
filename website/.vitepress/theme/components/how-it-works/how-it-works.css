@@ -35,6 +35,8 @@
    wrapped headings (like the hero title) overlap without this. */
 .hiw-root :is(h1, h2, h3, h4) {
   line-height: 1.2;
+  font-family: var(--bonsai-font-display);
+  letter-spacing: -0.02em;
 }
 
 /* Layout container (ported from the old global .container) */
@@ -102,6 +104,8 @@
 
 .hiw-hero h1 {
   font-size: 3rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
   line-height: 1.15;
   margin-bottom: 1.25rem;
 }
@@ -176,8 +180,6 @@
   display: inline-block;
   font-size: 0.75rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
   color: var(--accent);
   background: var(--accent-bg-strong);
   border: 1px solid var(--accent-border);
@@ -200,8 +202,6 @@
 .hiw-panel-label {
   font-size: 0.7rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
   color: var(--text-secondary);
   display: block;
   margin-bottom: 6px;
@@ -251,7 +251,7 @@
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   padding: 10px 14px;
-  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--vp-font-family-base);
   font-size: 0.9rem;
   color: var(--text-primary);
   outline: none;
@@ -315,8 +315,6 @@
 .hiw-token-type {
   font-size: 0.65rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--text-secondary);
 }
 
@@ -398,8 +396,6 @@
   display: inline-block;
   font-size: 0.7rem;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
   padding: 2px 8px;
   border-radius: 999px;
   width: fit-content;
@@ -440,7 +436,6 @@
   padding: 6px 10px;
   color: var(--text-secondary);
   font-weight: 600;
-  text-transform: uppercase;
   font-size: 0.7rem;
   letter-spacing: 0.06em;
   border-bottom: 1px solid var(--border);
@@ -601,7 +596,7 @@
   gap: 8px;
   background: var(--accent-dark);
   color: var(--text-on-accent);
-  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--vp-font-family-base);
   font-weight: 600;
   font-size: 0.9rem;
   padding: 10px 24px;
@@ -690,8 +685,6 @@
 .hiw-opt-label {
   font-size: 0.7rem;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
   color: var(--text-secondary);
   text-align: center;
 }
