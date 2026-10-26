@@ -1,5 +1,6 @@
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vitepress'
+import { bonsaiDark, bonsaiLight } from './shiki-themes'
 
 const src = (path: string) => fileURLToPath(new URL(`../../src/${path}`, import.meta.url))
 
@@ -15,6 +16,7 @@ export default defineConfig({
   markdown: {
     // Bonsai syntax is a subset of JavaScript expression syntax.
     languageAlias: { bonsai: 'js' },
+    theme: { light: bonsaiLight, dark: bonsaiDark },
     // Wrap every table so a wide one scrolls inside the content column
     // instead of running under the page outline (custom.css styles the wrapper).
     config(md) {
