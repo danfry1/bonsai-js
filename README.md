@@ -39,7 +39,7 @@ const why = rule.explainSync({ user: { age: 16, plan: 'free' } }, { exhaustive: 
 why.reasons().map((r) => r.text) // => ["user.age >= 18", "user.plan == \"pro\""]
 ```
 
-Try it in the [Playground](https://danfry1.github.io/bonsai-js/playground).
+Try it in the [Playground](https://bonsai.danfry.dev/playground).
 
 ## Why Bonsai
 
@@ -62,7 +62,7 @@ Try it in the [Playground](https://danfry1.github.io/bonsai-js/playground).
 | Evaluation budget for untrusted input (as documented) | Yes, on by default | Parse-time limits only | No expression budget | No | No | No | No |
 | SQL or MongoDB translation | Yes | No | No | No | No | No | No |
 
-In the browser, Bonsai is about 30 KB for rules checked and compiled on a server and evaluated with `bonsai-js/runtime/core`, close to cel-js, json-rules-engine, and jsonata, and 57 to 69 KB when the browser checks rules too. The smallest libraries (2 to 8 KB) do not type-check rules or bound their evaluation. Bonsai is also the newest. If rules must also run in Go or Java, CEL or ZEN fit better; if rules are JSON produced by a form builder and size matters most, json-logic-js does. The [full comparison](https://danfry1.github.io/bonsai-js/guide/comparison) covers more libraries, throughput, and the method behind every number.
+In the browser, Bonsai is about 30 KB for rules checked and compiled on a server and evaluated with `bonsai-js/runtime/core`, close to cel-js, json-rules-engine, and jsonata, and 57 to 69 KB when the browser checks rules too. The smallest libraries (2 to 8 KB) do not type-check rules or bound their evaluation. Bonsai is also the newest. If rules must also run in Go or Java, CEL or ZEN fit better; if rules are JSON produced by a form builder and size matters most, json-logic-js does. The [full comparison](https://bonsai.danfry.dev/guide/comparison) covers more libraries, throughput, and the method behind every number.
 
 ## Install
 
@@ -70,9 +70,9 @@ In the browser, Bonsai is about 30 KB for rules checked and compiled on a server
 npm install bonsai-js
 ```
 
-Upgrading from 0.x? The [migration guide](https://danfry1.github.io/bonsai-js/guide/migrating) covers every change.
+Upgrading from 0.x? The [migration guide](https://bonsai.danfry.dev/guide/migrating) covers every change.
 
-Requires Node.js 22 or newer, current Bun, or a modern browser. The package is ESM; `require('bonsai-js')` works where Node can load ES modules synchronously (22.12 and newer); for the TypeScript settings that allow it, see [Install](https://danfry1.github.io/bonsai-js/guide/install#typescript-settings).
+Requires Node.js 22 or newer, current Bun, or a modern browser. The package is ESM; `require('bonsai-js')` works where Node can load ES modules synchronously (22.12 and newer); for the TypeScript settings that allow it, see [Install](https://bonsai.danfry.dev/guide/install#typescript-settings).
 
 In a browser bundle, evaluating rules that were checked and compiled on a server adds about 29 KB minified and gzipped, from `bonsai-js/runtime/core` with only the built-in functions your rules call (`bonsai-js/runtime`, with all of them, is about 43 KB). Checking rules in the browser too adds about 69 KB: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included; `bonsai-js/lite` leaves those two out, for about 57 KB. `bonsai-js/query` and `bonsai-js/service` are separate entry points; the language service on its own is about 47 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets (`bun run check:size`).
 
@@ -215,9 +215,9 @@ All callable as `f(x, ...)` or `x.f(...)`.
 | Maps and values | `keys` `values` `entries` `isEmpty` `type` `toString` |
 | Time | `now` `timestamp` `duration` `weeks` `days` `hours` `minutes` `seconds` `milliseconds` `inDays` `inHours` `inMinutes` `inSeconds` `inMilliseconds` `year` `month` `day` `hour` `minute` `second` `dayOfWeek` `startOfDay` `startOfMonth` `startOfYear` `addDays` `addMonths` `addYears` `formatDate` |
 
-Signatures and examples: [Built-in Functions](https://danfry1.github.io/bonsai-js/functions/).
+Signatures and examples: [Built-in Functions](https://bonsai.danfry.dev/functions/).
 
-`matches(text, pattern)` uses JavaScript regular expression syntax (as with the `u` flag) and runs in linear time, so a user-written pattern cannot hang evaluation; backreferences, lookaround, named groups, `\p{...}`, and inline flags other than a leading `(?i)` are rejected ([full list](https://danfry1.github.io/bonsai-js/language/functions#regular-expressions)), a leading `(?i)` ignores ASCII case, and a pattern longer than `maxPatternLength` is a `PATTERN_LIMIT` error. `formatDate` understands `yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS` and rejects unknown letters; constant patterns are checked when the expression is compiled.
+`matches(text, pattern)` uses JavaScript regular expression syntax (as with the `u` flag) and runs in linear time, so a user-written pattern cannot hang evaluation; backreferences, lookaround, named groups, `\p{...}`, and inline flags other than a leading `(?i)` are rejected ([full list](https://bonsai.danfry.dev/language/functions#regular-expressions)), a leading `(?i)` ignores ASCII case, and a pattern longer than `maxPatternLength` is a `PATTERN_LIMIT` error. `formatDate` understands `yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h a mm m ss s SSS` and rejects unknown letters; constant patterns are checked when the expression is compiled.
 
 `env.listFunctions()` returns every signature and description, for documentation or tooling.
 
@@ -317,7 +317,7 @@ const rule = runtime({ variables }).load(JSON.parse(artifact), { expect: t.boole
 rule.evaluateSync({ user: { age: 36 } }) // => true
 ```
 
-An artifact records the checker's choices that affect results and a digest of the definitions they depend on, so it evaluates exactly as the compiled program does, or a runtime with different definitions refuses it with a `BonsaiArtifactError` saying why. See [Runtime](https://danfry1.github.io/bonsai-js/api/runtime).
+An artifact records the checker's choices that affect results and a digest of the definitions they depend on, so it evaluates exactly as the compiled program does, or a runtime with different definitions refuses it with a `BonsaiArtifactError` saying why. See [Runtime](https://bonsai.danfry.dev/api/runtime).
 
 ## Syntax trees and visual editors
 
@@ -332,7 +332,7 @@ print(tree, { calls: 'method' })   // => 'name.trim().toUpperCase()'
 print(tree, { calls: 'function' }) // => 'toUpperCase(trim(name))'
 ```
 
-`f(x)` and `x.f()` produce the same call node, so a builder can show any chain as a list of steps and choose how to print it. `env.listFunctions()` provides the palette (names, signatures, descriptions), and the language service provides the types at any position for dropdowns. `forEachChild` walks a tree, `mapChildren` rewrites one, and `env.check(source).typeOf(node)` gives the type of any checked node. Comments and spacing are not part of the tree, so printing drops them; to change a saved rule and keep its comments, edit the source at the spans the parser records (`nameStart` and `nameEnd` cover a property or function name). See the [syntax tree reference](https://danfry1.github.io/bonsai-js/api/syntax-tree).
+`f(x)` and `x.f()` produce the same call node, so a builder can show any chain as a list of steps and choose how to print it. `env.listFunctions()` provides the palette (names, signatures, descriptions), and the language service provides the types at any position for dropdowns. `forEachChild` walks a tree, `mapChildren` rewrites one, and `env.check(source).typeOf(node)` gives the type of any checked node. Comments and spacing are not part of the tree, so printing drops them; to change a saved rule and keep its comments, edit the source at the spans the parser records (`nameStart` and `nameEnd` cover a property or function name). See the [syntax tree reference](https://bonsai.danfry.dev/api/syntax-tree).
 
 ## Editor support
 
@@ -350,7 +350,7 @@ The service never evaluates expressions or calls host functions.
 
 ## Stability
 
-Bonsai follows Semantic Versioning. The [stability policy](https://danfry1.github.io/bonsai-js/guide/stability) says what a minor release may change (new syntax, functions, fields, and union variants, messages, step costs) and what is not public API (error constructors, hand-built host functions).
+Bonsai follows Semantic Versioning. The [stability policy](https://bonsai.danfry.dev/guide/stability) says what a minor release may change (new syntax, functions, fields, and union variants, messages, step costs) and what is not public API (error constructors, hand-built host functions).
 
 ## License
 

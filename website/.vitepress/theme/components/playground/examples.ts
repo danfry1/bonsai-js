@@ -1,4 +1,4 @@
-// Playground examples. `website/scripts/check-playground.ts` evaluates every
+// Playground examples. `website/scripts/check-components.ts` evaluates every
 // example the way the playground does, so these stay valid.
 
 export interface ExampleVar {
@@ -17,6 +17,39 @@ export interface Example {
 }
 
 export const examples: Example[] = [
+  {
+    id: 'free-shipping',
+    group: 'Common Rules',
+    title: 'Free Shipping Rule',
+    expression: 'customer.tier == "gold" || cart.items.map(.price * .qty).sum() >= 50',
+    vars: [
+      { name: 'customer', value: '{ "name": "Ada", "tier": "standard" }' },
+      { name: 'cart', value: '{\n  "items": [\n    { "sku": "TEA-01", "price": 18, "qty": 2 },\n    { "sku": "POT-07", "price": 22, "qty": 1 }\n  ]\n}' },
+    ],
+  },
+  {
+    id: 'saved-filter',
+    group: 'Common Rules',
+    title: 'Saved Filter',
+    expression: 'tickets.filter(.status == "open" && .priority >= 2).map(.id)',
+    vars: [
+      {
+        name: 'tickets',
+        value:
+          '[\n  { "id": 101, "status": "open", "priority": 3 },\n  { "id": 102, "status": "closed", "priority": 3 },\n  { "id": 103, "status": "open", "priority": 1 }\n]',
+      },
+    ],
+  },
+  {
+    id: 'notification',
+    group: 'Common Rules',
+    title: 'Notification Template',
+    expression: '`Hi ${user.firstName}, ${order.items.length} items in order ${order.id} have shipped.`',
+    vars: [
+      { name: 'user', value: '{ "firstName": "Ada" }' },
+      { name: 'order', value: '{ "id": "A1001", "items": ["TEA-01", "POT-07"] }' },
+    ],
+  },
   { id: 'hello', group: 'Basics', title: 'Hello World', expression: '"hello".toUpperCase()', vars: [] },
   {
     id: 'templates',

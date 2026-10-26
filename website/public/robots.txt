@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://danfry1.github.io/bonsai-js/sitemap.xml
+Sitemap: https://bonsai.danfry.dev/sitemap.xml
