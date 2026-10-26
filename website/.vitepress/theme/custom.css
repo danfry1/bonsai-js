@@ -201,9 +201,16 @@
 }
 
 /* Code blocks --------------------------------------------------- */
+/* Raised like the home page's cards; colours come from shiki-themes.ts. */
 .vp-doc div[class*='language-'] {
   border: 1px solid var(--vp-c-divider);
-  border-radius: 6px;
+  border-radius: 10px;
+  background: var(--bonsai-card);
+}
+
+.vp-doc div[class*='language-'] > span.lang {
+  color: var(--vp-c-text-3);
+  font-weight: 500;
 }
 
 /* Reference tables ---------------------------------------------- */
@@ -215,7 +222,8 @@
 .vp-doc .table-wrap {
   margin: 1.25rem 0;
   border: 1px solid var(--vp-c-divider);
-  border-radius: 6px;
+  border-radius: 10px;
+  background: var(--bonsai-card);
   overflow-x: auto;
 }
 
@@ -227,13 +235,15 @@
   font-size: 14px;
 }
 
-.vp-doc tr {
+/* No stripes (VitePress shades every other row): the hairlines carry the rows. */
+.vp-doc tr,
+.vp-doc tr:nth-child(2n) {
   background: transparent;
   border: none;
 }
 
 .vp-doc th {
-  background: var(--vp-c-bg-soft);
+  background: transparent;
   color: var(--vp-c-text-2);
   font-size: 13px;
   font-weight: 600;
@@ -244,6 +254,7 @@
   border: none;
   border-bottom: 1px solid var(--vp-c-divider);
   padding: 10px 16px;
+  vertical-align: baseline;
 }
 
 .vp-doc tbody tr:last-child td {

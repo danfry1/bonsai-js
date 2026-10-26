@@ -1,109 +1,23 @@
-<template>
-  <div ref="root" class="pg-layout">
-    <!-- Sidebar: examples (rendered from playground/examples.ts) -->
-    <aside class="pg-sidebar">
-      <div class="pg-sidebar-header">Examples</div>
-      <div class="pg-example-list">
-        <template v-for="group in groups" :key="group.name">
-          <div class="pg-group-label">{{ group.name }}</div>
-          <button
-            v-for="example in group.examples"
-            :key="example.id"
-            class="pg-example"
-            :class="{ active: example.id === activeId }"
-            :data-example="example.id"
-          >
-            <span class="pg-example-title">{{ example.title }}</span>
-            <span class="pg-example-code">{{ firstLine(example.expression) }}</span>
-          </button>
-        </template>
-      </div>
-    </aside>
-
-    <!-- Main playground area -->
-    <main class="pg-main">
-      <div class="pg-topbar">
-        <div class="pg-topbar-left">
-          <span class="pg-live-badge" id="live-badge">
-            <span class="pg-live-dot"></span>
-            Live
-          </span>
-          <span class="pg-eval-time" id="eval-time"></span>
-        </div>
-        <div class="pg-topbar-right">
-          <button class="pg-topbar-btn" id="share-btn" title="Copy shareable link">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-            <span class="pg-btn-label">Share</span>
-          </button>
-          <button class="pg-topbar-btn" id="reset-btn" title="Reset">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-            Reset
-          </button>
-        </div>
-      </div>
-
-      <div class="pg-editor-grid">
-        <div class="pg-editor-left">
-          <div class="pg-pane pg-expr-pane">
-            <div class="pg-pane-header">
-              <span class="pg-pane-label">Expression</span>
-              <span class="pg-pane-hint">type-checked and evaluated as you type</span>
-            </div>
-            <div class="pg-expr-editor">
-              <div class="pg-expr-highlight" id="expr-highlight" aria-hidden="true"></div>
-              <textarea class="pg-expr-input" id="expr-input" spellcheck="false" placeholder="Type an expression..."></textarea>
-            </div>
-          </div>
-
-          <div class="pg-pane pg-ctx-pane" id="ctx-pane">
-            <div class="pg-pane-header">
-              <span class="pg-pane-label">Context</span>
-              <span class="pg-pane-hint">JSON values; ISO date-times become timestamps</span>
-              <button class="pg-ctx-add" id="ctx-add" title="Add variable">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                Add
-              </button>
-            </div>
-            <div class="pg-ctx-vars" id="ctx-vars"></div>
-            <div class="pg-ctx-empty" id="ctx-empty">
-              No context variables. <button class="pg-ctx-empty-add" id="ctx-empty-add">Add one</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="pg-editor-right">
-          <div class="pg-pane pg-result-pane">
-            <div class="pg-pane-header">
-              <div class="pg-result-tabs">
-                <button class="pg-result-tab active" data-mode="result">Result</button>
-                <button class="pg-result-tab" data-mode="ast">Syntax tree</button>
-              </div>
-              <span class="pg-result-type" id="result-type" title="Static type"></span>
-            </div>
-            <div class="pg-result-body" id="result-output"></div>
-            <div class="pg-error" id="error-output"></div>
-            <div class="pg-error pg-warning" id="warning-output"></div>
-          </div>
-        </div>
-      </div>
-    </main>
-  </div>
-</template>
-
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref } from 'vue'
-import { bonsai, formatType, isBonsaiError, Duration, type Diagnostic, type Environment } from 'bonsai-src'
-import { createLanguageService, type Completion, type LanguageService } from 'bonsai-service'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import type { EditorView } from '@codemirror/view'
+import type { Compartment, Extension } from '@codemirror/state'
+import { bonsai, formatType, isBonsaiError, type Diagnostic, type Environment, type Type } from 'bonsai-src'
+import Code from './home/Code.vue'
+import { reasonsOf, type Range } from './home/links'
+import ExplainView from './playground/ExplainView.vue'
+import QueryView from './playground/QueryView.vue'
+import Runs from './playground/Runs.vue'
 import { examples, defaultExample, type Example } from './playground/examples'
-import { buildContext, type ContextRow } from './playground/schema'
-import './playground/playground.css'
+import { stepAt, steps, type Step } from './playground/explain'
+import { runs } from './playground/pretty'
+import { fromRows, parseData } from './playground/schema'
 
-// All rendering in this component builds DOM nodes and sets textContent.
-// Expression text, context values, results, types, and messages are never
-// inserted as HTML.
-
-const root = ref<HTMLElement>()
-const activeId = ref<string>(defaultExample.id)
+// The playground: an expression and the data it runs on, both editable, and
+// what Bonsai makes of them: the result, every step that produced it, the rule
+// as a database query, and the syntax tree. The data's types are inferred from
+// its values, so the editor checks, completes and hovers against them. All
+// text is rendered with interpolation, never HTML.
 
 const groups = (() => {
   const out: { name: string; examples: Example[] }[] = []
@@ -115,671 +29,1102 @@ const groups = (() => {
   return out
 })()
 
-function firstLine(text: string): string {
-  const line = text.split('\n')[0]
-  return line.length > 44 ? `${line.slice(0, 43)}…` : line
+const activeId = ref<string>(defaultExample.id)
+const source = ref(defaultExample.expression)
+const dataText = ref(defaultExample.data)
+
+/**
+ * What the output reports on: the text once typing pauses, so the output
+ * doesn't flicker between errors on every keystroke. Loading an example or
+ * applying a fix settles at once.
+ */
+const settled = ref({ source: source.value, data: dataText.value })
+let settleTimer: ReturnType<typeof setTimeout> | undefined
+watch([source, dataText], () => {
+  clearTimeout(settleTimer)
+  settleTimer = setTimeout(settleNow, 220)
+})
+function settleNow() {
+  clearTimeout(settleTimer)
+  settled.value = { source: source.value, data: dataText.value }
+}
+const typing = computed(() => source.value !== settled.value.source || dataText.value !== settled.value.data)
+
+// ── The environment, from the data's inferred types ──────────────
+const data = computed(() => parseData(settled.value.data))
+/** The last data that parsed, so a half-typed edit keeps the editor's types. */
+const good = shallowRef<{ context: Record<string, unknown>; variables: Record<string, Type> }>({ context: {}, variables: {} })
+watch(
+  data,
+  (next) => {
+    if (next.ok) good.value = { context: next.context, variables: next.variables }
+  },
+  { immediate: true },
+)
+const env = computed(() => bonsai({ variables: good.value.variables, limits: { timeout: 250 } }) as Environment<never>)
+
+// ── What Bonsai makes of it ──────────────────────────────────────
+const check = computed(() => env.value.check(settled.value.source))
+const errors = computed(() => check.value.diagnostics.filter((d) => d.severity === 'error'))
+const warnings = computed(() => check.value.diagnostics.filter((d) => d.severity === 'warning'))
+
+const run = computed(() => {
+  if (settled.value.source.trim() === '' || errors.value.length > 0 || !data.value.ok) return undefined
+  try {
+    const program = env.value.compile(settled.value.source)
+    // Explained, so a failure still has the steps that led to it; timed as a plain evaluation.
+    const explanation = program.explainSync(good.value.context as never, { exhaustive: true })
+    if (!explanation.ok) return { program, failure: explanation.error, trace: explanation.trace }
+    const started = performance.now()
+    program.evaluateSync(good.value.context as never)
+    const ms = performance.now() - started
+    return { program, ms, value: explanation.value, explanation, trace: explanation.trace }
+  } catch (error) {
+    return { failure: isBonsaiError(error) ? error : { code: 'ERROR', message: String(error) } }
+  }
+})
+
+const type = computed(() => (check.value.type ? formatType(check.value.type) : ''))
+const isRule = computed(() => check.value.type?.kind === 'boolean')
+
+const reasons = computed(() =>
+  run.value && 'explanation' in run.value && typeof run.value.value === 'boolean'
+    ? reasonsOf(run.value.trace, run.value.explanation.reasons())
+    : [],
+)
+
+const open = ref(new Set<string>())
+// Runs are keyed by position, so an edited expression starts with every run closed.
+watch(
+  () => settled.value.source,
+  () => (open.value = new Set()),
+)
+const rows = computed<Step[]>(() => (run.value?.trace ? steps(run.value.trace, open.value) : []))
+function toggle(key: string) {
+  const next = new Set(open.value)
+  if (!next.delete(key)) next.add(key)
+  open.value = next
 }
 
-interface ContextVar extends ContextRow {
-  id: number
+const tree = computed(() => {
+  try {
+    return runs(env.value.parse(settled.value.source), { width: 64 })
+  } catch {
+    return undefined
+  }
+})
+
+type View = 'result' | 'steps' | 'query' | 'tree'
+const views: { id: View; label: string }[] = [
+  { id: 'result', label: 'Result' },
+  { id: 'steps', label: 'Steps' },
+  { id: 'query', label: 'Query' },
+  { id: 'tree', label: 'Syntax tree' },
+]
+const view = ref<View>('result')
+
+/** Line and column of a diagnostic, counted from 1. */
+function where(d: Diagnostic): string {
+  const before = settled.value.source.slice(0, d.start).split('\n')
+  return `line ${before.length}, column ${before[before.length - 1].length + 1}`
 }
 
-const cleanups: (() => void)[] = []
+// ── Hover links: a condition or step and its text in the editor ──
+const hovered = ref<{ key: string; range: Range }>()
+function hover(key: string | undefined, range?: Range) {
+  hovered.value = key === undefined || range === undefined || typing.value ? undefined : { key, range }
+}
+watch([typing, view], () => (hovered.value = undefined))
+
+// ── The editors ──────────────────────────────────────────────────
+const exprHost = ref<HTMLElement>()
+const dataHost = ref<HTMLElement>()
+const exprView = shallowRef<EditorView>()
+const dataView = shallowRef<EditorView>()
+let language: Compartment | undefined
+let languageFor: ((env: Environment<never>) => Extension) | undefined
+let marks: Compartment | undefined
+let marksFor: ((range: Range | undefined) => Extension) | undefined
+
+onMounted(async () => {
+  const [
+    { EditorState, Compartment },
+    { EditorView, Decoration, keymap, placeholder },
+    { defaultKeymap, history, historyKeymap },
+    { createLanguageService },
+    { bonsaiLanguage },
+    { bonsaiHighlight },
+    { jsonHighlight },
+  ] = await Promise.all([
+    import('@codemirror/state'),
+    import('@codemirror/view'),
+    import('@codemirror/commands'),
+    import('bonsai-service'),
+    import('./codemirror/bonsai-language'),
+    import('./home/highlight'),
+    import('./playground/json-highlight'),
+  ])
+  if (!exprHost.value || !dataHost.value) return
+  loadFromUrl()
+
+  const common = [history(), keymap.of([...defaultKeymap, ...historyKeymap]), EditorView.lineWrapping]
+  language = new Compartment()
+  languageFor = (e) => bonsaiLanguage(createLanguageService(e))
+  marks = new Compartment()
+  const lit = Decoration.mark({ class: 'cm-lit' })
+  marksFor = (range) =>
+    EditorView.decorations.of((v) =>
+      range && range.start < range.end && range.end <= v.state.doc.length
+        ? Decoration.set([lit.range(range.start, range.end)])
+        : Decoration.none,
+    )
+
+  exprView.value = new EditorView({
+    parent: exprHost.value,
+    state: EditorState.create({
+      doc: source.value,
+      extensions: [
+        ...common,
+        language.of(languageFor(env.value)),
+        marks.of([]),
+        bonsaiHighlight,
+        placeholder('Write an expression, like order.total >= 50'),
+        EditorView.contentAttributes.of({ 'aria-label': 'Expression', spellcheck: 'false' }),
+        EditorView.updateListener.of((u) => {
+          if (u.docChanged) source.value = u.state.doc.toString()
+        }),
+        // Hovering the text lights up the condition or step under the pointer.
+        EditorView.domEventHandlers({
+          mousemove(event, target) {
+            const at = target.posAtCoords({ x: event.clientX, y: event.clientY }, false)
+            hoverAt(at ?? undefined)
+          },
+          mouseleave: () => hover(undefined),
+        }),
+      ],
+    }),
+  })
+  dataView.value = new EditorView({
+    parent: dataHost.value,
+    state: EditorState.create({
+      doc: dataText.value,
+      extensions: [
+        ...common,
+        jsonHighlight,
+        EditorView.contentAttributes.of({ 'aria-label': 'Data, as JSON', spellcheck: 'false' }),
+        EditorView.updateListener.of((u) => {
+          if (u.docChanged) dataText.value = u.state.doc.toString()
+        }),
+      ],
+    }),
+  })
+  exprHost.value.dataset.ready = ''
+  dataHost.value.dataset.ready = ''
+})
+
+// The editor checks against the latest good data's types.
+watch(env, (next) => {
+  if (exprView.value && language && languageFor) exprView.value.dispatch({ effects: language.reconfigure(languageFor(next)) })
+})
+watch(hovered, (next) => {
+  if (exprView.value && marks && marksFor) exprView.value.dispatch({ effects: marks.reconfigure(marksFor(next?.range)) })
+})
+
+function hoverAt(offset: number | undefined) {
+  if (offset === undefined) return hover(undefined)
+  if (view.value === 'steps') {
+    const step = stepAt(rows.value, offset)
+    return hover(step?.key, step)
+  }
+  if (view.value === 'result') {
+    const i = reasons.value.findIndex((r) => r.start <= offset && offset < r.end)
+    return hover(i === -1 ? undefined : `reason${i}`, reasons.value[i])
+  }
+  hover(undefined)
+}
+
 onBeforeUnmount(() => {
-  for (const cleanup of cleanups) cleanup()
+  clearTimeout(settleTimer)
+  exprView.value?.destroy()
+  dataView.value?.destroy()
 })
 
-onMounted(() => {
-  const rootEl = root.value
-  if (!rootEl) return
+function replace(target: EditorView | undefined, text: string) {
+  target?.dispatch({ changes: { from: 0, to: target.state.doc.length, insert: text } })
+}
 
-  const $ = <T extends Element = HTMLElement>(sel: string): T => rootEl.querySelector<T>(sel) as T
-  const $all = <T extends Element = HTMLElement>(sel: string): T[] =>
-    Array.from(rootEl.querySelectorAll<T>(sel))
+function load(example: Example) {
+  activeId.value = example.id
+  source.value = example.expression
+  dataText.value = example.data
+  replace(exprView.value, example.expression)
+  replace(dataView.value, example.data)
+  open.value = new Set()
+  settleNow()
+}
 
-  const exprInput = $<HTMLTextAreaElement>('#expr-input')
-  const exprHighlight = $('#expr-highlight')
-  const ctxVarsEl = $('#ctx-vars')
-  const ctxEmptyEl = $('#ctx-empty')
-  const resultOutput = $('#result-output')
-  const errorOutput = $('#error-output')
-  const warningOutput = $('#warning-output')
-  const resultType = $('#result-type')
-  const evalTimeEl = $('#eval-time')
-  const exampleBtns = $all<HTMLButtonElement>('.pg-example')
-  const resultTabs = $all<HTMLButtonElement>('.pg-result-tab')
-  const shareBtn = $<HTMLButtonElement>('#share-btn')
-  const resetBtn = $<HTMLButtonElement>('#reset-btn')
-  const liveBadge = $('#live-badge')
+function pick(id: string) {
+  const example = examples.find((e) => e.id === id)
+  if (example) load(example)
+}
 
-  let currentMode = 'result'
+function applyFix(d: Diagnostic) {
+  const target = exprView.value
+  if (!target || d.suggestion === undefined) return
+  target.dispatch({ changes: { from: d.start, to: d.end, insert: d.suggestion } })
+  settleNow()
+  target.focus()
+}
 
-  // ── Environment ─────────────────────────────────────────────
-  // The environment is rebuilt from the context rows: each variable is
-  // declared with a type inferred from its value, so the checker, completions,
-  // and hover know the data's shape.
-  let ctxVars: ContextVar[] = []
-  let nextVarId = 1
-  let context: Record<string, unknown> = {}
-  let env: Environment<never> = bonsai() as Environment<never>
-  let service: LanguageService = createLanguageService(env)
-  let diagnostics: readonly Diagnostic[] = []
+const active = computed(() => examples.find((e) => e.id === activeId.value))
+const edited = computed(() => !active.value || source.value !== active.value.expression || dataText.value !== active.value.data)
 
-  function rebuildEnvironment() {
-    const built = buildContext(ctxVars)
-    context = built.context
-    env = bonsai({ variables: built.variables, limits: { timeout: 250 } }) as Environment<never>
-    service = createLanguageService(env)
-  }
-
-  // ── Context rows ────────────────────────────────────────────
-  function detectType(raw: string): string {
-    const s = raw.trim()
-    if (s === '' || s === 'null') return 'null'
-    if (s === 'true' || s === 'false') return 'boolean'
-    if (/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(s)) return 'number'
-    if (/^["']\d{4}-\d{2}-\d{2}T/.test(s)) return 'timestamp'
-    if (s.startsWith('"') || s.startsWith("'")) return 'string'
-    if (s.startsWith('[')) return 'list'
-    if (s.startsWith('{')) return 'map'
-    return 'string'
-  }
-
-  const typeClass: Record<string, string> = {
-    null: 'null',
-    boolean: 'boolean',
-    number: 'number',
-    timestamp: 'string',
-    string: 'string',
-    list: 'array',
-    map: 'object',
-  }
-
-  function setBadge(badge: HTMLElement, raw: string) {
-    const kind = detectType(raw)
-    badge.className = `pg-ctx-row-type ctx-type-${typeClass[kind]}`
-    badge.textContent = kind
-  }
-
-  function onContextChanged() {
-    rebuildEnvironment()
-    markStale()
-    scheduleEvaluate()
-  }
-
-  function addVar(name = '', value = '', focus = false) {
-    const v: ContextVar = { id: nextVarId++, name, value }
-    ctxVars.push(v)
-    renderVars()
-    if (focus) {
-      ctxVarsEl.querySelector<HTMLInputElement>(`[data-id="${v.id}"] .pg-ctx-row-name`)?.focus()
-    }
-  }
-
-  function removeVar(id: number) {
-    ctxVars = ctxVars.filter((v) => v.id !== id)
-    renderVars()
-    onContextChanged()
-  }
-
-  function renderVars() {
-    ctxVarsEl.textContent = ''
-    ctxEmptyEl.style.display = ctxVars.length === 0 ? '' : 'none'
-
-    for (const v of ctxVars) {
-      const row = document.createElement('div')
-      row.className = 'pg-ctx-row'
-      row.dataset.id = String(v.id)
-
-      const left = document.createElement('div')
-      left.className = 'pg-ctx-row-left'
-      const nameInput = document.createElement('input')
-      nameInput.className = 'pg-ctx-row-name'
-      nameInput.type = 'text'
-      nameInput.placeholder = 'name'
-      nameInput.value = v.name
-      nameInput.spellcheck = false
-      const sep = document.createElement('span')
-      sep.className = 'pg-ctx-row-sep'
-      sep.textContent = '='
-      left.append(nameInput, sep)
-
-      const valueInput = document.createElement('textarea')
-      valueInput.className = 'pg-ctx-row-value'
-      valueInput.placeholder = '"hello", 42, [1, 2], { "a": 1 }'
-      valueInput.value = v.value
-      valueInput.spellcheck = false
-      valueInput.rows = 1
-
-      const meta = document.createElement('div')
-      meta.className = 'pg-ctx-row-meta'
-      const typeBadge = document.createElement('span')
-      setBadge(typeBadge, v.value)
-      const deleteBtn = document.createElement('button')
-      deleteBtn.className = 'pg-ctx-row-delete'
-      deleteBtn.title = 'Remove'
-      deleteBtn.textContent = '×'
-      meta.append(typeBadge, deleteBtn)
-
-      nameInput.addEventListener('input', () => {
-        v.name = nameInput.value
-        onContextChanged()
-      })
-      valueInput.addEventListener('input', () => {
-        v.value = valueInput.value
-        setBadge(typeBadge, v.value)
-        onContextChanged()
-      })
-      deleteBtn.addEventListener('click', () => removeVar(v.id))
-
-      row.append(left, valueInput, meta)
-      ctxVarsEl.appendChild(row)
-    }
-  }
-
-  // ── Highlight overlay ───────────────────────────────────────
-  // The overlay sits behind the transparent-background textarea and only
-  // tints ranges: declared variables, function names, and diagnostic ranges.
-  function updateHighlight() {
-    const text = exprInput.value
-    const marks: string[] = new Array(text.length).fill('')
-
-    const names = new Set(Object.keys(env.variables ?? {}))
-    for (const match of text.matchAll(/[A-Za-z_$][A-Za-z0-9_$]*/g)) {
-      const start = match.index ?? 0
-      const word = match[0]
-      const before = text.slice(0, start).trimEnd()
-      const afterMember = before.endsWith('.') && !before.endsWith('...')
-      const isCall = /^\s*\(/.test(text.slice(start + word.length))
-      let cls = ''
-      if (isCall && env.describeFunction(word)) cls = 'hl-transform'
-      else if (!afterMember && names.has(word)) cls = 'hl-var'
-      if (cls) for (let i = start; i < start + word.length; i++) marks[i] = cls
-    }
-    for (const d of diagnostics) {
-      const cls = d.severity === 'error' ? 'hl-error' : 'hl-warn'
-      const end = Math.max(d.end, d.start + 1)
-      for (let i = d.start; i < Math.min(end, text.length); i++) marks[i] = `${marks[i]} ${cls}`.trim()
-    }
-
-    const frag = document.createDocumentFragment()
-    let i = 0
-    while (i < text.length) {
-      const cls = marks[i]
-      let j = i + 1
-      while (j < text.length && marks[j] === cls) j++
-      const chunk = text.slice(i, j)
-      if (cls) {
-        const span = document.createElement('span')
-        span.className = cls
-        span.textContent = chunk
-        frag.appendChild(span)
-      } else {
-        frag.appendChild(document.createTextNode(chunk))
-      }
-      i = j
-    }
-    // A trailing newline needs a character after it to take up a line.
-    frag.appendChild(document.createTextNode('​'))
-    exprHighlight.textContent = ''
-    exprHighlight.appendChild(frag)
-  }
-
-  exprInput.addEventListener('scroll', () => {
-    exprHighlight.scrollTop = exprInput.scrollTop
-    exprHighlight.scrollLeft = exprInput.scrollLeft
-  })
-
-  // ── Geometry helpers (monospace textarea) ───────────────────
-  function metrics() {
-    const style = getComputedStyle(exprInput)
-    return {
-      lineHeight: parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.6,
-      charWidth: parseFloat(style.fontSize) * 0.6,
-      padLeft: parseFloat(style.paddingLeft),
-      padTop: parseFloat(style.paddingTop),
-    }
-  }
-
-  function offsetAtPoint(clientX: number, clientY: number): number | null {
-    const { lineHeight, charWidth, padLeft, padTop } = metrics()
-    const rect = exprInput.getBoundingClientRect()
-    const x = clientX - rect.left - padLeft + exprInput.scrollLeft
-    const y = clientY - rect.top - padTop + exprInput.scrollTop
-    const row = Math.floor(y / lineHeight)
-    const col = Math.floor(x / charWidth)
-    const lines = exprInput.value.split('\n')
-    if (row < 0 || row >= lines.length || col < 0 || col >= lines[row].length) return null
-    let offset = col
-    for (let r = 0; r < row; r++) offset += lines[r].length + 1
-    return offset
-  }
-
-  function pointAtOffset(offset: number): { left: number; top: number } {
-    const { lineHeight, charWidth, padLeft, padTop } = metrics()
-    const lines = exprInput.value.slice(0, offset).split('\n')
-    const row = lines.length - 1
-    const col = lines[row].length
-    const rect = exprInput.getBoundingClientRect()
-    return {
-      left: rect.left + padLeft + col * charWidth - exprInput.scrollLeft,
-      top: rect.top + padTop + row * lineHeight - exprInput.scrollTop,
-    }
-  }
-
-  // ── Hover tooltip (types and signatures from the language service) ──
-  const tooltip = document.createElement('div')
-  tooltip.className = 'pg-transform-tooltip'
-  tooltip.style.display = 'none'
-  document.body.appendChild(tooltip)
-  cleanups.push(() => tooltip.remove())
-
-  let hoverKey = ''
-  let tooltipTimer: ReturnType<typeof setTimeout> | undefined
-
-  exprInput.addEventListener('mousemove', (e) => {
-    const offset = offsetAtPoint(e.clientX, e.clientY)
-    const info = offset === null ? undefined : service.hover(exprInput.value, offset)
-    if (!info) {
-      hoverKey = ''
-      hideTooltip()
-      return
-    }
-    const key = `${info.start}:${info.end}:${info.detail}`
-    if (key === hoverKey) return
-    hoverKey = key
-    clearTimeout(tooltipTimer)
-
-    tooltip.textContent = ''
-    const name = document.createElement('span')
-    name.className = 'pg-tt-name'
-    name.textContent = exprInput.value.slice(info.start, info.end)
-    const detail = document.createElement('span')
-    detail.className = 'pg-tt-module'
-    detail.textContent = info.detail
-    tooltip.append(name, detail)
-    if (info.documentation) {
-      const doc = document.createElement('span')
-      doc.className = 'pg-tt-desc'
-      doc.textContent = info.documentation
-      tooltip.append(doc)
-    }
-    const point = pointAtOffset(info.start)
-    tooltip.style.display = ''
-    tooltip.style.left = `${point.left + ((info.end - info.start) * metrics().charWidth) / 2}px`
-    tooltip.style.top = `${point.top - 4}px`
-  })
-
-  exprInput.addEventListener('mouseleave', () => {
-    hoverKey = ''
-    hideTooltip()
-  })
-
-  function hideTooltip() {
-    clearTimeout(tooltipTimer)
-    tooltipTimer = setTimeout(() => {
-      tooltip.style.display = 'none'
-    }, 150)
-  }
-
-  // ── Completions (from the language service) ─────────────────
-  const acPanel = document.createElement('div')
-  acPanel.className = 'pg-autocomplete'
-  acPanel.style.display = 'none'
-  document.body.appendChild(acPanel)
-  cleanups.push(() => acPanel.remove())
-
-  let acItems: Completion[] = []
-  let acIndex = -1
-  let acFrom = 0
-  let acTo = 0
-
-  function updateAutocomplete() {
-    const pos = exprInput.selectionStart
-    const text = exprInput.value
-    const result = service.complete(text, pos)
-    const typed = text.slice(result.start, pos)
-    // Only offer completions while a name or member is being typed.
-    const afterDot = /\??\.\s*$/.test(text.slice(0, result.start)) && !/\.\.\.\s*$/.test(text.slice(0, result.start))
-    const items = result.items.filter((item) => item.label !== '.')
-    if (
-      items.length === 0 ||
-      (typed === '' && !afterDot) ||
-      (items.length === 1 && items[0].label === typed)
-    ) {
-      closeAutocomplete()
-      return
-    }
-    acItems = items.slice(0, 12)
-    acFrom = result.start
-    acTo = result.end
-    acIndex = 0
-    renderAutocomplete(typed)
-  }
-
-  function renderAutocomplete(typed = exprInput.value.slice(acFrom, exprInput.selectionStart)) {
-    acPanel.textContent = ''
-    acItems.forEach((item, i) => {
-      const row = document.createElement('div')
-      row.className = 'pg-ac-item' + (i === acIndex ? ' active' : '')
-
-      const name = document.createElement('span')
-      name.className = 'pg-ac-name'
-      if (typed && item.label.toLowerCase().startsWith(typed.toLowerCase())) {
-        const bold = document.createElement('strong')
-        bold.textContent = item.label.slice(0, typed.length)
-        name.append(bold, document.createTextNode(item.label.slice(typed.length)))
-      } else {
-        name.textContent = item.label
-      }
-
-      const kind = document.createElement('span')
-      kind.className = 'pg-ac-module'
-      kind.textContent = item.kind
-
-      const desc = document.createElement('span')
-      desc.className = 'pg-ac-desc'
-      desc.textContent = item.documentation || item.detail.split('\n')[0]
-
-      row.append(name, kind, desc)
-      row.addEventListener('pointerdown', (e) => {
-        e.preventDefault()
-        acIndex = i
-        acceptAutocomplete()
-      })
-      acPanel.appendChild(row)
-    })
-
-    const point = pointAtOffset(acFrom)
-    acPanel.style.left = `${point.left}px`
-    acPanel.style.top = `${point.top + metrics().lineHeight + 4}px`
-    acPanel.style.display = ''
-    ;(acPanel.children[acIndex] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest' })
-  }
-
-  function acceptAutocomplete() {
-    const item = acItems[acIndex]
-    if (!item) return
-    const text = exprInput.value
-    // Some items (a field inserted as ["first-name"]) replace their own range.
-    const start = item.range?.start ?? acFrom
-    const end = item.range?.end ?? acTo
-    exprInput.value = text.slice(0, start) + item.insertText + text.slice(end)
-    const caret = start + item.insertText.length
-    exprInput.setSelectionRange(caret, caret)
-    closeAutocomplete()
-    onExpressionChanged()
-  }
-
-  function closeAutocomplete() {
-    acPanel.style.display = 'none'
-    acItems = []
-    acIndex = -1
-  }
-
-  const isAutocompleteOpen = () => acPanel.style.display !== 'none'
-
-  // ── Result rendering (DOM nodes only) ───────────────────────
-  function span(cls: string, text: string): HTMLSpanElement {
-    const el = document.createElement('span')
-    el.className = cls
-    el.textContent = text
-    return el
-  }
-
-  function renderValue(value: unknown, depth: number, seen: Set<object> = new Set()): Node {
-    if (value === null || value === undefined) return span('r-null', 'null')
-    if (typeof value === 'string') return span('r-string', JSON.stringify(value))
-    if (typeof value === 'number') return span('r-number', String(value))
-    if (typeof value === 'boolean') return span('r-boolean', String(value))
-    if (value instanceof Date) return span('r-number', value.toISOString())
-    if (value instanceof Duration) return span('r-number', value.toString())
-    if (typeof value !== 'object') return document.createTextNode(String(value))
-    if (seen.has(value) || depth > 20) return span('r-punct', '…')
-    seen.add(value)
-
-    const frag = document.createDocumentFragment()
-    const indent = '  '.repeat(depth + 1)
-    const close = '  '.repeat(depth)
-    const entries: [string | null, unknown][] = Array.isArray(value)
-      ? value.map((item) => [null, item])
-      : Object.entries(value as Record<string, unknown>)
-    const [open, shut] = Array.isArray(value) ? ['[', ']'] : ['{', '}']
-    if (entries.length === 0) {
-      frag.appendChild(span('r-bracket', open + shut))
-      return frag
-    }
-    frag.appendChild(span('r-bracket', open))
-    entries.forEach(([key, item], index) => {
-      frag.appendChild(document.createTextNode(`\n${indent}`))
-      if (key !== null) {
-        frag.appendChild(span('r-key', JSON.stringify(key)))
-        frag.appendChild(span('r-punct', ': '))
-      }
-      frag.appendChild(renderValue(item, depth + 1, seen))
-      if (index < entries.length - 1) frag.appendChild(span('r-punct', ','))
-    })
-    frag.appendChild(document.createTextNode(`\n${close}`))
-    frag.appendChild(span('r-bracket', shut))
-    return frag
-  }
-
-  function setResult(node: Node | null) {
-    resultOutput.textContent = ''
-    if (node) resultOutput.appendChild(node)
-  }
-
-  function showMessages(el: HTMLElement, lines: string[]) {
-    el.textContent = lines.join('\n\n')
-    el.style.display = lines.length > 0 ? 'block' : 'none'
-  }
-
-  function describe(d: Diagnostic, source: string): string {
-    const before = source.slice(0, d.start).split('\n')
-    return `${d.code} (line ${before.length}, column ${before[before.length - 1].length + 1})\n${d.message}`
-  }
-
-  // ── Evaluate ────────────────────────────────────────────────
-  let errorTimer: ReturnType<typeof setTimeout> | undefined
-
-  function markStale() {
-    liveBadge.classList.add('is-stale')
-    resultOutput.classList.add('is-stale')
-  }
-
-  function markLive() {
-    liveBadge.classList.remove('is-stale')
-    resultOutput.classList.remove('is-stale')
-  }
-
-  function evaluate() {
-    const source = exprInput.value
-    clearTimeout(errorTimer)
-    showMessages(errorOutput, [])
-    showMessages(warningOutput, [])
-    markLive()
-
-    if (source.trim() === '') {
-      diagnostics = []
-      updateHighlight()
-      setResult(null)
-      resultType.textContent = ''
-      evalTimeEl.textContent = ''
-      return
-    }
-
-    const check = env.check(source)
-    diagnostics = check.diagnostics
-    updateHighlight()
-    resultType.textContent = check.type ? formatType(check.type) : ''
-    const errors = check.diagnostics.filter((d) => d.severity === 'error')
-    const warnings = check.diagnostics.filter((d) => d.severity === 'warning')
-    showMessages(warningOutput, warnings.map((d) => `warning: ${describe(d, source)}`))
-
-    if (currentMode === 'ast') {
-      try {
-        setResult(renderValue(env.parse(source), 0))
-      } catch {
-        setResult(null)
-      }
-    }
-
-    if (errors.length > 0) {
-      if (currentMode === 'result') setResult(null)
-      evalTimeEl.textContent = ''
-      // Delay errors slightly so they do not flash while typing.
-      errorTimer = setTimeout(() => showMessages(errorOutput, errors.map((d) => describe(d, source))), 400)
-      return
-    }
-    if (currentMode === 'ast') return
-
-    const start = performance.now()
+// ── Share links: ?expr=…&data=… (older links have ?ctx= with one value per variable) ──
+function loadFromUrl() {
+  const params = new URLSearchParams(location.search)
+  const expr = params.get('expr')
+  if (expr === null) return
+  let text = params.get('data')
+  if (text === null) {
     try {
-      const result = env.evaluateSync(source, context as never)
-      evalTimeEl.textContent = `${(performance.now() - start).toFixed(2)}ms`
-      setResult(renderValue(result, 0))
-    } catch (error) {
-      setResult(null)
-      evalTimeEl.textContent = ''
-      const text = isBonsaiError(error) ? `${error.code}\n${error.formatted}` : String(error)
-      errorTimer = setTimeout(() => showMessages(errorOutput, [text]), 400)
-    }
-  }
-
-  let timer: ReturnType<typeof setTimeout> | undefined
-  function scheduleEvaluate() {
-    clearTimeout(timer)
-    timer = setTimeout(evaluate, 150)
-  }
-
-  function onExpressionChanged() {
-    updateHighlight()
-    markStale()
-    scheduleEvaluate()
-  }
-
-  // ── Events ──────────────────────────────────────────────────
-  exprInput.addEventListener('input', () => {
-    onExpressionChanged()
-    updateAutocomplete()
-  })
-
-  exprInput.addEventListener('keydown', (e) => {
-    if (isAutocompleteOpen()) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        acIndex = (acIndex + 1) % acItems.length
-        renderAutocomplete()
-        return
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        acIndex = (acIndex - 1 + acItems.length) % acItems.length
-        renderAutocomplete()
-        return
-      }
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault()
-        acceptAutocomplete()
-        return
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        closeAutocomplete()
-        return
-      }
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key === ' ') {
-      e.preventDefault()
-      updateAutocomplete()
-      return
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-      e.preventDefault()
-      clearTimeout(timer)
-      evaluate()
-    }
-  })
-
-  exprInput.addEventListener('blur', () => closeAutocomplete())
-
-  const onDocumentPointerDown = (e: PointerEvent) => {
-    const target = e.target as Node
-    if (!acPanel.contains(target) && target !== exprInput) closeAutocomplete()
-  }
-  document.addEventListener('pointerdown', onDocumentPointerDown)
-  cleanups.push(() => document.removeEventListener('pointerdown', onDocumentPointerDown))
-
-  $<HTMLButtonElement>('#ctx-add').addEventListener('click', () => addVar('', '', true))
-  $<HTMLButtonElement>('#ctx-empty-add').addEventListener('click', () => addVar('', '', true))
-
-  function loadExample(example: Example) {
-    activeId.value = example.id
-    exprInput.value = example.expression
-    ctxVars = example.vars.map((v) => ({ id: nextVarId++, name: v.name, value: v.value }))
-    renderVars()
-    rebuildEnvironment()
-    evaluate()
-  }
-
-  for (const btn of exampleBtns) {
-    btn.addEventListener('click', () => {
-      const example = examples.find((e) => e.id === btn.dataset.example)
-      if (example) loadExample(example)
-    })
-  }
-
-  for (const tab of resultTabs) {
-    tab.addEventListener('click', () => {
-      currentMode = tab.dataset.mode ?? 'result'
-      for (const other of resultTabs) other.classList.toggle('active', other === tab)
-      evaluate()
-    })
-  }
-
-  shareBtn.addEventListener('click', () => {
-    const vars: Record<string, string> = {}
-    for (const v of ctxVars) if (v.name.trim()) vars[v.name.trim()] = v.value
-    const params = new URLSearchParams({ expr: exprInput.value, ctx: JSON.stringify(vars) })
-    const url = `${location.origin}${location.pathname}?${params}`
-    void navigator.clipboard.writeText(url).then(() => {
-      shareBtn.classList.add('copied')
-      const label = shareBtn.querySelector<HTMLElement>('.pg-btn-label')
-      if (label) label.textContent = 'Copied!'
-      setTimeout(() => {
-        shareBtn.classList.remove('copied')
-        if (label) label.textContent = 'Share'
-      }, 2000)
-    })
-  })
-
-  resetBtn.addEventListener('click', () => loadExample(defaultExample))
-
-  // ── Load from URL parameters ────────────────────────────────
-  function loadFromUrl(): boolean {
-    const params = new URLSearchParams(location.search)
-    const expr = params.get('expr')
-    if (expr === null) return false
-    exprInput.value = expr
-    ctxVars = []
-    try {
-      const parsed: unknown = JSON.parse(params.get('ctx') ?? '{}')
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        for (const [name, value] of Object.entries(parsed)) {
-          // Current links store the raw text of each value; older links stored JSON values.
-          ctxVars.push({ id: nextVarId++, name, value: typeof value === 'string' ? value : JSON.stringify(value) })
-        }
-      }
+      const rows: unknown = JSON.parse(params.get('ctx') ?? '{}')
+      const valid = rows !== null && typeof rows === 'object' && !Array.isArray(rows)
+      text = valid
+        ? fromRows(Object.fromEntries(Object.entries(rows).map(([k, v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)])))
+        : '{}'
     } catch {
-      // ignore a malformed context
+      text = '{}'
     }
-    activeId.value = ''
-    renderVars()
-    rebuildEnvironment()
-    evaluate()
-    return true
+  }
+  activeId.value = ''
+  source.value = expr
+  dataText.value = text
+  settleNow()
+}
+
+const copied = ref(false)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+async function share() {
+  const params = new URLSearchParams({ expr: source.value, data: dataText.value })
+  const url = `${location.origin}${location.pathname}?${params}`
+  window.history.replaceState(null, '', url)
+  try {
+    await navigator.clipboard.writeText(url)
+    copied.value = true
+    clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => (copied.value = false), 1800)
+  } catch {
+    // The address bar has the link.
+  }
+}
+</script>
+
+<template>
+  <div class="pg">
+    <aside class="examples" aria-label="Examples">
+      <template v-for="group in groups" :key="group.name">
+        <p class="group">{{ group.name }}</p>
+        <button
+          v-for="example in group.examples"
+          :key="example.id"
+          type="button"
+          class="example"
+          :aria-current="example.id === activeId ? 'true' : undefined"
+          @click="load(example)"
+        >
+          {{ example.title }}
+        </button>
+      </template>
+    </aside>
+
+    <div class="work">
+      <header class="bar">
+        <h1>Playground</h1>
+        <label class="picker">
+          <span class="sr">Example</span>
+          <select :value="activeId" @change="pick(($event.target as HTMLSelectElement).value)">
+            <option v-if="!active" value="">Your own</option>
+            <optgroup v-for="group in groups" :key="group.name" :label="group.name">
+              <option v-for="example in group.examples" :key="example.id" :value="example.id">{{ example.title }}</option>
+            </optgroup>
+          </select>
+        </label>
+        <div class="actions">
+          <button v-if="active && edited" type="button" class="btn" @click="load(active)">Reset</button>
+          <button type="button" class="btn primary" @click="share">{{ copied ? 'Link copied' : 'Share' }}</button>
+        </div>
+      </header>
+
+      <div class="grid">
+        <section class="pane input">
+          <div class="head">
+            <h2>Expression</h2>
+            <!-- What the checker says, kept beside the text it is about. -->
+            <p v-if="settled.source.trim() !== ''" class="status" :class="{ bad: errors.length, stale: typing }">
+              <template v-if="errors.length">
+                {{ errors.length === 1 ? '1 problem' : `${errors.length} problems` }}
+              </template>
+              <template v-else-if="type">
+                <span class="tick" aria-hidden="true">✓</span> gives <code>{{ type }}</code>
+              </template>
+            </p>
+          </div>
+          <div ref="exprHost" class="editor expr">
+            <pre class="fallback">{{ source }}</pre>
+          </div>
+          <p class="hint">Ctrl Space suggests names and values. Hover a name to see its type.</p>
+
+          <div class="head data-head">
+            <h2>Data</h2>
+            <p class="aside">JSON. Each key is a variable; its type comes from its value.</p>
+          </div>
+          <div ref="dataHost" class="editor data">
+            <pre class="fallback">{{ dataText }}</pre>
+          </div>
+          <p v-if="!data.ok" class="data-error" role="alert">{{ data.message }}</p>
+        </section>
+
+        <section class="pane output" :class="{ stale: typing }" aria-live="polite">
+          <div class="tabs" role="tablist" aria-label="Output">
+            <button
+              v-for="v in views"
+              :key="v.id"
+              type="button"
+              role="tab"
+              class="tab"
+              :aria-selected="view === v.id"
+              @click="view = v.id"
+            >
+              {{ v.label }}
+            </button>
+            <span class="meta">
+              <span v-if="run && 'ms' in run && run.ms !== undefined">{{ run.ms < 0.1 ? '<0.1' : run.ms.toFixed(1) }} ms</span>
+            </span>
+          </div>
+
+          <div class="body">
+            <!-- What stops a result: no expression, bad data, or a check error. -->
+            <p v-if="settled.source.trim() === ''" class="quiet">Write an expression to see what it gives.</p>
+            <div v-else-if="!data.ok && view !== 'tree'" class="state">
+              <p class="caught">The data isn't valid JSON</p>
+              <p class="diag">{{ data.message }}</p>
+            </div>
+            <div v-else-if="errors.length && view !== 'tree'" class="state">
+              <p class="caught">Caught before it runs</p>
+              <div v-for="d in errors" :key="d.code + d.start" class="diag">
+                <p class="code-line"><Code :code="settled.source" :mark="d" :wrap="false" /></p>
+                <p>{{ d.message }} <span class="at">{{ where(d) }}</span></p>
+                <button v-if="d.suggestion" type="button" class="fix" @click="applyFix(d)">
+                  Use <code>{{ d.suggestion }}</code>
+                </button>
+              </div>
+            </div>
+
+            <template v-else-if="view === 'result'">
+              <div v-if="run && 'failure' in run && run.failure" class="state">
+                <p class="caught">Stopped safely</p>
+                <p class="diag">{{ run.failure.message }} <span class="at">{{ run.failure.code }}</span></p>
+              </div>
+              <template v-else-if="run && 'value' in run">
+                <pre class="value" :class="{ big: typeof run.value !== 'object' || run.value === null }"><Runs :runs="runs(run.value)" /></pre>
+                <template v-if="reasons.length > 1">
+                  <h3 class="sub">Why</h3>
+                  <ul class="parts" @mouseleave="hover(undefined)">
+                    <li
+                      v-for="(r, i) in reasons"
+                      :key="r.start"
+                      :class="{ lit: hovered?.key === `reason${i}`, aside: !r.decided }"
+                      @mouseenter="hover(`reason${i}`, r)"
+                    >
+                      <Code :code="r.text" />
+                      <span class="chip" :class="r.value">{{ r.value }}</span>
+                    </li>
+                  </ul>
+                </template>
+              </template>
+              <p v-for="d in warnings" :key="d.code + d.start" class="warn">{{ d.message }}</p>
+            </template>
+
+            <template v-else-if="view === 'steps'">
+              <ExplainView
+                v-if="run?.trace"
+                :rows="rows"
+                :lit="hovered?.key"
+                @hover="(s) => hover(s?.key, s)"
+                @toggle="toggle"
+              />
+              <div v-else-if="run && 'failure' in run && run.failure" class="state">
+                <p class="caught">Stopped safely</p>
+                <p class="diag">{{ run.failure.message }}</p>
+              </div>
+            </template>
+
+            <template v-else-if="view === 'query'">
+              <p v-if="!isRule" class="quiet">
+                A query needs a rule: an expression that gives true or false. This one gives <code>{{ type }}</code>.
+              </p>
+              <QueryView
+                v-else-if="run?.program"
+                :program="run.program"
+                :variables="good.variables"
+                :context="good.context"
+              />
+            </template>
+
+            <template v-else-if="view === 'tree'">
+              <pre v-if="tree" class="value small"><Runs :runs="tree" /></pre>
+              <p v-else class="quiet">The expression doesn't parse yet.</p>
+            </template>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+/* The page: examples down the left, the work beside them, on the site's band colour. */
+.pg {
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr);
+  gap: 28px;
+  min-height: calc(100vh - var(--vp-nav-height));
+  padding: 24px 32px 48px;
+  background: var(--bonsai-band);
+}
+
+.examples {
+  position: sticky;
+  top: calc(var(--vp-nav-height) + 24px);
+  align-self: start;
+  max-height: calc(100vh - var(--vp-nav-height) - 48px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.group {
+  margin: 18px 0 4px;
+  padding: 0 10px;
+  color: var(--vp-c-text-3);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.group:first-child {
+  margin-top: 6px;
+}
+
+.example {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  border-radius: 6px;
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+  text-align: left;
+  transition: background-color 0.12s, color 0.12s;
+}
+
+.example:hover {
+  color: var(--vp-c-text-1);
+}
+
+.example[aria-current='true'] {
+  background: var(--bonsai-card);
+  color: var(--vp-c-text-1);
+  font-weight: 600;
+  box-shadow: var(--bonsai-card-shadow);
+}
+
+.work {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* A workspace that fills the window: the data editor and the output take the height left. */
+  height: max(620px, calc(100vh - var(--vp-nav-height) - 72px));
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.bar h1 {
+  margin: 0;
+  font-family: var(--bonsai-font-display);
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  color: var(--vp-c-text-1);
+}
+
+/* The examples as a menu, for screens without room for the list. */
+.picker {
+  display: none;
+}
+
+.picker select {
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  background: var(--bonsai-card);
+  color: var(--vp-c-text-1);
+  font-size: 14px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.btn {
+  padding: 6px 14px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  background: var(--bonsai-card);
+  color: var(--vp-c-text-1);
+  font-size: 14px;
+  font-weight: 500;
+  transition: border-color 0.15s;
+}
+
+.btn:hover {
+  border-color: var(--vp-c-brand-1);
+}
+
+.btn.primary {
+  min-width: 7.5em;
+  border-color: var(--vp-c-brand-1);
+  background: var(--vp-c-brand-1);
+  color: var(--bonsai-on-brand);
+}
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.grid {
+  flex: 1;
+  display: grid;
+  /* The input gets the larger share, so expressions wrap less. */
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: 20px;
+  min-height: 0;
+}
+
+.pane {
+  min-width: 0;
+  border-radius: 14px;
+  background: var(--bonsai-card);
+  box-shadow: var(--bonsai-card-shadow);
+}
+
+.input {
+  display: flex;
+  flex-direction: column;
+  padding: 18px 20px 20px;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.data-head {
+  margin-top: 22px;
+}
+
+.head h2 {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--vp-c-text-2);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+
+.aside {
+  margin: 0;
+  color: var(--vp-c-text-3);
+  font-size: 12.5px;
+}
+
+/* Both editors: a framed, monospaced field that grows with its text. */
+.editor {
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  background: var(--vp-c-bg);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.editor:focus-within {
+  border-color: var(--vp-c-brand-1);
+  box-shadow: 0 0 0 3px var(--vp-c-brand-soft);
+}
+
+/* The expression is what the page is about: on the card's own white, sized to its text. */
+.editor.expr {
+  border-color: var(--vp-c-border);
+  background: var(--bonsai-card);
+}
+
+.editor.data {
+  flex: 1;
+  min-height: 180px;
+  overflow: auto;
+}
+
+.fallback,
+.editor :deep(.cm-content) {
+  margin: 0;
+  padding: 12px 10px;
+  font-family: var(--vp-font-family-mono);
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--vp-c-text-1);
+  caret-color: var(--vp-c-text-1);
+}
+
+.editor.expr .fallback,
+.editor.expr :deep(.cm-content) {
+  padding: 16px 12px;
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.editor.expr .fallback {
+  padding: 16px 18px;
+}
+
+/* A line too long for the box continues indented, so the wrap reads as a continuation. */
+.editor.expr :deep(.cm-line) {
+  padding-left: calc(6px + 2ch);
+  text-indent: -2ch;
+}
+
+.hint {
+  margin: 8px 2px 0;
+  color: var(--vp-c-text-3);
+  font-size: 12.5px;
+}
+
+/* ✓ gives string[], or how many problems the checker found. */
+.status {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 0 0 auto;
+  color: var(--vp-c-text-2);
+  font-size: 13px;
+  transition: opacity 0.15s;
+}
+
+.status code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--vp-font-family-mono);
+  color: var(--vp-c-text-1);
+}
+
+.status .tick {
+  color: var(--vp-c-brand-1);
+  font-weight: 700;
+}
+
+.status.bad {
+  color: var(--bonsai-error);
+  font-weight: 600;
+}
+
+.status.stale {
+  opacity: 0.5;
+}
+
+.fallback {
+  padding: 12px 16px;
+  white-space: pre-wrap;
+}
+
+.editor[data-ready] .fallback {
+  display: none;
+}
+
+.editor :deep(.cm-editor) {
+  background: transparent;
+}
+
+.editor :deep(.cm-editor.cm-focused) {
+  outline: none;
+}
+
+.editor :deep(.cm-line) {
+  padding: 0 6px;
+}
+
+.editor :deep(.cm-placeholder) {
+  color: var(--vp-c-text-3);
+}
+
+.editor :deep(.tk-prop) {
+  color: var(--bonsai-syn-prop);
+}
+.editor :deep(.tk-name) {
+  color: var(--vp-c-text-1);
+}
+.editor :deep(.tk-fn) {
+  color: var(--vp-c-brand-1);
+}
+.editor :deep(.tk-str) {
+  color: var(--bonsai-syn-string);
+}
+.editor :deep(.tk-lit) {
+  color: var(--bonsai-syn-literal);
+}
+.editor :deep(.tk-punct) {
+  color: var(--vp-c-text-3);
+}
+
+.editor :deep(.cm-lit) {
+  background: var(--bonsai-lit);
+}
+
+.editor :deep(.cm-tooltip) {
+  background: var(--vp-c-bg-elv);
+  color: var(--vp-c-text-1);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  box-shadow: 0 12px 30px -12px rgba(0, 0, 0, 0.3);
+  font-size: 13.5px;
+  overflow: hidden;
+}
+
+/* A problem's message wraps instead of running past the editor and over the output. */
+.editor :deep(.cm-tooltip-hover),
+.editor :deep(.cm-tooltip-lint) {
+  max-width: min(30em, 80vw);
+  white-space: normal;
+  line-height: 1.5;
+}
+
+.editor :deep(.cm-tooltip-autocomplete > ul) {
+  font-family: var(--vp-font-family-mono);
+  max-width: min(440px, 80vw);
+}
+
+.editor :deep(.cm-tooltip-autocomplete > ul > li[aria-selected]) {
+  background: var(--vp-c-brand-1);
+  color: var(--bonsai-on-brand);
+}
+
+.editor :deep(.cm-completionDetail) {
+  margin-left: 1em;
+  opacity: 0.75;
+  font-style: normal;
+}
+
+.data-error {
+  margin: 10px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--bonsai-error);
+  color: var(--vp-c-text-1);
+  font-size: 13.5px;
+}
+
+.output {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 14px 0;
+  border-bottom: 1px solid var(--vp-c-divider);
+  overflow-x: auto;
+}
+
+.tab {
+  flex: none;
+  padding: 8px 12px 10px;
+  border-bottom: 2px solid transparent;
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.tab:hover {
+  color: var(--vp-c-text-1);
+}
+
+.tab[aria-selected='true'] {
+  color: var(--vp-c-text-1);
+  border-bottom-color: var(--vp-c-brand-1);
+}
+
+.meta {
+  display: flex;
+  flex: none;
+  gap: 12px;
+  margin-left: auto;
+  padding: 0 4px 2px 12px;
+  color: var(--vp-c-text-3);
+  font-size: 12.5px;
+}
+
+.meta code {
+  max-width: 22em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--vp-font-family-mono);
+  color: var(--vp-c-text-2);
+}
+
+.body {
+  flex: 1;
+  padding: 20px 22px 24px;
+  overflow: auto;
+  transition: opacity 0.15s;
+}
+
+.stale .body {
+  opacity: 0.5;
+}
+
+.quiet {
+  margin: 0;
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+}
+
+.quiet code {
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.92em;
+  color: var(--vp-c-text-1);
+}
+
+.value {
+  margin: 0;
+  font-family: var(--vp-font-family-mono);
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--vp-c-text-1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.value.big {
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.value.small {
+  font-size: 13px;
+}
+
+.sub {
+  margin: 26px 0 8px;
+  padding: 0;
+  border: 0;
+  color: var(--vp-c-text-2);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* The conditions that decided a true or false result; hovering one lights up its text in the editor. */
+.parts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.parts li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 -8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: default;
+  transition: background-color 0.12s;
+}
+
+.parts li.lit {
+  background: var(--bonsai-lit);
+}
+
+.parts li.aside {
+  opacity: 0.6;
+}
+
+.chip {
+  flex: none;
+  font-family: var(--vp-font-family-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vp-c-text-2);
+}
+
+.chip.true {
+  color: var(--vp-c-brand-1);
+}
+
+.chip.false {
+  color: var(--bonsai-error);
+}
+
+.caught {
+  margin: 0;
+  color: var(--bonsai-error);
+  font-weight: 600;
+}
+
+.diag {
+  margin: 10px 0 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--bonsai-error);
+  color: var(--vp-c-text-1);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.diag p {
+  margin: 0;
+}
+
+.code-line {
+  margin-bottom: 4px !important;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.at {
+  margin-left: 6px;
+  color: var(--vp-c-text-3);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.fix {
+  margin-top: 8px;
+  padding: 3px 12px;
+  border-radius: 6px;
+  background: var(--vp-c-brand-1);
+  color: var(--bonsai-on-brand);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.fix code {
+  font-family: var(--vp-font-family-mono);
+  color: inherit;
+}
+
+.warn {
+  margin: 16px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--bonsai-warning);
+  color: var(--vp-c-text-2);
+  font-size: 13.5px;
+}
+
+/* Narrower: the examples become a menu. */
+@media (max-width: 1100px) {
+  .pg {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 20px 24px 40px;
   }
 
-  if (!loadFromUrl()) loadExample(defaultExample)
-})
-</script>
+  .examples {
+    display: none;
+  }
+
+  .picker {
+    display: block;
+    min-width: 0;
+  }
+}
+
+/* Narrow: input above output. */
+@media (max-width: 860px) {
+  .work {
+    height: auto;
+  }
+
+  .grid {
+    flex: none;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .editor.data {
+    flex: none;
+    max-height: 60vh;
+  }
+
+  .output {
+    min-height: 280px;
+  }
+}
+
+@media (max-width: 640px) {
+  .pg {
+    padding: 16px 16px 32px;
+  }
+
+  .bar {
+    flex-wrap: wrap;
+    gap: 10px 12px;
+  }
+
+  .bar h1 {
+    font-size: 24px;
+  }
+
+  .picker {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .picker select {
+    width: 100%;
+  }
+
+  .input {
+    padding: 14px 14px 16px;
+  }
+
+  .meta {
+    display: none;
+  }
+
+  .editor.data .fallback,
+  .editor.data :deep(.cm-content) {
+    font-size: 13px;
+  }
+
+  .body {
+    padding: 16px;
+  }
+}
+</style>

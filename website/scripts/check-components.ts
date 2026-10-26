@@ -11,7 +11,8 @@ import { readFileSync } from 'node:fs'
 import { bonsai, formatType, t } from '../../src/index.ts'
 import { toSQL } from '../../src/query/index.ts'
 import { examples } from '../.vitepress/theme/components/playground/examples.ts'
-import { buildContext } from '../.vitepress/theme/components/playground/schema.ts'
+import { parseData } from '../.vitepress/theme/components/playground/schema.ts'
+import { recordsOf, translate } from '../.vitepress/theme/components/playground/query.ts'
 import { createLanguageService } from '../../src/service/index.ts'
 import {
   columns,
@@ -23,7 +24,7 @@ import {
   variables,
 } from '../.vitepress/theme/components/home/proofs-data.ts'
 import { MAX_EXPRESSION_LENGTH, tabs } from '../.vitepress/theme/components/home/tabs-data.ts'
-import { display } from './format.ts'
+import { CLOCK, display } from './format.ts'
 
 let failures = 0
 const fail = (message: string): void => {
@@ -32,7 +33,12 @@ const fail = (message: string): void => {
 }
 
 for (const example of examples) {
-  const { context, variables } = buildContext(example.vars)
+  const data = parseData(example.data)
+  if (!data.ok) {
+    fail(`playground ${example.id}: its data doesn't parse: ${data.message}`)
+    continue
+  }
+  const { context, variables } = data
   const env = bonsai({ variables })
   const check = env.check(example.expression)
   const errors = check.diagnostics.filter((d) => d.severity === 'error')
@@ -51,6 +57,13 @@ for (const example of examples) {
     console.log(`ok playground ${example.id}: ${formatType(check.type)} ${display(result)}`)
   } catch (error) {
     fail(`playground ${example.id}: ${(error as Error).message}`)
+  }
+  // The rules open in the Query view: each must translate over its first record.
+  if (example.group === 'Rules') {
+    const program = env.compile(example.expression)
+    const row = recordsOf(program, variables)[0]
+    const query = row === undefined ? undefined : translate(program, row, 'sqlite', variables, context, new Date(CLOCK))
+    if (!query?.ok) fail(`playground ${example.id}: no query (${query?.message ?? 'no record variable'})`)
   }
 }
 
