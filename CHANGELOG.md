@@ -10,6 +10,13 @@ From 1.0.0, entries are generated at release time from the bump files in
 
 
 
+## 1.2.2
+<sub>2026-10-26</sub>
+
+- *(patch)*
+  Check errors for a non-boolean in a condition, `!`, `&&` or `||` now say how to fix it. A default written with `||` (`user.nickname || "anon"`, or `discount || 0` on an untyped value) is reported once, suggesting `??`, and the rest of the expression is checked as if it used `??`, so a method call on it adds no further error. Where a boolean is wanted (a condition, `!`, `&&`), a number or string is told to compare it (`x != 0`), or to test it against null (`x != null`) when it may be null.
+- The package homepage is now https://bonsai.danfry.dev.
+
 ## 1.2.1
 <sub>2026-10-25</sub>
 
