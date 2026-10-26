@@ -94,6 +94,11 @@ const reasons = computed(() =>
 )
 
 const open = ref(new Set<string>())
+// Runs are keyed by position, so an edited expression starts with every run closed.
+watch(
+  () => settled.value.source,
+  () => (open.value = new Set()),
+)
 const rows = computed<Step[]>(() => (run.value?.trace ? steps(run.value.trace, open.value) : []))
 function toggle(key: string) {
   const next = new Set(open.value)

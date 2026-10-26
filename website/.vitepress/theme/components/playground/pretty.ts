@@ -37,57 +37,80 @@ const isNested = (value: unknown): value is object =>
 
 const length = (runs: readonly Run[]) => runs.reduce((n, r) => n + r.text.length, 0)
 
+const p = (text: string): Run => ({ text, cls: 'tk-punct' })
+
+/** Lists longer than this show their first items and a count of the rest, so a huge result stays responsive. */
+const MAX_ITEMS = 200
+
+/** A value's entries (list items have no key), the shown ones only, and how many more there are. */
+function entriesOf(value: object): { entries: [string | null, unknown][]; more: number } {
+  const all: [string | null, unknown][] = Array.isArray(value)
+    ? value.slice(0, MAX_ITEMS).map((item: unknown) => [null, item])
+    : Object.entries(value)
+  return { entries: all, more: Array.isArray(value) ? Math.max(0, value.length - MAX_ITEMS) : 0 }
+}
+
+/** Appends without spreading, which overflows the stack for long lists. */
+function append(out: Run[], runs: readonly Run[]): void {
+  for (const run of runs) out.push(run)
+}
+
 function inline(value: unknown, options: Options, seen: Set<object>): Run[] {
   if (!isNested(value)) return [scalar(value)]
-  if (seen.has(value)) return [{ text: '…', cls: 'tk-punct' }]
+  if (seen.has(value)) return [p('…')]
   seen.add(value)
-  const p = (text: string): Run => ({ text, cls: 'tk-punct' })
-  let out: Run[]
-  if (Array.isArray(value)) {
-    out = [p('[')]
-    value.forEach((item, i) => out.push(...(i ? [p(', ')] : []), ...inline(item, options, seen)))
-    out.push(p(']'))
-  } else {
-    const entries = Object.entries(value)
-    out = entries.length ? [p('{ ')] : [p('{}')]
-    entries.forEach(([k, item], i) => out.push(...(i ? [p(', ')] : []), key(k, options), p(': '), ...inline(item, options, seen)))
-    if (entries.length) out.push(p(' }'))
+  const { entries, more } = entriesOf(value)
+  const list = Array.isArray(value)
+  const out: Run[] = []
+  if (entries.length === 0) out.push(p(list ? '[]' : '{}'))
+  else {
+    out.push(p(list ? '[' : '{ '))
+    entries.forEach(([k, item], i) => {
+      if (i) out.push(p(', '))
+      if (k !== null) out.push(key(k, options), p(': '))
+      append(out, inline(item, options, seen))
+    })
+    if (more) out.push(p(`, … ${more} more`))
+    out.push(p(list ? ']' : ' }'))
   }
   seen.delete(value)
   return out
 }
 
-/** `lead` is how far into its line the value starts (after its key); `indent` is that line's indent. */
-function block(value: unknown, options: Options, indent: number, lead: number, seen: Set<object>): Run[] {
+/**
+ * `lead` is how far into its line the value starts (after its key); `indent`
+ * is that line's indent; `tail` is what follows it on the line (a comma).
+ */
+function block(value: unknown, options: Options, indent: number, lead: number, tail: number, seen: Set<object>): Run[] {
   const flat = inline(value, options, seen)
-  if (!isNested(value) || lead + length(flat) <= options.width || seen.has(value)) return flat
+  if (!isNested(value) || lead + length(flat) + tail <= options.width || seen.has(value)) return flat
+  const { entries, more } = entriesOf(value)
+  if (entries.length === 0) return flat
   seen.add(value)
-  const p = (text: string): Run => ({ text, cls: 'tk-punct' })
   const pad = ' '.repeat(indent + 2)
-  const entries: [string | null, unknown][] = Array.isArray(value)
-    ? value.map((item) => [null, item])
-    : Object.entries(value)
-  const [open, close] = Array.isArray(value) ? ['[', ']'] : ['{', '}']
-  const out: Run[] = [p(open)]
+  const out: Run[] = [p(Array.isArray(value) ? '[' : '{')]
   entries.forEach(([k, item], i) => {
     out.push({ text: `\n${pad}`, cls: '' })
     const head = k === null ? [] : [key(k, options), p(': ')]
-    out.push(...head, ...block(item, options, indent + 2, indent + 2 + length(head), seen))
-    if (i < entries.length - 1) out.push(p(','))
+    const last = i === entries.length - 1 && !more
+    append(out, head)
+    append(out, block(item, options, indent + 2, indent + 2 + length(head), last ? 0 : 1, seen))
+    if (!last) out.push(p(','))
   })
-  out.push({ text: `\n${' '.repeat(indent)}`, cls: '' }, p(close))
+  if (more) out.push({ text: `\n${pad}`, cls: '' }, p(`… ${more} more`))
+  out.push({ text: `\n${' '.repeat(indent)}`, cls: '' }, p(Array.isArray(value) ? ']' : '}'))
   seen.delete(value)
   return out
 }
 
 /** A value as coloured runs, in Bonsai's notation (or JSON), broken over lines where it doesn't fit. */
 export function runs(value: unknown, { json = false, width = 56 } = {}): Run[] {
-  return block(value, { json, width }, 0, 0, new Set())
+  return block(value, { json, width }, 0, 0, 0, new Set())
 }
 
 /** A value as JSON text, one top-level entry per line, the rest broken over lines where it doesn't fit. */
 export function prettyJSON(value: unknown, width = 56): string {
-  return block(value, { json: true, width }, 0, Infinity, new Set())
+  return block(value, { json: true, width }, 0, Infinity, 0, new Set())
     .map((r) => r.text)
     .join('')
 }

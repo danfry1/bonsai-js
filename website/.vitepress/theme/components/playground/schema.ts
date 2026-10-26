@@ -62,6 +62,12 @@ export function typeOf(value: unknown): Type {
 function merge(a: Type, b: Type): Type {
   if (a.kind === 'any' || b.kind === 'any') return t.any()
   if (JSON.stringify(a) === JSON.stringify(b)) return a
+  // A field missing from some items is optional; merging it with the field's own type keeps it optional.
+  const base = (x: Type): Type | undefined =>
+    x.kind === 'union' && x.types.length === 2 && x.types.some((m) => m.kind === 'null')
+      ? x.types.find((m) => m.kind !== 'null')
+      : undefined
+  if (base(a) || base(b)) return t.optional(merge(base(a) ?? a, base(b) ?? b))
   if (a.kind === 'map' && b.kind === 'map') {
     const fields: Record<string, Type> = {}
     for (const key of new Set([...Object.keys(a.fields), ...Object.keys(b.fields)])) {
@@ -108,9 +114,9 @@ export function fromRows(rows: Readonly<Record<string, string>>): string {
   const out: Record<string, unknown> = {}
   for (const [name, raw] of Object.entries(rows)) {
     try {
-      out[name] = raw.trim() === '' ? null : parseJSON(raw)
+      out[name.trim()] = raw.trim() === '' ? null : parseJSON(raw)
     } catch {
-      out[name] = raw
+      out[name.trim()] = raw
     }
   }
   return JSON.stringify(out, null, 2)

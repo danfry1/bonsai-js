@@ -21,11 +21,14 @@ export interface Step {
   more?: number
 }
 
-const isRead = (node: Trace): boolean =>
-  node.kind === 'Variable' ||
-  node.kind === 'It' ||
-  node.kind === 'Local' ||
-  ((node.kind === 'Member' || node.kind === 'Index') && node.children[0] !== undefined && isRead(node.children[0]))
+/** A plain read of data: a name, or fields and fixed indexes on one (`orders[0].total`), but not `xs[ys.length - 1]`. */
+const isRead = (node: Trace): boolean => {
+  if (node.kind === 'Variable' || node.kind === 'It' || node.kind === 'Local') return true
+  const [object, index] = node.children
+  if (object === undefined || !isRead(object)) return false
+  if (node.kind === 'Member') return true
+  return node.kind === 'Index' && index !== undefined && (index.kind === 'Literal' || isRead(index))
+}
 
 /** A list or map written out in full (`["admin", "editor"]`): its value is its text. */
 const constant = (node: Trace): boolean =>

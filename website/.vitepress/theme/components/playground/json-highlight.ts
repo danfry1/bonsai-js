@@ -4,7 +4,7 @@
 import { RangeSetBuilder } from '@codemirror/state'
 import { Decoration, ViewPlugin, type DecorationSet, type EditorView, type ViewUpdate } from '@codemirror/view'
 
-const TOKEN = /("(?:[^"\\\n]|\\.)*"?|'(?:[^'\\\n]|\\.)*'?)(\s*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)\b|([{}[\],:])/gu
+const TOKEN = /("(?:[^"\\\n]|\\.)*"?|'(?:[^'\\\n]|\\.)*'?)(\s*:)?|(?<![\w$.])(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)\b|([{}[\],:])/gu
 
 const marks = {
   key: Decoration.mark({ class: 'tk-prop' }),
