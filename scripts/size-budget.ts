@@ -48,8 +48,10 @@ const cases: SizeCase[] = [
     // (error ownership per evaluation, bounded explanation rendering); 68.0 KB
     // for round ten (hostile thrown values, deterministic rendering, checked
     // unknown paths); 68.9 KB once each built-in became its own export and the
-    // builtins option landed (2026-10-24), for bonsai-js/runtime/core.
-    maxGzipBytes: 69_300,
+    // builtins option landed (2026-10-24), for bonsai-js/runtime/core; 69.5 KB
+    // for check errors that say how to fix a non-boolean in logic (`??` for a
+    // default written with ||, x != null or x != 0 for a condition).
+    maxGzipBytes: 69_500,
   },
   {
     // The lite entry: checking and evaluating, without explaining and partial

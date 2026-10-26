@@ -103,24 +103,61 @@ describe('diagnostics', () => {
     expect(errors('orders.filter(o => orders.some(.id == o.id))')).toEqual([])
   })
 
-  it('reads a nullable value before || as a fallback: one problem, pointing to ??', () => {
-    const { diagnostics } = env.check('user.nick || "anon"')
-    expect(diagnostics).toHaveLength(1)
-    expect(diagnostics[0]).toMatchObject({ code: 'TYPE_ERROR', start: 0, end: 9 })
-    expect(diagnostics[0]?.message).toContain('use ?? instead of ||')
-    expect(errors('user.nick ?? "anon"')).toEqual([])
-  })
-
-  it('suggests an explicit comparison for a number or string used as a condition', () => {
-    for (const source of ['user.age && true', '!user.name', 'user.age ? 1 : 2', 'true || 10']) {
-      const messages = env.check(source).diagnostics.map((d) => d.message)
-      expect(messages, source).toEqual([expect.stringContaining('compare explicitly, e.g. x != 0')])
+  describe('a default written with ||', () => {
+    const only = (source: string) => {
+      const found = env.check(source).diagnostics
+      expect(found, source).toHaveLength(1)
+      return found[0]
     }
+
+    it('is one problem, on the value that may be null, pointing to ??', () => {
+      expect(only('user.nick || "anon"')).toMatchObject({
+        code: 'TYPE_ERROR',
+        start: 0,
+        end: 9,
+        message: '"||" expects a boolean but got string | null; for a default, use ?? for each ||',
+      })
+      expect(errors('user.nick ?? "anon"')).toEqual([])
+    })
+
+    it('is recognised on an untyped value, on the side that is not a boolean', () => {
+      const loose = bonsai()
+      const [diagnostic, ...rest] = loose.check('discount || 0').diagnostics
+      expect(rest).toEqual([])
+      expect(diagnostic).toMatchObject({ start: 12, end: 13 })
+      expect(diagnostic?.message).toContain('use ?? for each ||')
+      expect(only('null || 1').message).toContain('use ?? for each ||')
+    })
+
+    it('reports a chain once', () => {
+      for (const source of ['user.nick || user.nick || "anon"', 'user.nick || "a" || "b"']) {
+        expect(only(source).message, source).toContain('use ?? for each ||')
+      }
+    })
+
+    it('stands for its value where it is used, so nothing cascades', () => {
+      expect(only('(user.nick || "anon").toUpperCase()').start).toBe(1)
+      expect(only('(user.nick || "anon") && true').start).toBe(1)
+    })
+
+    it('still checks the fallback itself', () => {
+      expect(codes('user.nick || user.agee')).toEqual(['UNKNOWN_PROPERTY', 'TYPE_ERROR'])
+    })
   })
 
-  it('adds no hint where neither fix applies', () => {
-    const [diagnostic] = env.check('user.tags && true').diagnostics
-    expect(diagnostic?.message).toBe('"&&" expects a boolean but got string[]')
+  it('says how to compare a non-boolean in a condition, by its type', () => {
+    const hint = (source: string) =>
+      env.check(source).diagnostics.map((d) => d.message.split('; ')[1])
+    const compare = 'compare explicitly, e.g. x != 0 or x != ""'
+    expect(hint('user.age && true')).toEqual([compare])
+    expect(hint('!user.name')).toEqual([compare])
+    // Null reads as false, so x != 0 would turn it true: test for presence instead.
+    expect(hint('user.nick ? 1 : 2')).toEqual(['to test that it is set, write x != null'])
+    // An enum compared to "" always differs, a constant operand isn't the mistake,
+    // and a list has no comparison to suggest.
+    expect(hint('!user.plan')).toEqual([undefined])
+    expect(hint('true || 10')).toEqual([undefined])
+    expect(hint('user.tags && true')).toEqual([undefined])
   })
 
   it('points diagnostics at the offending span', () => {

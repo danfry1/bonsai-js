@@ -136,25 +136,23 @@ function mayBeNull(type: Type): boolean {
   return type.kind === 'null' || (type.kind === 'union' && type.types.some(mayBeNull))
 }
 
-/** Whether every value of a type, other than null, is a number or a string. */
-function isNumberOrString(type: Type): boolean {
-  const members = unionMembers(type).filter((m) => m.kind !== 'null')
-  return (
-    members.length > 0 &&
-    members.every(
-      (m) =>
-        m.kind === 'number' ||
-        m.kind === 'string' ||
-        (m.kind === 'literal' && (typeof m.value === 'number' || typeof m.value === 'string')),
+/**
+ * How to say what a number or string means as a condition, for a non-boolean
+ * operand of logic. Null reads as false, so a nullable one is tested against
+ * null (`x != 0` would turn null true). A literal operand, an enum (`x != ""`
+ * would always hold), or any other type gets no hint.
+ */
+function comparisonHint(type: Type, at: Node): string {
+  if (
+    at.type === 'Literal' ||
+    !unionMembers(type).every(
+      (m) => m.kind === 'number' || m.kind === 'string' || m.kind === 'null',
     )
   )
-}
-
-/** How to fix a non-boolean operand of logic: `??` for a nullable fallback, else an explicit comparison. */
-function logicHint(type: Type, fallback: boolean): string {
-  if (fallback && mayBeNull(type)) return '; for a fallback when it is null, use ?? instead of ||'
-  if (isNumberOrString(type)) return '; compare explicitly, e.g. x != 0 or x != ""'
-  return ''
+    return ''
+  return mayBeNull(type)
+    ? '; to test that it is set, write x != null'
+    : '; compare explicitly, e.g. x != 0 or x != ""'
 }
 
 /** The node whose value is the result (the body of lets, the last expression). */
@@ -548,6 +546,12 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
   let probeScope: ProbeScope | undefined
   let probeMembers: ReadonlyMap<string, Type> | undefined
 
+  /**
+   * Each `a || b` written as a default, the JavaScript way, and already
+   * reported (see checkDefault): a chain (`a || b || c`) is one problem, and
+   * the value it stands for isn't reported again where it is used.
+   */
+  const defaults = new Set<Node>()
   const reported = new Set<string>()
   const report = (
     code: DiagnosticCode,
@@ -964,18 +968,46 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
   }
 
   /**
-   * Checks an operand of a condition, `!`, `&&` or `||`. `fallback` marks the
-   * left side of `||`, where a value that may be null is usually meant as
-   * `a ?? b`; a number or a string gets the explicit comparison the runtime
-   * error suggests.
+   * Checks `a || b` where a side is not a boolean. When `a` may be missing
+   * (null, or an untyped value) it is a default: one problem, pointing to
+   * `??`, on the side that is not a boolean. When neither side is a boolean,
+   * one problem on `a`. Either way the result takes the type `??` would give,
+   * so the rest of the expression is checked as the author meant it.
+   * Undefined when it is an ordinary `||`, checked operand by operand.
    */
-  function expectLogic(actual: Type, at: Node, what: string, fallback = false): void {
-    if (!isAssignable(actual, OPTIONAL_BOOLEAN)) {
-      report(
-        'TYPE_ERROR',
-        `${what} expects a boolean but got ${typeText(actual)}${logicHint(actual, fallback)}`,
-        at,
+  function checkDefault(
+    node: Extract<Node, { type: 'Binary' }>,
+    left: Type,
+    right: Type,
+  ): Type | undefined {
+    const leftLogic = isAssignable(left, OPTIONAL_BOOLEAN)
+    if (leftLogic && isAssignable(right, OPTIONAL_BOOLEAN)) return undefined
+    // In a chain (a || b || c) the default on the left was already reported.
+    const chain = defaults.has(node.left)
+    if (!chain && !(left.kind === 'any' || left.kind === 'null' || (!leftLogic && mayBeNull(left))))
+      return undefined
+    if (!chain)
+      expectLogic(
+        leftLogic ? right : left,
+        leftLogic ? node.right : node.left,
+        '"||"',
+        '; for a default, use ?? for each ||',
       )
+    defaults.add(node)
+    return unionOf([nonNull(left), right])
+  }
+
+  /** Checks an operand of a condition, `!`, `&&` or `||`; a non-boolean one is told how to compare it. */
+  function expectLogic(
+    actual: Type,
+    at: Node,
+    what: string,
+    hint = comparisonHint(actual, at),
+  ): void {
+    // A default already reported stands for the value it meant; don't report it again.
+    if (defaults.has(at)) return
+    if (!isAssignable(actual, OPTIONAL_BOOLEAN)) {
+      report('TYPE_ERROR', `${what} expects a boolean but got ${typeText(actual)}${hint}`, at)
     } else if (mayBeNull(actual)) {
       // Null counts as false here, which ! turns into true: say which one is meant.
       report(
@@ -1121,11 +1153,10 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     switch (op) {
       case '&&':
       case '||': {
-        // `a || b` with `a` possibly null is a fallback written the JavaScript way:
-        // one problem, on `a`, rather than a second one for the fallback value.
-        const fallback = op === '||' && !isAssignable(left, OPTIONAL_BOOLEAN) && mayBeNull(left)
-        expectLogic(left, node.left, `"${op}"`, op === '||')
-        if (!fallback) expectLogic(right, node.right, `"${op}"`)
+        const fallback = op === '||' ? checkDefault(node, left, right) : undefined
+        if (fallback) return fallback
+        expectLogic(left, node.left, `"${op}"`)
+        expectLogic(right, node.right, `"${op}"`)
         return BOOLEAN
       }
       case '??':

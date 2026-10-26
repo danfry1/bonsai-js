@@ -2,4 +2,4 @@
 'bonsai-js': patch
 ---
 
-Check errors for a non-boolean in a condition, `!`, `&&` or `||` now say how to fix it. A value that may be null before `||` (`user.nickname || "anon"`) is reported once, suggesting `??`, instead of once for each side. A number or string gets the explicit comparison the runtime error already suggests (`x != 0`).
+Check errors for a non-boolean in a condition, `!`, `&&` or `||` now say how to fix it. A default written with `||` (`user.nickname || "anon"`, or `discount || 0` on an untyped value) is reported once, suggesting `??`, and the rest of the expression is checked as if it used `??`, so a chain or a method call on it adds no further errors. A number or string used as a condition is told to compare it (`x != 0`), or to test it against null (`x != null`) when it may be null.

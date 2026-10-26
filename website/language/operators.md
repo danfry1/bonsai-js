@@ -126,7 +126,7 @@ user.plan == "pro" ? "Pro" : "Free" // => "Pro"
 qty && true // error: TYPE_ERROR
 ```
 
-`a ?? b` evaluates `b` only when `a` is `null`. It is the default JavaScript often writes with `||`, which here takes only booleans:
+`a ?? b` evaluates `b` only when `a` is `null`, so `0` and `""` are kept. It is the default JavaScript often writes with `||`, which here takes only booleans:
 
 ```bonsai
 discount ?? 0 // => 0
