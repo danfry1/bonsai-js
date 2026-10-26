@@ -145,13 +145,35 @@ describe('diagnostics', () => {
         env
           .check(source, expect_ ? { expect: expect_ } : {})
           .diagnostics.map((d) => d.message.split('; ')[1])
-      const present = 'to test that it is set, write x != null'
+      const present = 'to test it is set, write x != null'
       expect(advice('(user.nick || "anon") && true')).toEqual([present, undefined])
       expect(advice('!(user.nick || "anon")')).toEqual([present, undefined])
       expect(advice('(user.nick || "anon") ? 1 : 2')).toEqual([present, undefined])
       expect(advice('user.nick || "anon"', t.boolean())).toContain(present)
       // A boolean on the right: the left is a test too (user.nick != null || ...).
       expect(advice('user.nick || user.age > 1')).toEqual([present])
+      // A predicate's lambda, and a place that takes boolean | null, want a boolean as well.
+      expect(advice('user.tags.filter(tag => user.nick || "anon")')).toContain(present)
+      expect(advice('user.nick || "anon"', t.optional(t.boolean()))).toContain(present)
+    })
+
+    it('takes an untyped fallback as a default, and leaves untyped || alone', () => {
+      const loose = bonsai({
+        variables: { user: t.object({ nick: t.optional(t.string()) }), fallback: t.any() },
+      })
+      expect(loose.check('user.nick || fallback').diagnostics.map((d) => d.message)).toEqual([
+        expect.stringContaining('use ?? for each ||'),
+      ])
+      const plain = bonsai().check('a || b')
+      expect(plain.diagnostics).toEqual([])
+      expect(plain.type).toEqual(t.boolean())
+    })
+
+    it('still reports the outer || when a default sits after a boolean', () => {
+      expect(codes('user.created == user.created || (user.nick || "x")')).toEqual([
+        'TYPE_ERROR',
+        'TYPE_ERROR',
+      ])
     })
 
     it('still checks the fallback itself', () => {
@@ -166,7 +188,7 @@ describe('diagnostics', () => {
     expect(hint('user.age && true')).toEqual([compare])
     expect(hint('!user.name')).toEqual([compare])
     // Null reads as false, so x != 0 would turn it true: test for presence instead.
-    expect(hint('user.nick ? 1 : 2')).toEqual(['to test that it is set, write x != null'])
+    expect(hint('user.nick ? 1 : 2')).toEqual(['to test it is set, write x != null'])
     // An enum compared to "" always differs, a constant operand isn't the mistake,
     // and a list has no comparison to suggest.
     expect(hint('!user.plan')).toEqual([undefined])

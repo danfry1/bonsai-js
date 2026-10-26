@@ -151,7 +151,7 @@ function comparisonHint(type: Type, at: Node): string {
   )
     return ''
   return mayBeNull(type)
-    ? '; to test that it is set, write x != null'
+    ? '; to test it is set, write x != null'
     : '; compare explicitly, e.g. x != 0 or x != ""'
 }
 
@@ -548,11 +548,10 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
 
   /**
    * Each `a || b` written as a default, the JavaScript way, and already
-   * reported (see checkDefault): a chain (`a || b || c`) is one problem, and
-   * the value it stands for isn't reported again where it is used.
+   * reported (see checkDefault), so a chain (`a || b || c`) is one problem.
    */
   const defaults = new Set<Node>()
-  /** Operands used as conditions (of `!`, `?:`, `&&`), where an `a || b` is a test, not a default. */
+  /** Values used as conditions (of `!`, `?:`, `&&`, a predicate's lambda), where an `a || b` is a test, not a default. */
   const tests = new WeakSet<Node>()
   const asTest = (n: Node): void => {
     tests.add(n)
@@ -995,13 +994,20 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     right: Type,
     expected: Type | undefined,
   ): Type | undefined {
-    if (tests.has(node) || expected?.kind === 'boolean' || isAssignable(right, OPTIONAL_BOOLEAN))
-      return undefined
     const leftLogic = isAssignable(left, OPTIONAL_BOOLEAN)
-    // In a chain (a || b || c, or a || (b || c)) the default inside was already reported.
-    const chain = defaults.has(node.left) || defaults.has(node.right)
-    if (!chain && !(left.kind === 'any' || left.kind === 'null' || (!leftLogic && mayBeNull(left))))
+    // A boolean fallback makes the left a test; an untyped one (user.nick || x) is
+    // still a default, but only when the left is the side that is not a boolean.
+    if (
+      tests.has(node) ||
+      (expected !== undefined && nonNull(expected).kind === 'boolean') ||
+      (isAssignable(right, OPTIONAL_BOOLEAN) && (leftLogic || right.kind !== 'any'))
+    )
       return undefined
+    const missing = left.kind === 'any' || mayBeNull(left)
+    // In a chain (a || b || c, or a || (b || c) after a value that may be missing)
+    // the default inside was already reported.
+    const chain = defaults.has(node.left) || (missing && defaults.has(node.right))
+    if (!chain && !missing) return undefined
     if (!chain)
       expectLogic(
         leftLogic ? right : left,
@@ -1020,8 +1026,6 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     what: string,
     hint = comparisonHint(actual, at),
   ): void {
-    // A default already reported stands for the value it meant; don't report it again.
-    if (defaults.has(at)) return
     if (!isAssignable(actual, OPTIONAL_BOOLEAN)) {
       report('TYPE_ERROR', `${what} expects a boolean but got ${typeText(actual)}${hint}`, at)
     } else if (mayBeNull(actual)) {
@@ -1604,6 +1608,8 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       // What the call is expected to produce tells the lambda what to return:
       // `map` returns list<U> of the lambda's U, `reduce` returns its U.
       const bodyExpected = lambdaExpected(first.result, param.result, expected)
+      // A predicate's body (filter, some, every, ...) is a condition.
+      if (param.result.kind === 'boolean') asTest(arg.body)
       let bodyType = checkLambda(arg, paramTypes, scope, bodyExpected)
       unify(param.result, bodyType, firstBindings)
       // A parameter that takes the lambda's own result (reduce's accumulator)
