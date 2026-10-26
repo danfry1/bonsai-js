@@ -139,7 +139,7 @@ env.evaluateSync('user.age >= 18 && user.plan == "pro"', { user }) // => true
 formatType(fromSchema(User)) // => '{ age: number, plan: "free" | "pro", nickname: string | null, joined: timestamp }'
 ```
 
-The type describes what the schema's `parse` returns, and the context is typed as that output (`z.output<typeof User>` here). Elsewhere, such as a host function's parameters or a program's result, the value was only checked against the converted type, so it is `unknown`, and so is `Infer` of a converted type. Use the library's own type there. `fromSchema` accepts:
+The type describes what the schema's `parse` returns, and the context is typed as that output (`z.output<typeof User>` here). Elsewhere, such as a host function's parameters or a program's result, the value was only checked against the converted type, so it is `unknown`, and so is `Infer` of a converted type. Parse it there (`User.parse(user)`) to get the library's type. `fromSchema` accepts:
 
 - **Zod 4 and ArkType** schemas, as they are.
 - **Valibot** schemas wrapped with `toStandardJsonSchema` from `@valibot/to-json-schema`.
@@ -154,7 +154,7 @@ Some parts have no shape Bonsai can read:
 - **Dates** from Zod, Valibot, and ArkType become `timestamp`. In a plain JSON Schema, a `format: "date-time"` string stays a `string`, because the data holds a string. Write `"x-bonsai-type": "timestamp"` in the schema when the value is a `Date`.
 - **Maps, sets, bigints, and promises** become opaque types.
 - **Tuples** become lists of any of their members: `[string, number]` is `(string | number)[]`.
-- **ArkType's `object` domain** includes arrays, but its JSON Schema says `type: "object"`, so an index-signature type (`{ '[string]': 'number' }`) or a JSON keyword (`string.json.parse`) converts to a record. Give it `t.any()` with the `types` option if it may hold a list.
+- **ArkType's `object` domain** includes arrays, but its JSON Schema says `type: "object"`. So an ArkType object type with no required keys (`{ 'nickname?': 'string' }`, `{ '[string]': 'number' }`) or a JSON keyword (`string.json.parse`) converts to an object, though ArkType also accepts a list there. Give it `t.any()` with the `types` option if it may hold a list.
 
 Objects stay closed even when the JSON Schema allows other keys, so a typo is still an error. A schema with `additionalProperties` or `patternProperties` gets those keys as an open record. Bonsai numbers are finite, so with `validateContext`, an `Infinity` that a schema allows is still rejected. A union of objects keeps each member's fields, but the checker doesn't narrow on a discriminant: in `shape.kind == "circle" ? shape.radius : 0`, `shape.radius` checks as `any`.
 
