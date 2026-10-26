@@ -808,6 +808,14 @@ async function share() {
   overflow: hidden;
 }
 
+/* A problem's message wraps instead of running past the editor and over the output. */
+.editor :deep(.cm-tooltip-hover),
+.editor :deep(.cm-tooltip-lint) {
+  max-width: min(30em, 80vw);
+  white-space: normal;
+  line-height: 1.5;
+}
+
 .editor :deep(.cm-tooltip-autocomplete > ul) {
   font-family: var(--vp-font-family-mono);
   max-width: min(440px, 80vw);
