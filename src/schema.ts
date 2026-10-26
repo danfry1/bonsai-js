@@ -110,9 +110,12 @@ function standardJSON(
     return undefined
   if (!('~standard' in schema)) return undefined
   // `z.toJSONSchema` returns plain JSON with a hidden `~standard`: read the JSON as given.
+  const hidden = Object.getOwnPropertyDescriptor(schema, '~standard')
   if (
     Object.getPrototypeOf(schema) === Object.prototype &&
-    Object.getOwnPropertyDescriptor(schema, '~standard')?.enumerable === false
+    hidden?.enumerable === false &&
+    isRecord(hidden.value) &&
+    hidden.value.vendor === 'zod'
   )
     return undefined
   const standard = (schema as StandardJSONSchema)['~standard']
@@ -171,6 +174,32 @@ function opaqueMark(name: string | undefined): string {
 
 /** Valibot schema kinds whose value may be undefined, which JSON Schema states only for object keys. */
 const VALIBOT_OPTIONAL = new Set(['optional', 'undefinedable', 'nullish', 'exact_optional'])
+
+interface ValibotSchema {
+  readonly type: string
+  readonly default?: unknown
+  readonly entries?: Readonly<Record<string, ValibotSchema>>
+}
+
+const VALIBOT_OBJECTS = new Set(['object', 'loose_object', 'strict_object', 'object_with_rest'])
+
+/**
+ * Whether parsing always replaces undefined with a default. A default function
+ * may itself return undefined, so only a default value counts.
+ */
+function defaulted(schema: ValibotSchema): boolean {
+  return schema.default !== undefined && typeof schema.default !== 'function'
+}
+
+/** Valibot's `{ anyOf: [T, { type: 'null' }] }` for a nullable as T; anything else as it is. */
+function withoutNull(json: Record<string, unknown>): Record<string, unknown> {
+  const members = json.anyOf
+  if (!Array.isArray(members)) return json
+  const rest = members.filter((member) => !(isRecord(member) && member.type === 'null'))
+  if (rest.length !== 1 || !isRecord(rest[0])) return json
+  const { anyOf: _, ...keywords } = json
+  return { ...keywords, ...rest[0] }
+}
 
 /** Valibot transformations that keep the type of the value they change. */
 const VALIBOT_SAME_TYPE = new Set([
@@ -232,6 +261,8 @@ const VENDORS: Readonly<
       if (def.type === 'literal' && def.values?.some((value) => typeof value === 'bigint') === true)
         mark = def.values.every((value) => typeof value === 'bigint') ? 'opaque:bigint' : 'any'
       if (mark !== undefined) ctx.jsonSchema[MARK] = mark
+      // Zod writes `{}` for undefined, which reads as null.
+      if (def.type === 'undefined' || def.type === 'void') ctx.jsonSchema.type = 'null'
       // Zod copies a child's JSON into wrappers like `.default()`, which take undefined away.
       if (
         def.type === 'optional' ||
@@ -246,8 +277,8 @@ const VENDORS: Readonly<
     errorMode: 'ignore',
     ...options,
     overrideSchema: (ctx: {
-      valibotSchema: { type: string; default?: unknown }
-      jsonSchema: object
+      valibotSchema: ValibotSchema
+      jsonSchema: Record<string, unknown>
     }) => {
       const theirs =
         typeof options.overrideSchema === 'function'
@@ -255,9 +286,24 @@ const VENDORS: Readonly<
           : undefined
       if (theirs !== undefined) return theirs
       const { type } = ctx.valibotSchema
-      // With a default, parsing replaces undefined.
-      if (VALIBOT_OPTIONAL.has(type) && ctx.valibotSchema.default === undefined)
-        return { ...ctx.jsonSchema, [OPTIONAL]: true }
+      // A default value replaces null too, for nullable and nullish.
+      if ((type === 'nullable' || type === 'nullish') && defaulted(ctx.valibotSchema))
+        return withoutNull(ctx.jsonSchema)
+      if (VALIBOT_OPTIONAL.has(type))
+        return defaulted(ctx.valibotSchema) ? undefined : { ...ctx.jsonSchema, [OPTIONAL]: true }
+      if (type === 'undefined' || type === 'void') return { type: 'null' }
+      if (VALIBOT_OBJECTS.has(type) && ctx.valibotSchema.entries !== undefined) {
+        // A key with a default is always there after parsing, though Valibot leaves it out of `required`.
+        const required = Array.isArray(ctx.jsonSchema.required) ? [...ctx.jsonSchema.required] : []
+        for (const [key, entry] of Object.entries(ctx.valibotSchema.entries))
+          if (VALIBOT_OPTIONAL.has(entry.type) && defaulted(entry) && !required.includes(key))
+            required.push(key)
+        return {
+          ...ctx.jsonSchema,
+          required,
+          ...(type === 'loose_object' ? { additionalProperties: true } : {}),
+        }
+      }
       const mark = markOf(type)
       return mark === undefined ? undefined : { [MARK]: mark }
     },
@@ -464,7 +510,8 @@ class Converter {
       field(
         key,
         this.convert(properties[key], `${at}/properties/${pointerKey(key)}`, depth + 1),
-        !required.has(key),
+        // OpenAPI requires a readOnly key only in responses, a writeOnly key only in requests.
+        !required.has(key) || oneWay(properties[key]),
       )
 
     // Every value type a key outside `properties` may have.
@@ -518,7 +565,7 @@ class Converter {
   private ref(ref: string, at: string, depth: number): Type {
     if (ref !== '#' && !ref.startsWith('#/'))
       throw new TypeError(
-        `The schema at "${at}" refers to "${ref}"; only refs inside the schema ("#/...") are followed`,
+        `The schema at "${at}" refers to "${ref}"; only JSON pointer refs inside the schema ("#/...") are followed`,
       )
     // A ref back into itself (a tree, a recursive Zod schema) stops there as any value.
     if (this.active.has(ref)) {
@@ -553,6 +600,10 @@ class Converter {
       this.active.delete(ref)
     }
   }
+}
+
+function oneWay(schema: unknown): boolean {
+  return isRecord(schema) && (schema.readOnly === true || schema.writeOnly === true)
 }
 
 const sizes = new WeakMap<Type, number>()

@@ -291,7 +291,7 @@ describe('fromSchema with JSON Schema', () => {
 
   it('refuses what it cannot follow', () => {
     expect(() => shape({ $ref: 'https://example.com/schema.json' })).toThrow(
-      'only refs inside the schema',
+      'only JSON pointer refs inside the schema',
     )
     expect(() => shape({ $ref: '#/$defs/Missing' })).toThrow('does not contain')
     expect(() => shape({ $ref: '#/constructor/prototype' })).toThrow('does not contain')
@@ -360,6 +360,29 @@ describe('fromSchema with JSON Schema', () => {
     expect(shape({ type: 'string', 'x-nullable': true })).toBe('string | null')
   })
 
+  it('makes OpenAPI readOnly and writeOnly keys optional', () => {
+    expect(
+      shape({
+        type: 'object',
+        properties: {
+          id: { type: 'number', readOnly: true },
+          password: { type: 'string', writeOnly: true },
+          name: { type: 'string' },
+        },
+        required: ['id', 'password', 'name'],
+      }),
+    ).toBe('{ id: number | null, password: string | null, name: string }')
+  })
+
+  it('reads a hidden ~standard from another library as a schema', () => {
+    const schema = {}
+    Object.defineProperty(schema, '~standard', {
+      enumerable: false,
+      value: { version: 1, vendor: 'other', jsonSchema: { output: () => ({ type: 'string' }) } },
+    })
+    expect(formatType(fromSchema(schema))).toBe('string')
+  })
+
   it('reads the JSON z.toJSONSchema returns as given', () => {
     const json = z.toJSONSchema(z.object({ when: z.string() }), { target: 'draft-07' })
     ;(json.properties!.when as Record<string, unknown>)['x-bonsai-type'] = 'timestamp'
@@ -385,6 +408,7 @@ describe('fromSchema accepts what each library parses', () => {
     const Pair = z.tuple([z.string(), z.number().optional()])
     expect(accepts(fromSchema(Pair), Pair.parse(['a']))).toBe(true)
     expect(accepts(fromSchema(z.string().optional()), undefined)).toBe(true)
+    expect(formatType(fromSchema(z.union([z.string(), z.undefined()])))).toBe('string | null')
     const Maybe = z.literal(['a', undefined])
     expect(accepts(fromSchema(Maybe), Maybe.parse(undefined))).toBe(true)
     // A default takes undefined away again.
@@ -422,9 +446,23 @@ describe('fromSchema accepts what each library parses', () => {
       v.mapItems((s) => s.length),
     )
     expect(() => fromSchema(toStandardJsonSchema(Lengths))).toThrow('is a transform')
-    // A defaulted key: Valibot leaves it out of `required`, so it reads as optional (wider, still sound).
-    const Defaulted = v.object({ a: v.optional(v.string(), 'x') })
-    expect(accepts(fromSchema(toStandardJsonSchema(Defaulted)), v.parse(Defaulted, {}))).toBe(true)
+    // A key with a default value is always there; a default function may return undefined.
+    const Defaulted = v.object({
+      a: v.optional(v.string(), 'x'),
+      b: v.nullish(v.number(), 0),
+      c: v.optional(v.string(), () => undefined),
+    })
+    const defaulted = fromSchema(toStandardJsonSchema(Defaulted))
+    expect(formatType(defaulted)).toBe('{ a: string, b: number, c: string | null }')
+    expect(accepts(defaulted, v.parse(Defaulted, {}))).toBe(true)
+    const Lazy = v.optional(v.string(), () => undefined)
+    expect(accepts(fromSchema(toStandardJsonSchema(Lazy)), v.parse(Lazy, undefined))).toBe(true)
+    expect(formatType(fromSchema(toStandardJsonSchema(v.looseObject({ a: v.string() }))))).toBe(
+      '{ a: string, [key: string]: any }',
+    )
+    expect(formatType(fromSchema(toStandardJsonSchema(v.union([v.string(), v.undefined()]))))).toBe(
+      'string | null',
+    )
   })
 
   it('ArkType: postfix tuples, Map instances', () => {
