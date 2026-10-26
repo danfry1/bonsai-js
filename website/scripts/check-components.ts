@@ -88,7 +88,7 @@ for (const tab of tabs) {
   if (tab.expression.length > MAX_EXPRESSION_LENGTH) {
     fail(`home tab ${tab.id}: ${tab.expression.length} characters wraps in the editor; keep it to ${MAX_EXPRESSION_LENGTH}`)
   }
-  const env = bonsai({ variables: tab.variables })
+  const env = bonsai({ variables: tab.variables, functions: tab.functions })
   const check = env.check(tab.expression, { expect: tab.expect })
   if (check.diagnostics.length > 0) {
     fail(`home tab ${tab.id}: ${check.diagnostics.map((d) => d.message).join('; ')}`)
@@ -126,6 +126,17 @@ for (const refusal of refusals) {
     const actual = (error as Error).message
     if (actual !== refusal.message) fail(`home refusal ${refusal.code}: shows "${refusal.message}", actual "${actual}"`)
   }
+}
+
+// The functions tab says the app's own functions are "checked like built-ins": a misspelled one gets a suggestion.
+{
+  const own = tabs.find((tab) => tab.id === 'functions')
+  const typo = own
+    ? bonsai({ variables: own.variables, functions: own.functions }).check(own.expression.replace('isAdult', 'isAdlt'), {
+        expect: own.expect,
+      })
+    : undefined
+  if (typo?.diagnostics[0]?.suggestion !== 'isAdult') fail('home tab functions: misspelling isAdult should suggest isAdult')
 }
 
 // The block after <!-- codemirror-extension --> must be the demo's module, character for character.

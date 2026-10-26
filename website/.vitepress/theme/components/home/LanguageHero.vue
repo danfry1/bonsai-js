@@ -19,7 +19,7 @@ import { tabs } from './tabs-data'
 
 const active = ref(0)
 const tab = computed(() => tabs[active.value])
-const envs = tabs.map((t) => bonsai({ variables: t.variables, limits: { timeout: 50 } }))
+const envs = tabs.map((t) => bonsai({ variables: t.variables, functions: t.functions, limits: { timeout: 50 } }))
 const env = computed(() => envs[active.value])
 const source = ref(tabs[0].expression)
 /**
@@ -243,6 +243,19 @@ function reset() {
         </div>
       </div>
 
+      <div v-if="tab.functions" class="row">
+        <p class="label">Functions</p>
+        <div class="cell">
+          <dl class="fns">
+            <template v-for="(f, name) in tab.functions" :key="name">
+              <dt><code>{{ name }}()</code></dt>
+              <dd>{{ f.description }}</dd>
+            </template>
+          </dl>
+          <p class="hint">Defined in your app, checked like built-ins.</p>
+        </div>
+      </div>
+
       <div class="row">
         <p class="label">Data</p>
         <div class="cell">
@@ -327,14 +340,14 @@ function reset() {
 }
 
 /*
- * Every tab gets the height of the tallest (the config file; the saved filter
- * on a phone), and the result row takes the spare, so switching tabs or
- * typing never moves the page.
+ * Every tab gets the height of the tallest (your functions, with an error
+ * showing; the saved filter on a phone), and the result row takes the spare,
+ * so switching tabs or typing never moves the page.
  */
 .body {
   display: flex;
   flex-direction: column;
-  min-height: 460px;
+  min-height: 502px;
   padding: 22px 28px 8px;
 }
 
@@ -514,6 +527,25 @@ function reset() {
   margin: 10px 2px 0;
   color: var(--vp-c-text-3);
   font-size: 13px;
+}
+
+/* The app's own functions: each name and what it does. */
+.fns {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 16px;
+  margin: 0;
+  font-size: 14px;
+}
+
+.fns dt code {
+  font-family: var(--vp-font-family-mono);
+  color: var(--vp-c-brand-1);
+}
+
+.fns dd {
+  margin: 0;
+  color: var(--vp-c-text-2);
 }
 
 .reset {

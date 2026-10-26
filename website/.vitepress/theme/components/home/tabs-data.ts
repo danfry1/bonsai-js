@@ -2,7 +2,7 @@
 // with the types it is checked against, sample data, and the expression it
 // opens with. Plain TypeScript (no Vue), so website/scripts/check-components.ts
 // can verify every tab checks and gives the result the page implies.
-import { t, type Type } from '../../../../../src/index.ts'
+import { fn, t, type HostFunction, type Type } from '../../../../../src/index.ts'
 
 /** Longest opening expression, so each fits the editor on one line at laptop widths (check-components enforces it). */
 export const MAX_EXPRESSION_LENGTH = 50
@@ -18,6 +18,8 @@ export interface Tab {
    */
   json?: { before: string[]; key: string; after: string[] }
   variables: Record<string, Type>
+  /** Functions the app defines, which the expression calls like built-ins; shown with their descriptions. */
+  functions?: Record<string, HostFunction>
   data: Record<string, unknown>
   expression: string
   /**
@@ -28,6 +30,8 @@ export interface Tab {
   /** What the app does with a result, in plain words, where the value alone doesn't say (a template's text does). */
   outcome?: (value: unknown) => string | undefined
 }
+
+const User = t.object({ name: t.string(), age: t.number(), country: t.enum('GB', 'IE', 'NZ', 'US') })
 
 const orders = [
   { id: 'A1', status: 'open', total: 120 },
@@ -49,6 +53,30 @@ export const tabs: Tab[] = [
     expression: 'order.total >= 50 && customer.tier == "gold"',
     expect: t.boolean(),
     outcome: (v) => (v === true ? 'Ships free' : v === false ? 'Pays for shipping' : undefined),
+  },
+  {
+    id: 'functions',
+    label: 'Your functions',
+    title: 'Who can open an account',
+    variables: { user: User },
+    functions: {
+      isAdult: fn({
+        params: [User],
+        returns: t.boolean(),
+        description: 'Aged 18 or over',
+        run: (user) => user.age >= 18,
+      }),
+      isUKCitizen: fn({
+        params: [User],
+        returns: t.boolean(),
+        description: 'Lives in the UK',
+        run: (user) => user.country === 'GB',
+      }),
+    },
+    data: { user: { name: 'Ada', age: 34, country: 'GB' } },
+    expression: 'user.isAdult() && user.isUKCitizen()',
+    expect: t.boolean(),
+    outcome: (v) => (v === true ? 'Can open an account' : v === false ? "Can't open an account" : undefined),
   },
   {
     id: 'filter',
