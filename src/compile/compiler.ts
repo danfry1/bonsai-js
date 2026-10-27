@@ -13,7 +13,7 @@ import {
 } from '../functions/define.js'
 import { forHost, isOwn, raised } from '../runtime/attribution.js'
 import type { State } from '../runtime/state.js'
-import type { TraceRecord, Tracer } from '../runtime/trace.js'
+import type { TraceHooks } from './trace.js'
 import {
   add,
   chargeKey,
@@ -54,13 +54,13 @@ import { formatType } from '../types.js'
  * A compiled node: a closure over the per-run state. Async closures resolve to
  * an {@link Out}, so no value from the host is ever awaited.
  */
-interface Code {
+export interface Code {
   readonly fn: (s: State) => unknown
   readonly async: boolean
 }
 
 /** A child run from an async closure: `(await boxed(code)(s)).v`, a sync child never awaited. */
-function boxed(code: Code): (s: State) => Out | Promise<Out> {
+export function boxed(code: Code): (s: State) => Out | Promise<Out> {
   const fn = code.fn
   return code.async ? (fn as (s: State) => Promise<Out>) : (s) => new Out(fn(s))
 }
@@ -101,28 +101,12 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
  * other Bonsai error a getter threw (from another evaluation, from parsing,
  * checking, or translating, or built by the host) is the host data's failure.
  */
-function hostDataError(error: unknown, s: State): unknown {
+export function hostDataError(error: unknown, s: State): unknown {
   if (isOwn(error)) return error
   // Out of stack, in the engine's recursion or a getter it called (telling them
   // apart would mean wrapping every read): a limit, which try() lets through.
   if (isStackOverflow(error)) return raised(tooDeep(s.source, error))
   return s.error('HOST_ERROR', `Reading host data failed: ${errorText(error)}`, undefined, error)
-}
-
-/**
- * Records a node's failure on its trace, as the error evaluation reports: host
- * data's failure is a HOST_ERROR here too, not the code of an error it threw.
- */
-function failed(trace: TraceRecord, error: unknown, s: State): unknown {
-  const failure = hostDataError(error, s) as BonsaiError
-  trace.error = { code: failure.code, message: failure.message }
-  return failure
-}
-
-/** Rethrows a failure of exhaustive explain's extra work only if it is a limit. */
-function extraFailure(error: unknown, s: State): void {
-  const failure = hostDataError(error, s)
-  if (failure instanceof BonsaiLimitError) throw failure
 }
 
 /** Whether `try()` recovers from an error: runtime failures, not limits or host contract violations. */
@@ -138,9 +122,10 @@ export interface CompileOptions {
   /**
    * Instrument every node to record its value on `state.tracer` (for
    * explain()). Traced programs are compiled separately, so ordinary
-   * evaluation pays nothing for tracing.
+   * evaluation pays nothing for tracing, and the hooks live with explain,
+   * so a bundle without it does not carry them.
    */
-  readonly trace?: boolean
+  readonly trace?: TraceHooks
   /**
    * Free local names the compiled tree may read (for compiling a sub-tree
    * on its own). They occupy slots 0..n-1 in order; the caller stores their
@@ -148,16 +133,10 @@ export interface CompileOptions {
    */
   readonly locals?: readonly string[]
   /**
-   * Variables with fixed values (a partial-evaluation residual's bindings).
-   * Reading one returns its value without looking in the context.
+   * How a variable with a fixed value (a partial-evaluation residual's
+   * binding) is read, or undefined for one read from the context.
    */
-  readonly constants?: ReadonlyMap<string, unknown>
-  /**
-   * The recorded size and depth of constants an evaluation built (partial
-   * evaluation's folded lists and maps), so a residual nests them as the
-   * original expression would, not as host data.
-   */
-  readonly shapes?: WeakMap<object, number> | undefined
+  readonly constant?: ((name: string) => ((s: State) => unknown) | undefined) | undefined
 }
 
 export function compileProgram(
@@ -175,48 +154,14 @@ function compileTree(
 ): CompiledProgram {
   let slots = 0
   const allowAsync = mode === 'async'
-  const tracing = options.trace === true
+  const trace = options.trace
 
   const sync = (fn: (s: State) => unknown): Code => ({ fn, async: false })
   const asyncCode = (fn: (s: State) => Promise<Out>): Code => ({ fn, async: true })
 
   function compile(node: Node, scope: Scope): Code {
     const code = compileNode(node, scope)
-    return tracing ? instrument(node, code) : code
-  }
-
-  function instrument(node: Node, code: Code): Code {
-    const fn = code.fn
-    if (!code.async) {
-      return sync((s) => {
-        const tracer = s.tracer as Tracer
-        const trace = tracer.enter(node)
-        if (trace === undefined) return fn(s)
-        try {
-          const value = fn(s)
-          trace.value = value
-          return value
-        } catch (error) {
-          throw failed(trace, error, s)
-        } finally {
-          tracer.exit()
-        }
-      })
-    }
-    return asyncCode(async (s) => {
-      const tracer = s.tracer as Tracer
-      const trace = tracer.enter(node)
-      if (trace === undefined) return fn(s) as Promise<Out>
-      try {
-        const out = (await fn(s)) as Out
-        trace.value = out.v
-        return out
-      } catch (error) {
-        throw failed(trace, error, s)
-      } finally {
-        tracer.exit()
-      }
-    })
+    return trace === undefined ? code : trace.node(node, code)
   }
 
   function compileNode(node: Node, scope: Scope): Code {
@@ -227,16 +172,8 @@ function compileTree(
       }
       case 'Variable': {
         const name = node.name
-        if (options.constants?.has(name) === true) {
-          const value = options.constants.get(name)
-          const shape =
-            typeof value === 'object' && value !== null ? options.shapes?.get(value) : undefined
-          if (shape === undefined) return sync(() => value)
-          return sync((s) => {
-            ;(s.shapes ??= new WeakMap()).set(value as object, shape)
-            return value
-          })
-        }
+        const constant = options.constant?.(name)
+        if (constant !== undefined) return sync(constant)
         return sync((s) => {
           const ctx = s.ctx
           if (!Object.hasOwn(ctx, name)) return null
@@ -377,7 +314,7 @@ function compileTree(
   }
 
   function compileMember(node: Extract<Node, { type: 'Member' }>, scope: Scope): Code {
-    if (tracing) {
+    if (trace !== undefined) {
       // Every step of a.b.c is its own traced node.
       const object = compile(node.object, scope)
       const name = node.name
@@ -458,7 +395,7 @@ function compileTree(
     const anyAsync = left.async || right.async
     const [bl, br] = [boxed(left), boxed(right)]
 
-    if (tracing && (op === '&&' || op === '||')) return compileExplainedLogic(node, left, right)
+    if (trace !== undefined && (op === '&&' || op === '||')) return trace.logic(node, left, right)
 
     switch (op) {
       case '&&':
@@ -522,59 +459,6 @@ function compileTree(
           at,
         )(s),
       )
-    })
-  }
-
-  /**
-   * && and || when explaining. With `exhaustive`, the side that
-   * short-circuiting would skip is still evaluated (and traced) so every
-   * deciding condition is recorded; its evaluation errors are ignored and the
-   * result is the ordinary one.
-   */
-  function compileExplainedLogic(node: BinaryNode, left: Code, right: Code): Code {
-    const isAnd = node.operator === '&&'
-    const what = `"${node.operator}"`
-    const extraSync = (s: State, r: (s: State) => unknown): void => {
-      const tracer = s.tracer as Tracer
-      tracer.extraDepth++
-      try {
-        r(s)
-      } catch (error) {
-        // Only limits stop the extra work; its failures (host data included) are ignored.
-        extraFailure(error, s)
-      } finally {
-        tracer.extraDepth--
-      }
-    }
-    if (!left.async && !right.async) {
-      const [l, r] = [left.fn, right.fn]
-      return sync((s) => {
-        const a = truth(l(s), s, node.left, what)
-        if (a !== isAnd) {
-          if ((s.tracer as Tracer).exhaustive) extraSync(s, r)
-          return a
-        }
-        return truth(r(s), s, node.right, what)
-      })
-    }
-    const [bl, br] = [boxed(left), boxed(right)]
-    return asyncCode(async (s) => {
-      const a = truth((await bl(s)).v, s, node.left, what)
-      if (a !== isAnd) {
-        const tracer = s.tracer as Tracer
-        if (tracer.exhaustive) {
-          tracer.extraDepth++
-          try {
-            await br(s)
-          } catch (error) {
-            extraFailure(error, s)
-          } finally {
-            tracer.extraDepth--
-          }
-        }
-        return new Out(a)
-      }
-      return new Out(truth((await br(s)).v, s, node.right, what))
     })
   }
 
@@ -790,29 +674,7 @@ function compileTree(
           throw annotate(error, index)
         }
       }
-      if (!tracing) return annotated
-      // Record each run as an iteration of the enclosing call.
-      return (argA: unknown, argB: unknown, position?: number) => {
-        const tracer = s.tracer as Tracer
-        const recorded =
-          position === undefined
-            ? tracer.enterIteration(node, typeof argB === 'number' ? argB : 0, argA)
-            : tracer.enterIteration(node, position, argB, argA)
-        if (!body.async) {
-          try {
-            return annotated(argA, argB, position)
-          } finally {
-            tracer.exitIteration(recorded)
-          }
-        }
-        return (async () => {
-          try {
-            return await annotated(argA, argB, position)
-          } finally {
-            tracer.exitIteration(recorded)
-          }
-        })()
-      }
+      return trace === undefined ? annotated : trace.lambda(node, annotated, body.async, s)
     }
     return { fn: make, async: body.async }
   }

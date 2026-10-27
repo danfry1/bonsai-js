@@ -97,7 +97,7 @@ premium.ok // => true
 premium.diagnostics[0].severity // => "warning"
 premium.diagnostics[0].message // => 'This comparison is always false: "free" | "pro" and "premium" have no values in common'
 
-env.compile('items.length ?? 0').warnings[0].message // => 'The left side of "??" is never null'
+env.compile('items.length ?? 0').warnings[0].message // => 'The left side of "??" is never null, so the right side is never used'
 env.compile('user.age > 18').warnings // => []
 ```
 

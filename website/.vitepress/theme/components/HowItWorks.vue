@@ -397,7 +397,7 @@
             before anything runs. That is the whole pipeline, and it all runs live in the Playground.
           </p>
           <div class="hiw-cta-actions">
-            <a href="/bonsai-js/playground" class="cta-btn">Open Playground</a>
+            <a :href="withBase('/playground')" class="cta-btn">Open Playground</a>
             <a
               href="https://github.com/danfry1/bonsai-js"
               class="cta-btn secondary"
@@ -414,6 +414,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { withBase } from 'vitepress'
 import { bonsai, isBonsaiError, Duration, t, formatType } from 'bonsai-src'
 import { tokenize } from 'bonsai-lexer'
 import './how-it-works/how-it-works.css'

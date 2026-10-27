@@ -194,8 +194,18 @@ export const t = Object.freeze({
 
 type Simplify<T> = { [K in keyof T]: T[K] }
 
-type NullableKeys<F> = {
-  [K in keyof F]: null extends Infer<F[K]> ? K : never
+declare const schemaOutput: unique symbol
+
+/**
+ * A type converted from a schema by `fromSchema`: an ordinary Bonsai type that
+ * also carries the schema's TypeScript output type, which a context declared
+ * with it takes.
+ */
+export type SchemaType<Output> = Type & { readonly [schemaOutput]: Output }
+
+// Keys that may be absent: null for Bonsai types, undefined for a schema's `.optional()`.
+type NullableKeys<F, H extends boolean> = {
+  [K in keyof F]: null extends InferAs<F[K], H> ? K : undefined extends InferAs<F[K], H> ? K : never
 }[keyof F]
 
 interface PrimitiveTypes {
@@ -212,31 +222,48 @@ interface PrimitiveTypes {
   var: unknown
 }
 
-type InferMap<F, R> = Simplify<
-  { readonly [K in Exclude<keyof F, NullableKeys<F>>]: Infer<F[K]> } & {
-    readonly [K in NullableKeys<F>]?: Infer<F[K]> | undefined
-  } & (R extends Type ? { readonly [key: string]: Infer<R> } : unknown)
+type InferMap<F, R, H extends boolean> = Simplify<
+  { readonly [K in Exclude<keyof F, NullableKeys<F, H>>]: InferAs<F[K], H> } & {
+    readonly [K in NullableKeys<F, H>]?: InferAs<F[K], H> | undefined
+  } & (R extends Type ? { readonly [key: string]: InferAs<R, H> } : unknown)
 >
 
-/** The TypeScript type of values described by a Bonsai type. */
-export type Infer<T> = [Type] extends [T]
+/**
+ * A Bonsai type's TypeScript type. `Host` is true where the host supplies the
+ * values (a context), so a `fromSchema` type is its schema's output type, and
+ * false where Bonsai supplies them (a host function's arguments, a program's
+ * result), which were only checked against the converted type: `unknown`.
+ */
+type InferAs<T, Host extends boolean> = [Type] extends [T]
   ? unknown
-  : T extends { readonly kind: 'literal'; readonly value: infer V }
-    ? V
-    : T extends { readonly kind: 'list'; readonly element: infer E }
-      ? readonly Infer<E>[]
-      : T extends { readonly kind: 'map'; readonly fields: infer F; readonly rest?: infer R }
-        ? InferMap<F, R>
-        : T extends { readonly kind: 'union'; readonly types: infer M extends readonly unknown[] }
-          ? Infer<M[number]>
-          : T extends { readonly kind: infer K extends keyof PrimitiveTypes }
-            ? PrimitiveTypes[K]
-            : unknown
+  : T extends { readonly [schemaOutput]: infer O }
+    ? Host extends true
+      ? O
+      : unknown
+    : T extends { readonly kind: 'literal'; readonly value: infer V }
+      ? V
+      : T extends { readonly kind: 'list'; readonly element: infer E }
+        ? readonly InferAs<E, Host>[]
+        : T extends { readonly kind: 'map'; readonly fields: infer F; readonly rest?: infer R }
+          ? InferMap<F, R, Host>
+          : T extends { readonly kind: 'union'; readonly types: infer M extends readonly unknown[] }
+            ? InferAs<M[number], Host>
+            : T extends { readonly kind: infer K extends keyof PrimitiveTypes }
+              ? PrimitiveTypes[K]
+              : unknown
+
+/**
+ * The TypeScript type of values described by a Bonsai type. A `fromSchema`
+ * type gives `unknown`: values Bonsai produces for it (a host function's
+ * arguments, a program's result) were checked against the converted type, not
+ * the schema. Use the library's own type (`z.output<typeof User>`) instead.
+ */
+export type Infer<T> = InferAs<T, false>
 
 /** The context type of a variable declaration record. */
 export type InferVariables<V> = Simplify<
-  { readonly [K in Exclude<keyof V, NullableKeys<V>>]: Infer<V[K]> } & {
-    readonly [K in NullableKeys<V>]?: Infer<V[K]> | undefined
+  { readonly [K in Exclude<keyof V, NullableKeys<V, true>>]: InferAs<V[K], true> } & {
+    readonly [K in NullableKeys<V, true>]?: InferAs<V[K], true> | undefined
   }
 >
 

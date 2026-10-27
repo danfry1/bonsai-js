@@ -55,12 +55,12 @@ rule.evaluateSync(context) // a boolean
 
 ## Documentation
 
-- Guide: https://danfry1.github.io/bonsai-js/guide/
-- Language: https://danfry1.github.io/bonsai-js/language/
-- Built-in functions: https://danfry1.github.io/bonsai-js/functions/
-- API: https://danfry1.github.io/bonsai-js/api/environment
-- Stability policy: https://danfry1.github.io/bonsai-js/guide/stability
-- Full text for LLMs: https://danfry1.github.io/bonsai-js/llms-full.txt
+- Guide: https://bonsai.danfry.dev/guide/
+- Language: https://bonsai.danfry.dev/language/
+- Built-in functions: https://bonsai.danfry.dev/functions/
+- API: https://bonsai.danfry.dev/api/environment
+- Stability policy: https://bonsai.danfry.dev/guide/stability
+- Full text for LLMs: https://bonsai.danfry.dev/llms-full.txt
 
 ## Links
 

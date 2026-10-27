@@ -136,6 +136,25 @@ function mayBeNull(type: Type): boolean {
   return type.kind === 'null' || (type.kind === 'union' && type.types.some(mayBeNull))
 }
 
+/**
+ * How to say what a number or string means as a condition, for a non-boolean
+ * operand of logic. Null reads as false, so a nullable one is tested against
+ * null (`x != 0` would turn null true). A literal operand, an enum (`x != ""`
+ * would always hold), or any other type gets no hint.
+ */
+function comparisonHint(type: Type, at: Node): string {
+  if (
+    at.type === 'Literal' ||
+    !unionMembers(type).every(
+      (m) => m.kind === 'number' || m.kind === 'string' || m.kind === 'null',
+    )
+  )
+    return ''
+  return mayBeNull(type)
+    ? '; to test it is set, write x != null'
+    : '; compare explicitly, e.g. x != 0 or x != ""'
+}
+
 /** The node whose value is the result (the body of lets, the last expression). */
 function resultSpan(node: Node): Node {
   return node.type === 'Let' ? resultSpan(node.body) : node
@@ -527,6 +546,20 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
   let probeScope: ProbeScope | undefined
   let probeMembers: ReadonlyMap<string, Type> | undefined
 
+  /**
+   * Each `a || b` written as a default, the JavaScript way, and already
+   * reported (see checkDefault), so a chain (`a || b || c`) is one problem.
+   */
+  const defaults = new Set<Node>()
+  /** Values used as conditions (of `!`, `?:`, `&&`, a predicate's lambda), where an `a || b` is a test, not a default. */
+  const tests = new WeakSet<Node>()
+  const asTest = (n: Node): void => {
+    tests.add(n)
+    if (n.type === 'Binary' && n.operator === '||') {
+      asTest(n.left)
+      asTest(n.right)
+    }
+  }
   const reported = new Set<string>()
   const report = (
     code: DiagnosticCode,
@@ -735,7 +768,10 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       case 'Call':
         return checkCall(node, scope, expected)
       case 'Unary': {
-        if (node.operator === '!') nullFalseMatters(node.operand)
+        if (node.operator === '!') {
+          nullFalseMatters(node.operand)
+          asTest(node.operand)
+        }
         const operand = check(node.operand, scope)
         markAsync(node, node.operand)
         if (node.operator === '!') {
@@ -756,6 +792,7 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         return checkBinary(node, scope, expected)
       case 'Conditional': {
         nullFalseMatters(node.test)
+        asTest(node.test)
         const test = check(node.test, scope)
         expectLogic(test, node.test, 'A condition')
         const a = check(node.then, withFacts(scope, nonNullFacts(node.test, true)), expected)
@@ -942,9 +979,55 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     }
   }
 
-  function expectLogic(actual: Type, at: Node, what: string): void {
+  /**
+   * Checks `a || b` as a default written the JavaScript way: `b` is not a
+   * boolean and `a` may be missing (null, nullable, or untyped). One problem,
+   * pointing to `??`, on the side that is not a boolean; the result takes the
+   * type `??` would give, so the rest of the expression is checked as the
+   * author meant it. Not a default where a boolean is wanted (a condition,
+   * `!`, `&&`, an expected boolean): there `??` would not fix it. Undefined
+   * when it is an ordinary `||`, checked operand by operand.
+   */
+  function checkDefault(
+    node: Extract<Node, { type: 'Binary' }>,
+    left: Type,
+    right: Type,
+    expected: Type | undefined,
+  ): Type | undefined {
+    const leftLogic = isAssignable(left, OPTIONAL_BOOLEAN)
+    // A boolean fallback makes the left a test; an untyped one (user.nick || x) is
+    // still a default, but only when the left is the side that is not a boolean.
+    if (
+      tests.has(node) ||
+      (expected !== undefined && nonNull(expected).kind === 'boolean') ||
+      (isAssignable(right, OPTIONAL_BOOLEAN) && (leftLogic || right.kind !== 'any'))
+    )
+      return undefined
+    const missing = left.kind === 'any' || mayBeNull(left)
+    // In a chain (a || b || c, or a || (b || c) after a value that may be missing)
+    // the default inside was already reported.
+    const chain = defaults.has(node.left) || (missing && defaults.has(node.right))
+    if (!chain && !missing) return undefined
+    if (!chain)
+      expectLogic(
+        leftLogic ? right : left,
+        leftLogic ? node.right : node.left,
+        '"||"',
+        '; for a default, use ?? for each ||',
+      )
+    defaults.add(node)
+    return unionOf([nonNull(left), right])
+  }
+
+  /** Checks an operand of a condition, `!`, `&&` or `||`; a non-boolean one is told how to compare it. */
+  function expectLogic(
+    actual: Type,
+    at: Node,
+    what: string,
+    hint = comparisonHint(actual, at),
+  ): void {
     if (!isAssignable(actual, OPTIONAL_BOOLEAN)) {
-      report('TYPE_ERROR', `${what} expects a boolean but got ${typeText(actual)}`, at)
+      report('TYPE_ERROR', `${what} expects a boolean but got ${typeText(actual)}${hint}`, at)
     } else if (mayBeNull(actual)) {
       // Null counts as false here, which ! turns into true: say which one is meant.
       report(
@@ -980,6 +1063,8 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       )
     }
     if (objectType.kind === 'map') {
+      // __proto__, constructor, and prototype read as null whatever the object declares.
+      if (BLOCKED_NAMES.has(name)) return NULL
       const field = fieldOf(objectType, name)
       if (field !== undefined) return field
       if (objectType.rest !== undefined) return t.optional(objectType.rest)
@@ -1061,6 +1146,10 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     expected: Type | undefined,
   ): Type {
     const nullish = node.operator === '??'
+    if (node.operator === '&&') {
+      asTest(node.left)
+      asTest(node.right)
+    }
     // x == false (or != true) reads a null comparison's false as a verdict.
     if (node.operator === '==' || node.operator === '!=') {
       const negates = node.operator === '!='
@@ -1089,13 +1178,24 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
     const op = node.operator
     switch (op) {
       case '&&':
-      case '||':
+      case '||': {
+        const fallback = op === '||' ? checkDefault(node, left, right, expected) : undefined
+        if (fallback) return fallback
         expectLogic(left, node.left, `"${op}"`)
         expectLogic(right, node.right, `"${op}"`)
         return BOOLEAN
+      }
       case '??':
-        if (!isNullable(left))
-          report('NEVER_NULL', 'The left side of "??" is never null', node.left, 'warning')
+        // The right side runs only when the left is null, so without null it adds nothing.
+        if (!isNullable(left)) {
+          report(
+            'NEVER_NULL',
+            'The left side of "??" is never null, so the right side is never used',
+            node.left,
+            'warning',
+          )
+          return left
+        }
         return unionOf([nonNull(left), right])
       case '==':
       case '!=':
@@ -1518,6 +1618,8 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
       // What the call is expected to produce tells the lambda what to return:
       // `map` returns list<U> of the lambda's U, `reduce` returns its U.
       const bodyExpected = lambdaExpected(first.result, param.result, expected)
+      // A predicate's body (filter, some, every, ...) is a condition.
+      if (param.result.kind === 'boolean') asTest(arg.body)
       let bodyType = checkLambda(arg, paramTypes, scope, bodyExpected)
       unify(param.result, bodyType, firstBindings)
       // A parameter that takes the lambda's own result (reduce's accumulator)

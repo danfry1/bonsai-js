@@ -1,0 +1,169 @@
+<!doctype html>
+<!--
+  The social card (website/public/og-card.png), 1200 by 630. To regenerate it:
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --hide-scrollbars \
+      --window-size=1200,630 --screenshot=website/public/og-card.png website/scripts/og-card.html
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face {
+        font-family: 'Bricolage Grotesque';
+        src: url('../../node_modules/@fontsource-variable/bricolage-grotesque/files/bricolage-grotesque-latin-opsz-normal.woff2')
+          format('woff2');
+        font-weight: 200 800;
+      }
+      :root {
+        --brand: #2b6743;
+        --ink: #15241b;
+        --text-2: #4a5c50;
+        --text-3: #6f7f73;
+        --band: #e2eadd;
+        --prop: #2f4a3a;
+        --string: #8a5530;
+        --literal: #6a5a12;
+        --error: #b23a2e;
+        --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+      }
+      body {
+        position: relative;
+        padding: 64px 72px;
+        background: var(--band);
+        color: var(--ink);
+        font-family: -apple-system, 'Inter', 'Segoe UI', sans-serif;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-family: 'Bricolage Grotesque', sans-serif;
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+      .brand img {
+        width: 46px;
+        height: 46px;
+      }
+      h1 {
+        margin: 56px 0 0;
+        max-width: 620px;
+        font-family: 'Bricolage Grotesque', sans-serif;
+        font-size: 82px;
+        font-weight: 800;
+        line-height: 0.98;
+        letter-spacing: -0.045em;
+      }
+      .url {
+        position: absolute;
+        left: 72px;
+        bottom: 60px;
+        color: var(--text-2);
+        font-size: 24px;
+        font-weight: 500;
+      }
+      /* The demo: an expression, what it found, and what it gave. */
+      .card {
+        position: absolute;
+        right: 64px;
+        top: 150px;
+        width: 440px;
+        padding: 26px 28px 24px;
+        border-radius: 18px;
+        background: #fff;
+        box-shadow:
+          0 1px 2px rgba(21, 36, 27, 0.06),
+          0 30px 60px -30px rgba(21, 36, 27, 0.35);
+      }
+      .label {
+        margin: 0 0 10px;
+        color: var(--text-3);
+        font-size: 16px;
+        font-weight: 600;
+      }
+      code {
+        font-family: var(--mono);
+      }
+      .expr {
+        display: block;
+        padding: 14px 16px;
+        border: 1px solid #d6dfd3;
+        border-radius: 10px;
+        background: #f3f6f1;
+        font-size: 21px;
+        line-height: 1.5;
+      }
+      .p {
+        color: var(--prop);
+      }
+      .s {
+        color: var(--string);
+      }
+      .l {
+        color: var(--literal);
+      }
+      .o {
+        color: var(--text-3);
+      }
+      .said {
+        margin: 22px 0 0;
+        font-family: 'Bricolage Grotesque', sans-serif;
+        font-size: 38px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .parts {
+        margin: 14px 0 0;
+        padding: 0;
+        list-style: none;
+        font-size: 18px;
+      }
+      .parts li {
+        display: flex;
+        justify-content: space-between;
+        padding: 5px 0;
+      }
+      .t {
+        color: var(--brand);
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="brand"><img src="../public/logo.svg" alt="" />Bonsai</div>
+    <h1>Safe, typed expressions for JavaScript.</h1>
+    <div class="card">
+      <p class="label">Free shipping</p>
+      <code class="expr"
+        >order<span class="o">.</span><span class="p">total</span> <span class="o">&gt;=</span>
+        <span class="l">50</span> <span class="o">&amp;&amp;</span><br />customer<span class="o">.</span
+        ><span class="p">tier</span> <span class="o">==</span> <span class="s">"gold"</span></code
+      >
+      <p class="said">Ships free</p>
+      <ul class="parts">
+        <li>
+          <code>order<span class="o">.</span><span class="p">total</span> <span class="o">&gt;=</span> <span class="l">50</span></code
+          ><code class="t">true</code>
+        </li>
+        <li>
+          <code
+            >customer<span class="o">.</span><span class="p">tier</span> <span class="o">==</span>
+            <span class="s">"gold"</span></code
+          ><code class="t">true</code>
+        </li>
+      </ul>
+    </div>
+    <p class="url">bonsai.danfry.dev</p>
+  </body>
+</html>

@@ -45,7 +45,7 @@ Upgrading from 0.x? The [migration guide](/guide/migrating) covers every change.
 
 ## Bundle size
 
-In a browser bundle, evaluating rules that were checked and compiled on a server adds about 30 KB minified and gzipped, from `bonsai-js/runtime/core` with only the built-in functions your rules call (`bonsai-js/runtime`, with all of them, is about 43 KB). Checking rules in the browser too adds about 69 KB: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. From `bonsai-js/lite`, which leaves those two out, it adds about 57 KB. The `query` and `service` entry points are separate; the language service on its own is about 47 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets.
+In a browser bundle, evaluating rules that were checked and compiled on a server adds about 29 KB minified and gzipped, from `bonsai-js/runtime/core` with only the built-in functions your rules call (`bonsai-js/runtime`, with all of them, is about 43 KB). Checking rules in the browser too adds about 69 KB: the parser, type checker, compiler, and built-in library, with explaining and partial evaluation included. From `bonsai-js/lite`, which leaves those two out, it adds about 57 KB. The `query` and `service` entry points are separate; the language service on its own is about 47 KB, since it includes the type checker. Unused modules are tree-shaken: importing only `t` adds under 1 KB, and all the error classes about 1.6 KB. CI enforces these budgets.
 
 ## First evaluation
 

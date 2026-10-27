@@ -1,54 +1,165 @@
 /* ──────────────────────────────────────────────────────────────
-   Bonsai theme — refined VitePress.
-   A tuned bonsai-green palette, a calmer type scale, brand-aligned
-   callouts, and styled reference tables. Keeps the familiar docs
-   structure; just polishes it.
+   Bonsai theme.
+   Pine ink on a pale sage page, moss for actions and links, bark
+   for strings: the colours of the logo, kept quiet so code and
+   diagnostics stand out. Bricolage Grotesque sets headings; body
+   text stays on VitePress's Inter.
    ────────────────────────────────────────────────────────────── */
 
-/* Brand palette ------------------------------------------------- */
+/* Palette ------------------------------------------------------- */
 :root {
-  /* Darker green for links/inline-code so they read on white. */
-  --vp-c-brand-1: #1f8a50;
-  --vp-c-brand-2: #2c8452;
-  --vp-c-brand-3: #3fae6e;
-  --vp-c-brand-soft: rgba(63, 174, 110, 0.14);
+  --bonsai-font-display: 'Bricolage Grotesque Variable', var(--vp-font-family-base);
 
-  --vp-home-hero-name-color: transparent;
-  --vp-home-hero-name-background: linear-gradient(120deg, #2c8452 8%, #5fc98a);
+  --vp-c-bg: #f3f6f1;
+  --vp-c-bg-alt: #eaefe7;
+  --vp-c-bg-soft: #e6ece3;
+  --vp-c-bg-elv: #fbfcfa;
+
+  --vp-c-text-1: #15241b;
+  --vp-c-text-2: #46564b;
+  --vp-c-text-3: #6c7b70;
+  --vp-c-divider: #d2ddcf;
+  --vp-c-gutter: #dde6da;
+  --vp-c-border: #c3d0bf;
+
+  --vp-c-brand-1: #2b6743;
+  --vp-c-brand-2: #235a39;
+  --vp-c-brand-3: #2b6743;
+  --vp-c-brand-soft: rgba(43, 103, 67, 0.12);
+  --bonsai-on-brand: #f3f6f1;
+
+  /* Syntax and diagnostics in the home page editor. */
+  --bonsai-syn-prop: #2f4a3a;
+  --bonsai-syn-string: #8a5530;
+  --bonsai-syn-literal: #6a5a12;
+  --bonsai-error: #b23a2e;
+  --bonsai-warning: #a8730c;
+  /* Home page surfaces: the hero's band, raised cards, and the dark pine panels. */
+  --bonsai-band: #e2eadd;
+  --bonsai-card: #ffffff;
+  --bonsai-card-shadow: 0 1px 2px rgba(21, 36, 27, 0.05), 0 12px 32px -16px rgba(21, 36, 27, 0.22);
+  --bonsai-ink: #12201a;
+  --bonsai-ink-2: #1b2d23;
+  --bonsai-ink-text: #d5e1d3;
+  /* Hover links between an expression and the data it read. */
+  --bonsai-lit: rgba(43, 103, 67, 0.16);
+
+  --vp-button-brand-bg: var(--vp-c-brand-1);
+  --vp-button-brand-hover-bg: var(--vp-c-brand-2);
+  --vp-button-brand-active-bg: var(--vp-c-brand-2);
+  --vp-button-brand-text: var(--bonsai-on-brand);
+  --vp-button-brand-hover-text: var(--bonsai-on-brand);
+  --vp-button-brand-active-text: var(--bonsai-on-brand);
+
+  --vp-code-block-bg: #fbfcfa;
+  --vp-code-bg: rgba(43, 103, 67, 0.08);
+  --vp-nav-bg-color: var(--vp-c-bg);
+  --vp-sidebar-bg-color: var(--vp-c-bg-alt);
 
   /* Tip callouts adopt the brand tint; warning/danger keep their
      conventional amber/red so severity stays legible. */
   --vp-custom-block-tip-border: transparent;
   --vp-custom-block-tip-bg: var(--vp-c-brand-soft);
-  --vp-custom-block-tip-code-bg: rgba(63, 174, 110, 0.08);
+  --vp-custom-block-tip-code-bg: rgba(43, 103, 67, 0.08);
 }
 
 .dark {
-  --vp-c-bg: #0a0a0f;
-  --vp-c-bg-alt: #111118;
-  --vp-c-bg-soft: #14141d;
-  --vp-c-bg-elv: #14141d;
-  /* Brighter greens for contrast on the near-black background. */
-  --vp-c-brand-1: #5fc98a;
-  --vp-c-brand-2: #4cbb79;
-  --vp-c-brand-3: #3fae6e;
+  --vp-c-bg: #0e1712;
+  --vp-c-bg-alt: #0b130f;
+  --vp-c-bg-soft: #16221b;
+  --vp-c-bg-elv: #16221b;
+
+  --vp-c-text-1: #dde7db;
+  --vp-c-text-2: #a6b4a8;
+  --vp-c-text-3: #768679;
+  --vp-c-divider: #243328;
+  --vp-c-gutter: #0b130f;
+  --vp-c-border: #2f4034;
+
+  --vp-c-brand-1: #8acfa2;
+  --vp-c-brand-2: #a3dbb6;
+  --vp-c-brand-3: #6fbd8b;
+  --vp-c-brand-soft: rgba(138, 207, 162, 0.14);
+  --bonsai-on-brand: #0e1712;
+
+  --bonsai-syn-prop: #bccdbf;
+  --bonsai-syn-string: #d6a77c;
+  --bonsai-syn-literal: #d9c46e;
+  --bonsai-error: #f0877a;
+  --bonsai-warning: #e3b35a;
+  --bonsai-band: #121e17;
+  --bonsai-card: #131e17;
+  --bonsai-card-shadow: 0 0 0 1px #223127, 0 16px 40px -20px rgba(0, 0, 0, 0.6);
+  /* Greener than the page, so the dark panels still read as panels. */
+  --bonsai-ink: #12261a;
+  --bonsai-ink-2: #1a3123;
+  --bonsai-ink-text: #d5e1d3;
+  --bonsai-lit: rgba(138, 207, 162, 0.22);
+
+  --vp-code-block-bg: #131e17;
+  --vp-code-bg: rgba(138, 207, 162, 0.1);
+  --vp-custom-block-tip-code-bg: rgba(138, 207, 162, 0.1);
 }
 
 /* Typography ---------------------------------------------------- */
+.VPNavBarTitle .title {
+  font-family: var(--bonsai-font-display);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.vp-doc :is(h1, h2, h3) {
+  font-family: var(--bonsai-font-display);
+}
+
 .vp-doc h1 {
-  letter-spacing: -0.02em;
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
 }
 
 .vp-doc h2 {
   margin-top: 2.75rem;
   padding-top: 1.5rem;
-  letter-spacing: -0.01em;
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
   border-top: 1px solid var(--vp-c-divider);
+}
+
+/* A section that opens the page needs no divider from the title. */
+.vp-doc h1 + h2 {
+  margin-top: 2rem;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .vp-doc h3 {
   margin-top: 2rem;
+  font-size: 20px;
+  font-weight: 650;
   letter-spacing: -0.01em;
+}
+
+@media (max-width: 640px) {
+  .vp-doc h1 {
+    font-size: 32px;
+  }
+}
+
+/* Links read as links in running text, not only by colour. */
+.vp-doc p a,
+.vp-doc li a {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--vp-c-brand-1) 40%, transparent);
+  text-underline-offset: 3px;
+}
+
+.vp-doc p a:hover,
+.vp-doc li a:hover {
+  text-decoration-color: currentColor;
 }
 
 /* Inline code reads as brand-tinted on VitePress's default subtle chip. */
@@ -66,7 +177,15 @@
   padding: 0;
   font-weight: 400;
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  /* Break a long token only when it can't fit on a line by itself: a wide
+     table scrolls in its wrapper rather than splitting @types/jexl letter
+     by letter. */
+  overflow-wrap: break-word;
+}
+
+/* Wide comparison tables: keep each column readable and let the wrapper scroll. */
+.vp-doc :is(th, td) {
+  min-width: 6.5em;
 }
 
 /* Column hierarchy: the first column is the Bonsai expression being
@@ -82,38 +201,52 @@
 }
 
 /* Code blocks --------------------------------------------------- */
+/* Raised like the home page's cards; colours come from shiki-themes.ts. */
 .vp-doc div[class*='language-'] {
   border: 1px solid var(--vp-c-divider);
   border-radius: 10px;
+  background: var(--bonsai-card);
+}
+
+.vp-doc div[class*='language-'] > span.lang {
+  color: var(--vp-c-text-3);
+  font-weight: 500;
 }
 
 /* Reference tables ---------------------------------------------- */
 /* The docs lean on dense "Expression / Result / Context" tables;
-   give them real structure instead of bare rules. */
+   give them real structure instead of bare rules. Each table sits in a
+   wrapper (config.ts) that carries the frame and scrolls sideways, so a
+   table fills the column when it fits and scrolls inside it when it is
+   wider, never running under the page outline. */
+.vp-doc .table-wrap {
+  margin: 1.25rem 0;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 10px;
+  background: var(--bonsai-card);
+  overflow-x: auto;
+}
+
 .vp-doc table {
   display: table;
   width: 100%;
-  margin: 1.25rem 0;
+  margin: 0;
   border-collapse: collapse;
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 10px;
-  overflow: hidden;
   font-size: 14px;
 }
 
-.vp-doc tr {
+/* No stripes (VitePress shades every other row): the hairlines carry the rows. */
+.vp-doc tr,
+.vp-doc tr:nth-child(2n) {
   background: transparent;
   border: none;
-  transition: background-color 0.15s ease;
 }
 
 .vp-doc th {
-  background: var(--vp-c-bg-soft);
+  background: transparent;
   color: var(--vp-c-text-2);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .vp-doc th,
@@ -121,20 +254,29 @@
   border: none;
   border-bottom: 1px solid var(--vp-c-divider);
   padding: 10px 16px;
+  vertical-align: baseline;
 }
 
 .vp-doc tbody tr:last-child td {
   border-bottom: none;
 }
 
-.vp-doc tbody tr:hover {
-  background: var(--vp-c-bg-soft);
+/* Home page ------------------------------------------------------ */
+/* The home layout here has no VitePress hero or features; the page
+   is the HomeShowcase component, so drop the default top spacing. */
+.VPHome {
+  margin-bottom: 0 !important;
+  padding-bottom: 0 !important;
 }
 
-/* Keep tables usable on narrow screens. */
-@media (max-width: 640px) {
-  .vp-doc table {
-    display: block;
-    overflow-x: auto;
-  }
+.NotFound :is(.code, .title) {
+  font-family: var(--bonsai-font-display);
+  letter-spacing: -0.02em;
+  text-transform: none;
+}
+
+/* Keyboard focus is always visible. */
+:is(a, button, summary, input, textarea, select):focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
 }

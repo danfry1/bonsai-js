@@ -244,6 +244,8 @@ function redirectImports(code: string): string {
     .replaceAll("from 'bonsai-js/builtins'", `from ${JSON.stringify(join(srcDir, 'builtins/index.ts'))}`)
     .replaceAll("from 'bonsai-js'", `from ${JSON.stringify(join(srcDir, 'index.ts'))}`)
     .replaceAll("from './bonsai-language'", `from ${JSON.stringify(codemirrorModule)}`)
+    // Schema libraries the fromSchema examples convert, from the repo's dev dependencies.
+    .replaceAll("from 'zod'", `from ${JSON.stringify(Bun.resolveSync('zod', repoDir))}`)
 }
 
 function queueTypeCheck(file: string, blocks: Block[], dir: string): void {

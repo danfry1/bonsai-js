@@ -9,6 +9,34 @@ From 1.0.0, entries are generated at release time from the bump files in
 
 
 
+
+
+
+## 1.3.1
+<sub>2026-10-26</sub>
+
+- *(patch)*
+  `a ?? b` where `a` is never null now has `a`'s type, since `b` never runs: `(order.total > 50) ?? 0` is a `boolean`, so it meets `expect: t.boolean()`. The `NEVER_NULL` warning now says the right side is never used. A computed read of `__proto__`, `constructor`, or `prototype` on an object is typed `null`, as it reads, even where the object's type declares that key.
+
+## 1.3.0
+<sub>2026-10-26</sub>
+
+- *(minor)*
+  `fromSchema` converts an app's existing schema into a Bonsai type: a Zod 4 or ArkType schema, a Valibot schema wrapped with `toStandardJsonSchema` (any Standard JSON Schema), or a JSON Schema (draft-07, 2020-12, OpenAPI 3.0). A context declared with it is typed as the schema's output. New exports: `fromSchema`, and the types `SchemaType`, `FromSchemaOptions`, `JSONSchema`, and `StandardJSONSchema`. Passing a schema object where a type goes now throws an error that says to use `fromSchema`.
+
+## 1.2.2
+<sub>2026-10-26</sub>
+
+- *(patch)*
+  Check errors for a non-boolean in a condition, `!`, `&&` or `||` now say how to fix it. A default written with `||` (`user.nickname || "anon"`, or `discount || 0` on an untyped value) is reported once, suggesting `??`, and the rest of the expression is checked as if it used `??`, so a method call on it adds no further error. Where a boolean is wanted (a condition, `!`, `&&`), a number or string is told to compare it (`x != 0`), or to test it against null (`x != null`) when it may be null.
+- The package homepage is now https://bonsai.danfry.dev.
+
+## 1.2.1
+<sub>2026-10-25</sub>
+
+- *(patch)*
+  Smaller browser bundles for `bonsai-js/runtime`, `bonsai-js/runtime/core`, and `bonsai-js/lite` (about 0.85 KB gzipped each): explain tracing and partial-evaluation residual handling now live with the main entry's explain and partial features instead of the shared compiler and runner. No change in behavior.
+
 ## 1.2.0
 <sub>2026-10-25</sub>
 
