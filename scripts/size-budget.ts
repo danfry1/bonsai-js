@@ -79,9 +79,11 @@ const cases: SizeCase[] = [
     maxGzipBytes: 7_700,
   },
   {
+    // The main entry with fromSchema. 74.1 KB for trailing t.optional host
+    // parameters and finite host results (2026-11-02).
     name: "bonsai({ variables: { a: fromSchema(...) } }).evaluateSync('1 + 2')",
     source: `import { bonsai, fromSchema } from ${entry}\nconsole.log(bonsai({ variables: { a: fromSchema({ type: 'string' }) } }).evaluateSync('1 + 2'))`,
-    maxGzipBytes: 73_900,
+    maxGzipBytes: 74_100,
   },
   {
     name: 'error helpers only',
