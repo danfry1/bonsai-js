@@ -27,7 +27,7 @@ env.evaluateSync('(200).discount(0.25)') // => 150
 | `params` | `Type[]` | Parameter types, in order. The types of `run`'s arguments are inferred from them. |
 | `returns` | `Type` | The declared result type. The result is checked deeply against it at run time. When it is nullable (`t.optional(...)`), `run` may also return `undefined`, which reads as `null`. |
 | `run` | function | The implementation. |
-| `required` | `number` | How many leading parameters are required (default: all). Missing optional arguments arrive as `null`, so optional parameters must be declared with `t.optional(...)`. |
+| `required` | `number` | How many leading parameters are required. By default, all but the trailing ones declared with `t.optional(...)`. Missing optional arguments arrive as `null`, so parameters after `required` must be declared with `t.optional(...)`. |
 | `rest` | `Type` | The type of further variadic arguments; `run`'s rest parameter is typed from it. |
 | `async` | `boolean` | `run` returns a promise. The expression must be evaluated with `evaluate()`. |
 | `call` | `boolean` | `run` receives a `{ context, signal }` call object before its arguments. See [The call](#the-call-context-and-cancellation). |
@@ -75,7 +75,6 @@ const text = bonsai({
   functions: {
     greet: fn({
       params: [t.string(), t.optional(t.string())],
-      required: 1,
       returns: t.string(),
       run: (name, greeting) => `${greeting ?? 'Hello'}, ${name}`,
     }),

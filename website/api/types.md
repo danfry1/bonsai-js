@@ -83,7 +83,7 @@ env.check('customer.email.endsWith("@example.com")').diagnostics[0].code // => "
 env.check('customer.email?.endsWith("@example.com") ?? false').ok // => true
 ```
 
-Optional parameters of host functions must also be declared with `t.optional`.
+Trailing host function parameters declared with `t.optional` may likewise be omitted, and arrive as `null`.
 
 ## Opaque values
 
