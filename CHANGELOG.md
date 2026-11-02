@@ -12,6 +12,17 @@ From 1.0.0, entries are generated at release time from the bump files in
 
 
 
+
+## 1.4.0
+<sub>2026-11-02</sub>
+
+- *(minor)*
+  Trailing host function parameters declared with `t.optional(...)` may now be omitted without setting `required`: `fn({ params: [t.number(), t.optional(t.string())], ... })` accepts `f(1)` and passes `null` for the missing argument. A trailing `t.any()` stays required, and an explicit `required` still decides. The artifact digest of such a function changes with its signature, so artifacts that call one need to be made again.
+- *(patch)*
+  A variable or field declared `t.opaque(...)` is now a required key in the inferred TypeScript context type, as context validation and the checker already treat it. Before, TypeScript accepted a context without it because an opaque value is `unknown`, and the evaluation then failed validation or saw `null`. Declare `t.optional(t.opaque(name))` for a handle that may be missing.
+- *(patch)*
+  A host function that returns `NaN` or an infinity where its `returns` type declares a number, including inside a list or map, is now a `HOST_CONTRACT` error, as other results that break the declared type already were. Before, the value reached the expression and failed later, away from its cause (for example when sorting). Arguments read from an unvalidated context still reach `run` as the host gave them.
+
 ## 1.3.1
 <sub>2026-10-26</sub>
 
