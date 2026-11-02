@@ -966,14 +966,22 @@ function checkHostResult(
   span: Span,
 ): unknown {
   const value = result === undefined ? null : result
-  if (!conforms(value, overload.result, s)) {
+  if (!conforms(value, overload.result, s, true)) {
     throw s.error(
       'HOST_CONTRACT',
-      `${def.name}() returned ${result === undefined ? 'undefined' : describeKind(value)}, which does not match its declared type ${formatType(overload.result)}`,
+      `${def.name}() returned ${describeResult(result)}, which does not match its declared type ${formatType(overload.result)}`,
       span,
     )
   }
   return value
+}
+
+/** A host result for an error message: NaN and infinities by value, since their kind is number. */
+function describeResult(result: unknown): string {
+  if (result === undefined) return 'undefined'
+  return typeof result === 'number' && !Number.isFinite(result)
+    ? String(result)
+    : describeKind(result)
 }
 
 /**
