@@ -1,8 +1,17 @@
 // Host functions: argument validation against every Type kind, result
 // validation, context functions, rest and optional parameters, declaration
 // errors, and context validation (validateContext) for every Type kind.
-import { describe, expect, it } from 'vitest'
-import { BonsaiError, Duration, bonsai, fn, t, withContext, type Type } from '../src/index.js'
+import { describe, expect, expectTypeOf, it } from 'vitest'
+import {
+  BonsaiError,
+  Duration,
+  bonsai,
+  fn,
+  t,
+  withContext,
+  type InferVariables,
+  type Type,
+} from '../src/index.js'
 import { codeOf } from './helpers.js'
 
 /** An environment with one host function `f` that accepts `type` and echoes a marker. */
@@ -399,6 +408,36 @@ describe('context validation', () => {
     }
     return 'OK'
   }
+
+  it('types a key optional exactly when validation lets it be absent', () => {
+    const variables = {
+      handle: t.opaque('Handle'),
+      either: t.union(t.opaque('Handle'), t.number()),
+      maybeHandle: t.optional(t.opaque('Handle')),
+      anything: t.any(),
+      nothing: t.null(),
+      maybe: t.optional(t.number()),
+      box: t.object({ h: t.opaque('Handle'), m: t.optional(t.opaque('Handle')) }),
+    }
+    expectTypeOf<InferVariables<typeof variables>>().toEqualTypeOf<{
+      readonly handle: unknown
+      readonly either: unknown
+      readonly box: { readonly h: unknown; readonly m?: unknown }
+      readonly maybeHandle?: unknown
+      readonly anything?: unknown
+      readonly nothing?: null | undefined
+      readonly maybe?: number | null | undefined
+    }>()
+    const env = validating(variables)
+    const client = { id: 1 }
+    expect(env.evaluateSync('true', { handle: client, either: 1, box: { h: client } })).toBe(true)
+    expect(
+      message(() => env.evaluateSync('true', { either: 1, box: { h: client } } as never)),
+    ).toBe('INVALID_CONTEXT: Invalid context: handle should be Handle, got null (missing)')
+    expect(
+      message(() => env.evaluateSync('true', { handle: client, either: 1, box: {} } as never)),
+    ).toMatch(/^INVALID_CONTEXT: Invalid context: box\.h should be Handle/u)
+  })
 
   it('accepts conforming contexts of every kind', () => {
     const env = validating({

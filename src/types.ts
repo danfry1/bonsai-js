@@ -203,9 +203,34 @@ declare const schemaOutput: unique symbol
  */
 export type SchemaType<Output> = Type & { readonly [schemaOutput]: Output }
 
-// Keys that may be absent: null for Bonsai types, undefined for a schema's `.optional()`.
+/**
+ * Whether a value of a Bonsai type may be absent (read as null), decided by the
+ * type as `isNullable` decides it at run time, not by its TypeScript type: an
+ * opaque value is `unknown` in TypeScript but must be present. A `fromSchema`
+ * type follows its schema's output where the host supplies values (`undefined`
+ * for `.optional()`); elsewhere, like a bare `Type`, it is unknown and may be absent.
+ */
+type MayBeAbsent<T, H extends boolean> = [Type] extends [T]
+  ? true
+  : T extends { readonly [schemaOutput]: infer O }
+    ? H extends true
+      ? null extends O
+        ? true
+        : undefined extends O
+          ? true
+          : false
+      : true
+    : T extends { readonly kind: 'union'; readonly types: infer M extends readonly unknown[] }
+      ? true extends MayBeAbsent<M[number], H>
+        ? true
+        : false
+      : T extends { readonly kind: 'any' | 'null' }
+        ? true
+        : false
+
+// Keys that may be absent, so optional in the TypeScript type.
 type NullableKeys<F, H extends boolean> = {
-  [K in keyof F]: null extends InferAs<F[K], H> ? K : undefined extends InferAs<F[K], H> ? K : never
+  [K in keyof F]: MayBeAbsent<F[K], H> extends true ? K : never
 }[keyof F]
 
 interface PrimitiveTypes {
