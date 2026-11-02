@@ -87,7 +87,7 @@ Trailing host function parameters declared with `t.optional` may likewise be omi
 
 ## Opaque values
 
-`t.opaque(name)` declares a host value that expressions may hold, compare with `==`, and pass to host functions, but not read properties of. Use it for handles such as a database client or a class instance you pass through to your own functions. For a class instance the restriction is static: at run time it is still read as a map of its own properties. Built-in host objects such as `Map`, `Set`, `RegExp`, and promises are opaque at run time too, whatever their declared type.
+`t.opaque(name)` declares a host value that expressions may hold, compare with `==`, and pass to host functions, but not read properties of. Use it for handles such as a database client or a class instance you pass through to your own functions. Its TypeScript type is `unknown`, but the key is required: declare `t.optional(t.opaque(name))` for a handle that may be missing. For a class instance the restriction is static: at run time it is still read as a map of its own properties. Built-in host objects such as `Map`, `Set`, `RegExp`, and promises are opaque at run time too, whatever their declared type.
 
 ## Helpers
 
