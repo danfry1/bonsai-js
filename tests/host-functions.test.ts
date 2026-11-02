@@ -1,8 +1,17 @@
 // Host functions: argument validation against every Type kind, result
 // validation, context functions, rest and optional parameters, declaration
 // errors, and context validation (validateContext) for every Type kind.
-import { describe, expect, it } from 'vitest'
-import { BonsaiError, Duration, bonsai, fn, t, withContext, type Type } from '../src/index.js'
+import { describe, expect, expectTypeOf, it } from 'vitest'
+import {
+  BonsaiError,
+  Duration,
+  bonsai,
+  fn,
+  t,
+  withContext,
+  type InferVariables,
+  type Type,
+} from '../src/index.js'
 import { codeOf } from './helpers.js'
 
 /** An environment with one host function `f` that accepts `type` and echoes a marker. */
@@ -206,6 +215,73 @@ describe('host parameters', () => {
     ])
     expect(env.check('greet()').ok).toBe(false)
     expect(env.check('greet("a", "b", "c")').ok).toBe(false)
+  })
+
+  it('makes trailing t.optional parameters optional when required is omitted', () => {
+    const seen: unknown[][] = []
+    const env = bonsai({
+      functions: {
+        random: fn({
+          params: [t.number(), t.number(), t.optional(t.union(t.number(), t.string()))],
+          returns: t.number(),
+          run: (min, max, seed) => {
+            seen.push([min, max, seed])
+            return min
+          },
+        }),
+      },
+    })
+    expect(env.evaluateSync('random(1, 10)')).toBe(1)
+    expect(env.evaluateSync('random(1, 10, "s")')).toBe(1)
+    expect(seen).toEqual([
+      [1, 10, null],
+      [1, 10, 's'],
+    ])
+    expect(env.check('random(1)').ok).toBe(false)
+    expect(env.check('random(1, 2, 3, 4)').ok).toBe(false)
+    expect(env.describeFunction('random')?.signatures[0]?.required).toBe(2)
+  })
+
+  it('keeps a nullable parameter required when a later one is not', () => {
+    const env = bonsai({
+      functions: {
+        f: fn({
+          params: [t.optional(t.string()), t.number(), t.optional(t.number())],
+          returns: t.number(),
+          run: (_label, n) => n,
+        }),
+      },
+    })
+    expect(env.describeFunction('f')?.signatures[0]?.required).toBe(2)
+    expect(env.evaluateSync('f(null, 3)')).toBe(3)
+    expect(env.check('f(3)').ok).toBe(false)
+  })
+
+  it('keeps a trailing t.any() required but lets a trailing t.null() be omitted', () => {
+    const env = bonsai({
+      functions: {
+        anything: fn({ params: [t.any()], returns: t.boolean(), run: () => true }),
+        nothing: fn({ params: [t.null()], returns: t.boolean(), run: () => true }),
+      },
+    })
+    expect(env.check('anything()').ok).toBe(false)
+    expect(env.describeFunction('anything')?.signatures[0]?.required).toBe(1)
+    expect(env.describeFunction('nothing')?.signatures[0]?.required).toBe(0)
+  })
+
+  it('lets an explicit required keep a trailing t.optional parameter required', () => {
+    const env = bonsai({
+      functions: {
+        f: fn({
+          params: [t.optional(t.string())],
+          returns: t.boolean(),
+          required: 1,
+          run: () => true,
+        }),
+      },
+    })
+    expect(env.check('f()').ok).toBe(false)
+    expect(env.evaluateSync('f(null)')).toBe(true)
   })
 
   it('passes rest arguments after the declared parameters', () => {
@@ -439,6 +515,36 @@ describe('context validation', () => {
     }
     return 'OK'
   }
+
+  it('types a key optional exactly when validation lets it be absent', () => {
+    const variables = {
+      handle: t.opaque('Handle'),
+      either: t.union(t.opaque('Handle'), t.number()),
+      maybeHandle: t.optional(t.opaque('Handle')),
+      anything: t.any(),
+      nothing: t.null(),
+      maybe: t.optional(t.number()),
+      box: t.object({ h: t.opaque('Handle'), m: t.optional(t.opaque('Handle')) }),
+    }
+    expectTypeOf<InferVariables<typeof variables>>().toEqualTypeOf<{
+      readonly handle: unknown
+      readonly either: unknown
+      readonly box: { readonly h: unknown; readonly m?: unknown }
+      readonly maybeHandle?: unknown
+      readonly anything?: unknown
+      readonly nothing?: null | undefined
+      readonly maybe?: number | null | undefined
+    }>()
+    const env = validating(variables)
+    const client = { id: 1 }
+    expect(env.evaluateSync('true', { handle: client, either: 1, box: { h: client } })).toBe(true)
+    expect(
+      message(() => env.evaluateSync('true', { either: 1, box: { h: client } } as never)),
+    ).toBe('INVALID_CONTEXT: Invalid context: handle should be Handle, got null (missing)')
+    expect(
+      message(() => env.evaluateSync('true', { handle: client, either: 1, box: {} } as never)),
+    ).toMatch(/^INVALID_CONTEXT: Invalid context: box\.h should be Handle/u)
+  })
 
   it('accepts conforming contexts of every kind', () => {
     const env = validating({

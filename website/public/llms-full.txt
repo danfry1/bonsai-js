@@ -139,7 +139,7 @@ Evaluation options: `timeout` (ms), `maxSteps`, `signal` (AbortSignal), `now` (D
 ```ts
 fn({
   params: [t.string(), t.optional(t.number())],
-  required: 1, // later parameters are optional, must be nullable, and arrive as null when omitted
+  required: 1, // optional; default: all but trailing t.optional params. Later params must be nullable and arrive as null when omitted
   rest: t.number(), // optional variadic type
   returns: t.boolean(),
   async: false, // true: run returns a promise; evaluateSync rejects the expression with ASYNC_IN_SYNC; a promise from a non-async function is HOST_CONTRACT
