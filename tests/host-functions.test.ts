@@ -123,6 +123,46 @@ describe('host results', () => {
     )
   })
 
+  it('rejects NaN and infinities for a declared number, which the language cannot represent', () => {
+    for (const bad of [Number.NaN, Infinity, -Infinity]) {
+      expect(() => returning(t.number(), bad).evaluateSync('g()')).toThrow(
+        `g() returned ${String(bad)}, which does not match its declared type number`,
+      )
+      expect(codeOf(() => returning(t.number(), bad).evaluateSync('try(g(), 0)'))).toBe(
+        'HOST_CONTRACT',
+      )
+      expect(codeOf(() => returning(t.optional(t.number()), bad).evaluateSync('g()'))).toBe(
+        'HOST_CONTRACT',
+      )
+    }
+    expect(codeOf(() => returning(t.list(t.number()), [1, Number.NaN]).evaluateSync('g()'))).toBe(
+      'HOST_CONTRACT',
+    )
+    expect(
+      codeOf(() => returning(t.object({ n: t.number() }), { n: Infinity }).evaluateSync('g()')),
+    ).toBe('HOST_CONTRACT')
+    // t.any() promises nothing, like the context validator.
+    expect(returning(t.any(), Number.NaN).evaluateSync('g()')).toBeNaN()
+  })
+
+  it('still passes NaN from an unvalidated context to run, as documented', () => {
+    const seen: unknown[] = []
+    const env = bonsai({
+      functions: {
+        id: fn({
+          params: [t.number()],
+          returns: t.boolean(),
+          run: (n) => {
+            seen.push(n)
+            return true
+          },
+        }),
+      },
+    })
+    expect(env.evaluateSync('id(x)', { x: Number.NaN })).toBe(true)
+    expect(seen).toEqual([Number.NaN])
+  })
+
   it('wraps thrown host errors, including non-Error values', () => {
     const env = bonsai({
       functions: {

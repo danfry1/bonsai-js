@@ -165,8 +165,19 @@ export function matchesKind(value: unknown, type: Type): boolean {
   }
 }
 
-/** Deep runtime conformance, used to guard host function parameters. */
-export function conforms(value: unknown, type: Type, state: State, depth = 0): boolean {
+/**
+ * Deep runtime conformance, used to guard host function parameters and
+ * results. With `finite`, a number must also be finite: the language has no
+ * NaN or infinities, so a host result holding one is not a value it can use.
+ * (Arguments read from an unvalidated context pass as the host gave them.)
+ */
+export function conforms(
+  value: unknown,
+  type: Type,
+  state: State,
+  finite = false,
+  depth = 0,
+): boolean {
   if (depth > state.limits.maxValueDepth) return false
   switch (type.kind) {
     case 'list': {
@@ -175,7 +186,7 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
       state.charge(value.length)
       // oxlint-disable-next-line typescript/prefer-for-of -- indexing never invokes a host array's own Symbol.iterator
       for (let i = 0; i < value.length; i++)
-        if (!conforms(value[i], type.element, state, depth + 1)) return false
+        if (!conforms(value[i], type.element, state, finite, depth + 1)) return false
       return true
     }
     case 'map': {
@@ -183,8 +194,8 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
       const fields = Object.entries(type.fields)
       state.charge(1 + fields.length)
       for (const [key, fieldType] of fields) {
-        if (!conforms(Object.hasOwn(value, key) ? value[key] : null, fieldType, state, depth + 1))
-          return false
+        const field = Object.hasOwn(value, key) ? value[key] : null
+        if (!conforms(field, fieldType, state, finite, depth + 1)) return false
       }
       if (type.rest !== undefined && type.rest.kind !== 'any') {
         const keys = Object.keys(value)
@@ -195,7 +206,7 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
           if (
             field !== undefined &&
             !Object.hasOwn(type.fields, key) &&
-            !conforms(field, type.rest, state, depth + 1)
+            !conforms(field, type.rest, state, finite, depth + 1)
           )
             return false
         }
@@ -205,19 +216,20 @@ export function conforms(value: unknown, type: Type, state: State, depth = 0): b
     case 'union':
       // Each member may be tried: a union of thousands of literals is real work.
       state.charge(type.types.length)
-      return type.types.some((member) => conforms(value, member, state, depth))
+      return type.types.some((member) => conforms(value, member, state, finite, depth))
     case 'timestamp':
       // An invalid Date is an opaque host value, not a timestamp.
       return isTimestamp(value)
     case 'duration':
       return isValidDuration(value)
+    case 'number':
+      return typeof value === 'number' && (!finite || Number.isFinite(value))
     case 'any':
     case 'boolean':
     case 'function':
     case 'literal':
     case 'never':
     case 'null':
-    case 'number':
     case 'opaque':
     case 'string':
     case 'var':
