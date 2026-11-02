@@ -167,7 +167,7 @@ await env.evaluate('hasRole("admin") || orders.map(fxRate(.currency) * .amount).
 - `async: true` functions are awaited by `evaluate()`, one call at a time. `evaluateSync()` rejects expressions that call them before any host code runs. A function not declared `async` that returns a promise is a `HOST_CONTRACT` error.
 - A host function with the same name as a built-in replaces it for that environment, so new built-ins in future releases never change the meaning of your expressions.
 - With `call: true`, `run` first receives `{ context, signal }`: the read-only evaluation context, and an `AbortSignal` that aborts when the evaluation times out or is cancelled while waiting on the call (pass it to `fetch`). `withContext<Ctx>()` returns a version of `fn` with the context typed: `withContext<Ctx>()({ params: [], returns: t.string(), run: (call) => call.context.tenant.id })`.
-- Optional parameters (after `required`) arrive as `null` when omitted, so declare them with `t.optional(...)`.
+- Trailing parameters declared with `t.optional(...)` may be omitted, and arrive as `null`. Set `required` to choose the count of required leading parameters yourself.
 - Each call is charged `cost` steps (default 32) against the step budget; set a lower `cost` for cheap pure helpers.
 - Bundle functions (and variables) into a `Library` (`{ name, functions, variables } satisfies Library`) and pass `libraries: [a, b]`; its variables join the context type, and a name defined twice is an error. `env.extend({...})` derives a new environment.
 

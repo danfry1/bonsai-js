@@ -97,7 +97,7 @@ describe('encodeFunction', () => {
     ['call', { params: [], returns: t.number(), call: true, run: () => 1 }],
     [
       'required count',
-      { params: [t.optional(t.number())], required: 0, returns: t.number(), run: () => 1 },
+      { params: [t.optional(t.number())], required: 1, returns: t.number(), run: () => 1 },
     ],
     ['result type', { params: [], returns: t.string(), run: () => '1' }],
   ])('changes with %s', (_, spec) => {

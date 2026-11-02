@@ -144,7 +144,11 @@ export interface FnSpec<
   readonly params: P
   /** Declared result type; results are checked against its kind. */
   readonly returns: R
-  /** Number of required leading parameters (default: all). Missing optional arguments arrive as null. */
+  /**
+   * Number of required leading parameters. By default, every parameter up to
+   * the trailing ones declared nullable (`t.optional(...)`), which may be
+   * omitted. Missing optional arguments arrive as null.
+   */
   readonly required?: number | undefined
   /** Type of further variadic arguments. */
   readonly rest?: RT
@@ -738,6 +742,22 @@ export interface ResidualRunner {
   explainAsync: (ctx: unknown, options: unknown) => Promise<Explanation>
 }
 
+/**
+ * How many leading parameters a host function requires when it does not say:
+ * all but the trailing ones declared nullable, such as `t.optional(...)`, since
+ * an omitted argument arrives as null. A bare `t.any()` stays required, so a
+ * function taking anything still has its arity checked.
+ */
+function defaultRequired(params: readonly Type[]): number {
+  let required = params.length
+  while (required > 0) {
+    const param = params[required - 1]
+    if (param.kind === 'any' || !isNullable(param)) break
+    required--
+  }
+  return required
+}
+
 function toDef(name: string, host: HostFunction): FunctionDef {
   // `has` and `try` read as syntax, so a function with either name could never be called.
   if (!isName(name) || name === 'has' || name === 'try') {
@@ -746,8 +766,9 @@ function toDef(name: string, host: HostFunction): FunctionDef {
   assertHostSpec(host, `Function "${name}"`)
   const run = host.run as (...args: unknown[]) => unknown
   const count = host.params.length
+  const required = host.required ?? defaultRequired(host.params)
   host.params.forEach((param, index) => {
-    if (index >= (host.required ?? count) && !isNullable(param)) {
+    if (index >= required && !isNullable(param)) {
       throw new TypeError(
         `Optional parameter ${index + 1} of "${name}" receives null when omitted; declare it as t.optional(...)`,
       )
@@ -771,7 +792,7 @@ function toDef(name: string, host: HostFunction): FunctionDef {
           return run(...args)
         },
         {
-          required: host.required ?? count,
+          required,
           ...(host.rest === undefined ? {} : { rest: host.rest }),
         },
       ),
