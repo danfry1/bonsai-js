@@ -13,6 +13,13 @@ From 1.0.0, entries are generated at release time from the bump files in
 
 
 
+
+## 1.4.1
+<sub>2026-11-14</sub>
+
+- *(patch)*
+  An unknown variable in an environment set to `strict: true` with no declared variables now says how to fix it: declare the name in `variables`, or set `strict: false`. The context passed at evaluation supplies values, not declarations.
+
 ## 1.4.0
 <sub>2026-11-02</sub>
 
