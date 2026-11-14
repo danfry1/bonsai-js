@@ -30,6 +30,21 @@ describe('environment', () => {
     expect(result.diagnostics[0]?.message).toContain('did you mean "user"')
   })
 
+  it('says to declare variables when strict is set with none declared', () => {
+    const env = bonsai({ strict: true })
+    expect(() => env.evaluateSync('name', { name: 'alice' })).toThrow(
+      'Unknown variable "name"; this environment is strict and declares no variables: declare it in `variables`, or set `strict: false`',
+    )
+    expect(
+      bonsai({ strict: true, variables: { name: t.string() } }).evaluateSync('name', {
+        name: 'alice',
+      }),
+    ).toBe('alice')
+    // With variables declared, the hint stays a typo suggestion.
+    const declared = bonsai({ strict: true, variables: { user: t.string() } }).check('usr')
+    expect(declared.diagnostics[0]?.message).toBe('Unknown variable "usr"; did you mean "user"?')
+  })
+
   it('reports unknown properties of declared maps', () => {
     const env = bonsai({ variables: { user: t.object({ age: t.number(), name: t.string() }) } })
     const result = env.check('user.agee > 1')
