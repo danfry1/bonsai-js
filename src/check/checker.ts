@@ -725,9 +725,15 @@ function analyzeWithin(root: Node, env: CheckEnv, options: CheckOptions): Analys
         if (declared !== undefined) return declared
         if (env.strict) {
           const suggestion = suggest(node.name, () => Object.keys(env.variables ?? {}))
+          // Strict with nothing declared rejects every name; the context passed at
+          // evaluation supplies values, not declarations, so say where they go.
+          const hint =
+            env.variables === undefined
+              ? '; this environment is strict and declares no variables: declare it in `variables`, or set `strict: false` to read undeclared names from the context'
+              : didYouMean(suggestion)
           report(
             'UNKNOWN_VARIABLE',
-            `Unknown variable "${node.name}"${didYouMean(suggestion)}`,
+            `Unknown variable "${node.name}"${hint}`,
             node,
             'error',
             suggestion,
